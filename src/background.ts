@@ -9,6 +9,7 @@
 
 import { Store, Transfer, browserEnv } from '../vendor/qrst-web/index.ts';
 import { verifyEvent, type Event } from 'nostr-tools/pure';
+import { nip19 } from 'nostr-tools';
 import { SimplePool } from 'nostr-tools/pool';
 import { signerTicket, type Ticket } from './ticket.ts';
 import { Link, newKey } from './link.ts';
@@ -350,12 +351,12 @@ const host = (origin: string) => { try { return new URL(origin).host; } catch { 
 // A small card drawn over the page (an extension page in a frame the site can't
 // reach). One card per tab and site; every request waiting on it shares the answer.
 
-interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
+interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
 const asks = new Map<string, Ask>();
 
-function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve', detail?: string): Promise<void> {
-  // Approvals are one per event; sign-in and Allow are one per tab and site.
-  const existing = kind !== 'approve' && [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
+function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve' | 'notice', detail?: string): Promise<void> {
+  // Approvals and notices are one each; sign-in and Allow are one per tab and site.
+  const existing = kind !== 'approve' && kind !== 'notice' && [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
   if (existing) return existing.done;
   if (tabId === undefined) return Promise.reject(new Error('Not signed in.'));
   const id = newKey().slice(0, 32);
@@ -380,6 +381,10 @@ async function answer(id: string, yes: boolean) {
       else if (pairing) await grantFor(pairing, sites, a.origin).catch(e => a.reject(e));
     }
     a.resolve();
+  } else if (a.kind === 'notice') {
+    // "Not you? Sign out"
+    a.resolve();
+    await signOut();
   } else if (a.kind === 'approve') {
     a.reject(new Error('You didn’t approve it.'));
   } else {
@@ -453,9 +458,20 @@ async function finish(tk: Ticket) {
     view.done = true; view.status = 'Signed in.';
     pairEmit();
     changed();
-    void fetchProfile(p);
+    const byLink = !!pairing?.byLink;
+    // With no "Sign in as …?" (same phone), say who you are once you're in.
+    const profile = byLink ? Promise.race([fetchProfile(p), new Promise(r => setTimeout(r, 3000))]) : fetchProfile(p);
+    if (!byLink) void profile;
     // Every site that was waiting on this sign-in goes ahead: you signed in from it.
-    for (const a of asks.values()) if (a.kind === 'pair') { await grantFor(p, (await load()).sites, a.origin).catch(() => {}); a.resolve(); }
+    const tabs = new Set<number>();
+    for (const a of asks.values()) if (a.kind === 'pair') { await grantFor(p, (await load()).sites, a.origin).catch(() => {}); a.resolve(); if (a.tabId !== undefined) tabs.add(a.tabId); }
+    if (byLink) {
+      await profile;
+      const cur = (await load()).pairing;
+      const npub = nip19.npubEncode(p.pubkey);
+      const who = cur?.profile?.name ?? `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+      for (const tab of tabs) void ask(tab, '', 'notice', who).catch(() => {});
+    }
   } catch (e) {
     view.error = (e as Error).message; view.uri = undefined; view.busy = false; pairEmit();
   }

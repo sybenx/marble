@@ -24,11 +24,16 @@ function arm(...buttons: HTMLButtonElement[]) {
 }
 
 async function main() {
-  const info = await api.runtime.sendMessage({ type: 'card-info', id }) as { kind: 'pair' | 'allow' | 'approve'; origin: string; detail?: string } | null;
+  const info = await api.runtime.sendMessage({ type: 'card-info', id }) as { kind: 'pair' | 'allow' | 'approve' | 'notice'; origin: string; detail?: string } | null;
   if (!info) { $('title').textContent = 'This request has ended.'; resize(); return; }
   const site = host(info.origin);
 
-  if (info.kind === 'approve') {
+  if (info.kind === 'notice') {
+    $('title').textContent = `Signed in as ${info.detail ?? 'you'}`;
+    $('body').innerHTML = `<p class="muted" style="margin:4px 0 0"><button class="link" id="out" style="padding:0">Not you? Sign out</button></p>`;
+    ($('out') as HTMLButtonElement).onclick = () => answer(false);
+    setTimeout(() => answer(true), 6000);
+  } else if (info.kind === 'approve') {
     const what = (info.detail ?? 'make a big change').replace(/^\w/, c => c.toUpperCase());
     $('title').textContent = `${site} wants to make a big change`;
     $('body').innerHTML = `<p class="who"></p><p class="muted" id="lockNote">You’ll confirm with your device lock.</p>
