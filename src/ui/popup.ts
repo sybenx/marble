@@ -68,6 +68,8 @@ $('signOut').onclick = () => {
   if (confirm('Sign out of this browser? Every site here stops signing as you.')) api.runtime.sendMessage({ type: 'sign-out' });
 };
 
+// Joining a server's own group by its code is for testing and self-hosters for now.
+api.storage.local.get('dev').then((r: any) => { if (r.dev) $('joinOpen').hidden = false; }).catch(() => {});
 $('joinOpen').onclick = () => { $('joinForm').hidden = false; $('joinOpen').hidden = true; ($('joinCode') as HTMLTextAreaElement).focus(); };
 $('joinGo').onclick = () => {
   const uri = ($('joinCode') as HTMLTextAreaElement).value.trim();

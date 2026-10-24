@@ -195,6 +195,9 @@ async function publishProfile(m: MemberState, d: Device) {
     try { ev = await d.sign({ kind: 0, content, tags: [], created_at: Math.floor(Date.now() / 1000) }, grant); break; }
     catch (e) { if (i >= 5 || !/^revoked:/.test((e as Error).message)) throw e; await new Promise(r => setTimeout(r, 1500)); }
   }
+  m.profileEvent = ev; await saveMember(m);
+  // Tests sign it but don't post it to public relays.
+  if (((await api.storage.local.get('devNoPublish')) as { devNoPublish?: boolean }).devNoPublish) return;
   const relays = [...new Set([...m.group.relays, ...DEFAULT_RELAYS])];
   const pool = new SimplePool();
   try { await Promise.any(pool.publish(relays, ev)); } finally { setTimeout(() => pool.destroy(), 5000); }

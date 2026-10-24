@@ -59,6 +59,7 @@ const note = (page: Page, content: string, extra = '') => call(page, `window.nos
 
 try {
   // 1. Join by the server's code, in the popup.
+  await sw.evaluate(() => (globalThis as any).chrome.storage.local.set({ dev: true }));
   const pop = await ctx.newPage();
   await pop.goto(`chrome-extension://${extId}/popup.html`);
   await pop.click('#joinOpen');

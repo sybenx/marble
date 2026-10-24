@@ -11,7 +11,6 @@ import { mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http';
 import { chromium, type Frame, type Page } from 'playwright-core';
 import { verifyEvent, type Event } from 'nostr-tools/pure';
-import { SimplePool } from 'nostr-tools/pool';
 
 const SERVER = `${process.env.HOME}/cosign/server`;
 const DIR = new URL('../.test-shared', import.meta.url).pathname;
@@ -45,7 +44,8 @@ const ctx = await chromium.launchPersistentContext('', {
 });
 const sw = ctx.serviceWorkers().find(w => w.url().endsWith('/background.js')) ?? await ctx.waitForEvent('serviceworker', w => w.url().endsWith('/background.js'));
 await sleep(1000);
-await sw.evaluate(s => (globalThis as any).chrome.storage.local.set({ devSeeds: s }), seeds);
+// Seeds for the two test servers; and sign the profile without posting it publicly.
+await sw.evaluate(s => (globalThis as any).chrome.storage.local.set({ devSeeds: s, devNoPublish: true }), seeds);
 
 async function card(page: Page, want: string, timeout = 20_000): Promise<Frame> {
   const until = Date.now() + timeout;
@@ -79,10 +79,10 @@ try {
   const ev = await call(page, `window.nostr.signEvent({ kind: 1, content: 'my first note', tags: [] })`);
   check(ev.ok && verifyEvent(ev.r as Event), `signs at once (no Allow card: you started from this site)${ev.ok ? '' : ': ' + ev.e}`);
 
-  const pool = new SimplePool();
-  const profile = await pool.get(member.group.relays, { kinds: [0], authors: [member.group.groupX] }, { maxWait: 5000 });
-  pool.destroy();
-  check(!!profile && JSON.parse(profile.content).name === 'Test Person', `profile published${profile ? '' : ' (not found on the relays)'}`);
+  await sleep(2000);
+  const after = (await sw.evaluate(() => (globalThis as any).chrome.storage.local.get('member')) as any).member;
+  const pe = after?.profileEvent;
+  check(!!pe && verifyEvent(pe) && pe.kind === 0 && JSON.parse(pe.content).name === 'Test Person', 'profile signed (not posted: a test)');
 
   procs.get('h1')!.kill();
   await sleep(1000);

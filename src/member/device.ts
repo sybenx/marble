@@ -29,6 +29,8 @@ export interface MemberState {
   profile?: { name?: string; picture?: string };
   /** The extension's own grant, for what it signs itself (your profile at Create account). */
   ownGrant?: string;
+  /** The profile event last signed, as published. */
+  profileEvent?: Event;
 }
 
 const HEDGE_MS = 300;
