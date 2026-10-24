@@ -58,6 +58,7 @@ port.onMessage.addListener((s: any) => {
   // adding your phone or printing a backup exists.
   $('signOut').hidden = !!s.member;
   $('memberNote').hidden = !s.member;
+  $('safety').hidden = !s.unsafe;
 });
 
 $('sites').addEventListener('click', e => {
@@ -80,3 +81,6 @@ $('joinGo').onclick = () => {
   $('joinStatus').textContent = 'Connecting…';
   port.postMessage({ type: 'join', uri });
 };
+
+$('safePaper').onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'paper' }); window.close(); };
+$('safePhone').onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'phone' }); window.close(); };

@@ -53,7 +53,7 @@ for (const t of targets) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   await build({
-    entryPoints: { background: 'src/background.ts', content: 'src/content.ts', inpage: 'src/inpage.ts', card: 'src/ui/card.ts', popup: 'src/ui/popup.ts', 'spike-weighted': 'src/spike/weighted.ts', 'spike-refresh': 'src/spike/refresh.ts' },
+    entryPoints: { background: 'src/background.ts', content: 'src/content.ts', inpage: 'src/inpage.ts', card: 'src/ui/card.ts', popup: 'src/ui/popup.ts', safety: 'src/ui/safety.ts', 'spike-weighted': 'src/spike/weighted.ts', 'spike-refresh': 'src/spike/refresh.ts' },
     outdir: out, bundle: true, format: 'iife', target: ['chrome116', 'firefox128', 'safari16'], minify: false, logLevel: 'warning',
     // wasm-bindgen's default loader looks at import.meta.url; ours loads the module itself.
     define: { 'import.meta.url': 'undefined' },

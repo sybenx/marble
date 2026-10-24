@@ -34,6 +34,8 @@ export const verifyPartial = (g: Group, msg: string, commits: Commit[], idx: num
 export const aggregate = (g: Group, msg: string, commits: Commit[], partials: [number, string][]) => w.aggregate(j(g), msg, j(commits), j(partials));
 
 // Repair (adding a device): the new member sums its helpers' sigmas into a share.
+export const repairStep1 = (g: Group, idx: number, share: string, helpers: number[], k: number) => JSON.parse(w.repairStep1(j(g), idx, share, Uint16Array.from(helpers), k)) as [number, string][];
+export const repairStep2 = (deltas: string[]) => w.repairStep2(deltas);
 export const repairStep3 = (g: Group, sigmas: string[], k: number) => w.repairStep3(j(g), sigmas, k);
 export const sharePub = (share: string) => w.sharePub(share);
 

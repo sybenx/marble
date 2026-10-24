@@ -18,7 +18,7 @@ import { Mailbox, pubOf } from './net.ts';
 import { DkgRun } from './dkg.ts';
 import { RefreshRun, type RefreshPlan, type RefreshResult } from './refresh.ts';
 import * as nip44 from 'nostr-tools/nip44';
-import { allValid, combine, commitAll, partialAll, sharesOf, type Group, type Share } from './sign.ts';
+import { allValid, combine, commitAll, flat, partialAll, sharesOf, type Group, type Share } from './sign.ts';
 
 export interface MemberState {
   sk: string;
@@ -49,6 +49,13 @@ export class Device {
   private box: Mailbox;
   private waiting = new Map<string, (r: any) => void>();
   private refresh: RefreshRun | null = null;
+  /** A paper backup being made: its key, until the servers say it's done. */
+  private making: { sk: string; pk: string; id: string; done: (code: string) => void; fail: (e: Error) => void } | null = null;
+  /** New devices this browser vouched for (with its lock), until their repair is done. */
+  private vouched = new Map<string, number>();
+  /** A phone that scanned this browser's invite asks to join: the page showing the invite asks you. */
+  onJoinRequest: (r: { pk: string; name: string; relays: string[] }) => void = () => {};
+  private requests = new Set<string>();
   private pinger: ReturnType<typeof setInterval>;
 
   constructor(public st: MemberState, private save: (st: MemberState) => void) {
@@ -114,7 +121,10 @@ export class Device {
       const end = (f: () => void) => { if (settled) return; settled = true; asks.forEach(a => a.cancel()); f(); };
       servers.forEach((s, i) => setTimeout(() => {
         if (settled) return;
-        const { request, finish } = make(s);
+        let made: ReturnType<typeof make>;
+        // Anything that throws here would otherwise be lost in the timer and hang the round.
+        try { made = make(s); } catch (e) { why.push(`${s.name}: ${(e as Error).message}`); if (--left === 0) end(() => reject(new Error(`Couldn’t sign (${why.join('; ')}).`))); return; }
+        const { request, finish } = made;
         const a = this.ask(s.pk!, request);
         asks.push(a);
         void a.answer.then(res => {
@@ -173,13 +183,33 @@ export class Device {
 
   private handle(m: any, from: string, sentAt: number) {
     if ((m.type === 'cosign_res' || m.type === 'ecdh_res' || m.type === 'sign_res') && this.waiting.has(m.id)) { this.waiting.get(m.id)!(m); this.waiting.delete(m.id); return; }
+    // A new phone that scanned our invite (cosign:invite): not a member yet. Ask once per key.
+    if (m.type === 'join_request' && typeof m.pk === 'string' && /^[0-9a-f]{64}$/.test(m.pk) && m.pk === from) {
+      if (this.requests.has(m.pk)) return;
+      this.requests.add(m.pk);
+      return this.onJoinRequest({ pk: m.pk, name: String(m.name ?? 'A phone').slice(0, 40), relays: (Array.isArray(m.relays) ? m.relays : []).filter((r: unknown) => typeof r === 'string' && /^wss?:\/\//.test(r)).slice(0, 4) });
+    }
     // A refresh, from whichever member runs it, or kept for us by a server while we were away.
     if (this.st.group.members.some(x => x.pk === from) && this.takeRefresh(m, from)) return;
     const server = this.st.group.members.find(x => x.role === 'server' && x.pk === from);
     if (!server) return;
+    if (m.type === 'repair') return void this.helpRepair(m, from);
+    if (m.type === 'backup_made' && this.making && m.id === this.making.id) {
+      const { sk, done } = this.making; this.making = null;
+      return done(this.paperCode(sk));
+    }
+    if (m.type === 'add_failed' && this.making && m.id === this.making.id) { const { fail } = this.making; this.making = null; return fail(new Error(String(m.reason ?? 'The server couldn’t make it.'))); }
     if (m.type === 'members' && Array.isArray(m.members)) {
-      const me = this.st.shares[0].idx;
-      this.st.group.members = m.members.map((x: any) => (sharesOf(x).includes(me) ? { ...x, pk: pubOf(this.st.sk) } : x));
+      // Who's in the key (a device added or removed, a paper made). Share points move only
+      // by refresh, which this browser works out itself: keep the ones it knows, so a list
+      // sent mid-way (points still blank) can't break signing.
+      const me = this.st.shares[0].idx, myPk = pubOf(this.st.sk);
+      const known = new Map(this.st.group.members.flatMap(x => (x.shares ?? [{ idx: x.idx, sharePub: x.sharePub }]).map(p => [p.idx, p.sharePub] as [number, string])));
+      const keep = (idx: number, pub: string) => known.get(idx) || pub;
+      this.st.group.members = m.members.map((x: any) => {
+        const y = { ...x, sharePub: keep(x.idx, x.sharePub), ...(x.shares ? { shares: x.shares.map((p: any) => ({ idx: p.idx, sharePub: keep(p.idx, p.sharePub) })) } : {}) };
+        return sharesOf(y).includes(me) ? { ...y, pk: myPk } : y;
+      });
       this.save(this.st);
     } else if (m.type === 'sign_req' && Date.now() / 1000 - sentAt < 30) {
       // A server running a round for a site that isn't this browser (a NIP-46 site, say).
@@ -234,6 +264,78 @@ export class Device {
     this.st.shares = r.shares; this.st.epoch = r.epoch;
     this.save(this.st);
     for (const s of this.servers()) this.box.send(s.pk!, { type: 'refreshed', epoch: r.epoch });
+  }
+
+  // --- Vouching: a paper backup, or a new device ------------------------------------------
+
+  /**
+   * Make a paper backup (COSIGN.md §8): a new key goes on the paper; this browser and a
+   * server make its shares by repair, and this browser's part is sealed to the paper and
+   * kept by the servers. Ask for the device lock before calling this. Resolves with the
+   * paper's code, `cosign:backup?k=…&s=…&r=…`, which Cosign can restore from.
+   */
+  makePaper(): Promise<string> {
+    const sk = bytesToHex(randomBytes(32)), pk = pubOf(sk), id = rid();
+    const server = this.servers()[0];
+    if (!server) return Promise.reject(new Error('No server to make it with.'));
+    return new Promise((done, fail) => {
+      this.making = { sk, pk, id, done, fail };
+      this.box.send(server.pk!, { type: 'add_device', id, pk, name: 'Paper backup', lock: true, backup: true });
+      setTimeout(() => { if (this.making?.id === id) { this.making = null; fail(new Error('Your server didn’t answer. Try again in a minute.')); } }, 45_000);
+    });
+  }
+
+  /** Vouch for a new device of yours (its code's key, name and relays). Ask for the lock first. */
+  vouch(d: { pk: string; name: string; relays: string[] }) {
+    const server = this.servers()[0];
+    if (!server) return;
+    this.vouched.set(d.pk, Date.now());
+    this.box.send(server.pk!, { type: 'add_device', id: rid(), pk: d.pk, name: d.name.slice(0, 40), relays: d.relays, lock: true });
+  }
+
+  /** The invite a new phone scans to ask to join (Cosign's "Join with an invite"). */
+  invite() {
+    return `cosign:invite?pk=${pubOf(this.st.sk)}&` + this.st.group.relays.slice(0, 4).map(r => 'r=' + encodeURIComponent(r)).join('&');
+  }
+
+  /** Has a way back if this browser's data goes: another device of yours, or a paper. */
+  safe() {
+    const me = pubOf(this.st.sk);
+    return this.st.group.members.some((m: any) => !m.removed && (m.role === 'backup' || ((m.role === 'phone' || m.role === 'device') && m.pk && m.pk !== me)));
+  }
+
+  private paperCode(sk: string) {
+    return `cosign:backup?k=${sk}&` + [...this.servers().map(s => `s=${s.pk}`), ...this.st.group.relays.map(r => 'r=' + encodeURIComponent(r))].join('&');
+  }
+
+  /**
+   * The server running a repair (a paper or a new device) asks us, the vouching device:
+   * each of our shares splits its part of each new share into a delta per helper share.
+   * Ours are summed here into sigmas; the rest go back to the server.
+   */
+  private async helpRepair(m: any, from: string) {
+    // Only for an add this browser asked for, just now, with its lock: never make shares
+    // for a key a server names on its own.
+    const ours = (this.making && m.pk === this.making.pk) || Date.now() - (this.vouched.get(m.pk) ?? 0) < 120_000;
+    if (!ours) return;
+    this.vouched.delete(m.pk);
+    await F.load();
+    const g = flat(this.st.group), mine = this.st.shares, idxs = mine.map(x => x.idx);
+    const ks: number[] = m.ks ?? [m.k];
+    const fromSrv: [number, number, number, string][] = m.deltas ?? [[m.k, 0, idxs[0], m.delta]];
+    const local = new Map<string, string[]>(), toSrv: [number, number, number, string][] = [];
+    for (const k of ks) for (const x of mine) for (const [j, d] of F.repairStep1(g, x.idx, x.secret, m.helpers, k)) {
+      if (idxs.includes(j)) local.set(`${k}:${j}`, [...local.get(`${k}:${j}`) ?? [], d]); else toSrv.push([k, x.idx, j, d]);
+    }
+    const sigmas = ks.flatMap(k => idxs.map(j => [k, j, F.repairStep2([...local.get(`${k}:${j}`) ?? [], ...fromSrv.filter(t => t[0] === k && t[2] === j).map(t => t[3])])]));
+    this.box.send(from, { type: 'repair_delta', id: m.id, deltas: toSrv });
+    if (this.making && m.pk === this.making.pk) {
+      // The paper's piece: sealed to its key, kept by the servers until it's needed.
+      const ck = nip44.v2.utils.getConversationKey(hexToBytes(this.st.sk), this.making.pk);
+      this.box.send(from, { type: 'backup_piece', id: m.id, content: nip44.v2.encrypt(JSON.stringify({ sigmas }), ck) });
+    } else {
+      this.box.send(m.pk, { type: 'sigma', id: m.id, sigmas });
+    }
   }
 
   // --- Being added to a key that already exists ----------------------------------------

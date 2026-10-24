@@ -3,6 +3,7 @@
 
 import { api, isNarrow } from '../env.ts';
 import { mountSignIn } from './pair.ts';
+import { deviceLock } from './lock.ts';
 
 const id = location.hash.slice(1);
 // Safari on iPhone floats its toolbar over the bottom of the page, where this card sits.
@@ -24,11 +25,19 @@ function arm(...buttons: HTMLButtonElement[]) {
 }
 
 async function main() {
-  const info = await api.runtime.sendMessage({ type: 'card-info', id }) as { kind: 'pair' | 'allow' | 'approve' | 'notice'; origin: string; detail?: string } | null;
+  const info = await api.runtime.sendMessage({ type: 'card-info', id }) as { kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; origin: string; detail?: string } | null;
   if (!info) { $('title').textContent = 'This request has ended.'; resize(); return; }
   const site = host(info.origin);
 
-  if (info.kind === 'notice') {
+  if (info.kind === 'backup') {
+    $('title').textContent = 'One more step: a paper backup';
+    $('body').innerHTML = `<p class="muted">If this browser’s data is lost, it gets your account back.</p>
+      <div class="row" style="margin-top:12px"><button class="btn" id="later">Later</button><button class="btn primary" id="make">Make it</button></div>
+      <button class="link" id="phone" style="margin-top:4px">Add your phone instead</button>`;
+    ($('later') as HTMLButtonElement).onclick = () => answer(true);
+    ($('make') as HTMLButtonElement).onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'paper' }); answer(true); };
+    ($('phone') as HTMLButtonElement).onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'phone' }); answer(true); };
+  } else if (info.kind === 'notice') {
     $('title').textContent = `Signed in as ${info.detail ?? 'you'}`;
     $('body').innerHTML = `<p class="muted" style="margin:4px 0 0"><button class="link" id="out" style="padding:0">Not you? Sign out</button></p>`;
     ($('out') as HTMLButtonElement).onclick = () => answer(false);
@@ -64,37 +73,6 @@ async function main() {
     no.onclick = () => answer(false);
   }
   resize();
-}
-
-/**
- * Ask for this device's lock (Touch ID, Windows Hello, a passcode) with a passkey that
- * belongs to this extension, made the first time. True only when the lock was used.
- */
-async function deviceLock(): Promise<boolean> {
-  if (!window.PublicKeyCredential) throw new Error('This browser can’t ask for your device lock, so it can’t approve this here.');
-  const b64 = (u: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(u)));
-  const unb64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
-  const { lock } = await api.storage.local.get('lock') as { lock?: { id: string } };
-  let data: ArrayBuffer;
-  try {
-    if (!lock) {
-      const c = await navigator.credentials.create({ publicKey: {
-        rp: { name: 'Cosign' }, challenge, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'Cosign', displayName: 'Cosign on this device' },
-        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
-      } }) as PublicKeyCredential;
-      await api.storage.local.set({ lock: { id: b64(c.rawId) } });
-      data = (c.response as AuthenticatorAttestationResponse).getAuthenticatorData();
-    } else {
-      const a = await navigator.credentials.get({ publicKey: { challenge, allowCredentials: [{ type: 'public-key', id: unb64(lock.id) }], userVerification: 'required' } }) as PublicKeyCredential;
-      data = (a.response as AuthenticatorAssertionResponse).authenticatorData;
-    }
-  } catch (e) {
-    if ((e as Error).name === 'NotAllowedError') return false; // cancelled
-    throw new Error('Your device lock isn’t available in this browser, so it can’t approve this here.');
-  }
-  return (new Uint8Array(data)[32] & 0x04) !== 0; // UV: the lock itself was used
 }
 
 void main();

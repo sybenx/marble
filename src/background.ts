@@ -82,9 +82,15 @@ async function loadMember(): Promise<MemberState | undefined> {
 }
 const saveMember = (m: MemberState) => api.storage.local.set({ member: m });
 function deviceFor(m: MemberState): Device {
-  if (!device || device.st.sk !== m.sk) { device?.close(); device = new Device(m, st => void saveMember(st)); }
+  if (!device || device.st.sk !== m.sk) {
+    device?.close();
+    device = new Device(m, st => { void saveMember(st).then(changed); });
+    device.onJoinRequest = r => { for (const p of safetyPorts) p.postMessage({ type: 'join_request', ...r }); };
+  }
   return device;
 }
+const safetyPorts = new Set<chrome.runtime.Port>();
+const openSafety = (which: 'paper' | 'phone') => api.tabs.create({ url: api.runtime.getURL(`safety.html#${which}`) });
 
 async function memberGrant(d: Device, origin: string): Promise<string> {
   const { sites } = await load();
@@ -181,7 +187,10 @@ function create(name: string, say: (s: string) => void): Promise<void> {
     say('Publishing your profile…');
     await publishProfile(m, d).catch(() => { /* the account works without it; try again later */ });
     // Every site that was waiting for you to sign in goes ahead: you started from it.
-    for (const a of asks.values()) if (a.kind === 'pair') { await memberGrant(d, a.origin); a.resolve(); }
+    const tabs = new Set<number>();
+    for (const a of asks.values()) if (a.kind === 'pair') { await memberGrant(d, a.origin); a.resolve(); if (a.tabId !== undefined) tabs.add(a.tabId); }
+    // The next step: a way back if this browser's data goes. Skippable; the popup keeps asking.
+    if (!d.safe()) for (const tab of tabs) void ask(tab, '', 'backup').catch(() => {});
   })().finally(() => { creating = undefined; });
 }
 
@@ -364,12 +373,12 @@ const host = (origin: string) => { try { return new URL(origin).host; } catch { 
 // A small card drawn over the page (an extension page in a frame the site can't
 // reach). One card per tab and site; every request waiting on it shares the answer.
 
-interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
+interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
 const asks = new Map<string, Ask>();
 
-function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve' | 'notice', detail?: string): Promise<void> {
+function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup', detail?: string): Promise<void> {
   // Approvals and notices are one each; sign-in and Allow are one per tab and site.
-  const existing = kind !== 'approve' && kind !== 'notice' && [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
+  const existing = kind !== 'approve' && kind !== 'notice' && kind !== 'backup' && [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
   if (existing) return existing.done;
   if (tabId === undefined) return Promise.reject(new Error('Not signed in.'));
   const id = newKey().slice(0, 32);
@@ -394,6 +403,8 @@ async function answer(id: string, yes: boolean) {
       else if (pairing) await grantFor(pairing, sites, a.origin).catch(e => a.reject(e));
     }
     a.resolve();
+  } else if (a.kind === 'backup') {
+    a.resolve(); // Later
   } else if (a.kind === 'notice') {
     // "Not you? Sign out"
     a.resolve();
@@ -517,6 +528,8 @@ async function state() {
     signedIn: !!p || !!m,
     /** Holds part of your key (phase 2), rather than signing through a pairing. */
     member: !!m,
+    /** An account here with no other device and no paper: the popup keeps a card up. */
+    unsafe: !!m && !deviceFor(m).safe(),
     name: m ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
     pubkey: m?.group.groupX ?? p?.pubkey,
     profile: m?.profile ?? p?.profile,
@@ -546,6 +559,7 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     case 'remove-site': void forgetSite(msg.origin, true); return false;
     case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
     case 'sign-out': void signOut(); return false;
+    case 'open-safety': void openSafety(msg.which === 'phone' ? 'phone' : 'paper'); return false;
   }
   return false;
 });
@@ -584,6 +598,26 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     });
     void load().then(({ pairing: p }) => p ? port.postMessage({ type: 'pair', view: { done: true, status: 'Signed in.' } }) : startPairing());
   }
+  if (port.name === 'safety') {
+    safetyPorts.add(port);
+    port.onDisconnect.addListener(() => safetyPorts.delete(port));
+    port.onMessage.addListener(async (msg: any) => {
+      const m = await loadMember();
+      if (!m) return port.postMessage({ type: 'paper', error: 'This browser doesn’t hold an account.' });
+      const d = deviceFor(m);
+      if (msg.type === 'invite') port.postMessage({ type: 'invite', code: d.invite() });
+      if (msg.type === 'paper') d.makePaper().then(code => port.postMessage({ type: 'paper', code, pubkey: d.pubkey, name: m.profile?.name }), e => port.postMessage({ type: 'paper', error: (e as Error).message }));
+      if (msg.type === 'add' && /^[0-9a-f]{64}$/.test(msg.pk)) {
+        d.vouch({ pk: msg.pk, name: String(msg.name ?? 'Your phone'), relays: msg.relays ?? [] });
+        // Done once the servers list it as one of yours.
+        const until = Date.now() + 120_000;
+        const check = setInterval(() => {
+          if (d.st.group.members.some(x => x.pk === msg.pk)) { clearInterval(check); try { port.postMessage({ type: 'added', name: msg.name }); } catch { /* closed */ } }
+          else if (Date.now() > until) clearInterval(check);
+        }, 1500);
+      }
+    });
+  }
   if (port.name === 'create') {
     port.onMessage.addListener((m: any) => {
       if (m.type === 'ping') return;
@@ -603,4 +637,13 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
       join(String(m.uri ?? ''), say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));
     });
   }
+});
+
+// For tests: what the device is doing (read-only, nothing secret).
+(globalThis as any).__cosignStatus = () => ({
+  device: !!device,
+  servers: device?.servers().map(s => `${s.name}:${s.pk?.slice(0, 8)}`),
+  relaysUp: (device as any)?.box?.connected,
+  waiting: (device as any)?.waiting?.size,
+  epoch: device?.st.epoch ?? 0,
 });

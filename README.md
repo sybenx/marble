@@ -77,7 +77,15 @@ your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssem
   refresh (`refresh_plan`, `refresh_part`, and `mail` the servers kept while it was
   away) and moves to the new epoch, same npub (`src/member/refresh.ts`, ported from
   `~/cosign/server/refresh.ts`).
-- **Not yet:** reporting a device lost from here, adding your phone, the paper backup, swapping a dead server, and
+- **Keeping it safe:** an account that lives only in this browser is lost if the
+  browser's data goes. Right after Create account the next step is *Make a paper
+  backup* (or *Add your phone*); skippable, but the popup keeps a card up until one
+  exists. The paper (`safety.html#paper`) is made after the device lock, by repair with
+  a server, its piece sealed to the paper's key and kept by the servers; its code,
+  `cosign:backup?k=…&s=…&r=…`, is what Cosign restores from. *Add your phone* shows
+  `cosign:invite?pk=…&r=…`; Cosign (next release) scans it and asks to join; you say yes
+  with the device lock and the extension vouches for it.
+- **Not yet:** reporting a device lost from here, the paper backup, swapping a dead server, and
   signing out (it would throw away this browser's part). No public server announces
   itself yet (SEEDS is empty until syb.lol runs the shared server).
 
