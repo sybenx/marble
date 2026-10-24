@@ -8,6 +8,7 @@
 import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { chromium, type Frame, type Page } from 'playwright-core';
 import { verifyEvent, type Event } from 'nostr-tools/pure';
+import { decide } from './approve.ts';
 
 const OUT = new URL('../.test-group/joint', import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
@@ -53,9 +54,8 @@ try {
   const page = await ctx.newPage();
   await page.goto('http://localhost:8799/');
   const pk = page.evaluate('window.nostr.getPublicKey()');
-  const allow = await card(page, 'sign in as');
-  await page.waitForTimeout(700);
-  await allow.click('#yes');
+  await card(page, 'asking in its own window');
+  await decide(ctx);
   await pk;
   const before = await note(page, 'joint test: before the refresh');
   log(before.ok && verifyEvent(before.r) && before.r.pubkey === m1.group.groupX ? `SIGNED before the refresh (${before.r.id.slice(0, 12)}…)` : `FAILED to sign before: ${before.ok ? 'bad signature' : before.e}`);

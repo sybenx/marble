@@ -373,8 +373,12 @@ const host = (origin: string) => { try { return new URL(origin).host; } catch { 
 // A small card drawn over the page (an extension page in a frame the site can't
 // reach). One card per tab and site; every request waiting on it shares the answer.
 
-interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
+interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; detail?: string; window?: number; answered?: boolean; done: Promise<void>; resolve(): void; reject(e: Error): void }
 const asks = new Map<string, Ask>();
+/** Tabs whose page said it's on a phone-sized screen. */
+const narrowTabs = new Set<number>();
+// Closing the window without choosing is "Not now".
+api.windows?.onRemoved?.addListener((w: number) => { for (const a of asks.values()) if (a.window === w && !a.answered) void answer(a.id, false); });
 
 function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup', detail?: string): Promise<void> {
   // Approvals and notices are one each; sign-in and Allow are one per tab and site.
@@ -386,15 +390,38 @@ function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' |
   const done = new Promise<void>((y, n) => { resolve = y; reject = n; });
   const a: Ask = { id, tabId, origin, kind, detail, done, resolve, reject };
   asks.set(id, a);
-  const close = () => { asks.delete(id); api.tabs.sendMessage(tabId, { type: 'card', url: null, id }).catch(() => {}); };
+  // On a computer, Allow and approvals are decided in a window of the extension's own,
+  // which the page can't cover, fade or move under your pointer; the page only gets a
+  // pointer to it. Phones (no windows there) keep the card, hardened.
+  const own = (kind === 'allow' || kind === 'approve') && !narrowTabs.has(tabId) && !!api.windows?.create;
+  let win: number | undefined;
+  const close = () => {
+    asks.delete(id);
+    api.tabs.sendMessage(tabId, { type: 'card', url: null, id }).catch(() => {});
+    if (win !== undefined) api.windows.remove(win).catch(() => {});
+  };
   done.then(close, close);
-  api.tabs.sendMessage(tabId, { type: 'card', id, url: api.runtime.getURL(`card.html#${id}`) }).catch(() => reject(new Error('Couldn’t show the sign-in card on this page.')));
+  const inPage = (hash: string) => api.tabs.sendMessage(tabId, { type: 'card', id, url: api.runtime.getURL(`card.html#${hash}`) }).catch(() => reject(new Error('Couldn’t show the sign-in card on this page.')));
+  if (!own) { void inPage(id); return done; }
+  void (async () => {
+    try {
+      const cur = await api.windows.getLastFocused().catch(() => undefined);
+      const base = { url: api.runtime.getURL(`card.html#${id}&window`), type: 'popup' as const, focused: true, width: 400, height: kind === 'approve' ? 300 : 260 };
+      // Near the top right of the browser window; wherever the system likes if that's off screen.
+      const near = cur?.left !== undefined && cur.width ? { left: Math.max(0, cur.left + cur.width - 420), top: (cur.top ?? 0) + 80 } : {};
+      const w = await api.windows.create({ ...base, ...near }).catch(() => api.windows.create(base));
+      win = w?.id;
+      a.window = win;
+      void inPage(`${id}&pointer`);
+    } catch { void inPage(id); } // no windows here after all: the hardened card
+  })();
   return done;
 }
 
 async function answer(id: string, yes: boolean) {
   const a = asks.get(id);
-  if (!a) return;
+  if (!a || a.answered) return;
+  a.answered = true; // the first answer stands (a window closing after a tap isn't a second one)
   if (yes) {
     if (a.kind === 'allow') {
       const { pairing, sites } = await load();
@@ -549,12 +576,14 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     if (isOurs(sender)) return false;
     const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : '');
     if (!/^https?:\/\//.test(origin)) { reply({ error: 'This page can’t sign.' }); return false; }
+    if (sender.tab?.id !== undefined) { if (msg.narrow) narrowTabs.add(sender.tab.id); else narrowTabs.delete(sender.tab.id); }
     nip07(origin, sender.tab?.id, String(msg.method), msg.params ?? {}).then(result => reply({ result }), e => reply({ error: (e as Error).message ?? String(e) }));
     return true;
   }
   if (!isOurs(sender)) return false;
   switch (msg?.type) {
     case 'card-info': { const a = asks.get(msg.id); reply(a ? { kind: a.kind, origin: a.origin, detail: a.detail } : null); return false; }
+    case 'card-focus': { const a = asks.get(msg.id); if (a?.window !== undefined) void api.windows.update(a.window, { focused: true }).catch(() => {}); return false; }
     case 'card-answer': void answer(msg.id, !!msg.yes); return false;
     case 'remove-site': void forgetSite(msg.origin, true); return false;
     case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;

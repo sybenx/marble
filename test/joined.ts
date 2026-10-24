@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chromium, type Frame, type Page } from 'playwright-core';
 import { verifyEvent, type Event } from 'nostr-tools/pure';
+import { decide } from './approve.ts';
 
 const SERVER = `${process.env.HOME}/cosign/server`;
 const { Pool, sealTo, KIND_MEMBER } = await import(`${SERVER}/net.ts`);
@@ -95,9 +96,8 @@ try {
   const page = await ctx.newPage();
   await page.goto('http://localhost:8791/');
   const pk = page.evaluate('window.nostr.getPublicKey()');
-  const allow = await card(page, 'sign in as');
-  await page.waitForTimeout(700);
-  await allow.click('#yes');
+  await card(page, 'asking in its own window');
+  await decide(ctx);
   await pk;
   const before = await note(page, 'before the refresh');
   check(before.ok && verifyEvent(before.r) && before.r.pubkey === phone.group.groupX, `the extension signs (browser + a server)${before.ok ? '' : ': ' + before.e}`);

@@ -17,6 +17,7 @@ import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import { Store, Transfer, browserEnv } from '../vendor/qrst-web/index.ts';
 import { parseUri } from '../vendor/qrst-core/index.ts';
 import { signerTicket, type Ticket } from '../src/ticket.ts';
+import { decide } from './approve.ts';
 
 const SERVERS = process.env.COSIGN_SERVERS ?? `${process.env.HOME}/cosign/server/data`;
 const A = JSON.parse(readFileSync(`${SERVERS}/a/state.json`, 'utf8'));
@@ -114,10 +115,10 @@ try {
   const page2 = await ctx.newPage();
   await page2.goto(SITE2);
   const p2 = call(page2, 'window.nostr.getPublicKey()');
-  const allow = await cardFrame(page2, 'Let 127.0.0.1:8799 sign in as');
+  await cardFrame(page2, 'asking in its own window');
   await page2.waitForTimeout(700); // buttons wait a moment
   await page2.screenshot({ path: 'shots/desktop-allow-card.png' });
-  await allow.click('#yes');
+  await decide(ctx);
   const got2 = await p2;
   check(got2.ok && got2.r === group.groupX, 'second site: Allow → getPublicKey');
   t = Date.now();
@@ -143,7 +144,7 @@ try {
   const still = await call(page, `window.nostr.signEvent({ kind: 1, content: 'still here', tags: [] })`);
   check(still.ok && verifyEvent(still.r as Event), 'the other site still signs');
   const p4 = call(page2, 'window.nostr.getPublicKey()');
-  await cardFrame(page2, 'Let 127.0.0.1:8799 sign in as');
+  await cardFrame(page2, '127.0.0.1:8799 wants to sign in');
   check(true, 'removed site asks Allow again');
   void p4;
 

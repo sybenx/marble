@@ -2,8 +2,12 @@
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cosign</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  body { padding: 16px 16px 14px; }
+  html { background: transparent; }
+  body { padding: 16px 16px 14px; border: 1px solid var(--line); border-radius: 14px; }
+  body.sheet { border-radius: 16px 16px 0 0; border-bottom: 0; }
+  body.win { border: 0; border-radius: 0; }
   body.ios { padding-bottom: 84px; }
+  .site { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 6px 0 2px; word-break: break-all; }
   .close { position: absolute; top: 10px; right: 10px; }
   .foot { margin-top: 10px; display: flex; justify-content: center; }
 </style></head>

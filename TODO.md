@@ -24,13 +24,18 @@ These wait until the freeze lifts.
 - Swap a server that stays down (reshare); show who runs each server in settings; "Use my
   own server".
 - Create account: a picture; "I already have a key" (import).
-- Approvals when a site's Permissions-Policy blocks the device lock in the card: open the
-  approval in an extension tab instead.
+- On phones the Allow card stays in the page, hardened: Allow works only after the card
+  has been still and in view for 800 ms, on a real click, and (Chromium only) while the
+  visibility check says it's fully visible. Firefox for Android and Safari on iOS have no
+  such visibility check, so a page drawing an invisible pass-through layer over the card
+  there is only partly caught (top-layer popovers and dialogs are; plain overlays aren't).
 - Replace the native `confirm()` for "Sign out of this browser" with the extension's own.
 - Firefox for Android: tapping Open Cosign leaves an about:blank tab behind (the link uses
   `target=_blank`).
 
 ## Not verified
+- A real person's tap on the phone Allow card (the test harness's clicks into an
+  extension frame are untrusted, which the card correctly ignores).
 - The device lock (WebAuthn) in Firefox and Safari extensions; checked in Chromium only.
 - Safari on a real iPad (the layout is checked in Chromium dressed as iPad Safari).
 - Desktop Firefox's `wasm-unsafe-eval` and device mode (phase 1 is tested in Firefox).

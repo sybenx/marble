@@ -13,6 +13,7 @@ import { finalizeEvent, verifyEvent, type Event } from 'nostr-tools/pure';
 import { Relay } from 'nostr-tools/relay';
 import * as nip44 from 'nostr-tools/nip44';
 import { hexToBytes } from '@noble/hashes/utils.js';
+import { decide } from './approve.ts';
 
 const SERVER = `${process.env.HOME}/cosign/server`;
 const DIR = new URL('../.test-group', import.meta.url).pathname;
@@ -81,9 +82,8 @@ try {
   const page = await ctx.newPage();
   await page.goto(SITE1);
   const pk = call(page, 'window.nostr.getPublicKey()');
-  const allow = await card(page, 'Let localhost:8795 sign in as');
-  await page.waitForTimeout(700);
-  await allow.click('#yes');
+  await card(page, 'asking in its own window');
+  await decide(ctx);
   const got = await pk;
   check(got.ok && got.r === groupX, 'getPublicKey → the new key');
   t = Date.now();
@@ -106,14 +106,10 @@ try {
   const f1 = await call(page, `window.nostr.signEvent({ kind: 3, content: '', tags: [${follows}] })`);
   check(f1.ok, `a follow list of 30 signs at once${f1.ok ? '' : ': ' + f1.e}`);
   await sleep(2000); // the servers archive it from phone_signed
-  const cdp = await ctx.newCDPSession(page);
-  await cdp.send('WebAuthn.enable');
-  await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true } });
   const wipe = call(page, `window.nostr.signEvent({ kind: 3, content: '', tags: [] })`);
-  const approve = await card(page, 'wants to make a big change', 30_000);
-  log(`approval card: "${(await approve.textContent('.who'))?.trim()}"`);
-  await page.waitForTimeout(700);
-  await approve.click('#yes');
+  await card(page, 'wants to make a big change', 30_000);
+  const win = await decide(ctx, '#yes', { lock: true });
+  log(`approval window: "${(await win.textContent('.who').catch(() => ''))?.trim()}"`);
   const w = await wipe;
   check(w.ok && verifyEvent(w.r as Event), `approved with the device lock → signed${w.ok ? '' : ': ' + w.e}`);
 
@@ -121,9 +117,8 @@ try {
   const page2 = await ctx.newPage();
   await page2.goto(SITE2);
   const p2 = call(page2, 'window.nostr.getPublicKey()');
-  const allow2 = await card(page2, 'Let 127.0.0.1:8795 sign in as');
-  await page2.waitForTimeout(700);
-  await allow2.click('#yes');
+  await card(page2, 'asking in its own window');
+  await decide(ctx);
   await p2;
   const ev2 = await note(page2, 'second site');
   check(ev2.ok && verifyEvent(ev2.r as Event), `second site signs${ev2.ok ? '' : ': ' + ev2.e}`);
