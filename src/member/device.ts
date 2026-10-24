@@ -236,6 +236,48 @@ export class Device {
     for (const s of this.servers()) this.box.send(s.pk!, { type: 'refreshed', epoch: r.epoch });
   }
 
+  // --- Being added to a key that already exists ----------------------------------------
+
+  /**
+   * Show a code (`cosign:join?pk=…&name=…&r=…`) for one of your devices to scan; it
+   * vouches (with its lock), and it and a server make this browser's shares by repair:
+   * a sigma from each helper share for each new share, summed here. Nobody else ever
+   * sees them. (For testing for now; how browsers join an existing key is the user's
+   * call.)
+   */
+  static joinExisting(name: string, onCode: (uri: string) => void, onStatus: (s: string) => void): Promise<MemberState> {
+    const relays = ['wss://syb.lol', 'wss://nos.lol', 'wss://relay.primal.net'];
+    const sk = bytesToHex(randomBytes(32)), pk = pubOf(sk);
+    const got: { welcome?: any; server?: string; sigmas: [number, number, string][] } = { sigmas: [] };
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const box: Mailbox = new Mailbox(sk, relays, async (m, from) => {
+        if (finished) return;
+        if (m.type === 'welcome') { got.welcome = m; got.server = from; got.sigmas.push(...(m.sigmas ?? [[m.k, 0, m.sigma]])); onStatus('Your device said yes; making this browser’s part…'); }
+        else if (m.type === 'sigma') got.sigmas.push(...(m.sigmas ?? [[m.k, -1, m.sigma]]));
+        else return;
+        const w = got.welcome;
+        if (!w) return;
+        const ks: number[] = w.ks ?? [w.k];
+        const need = w.helpers?.length ?? 2;
+        if (!ks.every(k => got.sigmas.filter(x => x[0] === k).length >= need)) return;
+        finished = true;
+        await F.load();
+        const flatGroup = { groupX: w.group.groupX, threshold: w.group.threshold, members: w.group.members.flatMap((x: any) => x.shares ?? [{ idx: x.idx, sharePub: x.sharePub }]) };
+        const shares = ks.map(k => ({ idx: k, secret: F.repairStep3(flatGroup, got.sigmas.filter(x => x[0] === k).map(x => x[2]), k) }));
+        const points = shares.map(x => ({ idx: x.idx, sharePub: F.sharePub(x.secret) }));
+        const me = { idx: ks[0], name, role: 'device', pk, sharePub: points[0].sharePub, ...(ks.length > 1 ? { shares: points } : {}) };
+        const reply = () => box.send(got.server!, { type: 'joined', id: w.id, sharePubs: points.map(p => [p.idx, p.sharePub]), sharePub: points[0].sharePub });
+        reply(); setTimeout(reply, 4000);
+        setTimeout(() => box.close(), 9000);
+        resolve({ sk, shares, signer: w.signer, epoch: w.epoch ?? 0, group: { ...w.group, members: [...w.group.members, me] } });
+      });
+      const uri = `cosign:join?pk=${pk}&name=${encodeURIComponent(name)}&${relays.map(r => 'r=' + encodeURIComponent(r)).join('&')}`;
+      void box.ready().then(() => onCode(uri));
+      setTimeout(() => { if (!finished) { finished = true; box.close(); reject(new Error('No device added this browser. Show a new code and try again.')); } }, 10 * 60_000);
+    });
+  }
+
   // --- Joining ----------------------------------------------------------------------
 
   /**

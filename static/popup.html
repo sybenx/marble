@@ -14,6 +14,8 @@
     <p class="muted">Make one here, or sign in with your phone. Then sites just work in this browser.</p>
     <div id="pair"></div>
     <button class="link" id="joinOpen" hidden>Join with a server code</button>
+    <button class="link" id="joinDevice" hidden style="display:block">Add this browser to my key (as a device)</button>
+    <div id="joinDeviceView" hidden><div class="qr" id="joinQr"></div><p class="muted" id="joinDeviceCode" style="word-break:break-all;font-size:11px"></p></div>
     <div id="joinForm" hidden>
       <p class="muted">Paste the pairing code from your server’s page. This browser and your servers make your key together, and this browser keeps part of it.</p>
       <textarea id="joinCode" rows="3" style="width:100%;font:13px ui-monospace,monospace;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--soft);color:var(--fg)" placeholder="cosign:pair?…"></textarea>

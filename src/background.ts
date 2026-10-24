@@ -203,6 +203,16 @@ async function publishProfile(m: MemberState, d: Device) {
   try { await Promise.any(pool.publish(relays, ev)); } finally { setTimeout(() => pool.destroy(), 5000); }
 }
 
+/** Testing: be added to an existing key by one of its devices (cosign:join code). */
+function joinExisting(say: (s: string, extra?: object) => void): Promise<void> {
+  return joining ??= Device.joinExisting(deviceName(), uri => say('Scan this with one of your devices.', { code: uri }), say).then(async m => {
+    await saveMember(m);
+    deviceFor(m);
+    await setNotNow([]);
+    changed();
+  }).finally(() => { joining = undefined; });
+}
+
 let joining: Promise<void> | undefined;
 function join(uri: string, status: (s: string) => void): Promise<void> {
   return joining ??= Device.join(uri, status).then(async m => {
@@ -587,8 +597,9 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     port.onDisconnect.addListener(() => popupPorts.delete(port));
     void state().then(s => port.postMessage(s));
     port.onMessage.addListener((m: any) => {
-      if (m.type !== 'join') return;
       const say = (text: string, extra: object = {}) => { try { port.postMessage({ type: 'join', text, ...extra }); } catch { /* popup closed */ } };
+      if (m.type === 'join-existing') joinExisting(say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));
+      if (m.type !== 'join') return;
       join(String(m.uri ?? ''), say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));
     });
   }

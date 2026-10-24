@@ -33,6 +33,10 @@ export const sign = (g: Group, idx: number, share: string, nonces: string, msg: 
 export const verifyPartial = (g: Group, msg: string, commits: Commit[], idx: number, z: string) => w.verifyPartial(j(g), msg, j(commits), idx, z);
 export const aggregate = (g: Group, msg: string, commits: Commit[], partials: [number, string][]) => w.aggregate(j(g), msg, j(commits), j(partials));
 
+// Repair (adding a device): the new member sums its helpers' sigmas into a share.
+export const repairStep3 = (g: Group, sigmas: string[], k: number) => w.repairStep3(j(g), sigmas, k);
+export const sharePub = (share: string) => w.sharePub(share);
+
 // Threshold ECDH for NIP-04/NIP-44 (not FROST): each share gives λ_i·s_i·P; the sum is s·P.
 export const ecdhPartial = (idx: number, share: string, participants: number[], peerX: string) => w.ecdhPartial(idx, share, Uint16Array.from(participants), peerX);
 export const ecdhCombine = (points: string[]) => w.ecdhCombine(points);

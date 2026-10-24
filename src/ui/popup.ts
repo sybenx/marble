@@ -3,7 +3,7 @@
 
 import { nip19 } from 'nostr-tools';
 import { api, isNarrow } from '../env.ts';
-import { mountSignIn } from './pair.ts';
+import { mountSignIn, qrSvg } from './pair.ts';
 
 if (isNarrow()) document.documentElement.classList.add('phone');
 const $ = (s: string) => document.getElementById(s)!;
@@ -25,6 +25,7 @@ const port = api.runtime.connect({ name: 'popup' });
 // Keeps the background awake while the popup is open (a join can take a while).
 setInterval(() => { try { port.postMessage({ type: 'ping' }); } catch { /* closed */ } }, 10_000);
 port.onMessage.addListener((s: any) => {
+  if (s.type === 'join' && s.code) { $('joinQr').innerHTML = qrSvg(s.code); $('joinDeviceCode').textContent = s.code; }
   if (s.type === 'join') {
     $('joinStatus').textContent = s.text;
     $('joinStatus').classList.toggle('error', !!s.error);
@@ -69,7 +70,8 @@ $('signOut').onclick = () => {
 };
 
 // Joining a server's own group by its code is for testing and self-hosters for now.
-api.storage.local.get('dev').then((r: any) => { if (r.dev) $('joinOpen').hidden = false; }).catch(() => {});
+api.storage.local.get('dev').then((r: any) => { if (r.dev) { $('joinOpen').hidden = false; $('joinDevice').hidden = false; } }).catch(() => {});
+$('joinDevice').onclick = () => { $('joinDevice').hidden = true; $('joinDeviceView').hidden = false; port.postMessage({ type: 'join-existing' }); };
 $('joinOpen').onclick = () => { $('joinForm').hidden = false; $('joinOpen').hidden = true; ($('joinCode') as HTMLTextAreaElement).focus(); };
 $('joinGo').onclick = () => {
   const uri = ($('joinCode') as HTMLTextAreaElement).value.trim();
