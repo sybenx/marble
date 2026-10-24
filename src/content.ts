@@ -47,7 +47,9 @@ function showCard(id: string, url: string) {
   const root = host.attachShadow({ mode: 'closed' });
   frame = document.createElement('iframe');
   frame.src = url;
-  frame.setAttribute('allow', 'clipboard-write');
+  // The device lock (WebAuthn) for approvals, delegated to the card; a page whose own
+  // Permissions-Policy forbids it will need the approval elsewhere (phase 2).
+  frame.setAttribute('allow', 'clipboard-write; publickey-credentials-get; publickey-credentials-create');
   frame.style.cssText = `border:0;width:100%;height:100%;display:block;color-scheme:normal;${phone ? 'border-radius:16px 16px 0 0;' : 'border-radius:14px;'}box-shadow:0 8px 40px rgba(0,0,0,.28);background:transparent`;
   root.appendChild(frame);
   host.setAttribute('style', HOST_STYLE);

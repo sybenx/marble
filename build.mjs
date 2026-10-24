@@ -17,6 +17,8 @@ const base = {
   action: { default_popup: 'popup.html', default_title: 'Cosign', default_icon: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png' } },
   permissions: ['storage', 'activeTab'],
   content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: false }],
+  // WebAssembly (Cosign's FROST, phase 2) needs 'wasm-unsafe-eval'; nothing else is relaxed.
+  content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" },
   web_accessible_resources: [{ resources: ['inpage.js', 'card.html', 'card.js', 'style.css', 'icon-48.png'], matches: ['<all_urls>'] }],
 };
 
@@ -38,10 +40,14 @@ for (const t of targets) {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   await build({
-    entryPoints: { background: 'src/background.ts', content: 'src/content.ts', inpage: 'src/inpage.ts', card: 'src/ui/card.ts', popup: 'src/ui/popup.ts' },
+    entryPoints: { background: 'src/background.ts', content: 'src/content.ts', inpage: 'src/inpage.ts', card: 'src/ui/card.ts', popup: 'src/ui/popup.ts', 'spike-weighted': 'src/spike/weighted.ts' },
     outdir: out, bundle: true, format: 'iife', target: ['chrome116', 'firefox128', 'safari16'], minify: false, logLevel: 'warning',
+    // wasm-bindgen's default loader looks at import.meta.url; ours loads the module itself.
+    define: { 'import.meta.url': 'undefined' },
   });
   cpSync('static', out, { recursive: true });
+  cpSync('vendor/cosign-frost/cosign_frost_bg.wasm', `${out}/cosign_frost_bg.wasm`);
+  writeFileSync(`${out}/spike-weighted.html`, '<!doctype html><meta charset="utf-8"><title>weighted spike</title><script src="spike-weighted.js"></script>');
   writeFileSync(`${out}/manifest.json`, JSON.stringify(manifests[t], null, 2));
   console.log(`built ${out}`);
 }
