@@ -15,6 +15,9 @@ const base = {
   description: 'Sign in to Nostr sites with your phone. Your key never sits in the browser.',
   icons: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png', 96: 'icon-96.png', 128: 'icon-128.png', 256: 'icon-256.png', 512: 'icon-512.png' },
   action: { default_popup: 'popup.html', default_title: 'Cosign', default_icon: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png' } },
+  // The same view as the toolbar popup, where an add-ons list offers "Settings" (Firefox
+  // on Android's add-on page, chrome://extensions → Details → Extension options).
+  options_ui: { page: 'popup.html', open_in_tab: false },
   permissions: ['storage', 'activeTab'],
   content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: false }],
   // WebAssembly (Cosign's FROST, phase 2) needs 'wasm-unsafe-eval'; nothing else is relaxed.
@@ -31,6 +34,7 @@ const manifests = {
     manifest_version: 2,
     name: base.name, short_name: base.short_name, version, description: base.description, icons: base.icons,
     browser_action: base.action,
+    options_ui: base.options_ui,
     permissions: base.permissions,
     content_scripts: base.content_scripts,
     content_security_policy: base.content_security_policy.extension_pages,
