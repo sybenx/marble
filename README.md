@@ -73,7 +73,11 @@ your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssem
   point, the next one 300 ms later if that one is slow.
 - **Destructive things** (emptying your follows, wiping your profile…) show a card:
   *Approve*, confirmed with your device lock (a passkey of the extension's own).
-- **Not yet:** adding your phone, the paper backup, swapping a dead server, and
+- **Refresh:** when another device reports one lost, this browser follows the
+  refresh (`refresh_plan`, `refresh_part`, and `mail` the servers kept while it was
+  away) and moves to the new epoch, same npub (`src/member/refresh.ts`, ported from
+  `~/cosign/server/refresh.ts`).
+- **Not yet:** reporting a device lost from here, adding your phone, the paper backup, swapping a dead server, and
   signing out (it would throw away this browser's part). No public server announces
   itself yet (SEEDS is empty until syb.lol runs the shared server).
 
@@ -95,7 +99,8 @@ serves a test site on port 8799.
 `test/member.ts` is phase 2 end to end: it sets up a fresh weighted group from
 `~/cosign/server` on port 8761 (in `.test-group/`), joins it through the popup, then
 signs, encrypts, approves a held event with a simulated device lock, survives server A
-going down, and removes a site. `test/weighted.ts` runs the weighted DKG alone.
+going down, and removes a site. `test/weighted.ts` runs the weighted DKG alone; `test/refresh.ts` runs a refresh with
+a removed server inside the extension.
 `test/create.ts` is Create account against two shared servers (`server.ts --root`,
 open enrollment) named to the extension as seeds.
 

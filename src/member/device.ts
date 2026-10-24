@@ -16,6 +16,8 @@ import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import * as F from '../frost.ts';
 import { Mailbox, pubOf } from './net.ts';
 import { DkgRun } from './dkg.ts';
+import { RefreshRun, type RefreshPlan, type RefreshResult } from './refresh.ts';
+import * as nip44 from 'nostr-tools/nip44';
 import { allValid, combine, commitAll, partialAll, sharesOf, type Group, type Share } from './sign.ts';
 
 export interface MemberState {
@@ -29,6 +31,10 @@ export interface MemberState {
   profile?: { name?: string; picture?: string };
   /** The extension's own grant, for what it signs itself (your profile at Create account). */
   ownGrant?: string;
+  /** Which refresh of the key these shares belong to (0 before any). */
+  epoch?: number;
+  /** This browser was reported lost by another device: its shares sign nothing now. */
+  removed?: { by: string; at: number };
   /** The profile event last signed, as published. */
   profileEvent?: Event;
 }
@@ -42,6 +48,7 @@ const FINAL = /^(needs-approval|refused|revoked):/;
 export class Device {
   private box: Mailbox;
   private waiting = new Map<string, (r: any) => void>();
+  private refresh: RefreshRun | null = null;
   private pinger: ReturnType<typeof setInterval>;
 
   constructor(public st: MemberState, private save: (st: MemberState) => void) {
@@ -166,6 +173,8 @@ export class Device {
 
   private handle(m: any, from: string, sentAt: number) {
     if ((m.type === 'cosign_res' || m.type === 'ecdh_res' || m.type === 'sign_res') && this.waiting.has(m.id)) { this.waiting.get(m.id)!(m); this.waiting.delete(m.id); return; }
+    // A refresh, from whichever member runs it, or kept for us by a server while we were away.
+    if (this.st.group.members.some(x => x.pk === from) && this.takeRefresh(m, from)) return;
     const server = this.st.group.members.find(x => x.role === 'server' && x.pk === from);
     if (!server) return;
     if (m.type === 'members' && Array.isArray(m.members)) {
@@ -188,6 +197,43 @@ export class Device {
         this.box.send(from, { type: 'ecdh_res', id: m.id, ok: true, points, point: points[0] });
       });
     }
+  }
+
+  // --- Refresh (another device reported one lost) ---------------------------------------
+
+  /** True if it was a refresh message. Mail is opened and handled as if from its sender. */
+  private takeRefresh(m: any, from: string): boolean {
+    if (m.type === 'mail') {
+      let inner: any;
+      try { inner = JSON.parse(nip44.v2.decrypt(m.content, nip44.v2.utils.getConversationKey(hexToBytes(this.st.sk), m.from))); } catch { return true; }
+      return this.takeRefresh(inner, m.from);
+    }
+    if (m.type === 'refresh_plan') { this.follow(m.plan as RefreshPlan); return true; }
+    if (m.type === 'refresh_part') { this.refresh?.take(m, from); return true; }
+    if (m.type === 'removed') { this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() }; this.save(this.st); return true; }
+    return false;
+  }
+
+  private follow(plan: RefreshPlan) {
+    if ((this.st.epoch ?? 0) >= plan.epoch || this.refresh?.plan.epoch === plan.epoch) return;
+    try {
+      this.refresh = new RefreshRun(plan, pubOf(this.st.sk), this.st.shares, (to, msg) => this.box.send(to, msg), r => this.refreshed(r));
+      this.refresh.start();
+    } catch { /* a plan that doesn't start from our shares: not ours to follow */ }
+  }
+
+  private refreshed(r: RefreshResult) {
+    const at = new Map(r.points);
+    for (const m of this.st.group.members) {
+      const idxs = sharesOf(m);
+      if (!idxs.every(i => at.has(i))) continue;
+      const pts = idxs.map(idx => ({ idx, sharePub: at.get(idx)! }));
+      m.sharePub = pts[0].sharePub;
+      if (m.shares) m.shares = pts;
+    }
+    this.st.shares = r.shares; this.st.epoch = r.epoch;
+    this.save(this.st);
+    for (const s of this.servers()) this.box.send(s.pk!, { type: 'refreshed', epoch: r.epoch });
   }
 
   // --- Joining ----------------------------------------------------------------------

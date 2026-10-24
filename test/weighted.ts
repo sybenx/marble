@@ -11,7 +11,7 @@ const sw = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent('serviceworker');
 const p = await ctx.newPage();
 p.on('console', m => m.type() === 'error' && console.log('[page]', m.text()));
 await p.goto(`chrome-extension://${sw.url().split('/')[2]}/spike-weighted.html`);
-const r = await p.waitForFunction('window.result', null, { timeout: 60_000 }).then(h => h.jsonValue()) as any;
+const r = await p.waitForFunction(() => (window as any).result, null, { timeout: 60_000 }).then(h => h.jsonValue()) as any;
 console.log(JSON.stringify(r, null, 2));
 const ok = r.sameKeyEverywhere && r.browserPlusServer4 === 'signs' && r.browserPlusServer6 === 'signs' && /refused|invalid/.test(r.allThreeServers) && /refused|invalid/.test(r.browserAlone);
 console.log(ok ? 'PASS weighted 4-of-6: browser + any server signs; servers alone and browser alone cannot' : 'FAIL');
