@@ -16,7 +16,7 @@ export function qrSvg(text: string): string {
   return `<svg viewBox="0 0 ${m.length} ${m.length}" shape-rendering="crispEdges" role="img" aria-label="Sign-in code"><rect width="${m.length}" height="${m.length}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
 }
 
-export interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean }
+export interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean; note?: string }
 
 /** Draw the pairing into `el`. Calls `onDone` once signed in. */
 export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () => void = () => {}) {
@@ -48,7 +48,7 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
     if (v.uri) $<HTMLAnchorElement>('.open').href = v.uri;
     $('.show-qr').hidden = !(showing && isAndroid());
     $('.show-qr').textContent = preferQr ? 'Cosign is on this phone' : 'Show a code instead';
-    $('.status').textContent = v.error ?? (!showing ? v.status : preferQr ? 'Scan this with Cosign on your phone.' : 'Tap Open Cosign, then Connect.');
+    $('.status').textContent = v.error ?? (!showing ? v.status : preferQr ? 'Scan this with Cosign on your phone.' : (v.note ?? 'Tap Open Cosign, then Connect.'));
     $('.status').classList.toggle('error', !!v.error);
     $('.confirm').hidden = !v.confirm;
     if (v.confirm) $('.who').textContent = `Sign in as ${v.confirm}?`;
@@ -70,7 +70,9 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
   $('.no').onclick = () => port.postMessage({ type: 'decline' });
   $('.retry').onclick = () => port.postMessage({ type: 'retry' });
   $('.show-qr').onclick = () => { preferQr = !preferQr; draw(last); };
-  $('.open').addEventListener('click', () => port.postMessage({ type: 'by-link' }));
+  let handedOff = false;
+  $('.open').addEventListener('click', () => { handedOff = true; port.postMessage({ type: 'by-link' }); });
+  document.addEventListener('visibilitychange', () => { if (handedOff && document.visibilityState === 'visible') port.postMessage({ type: 'returned' }); });
   return () => { gone = true; clearInterval(ping); port.disconnect(); };
 }
 

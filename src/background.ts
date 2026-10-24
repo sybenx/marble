@@ -401,7 +401,7 @@ async function answer(id: string, yes: boolean) {
 // One pairing code at a time, shared by every card and the toolbar popup showing it.
 
 /** `busy`: you said Sign in and it's under way; the code is spent and isn't shown again. */
-interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean }
+interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean; note?: string }
 /**
  * `byLink`: the code went to Cosign on this same phone by the Open Cosign button, not
  * shown for a camera. Then there's no "Sign in as …?" here: the code was never on a
@@ -548,6 +548,21 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     port.onMessage.addListener((m: any) => {
       if (m.type === 'ping') return; // keeps the background awake while a code is showing
     if (m.type === 'by-link') { if (pairing) pairing.byLink = true; return; }
+    // Back from Cosign. If nothing of its answer arrived, that code is spent on Cosign's
+    // side ("already used"): give the card a fresh one to try again with.
+    if (m.type === 'returned') {
+      const p = pairing;
+      if (!p?.byLink) return;
+      setTimeout(() => {
+        if (pairing !== p || p.view.busy || p.view.done || p.view.confirm) return;
+        if (p.t.view().session.phase !== 'waiting') return;
+        p.t.dispose(); pairing = undefined;
+        startPairing();
+        if (pairing) (pairing as { view: PairView }).view.note = 'That didn’t go through. Tap Open Cosign to try again.';
+        pairEmit();
+      }, 4000);
+      return;
+    }
     if (m.type === 'start') startPairing();
       if (m.type === 'retry') { pairing?.t.dispose(); pairing = undefined; startPairing(); }
       if (m.type === 'accept' && pairing) {
