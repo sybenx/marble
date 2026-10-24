@@ -90,7 +90,12 @@ try {
   const confirm = await cardFrame(page, 'Sign in as', 40_000);
   await confirm.click('.yes');
   log('card: Sign in tapped');
+  // The spent code must not come back while signing in finishes.
+  let flashed = false;
+  const watch = (async () => { for (let i = 0; i < 40; i++) { if (await confirm.$eval('.qr', el => !(el as HTMLElement).hidden).catch(() => false)) flashed = true; await page.waitForTimeout(50); } })();
   const got = await pk;
+  await watch.catch(() => {});
+  check(!flashed, 'the code stays hidden after Sign in');
   check(got.ok && got.r === group.groupX, `getPublicKey → ${got.ok ? String(got.r).slice(0, 12) : got.e}`);
   phone.dispose();
 

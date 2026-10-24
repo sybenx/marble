@@ -230,7 +230,8 @@ async function answer(id: string, yes: boolean) {
 //
 // One pairing code at a time, shared by every card and the toolbar popup showing it.
 
-interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean }
+/** `busy`: you said Sign in and it's under way; the code is spent and isn't shown again. */
+interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean }
 let pairing: { t: Transfer<Ticket>; view: PairView } | undefined;
 const pairPorts = new Set<chrome.runtime.Port>();
 
@@ -245,8 +246,8 @@ function startPairing() {
   let finished = false;
   t.onChange = () => {
     const v = t.view();
-    if (v.uri && v.uri !== view.uri) { view.uri = v.uri; view.status = ''; }
-    view.confirm = v.session.phase === 'accept' && v.session.rendering ? v.session.rendering : undefined;
+    if (v.uri && v.uri !== view.uri && !view.busy) { view.uri = v.uri; view.status = ''; }
+    view.confirm = !view.busy && v.session.phase === 'accept' && v.session.rendering ? v.session.rendering : undefined;
     if (v.stage === 'ended' && !finished) {
       finished = true;
       if (v.value) void finish(v.value);
@@ -275,7 +276,7 @@ async function finish(tk: Ticket) {
     // Every site that was waiting on this sign-in goes ahead: you signed in from it.
     for (const a of asks.values()) if (a.kind === 'pair') { await grantFor(p, (await load()).sites, a.origin).catch(() => {}); a.resolve(); }
   } catch (e) {
-    view.error = (e as Error).message; view.uri = undefined; pairEmit();
+    view.error = (e as Error).message; view.uri = undefined; view.busy = false; pairEmit();
   }
 }
 
@@ -344,7 +345,11 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     port.onMessage.addListener((m: any) => {
       if (m.type === 'start') startPairing();
       if (m.type === 'retry') { pairing?.t.dispose(); pairing = undefined; startPairing(); }
-      if (m.type === 'accept') pairing?.t.accept();
+      if (m.type === 'accept' && pairing) {
+        Object.assign(pairing.view, { busy: true, uri: undefined, confirm: undefined, status: 'Signing in…' });
+        pairEmit();
+        pairing.t.accept();
+      }
       if (m.type === 'decline') pairing?.t.decline();
     });
     void load().then(({ pairing: p }) => p ? port.postMessage({ type: 'pair', view: { done: true, status: 'Signed in.' } }) : startPairing());
