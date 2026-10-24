@@ -98,6 +98,7 @@ try {
   await pop0.waitForTimeout(1500);
   check(await pop0.isVisible('#safety'), 'the popup keeps a "Keep your account safe" card');
   await pop0.close();
+  await sw.evaluate(() => (globalThis as any).chrome.storage.local.set({ dev: true })); // shows the 24 words too
   const safety = await ctx.newPage();
   await safety.goto(`chrome-extension://${extId}/safety.html#paper`);
   const cdp = await ctx.newCDPSession(safety);
@@ -107,6 +108,23 @@ try {
   await safety.waitForSelector('#paperDone:not([hidden])', { timeout: 60_000 }).catch(() => {});
   const paper = await safety.textContent('#paperCode').catch(() => '');
   check(!!paper?.startsWith('cosign:backup?k='), `a paper backup: ${paper ? paper.slice(0, 40) + '…' : (await safety.textContent('#paperStatus'))}`);
+  await safety.screenshot({ path: 'shots/safety-words.png' });
+  // 24 words that are the backup's key (behind the dev flag until Cosign restores from words).
+  await safety.waitForSelector('#keepWords:not([hidden])', { timeout: 5000 }).catch(() => {});
+  await safety.click('#keepWords');
+  const words = await safety.$$eval('#words li', els => els.map(e => e.textContent!.trim()));
+  const { mnemonicToEntropy } = await import('@scure/bip39');
+  const { wordlist } = await import('@scure/bip39/wordlists/english.js');
+  const kOf = (code: string) => new URL(code.replace('cosign:', 'cosign://')).searchParams.get('k');
+  check(words.length === 24 && Buffer.from(mnemonicToEntropy(words.join(' '), wordlist)).toString('hex') === kOf(paper ?? ''), '24 words, and they are the backup key');
+  await safety.click('#wroteThem');
+  for (const el of await safety.$$('#checks input')) await el.fill(words[Number(await el.getAttribute('data-i'))]);
+  await safety.click('#checkGo');
+  check(((await safety.textContent('#wordsStatus')) ?? '').startsWith('Those match'), 'checking three words: they match');
+  await safety.click('#keepQr');
+  const dl = safety.waitForEvent('download', { timeout: 10_000 }).catch(() => null);
+  await safety.click('#saveImg');
+  check(!!(await dl), 'the QR saves as an image');
   await safety.screenshot({ path: 'shots/safety-paper.png' });
   // Read it back the way Cosign does, from what a server keeps for the paper.
   if (paper) {

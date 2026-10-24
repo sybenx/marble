@@ -10,6 +10,10 @@
   .qr { width: 240px; }
   .code { font: 11px ui-monospace, monospace; word-break: break-all; color: var(--muted); }
   .paper { border: 1px dashed var(--line); border-radius: 12px; padding: 16px; margin: 12px 0; }
+  .words { columns: 3; column-gap: 18px; padding-left: 22px; font: 15px ui-monospace, monospace; margin: 12px 0; }
+  .words li { padding: 2px 0; }
+  #checks input { width: 100%; font: inherit; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--fg); margin: 4px 0 8px; }
+  @media (max-width: 420px) { .words { columns: 2; } }
   @media print {
     body { padding: 0; max-width: none; }
     .noprint { display: none !important; }
@@ -30,6 +34,27 @@
       <p class="muted" id="paperStatus"></p>
     </div>
     <div id="paperDone" hidden>
+      <p class="noprint">Your backup is made. Keep it one of these ways, somewhere safe and away from this computer:</p>
+      <div class="tabs noprint"><button class="btn" id="keepQr">Print or save</button><button class="btn" id="keepCopy">Password manager</button><button class="btn" id="keepWords" hidden>Write down 24 words</button></div>
+
+      <div id="viewWords" hidden class="noprint">
+        <ol class="words" id="words"></ol>
+        <button class="btn primary" id="wroteThem" style="width:100%">I’ve written them down</button>
+        <div id="checkWords" hidden>
+          <p>Check three of them:</p>
+          <div id="checks"></div>
+          <button class="btn primary" id="checkGo" style="width:100%">Check</button>
+        </div>
+        <p class="muted" id="wordsStatus"></p>
+      </div>
+
+      <div id="viewCopy" hidden class="noprint">
+        <p>Copy the backup code and save it in your password manager as a secure note.</p>
+        <button class="btn primary" id="copy" style="width:100%">Copy the backup code</button>
+        <p class="muted" id="copyStatus"></p>
+      </div>
+
+      <div id="viewQr" hidden>
       <div class="paper">
         <h2 style="margin:0 0 4px">Cosign paper backup</h2>
         <p class="muted" id="paperWho" style="margin:0 0 8px"></p>
@@ -37,8 +62,9 @@
         <p class="code" id="paperCode"></p>
         <p style="font-size:13.5px">To use it: install Cosign on a phone, tap <b>Restore a paper backup</b>, and scan this.</p>
       </div>
-      <button class="btn primary noprint" id="print" style="width:100%">Print it</button>
-      <p class="muted noprint">Once it’s printed or written down, you can close this page. Making a new one stops this one working.</p>
+      <div class="row noprint"><button class="btn primary" id="print">Print it</button><button class="btn" id="saveImg">Save as an image</button></div>
+      </div>
+      <p class="muted noprint">Once it’s kept, you can close this page. Making a new backup stops this one working.</p>
     </div>
   </section>
 
