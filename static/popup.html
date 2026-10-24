@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cosign</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { padding: 16px; width: 340px; min-height: 120px; }
+  @media (max-width: 500px) { body { width: auto; } }
+</style></head>
+<body>
+  <div class="brand"><img src="icon-48.png" alt=""> Cosign</div>
+  <div id="out" hidden>
+    <h1>Sign in with your phone</h1>
+    <p class="muted">Then every site that uses Nostr just works in this browser.</p>
+    <div id="pair"></div>
+  </div>
+  <div id="in" hidden>
+    <div class="me"><img class="avatar" id="avatar" alt=""><div><div class="name" id="name"></div><div class="muted" id="npub"></div></div></div>
+    <section id="here" hidden>
+      <div class="list"><div class="item"><div><div class="host" id="hereHost"></div><div class="muted">Not signed in here yet</div></div><button class="btn small primary" id="allow">Allow</button></div></div>
+    </section>
+    <section>
+      <h2>Sites using it</h2>
+      <div class="list" id="sites"></div>
+      <p class="muted" id="none">None yet. Sites that use Nostr will ask the first time.</p>
+    </section>
+    <p class="muted" id="device"></p>
+    <button class="btn danger" id="signOut" style="width:100%">Sign out of this browser</button>
+  </div>
+  <script src="popup.js"></script>
+</body></html>

@@ -1,0 +1,7 @@
+node_modules
+dist
+*.zip
+*.xpi
+safari/build
+safari/**/xcuserdata
+shots
