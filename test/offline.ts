@@ -22,7 +22,7 @@ const kill = () => spawnSync('pkill', ['-f', `server.ts --root ${DIR}/`]);
 kill(); rmSync(DIR, { recursive: true, force: true }); mkdirSync(`${DIR}/logs`, { recursive: true });
 const start = (h: string, port: number) => { const l = openSync(`${DIR}/logs/${h}.log`, 'a'); return spawn('node', ['server.ts', '--root', `${DIR}/${h}`, '--port', String(port)], { cwd: SERVER, env: { ...process.env, COSIGN_ENROLL: 'open' }, stdio: ['ignore', l, l] }); };
 // Start them once for their host keys, then take them down.
-start('h1', 8981); start('h2', 8982);
+start('h1', 8951); start('h2', 8952);
 await sleep(4000);
 const host = (h: string) => JSON.parse(readFileSync(`${DIR}/${h}/host.json`, 'utf8'));
 const seeds = ['h1', 'h2'].map((h, i) => ({ pubkey: host(h).pk, relays: host(h).relays, operator: String(i + 5).repeat(64) }));
@@ -70,7 +70,7 @@ try {
   check(!(await pop.isVisible('#signOut')), 'no sign-out or export while the whole key is here');
 
   // The servers come back: the key is dealt to them and wiped here.
-  start('h1', 8981); start('h2', 8982);
+  start('h1', 8951); start('h2', 8952);
   await sleep(4000);
   const t2 = Date.now();
   let s2: any = {};

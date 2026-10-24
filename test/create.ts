@@ -30,7 +30,7 @@ const start = (h: string, port: number) => {
   const l = openSync(`${DIR}/logs/${h}.log`, 'a');
   procs.set(h, spawn('node', ['server.ts', '--root', `${DIR}/${h}`, '--port', String(port)], { cwd: SERVER, env: { ...process.env, COSIGN_ENROLL: 'open' }, stdio: ['ignore', l, l] }));
 };
-start('h1', 8991); start('h2', 8992);
+start('h1', 8941); start('h2', 8942);
 await sleep(4000);
 const host = (h: string) => JSON.parse(readFileSync(`${DIR}/${h}/host.json`, 'utf8'));
 // Two made-up operators, so the extension takes both (never two from one operator).
