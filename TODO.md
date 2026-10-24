@@ -4,9 +4,10 @@ From here on: only bug fixes from real daily use, reported through the status se
 These wait until the freeze lifts.
 
 ## Waiting on Cosign
-- **24-word backup:** built and tested, shown only with the dev flag. Switch it on when
-  Cosign ships `backup_find` (restore from words alone; the Cosign session will name the
-  release). Then add restore in the extension too: words, the text code, or the QR.
+- **24-word backup (paused):** built and tested, shown only with the dev flag. Don't
+  switch it on until the user decides, after living with the current backup options,
+  and Cosign ships `backup_find` (restore from words alone). Then add restore in the
+  extension too: words, the text code, or the QR.
 - **Add your phone (real phone):** the invite flow (`cosign:invite`) is built and tested
   with a stand-in; real phones need the next Cosign release.
 
