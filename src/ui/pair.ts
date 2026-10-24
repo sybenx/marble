@@ -38,7 +38,10 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
   const draw = (v: PairView) => {
     last = v;
     const showing = !!v.uri && !v.confirm && !v.error && !v.done;
-    $('.qr').hidden = !(showing && preferQr);
+    const waiting = !v.uri && !v.confirm && !v.error && !v.done;
+    // The code's square is there from the start, so nothing jumps when the code arrives.
+    $('.qr').hidden = !((showing || waiting) && preferQr);
+    if (waiting) { $('.qr').innerHTML = ''; delete $('.qr').dataset.uri; }
     if (showing && preferQr && $('.qr').dataset.uri !== v.uri) { $('.qr').innerHTML = qrSvg(v.uri!); $('.qr').dataset.uri = v.uri!; }
     $<HTMLAnchorElement>('.open').hidden = !(showing && isAndroid() && !preferQr);
     if (v.uri) $<HTMLAnchorElement>('.open').href = v.uri;

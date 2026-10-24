@@ -38,7 +38,6 @@ async function main() {
     const who = pairing?.profile?.name ?? 'you';
     $('title').textContent = `Let ${site} sign in as ${who}?`;
     $('body').innerHTML = `
-      <p class="muted">Anything destructive still asks your phone first. You can remove it any time.</p>
       <div class="row" style="margin-top:12px"><button class="btn" id="no">Not now</button><button class="btn primary" id="yes">Allow</button></div>`;
     const yes = $('yes') as HTMLButtonElement, no = $('no') as HTMLButtonElement;
     arm(yes, no);

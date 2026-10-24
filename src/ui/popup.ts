@@ -2,9 +2,10 @@
 // way out.
 
 import { nip19 } from 'nostr-tools';
-import { api } from '../env.ts';
+import { api, isPhone } from '../env.ts';
 import { mountPairing } from './pair.ts';
 
+if (isPhone()) document.documentElement.classList.add('phone');
 const $ = (s: string) => document.getElementById(s)!;
 const host = (o: string) => { try { return new URL(o).host; } catch { return o; } };
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));

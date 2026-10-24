@@ -22,7 +22,7 @@ p { margin: 8px 0; }
 .link { appearance: none; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13.5px; padding: 6px 0; cursor: pointer; }
 .row { display: flex; gap: 8px; }
 .row > .btn { flex: 1; }
-.qr { width: 200px; margin: 8px auto 4px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+.qr { width: 200px; aspect-ratio: 1; margin: 8px auto 4px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--soft); }
 .qr svg { display: block; width: 100%; height: auto; }
 .open { display: block; margin: 10px 0 4px; }
 .who { font-weight: 600; }
