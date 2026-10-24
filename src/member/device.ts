@@ -200,6 +200,8 @@ export class Device {
     }
     if (m.type === 'add_failed' && this.making && m.id === this.making.id) { const { fail } = this.making; this.making = null; return fail(new Error(String(m.reason ?? 'The server couldn’t make it.'))); }
     if (m.type === 'members' && Array.isArray(m.members)) {
+      // A relay can deliver a list from before our last refresh; older servers send no epoch.
+      if ((m.epoch ?? this.st.epoch ?? 0) < (this.st.epoch ?? 0)) return;
       // Who's in the key (a device added or removed, a paper made). Share points move only
       // by refresh, which this browser works out itself: keep the ones it knows, so a list
       // sent mid-way (points still blank) can't break signing.
