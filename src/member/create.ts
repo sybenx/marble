@@ -26,7 +26,9 @@ export async function chooseServers(extraSeeds: Seed[] = []): Promise<Server[]> 
 }
 
 export async function createAccount(o: { name: string; servers: Server[]; onStatus: (s: string) => void; gaveUp?: () => boolean }): Promise<MemberState> {
-  if (!o.servers.length) throw new Error('No servers are taking new accounts right now. Try again later.');
+  // A new account starts with at least two servers (Cosign's rule: the paper is always 2
+  // shares and needs two, and either server with it can bring the account back).
+  if (o.servers.length < 2) throw new Error('Fewer than two servers are taking new accounts right now.');
   const sk = hex(), me = pubOf(sk);
   const relays = [...new Set(o.servers.flatMap(s => s.relays))].slice(0, 6);
   const replies = new Map<string, any>();
@@ -52,7 +54,7 @@ export async function createAccount(o: { name: string; servers: Server[]; onStat
     o.onStatus(o.servers.length === 1 ? 'Asking a server to hold part of your key…' : `Asking ${o.servers.length} servers to hold part of your key…`);
     const keys = await Promise.all(o.servers.map(s => ask(s.pk, { type: 'enroll_key' })));
     const ok = o.servers.map((s, i) => ({ s, key: keys[i] })).filter(x => x.key.type === 'enroll_key');
-    if (!ok.length) throw new Error('No server answered. Try again in a moment.');
+    if (ok.length < 2) throw new Error('Fewer than two servers answered.');
 
     const name = o.name.trim().slice(0, 40) || 'Me';
     const group: { threshold: number; relays: string[]; members: any[] } = {

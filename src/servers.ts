@@ -1,12 +1,14 @@
-// Vendored from ~/cosign/site/src/servers.ts (commit e28e1b6). Keep in step with it.
+// Vendored from ~/cosign/site/src/servers.ts (commit 65dd0e8). Keep in step with it.
 // Finding servers for a new key (COSIGN.md §9.5): the list lives on Nostr, not on one
 // website. A server announces itself (kind 30243, d = "cosign-server", signed by its
 // host key, naming its operator); an operator lists its servers (kind 10243). A server
 // counts as an operator's only when both name each other. A fresh install starts from
 // a seed list, so it works before it has seen any announcement.
 //
-// Picking: one ping round trip each, then the fastest server of each operator, never
-// two from one operator, as many as asked for (three, normally).
+// Picking: one ping round trip each, then the fastest server of each operator first,
+// as many as asked for (three, normally). With fewer operators than that, the rest come
+// from operators already picked, and `sharedOperators` says so: the user must be told
+// (COSIGN.md §9.5), and a refresh swaps one out when another operator appears.
 //
 // I/O comes in from outside (`query`, `ping`), so this runs in a page, an extension or
 // a test alike; `relayQuery` and `pingHost` are ready-made ones over nostr-tools.
@@ -42,12 +44,26 @@ export interface Seed { pubkey: string; relays: string[]; operator: string }
 export const SEEDS: Seed[] = [
   // syb.lol, run by the author of Cosign.
   { pubkey: '040e022d19ed8e0ba6d83f6246b9d051f0093e59092ee6bb279730d0e4b191c8', relays: ['wss://syb.lol', 'wss://nos.lol', 'wss://relay.primal.net'], operator: 'f5073ea24832d8e6246d22ec0b5a75bbf4a12558e3ac67cb07360b3474e5a40e' },
+  // cosign-cf.aaro.cc, the Cloudflare Worker server (../../worker), the same operator: its own relay.
+  { pubkey: '665dd9c0ececdb5b60868aa6c0860df9f8e9e40c65304a9ffcecc59aa1502420', relays: ['wss://cosign-cf.aaro.cc'], operator: 'f5073ea24832d8e6246d22ec0b5a75bbf4a12558e3ac67cb07360b3474e5a40e' },
+  // A third, in Docker on a VPS, the same operator: reached over public relays only.
+  { pubkey: 'b3bb4b39a719e7f647cf30aca77f54facd8634b3ae575eb3c527200ac51502ae', relays: ['wss://syb.lol', 'wss://nos.lol', 'wss://relay.primal.net'], operator: 'f5073ea24832d8e6246d22ec0b5a75bbf4a12558e3ac67cb07360b3474e5a40e' },
 ];
 /** Where announcements are looked for, besides the seeds' own relays and the user's. */
 export const DISCOVERY_RELAYS = ['wss://syb.lol', 'wss://relay.primal.net', 'wss://nos.lol', 'wss://relay.damus.io'];
 
 const isHex = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
 const isRelay = (r: unknown): r is string => typeof r === 'string' && /^wss?:\/\/[^\s]+$/.test(r);
+/** A relay a stranger's device could reach: wss://, and not a loopback, private or tailnet name or address (servers won't dial those either). */
+export function isPublicRelay(r: unknown): r is string {
+  if (typeof r !== 'string' || !/^wss:\/\/[^\s]+$/.test(r)) return false;
+  let h: string;
+  try { h = new URL(r).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch { return false; }
+  if (h === 'localhost' || /\.(localhost|local|internal|lan|home|ts\.net)$/.test(h) || !h.includes('.') && !h.includes(':')) return false;
+  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+  if (v4) { const [a, b] = [Number(v4[1]), Number(v4[2])]; return !(a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224); }
+  return !(h.includes(':') && (h === '::1' || /^(fc|fd|fe8|fe9|fea|feb)/.test(h)));
+}
 
 /** A server's announcement, to sign with its host key. */
 export function announcement(a: { relays: string[]; https: string | null; enroll: 'open' | 'invite'; version: string; operator: string; nip05?: string }, created_at = Math.floor(Date.now() / 1000)): EventTemplate {
@@ -70,7 +86,8 @@ export function parseAnnouncement(e: Event): Server | null {
   if (!isHex(operator)) return null;
   let c: any;
   try { c = JSON.parse(e.content); } catch { return null; }
-  const relays = Array.isArray(c?.relays) ? c.relays.filter(isRelay) : [];
+  // Only relays anyone can reach: an announcement naming none (a test server's, say) isn't a server to offer.
+  const relays = Array.isArray(c?.relays) ? c.relays.filter(isPublicRelay) : [];
   if (!relays.length) return null;
   const https = typeof c.https === 'string' && /^https:\/\//.test(c.https) ? c.https : null;
   const nip05 = e.tags.find(t => t[0] === 'nip05')?.[1];
@@ -107,11 +124,12 @@ export async function findServers(o: { query: Query; relays?: string[]; seeds?: 
 }
 
 /**
- * Up to `n` servers for a new key: verified, taking new people (or this device is
- * invited), answering, and one per operator, fastest first. `ping` gives a round trip in
- * ms, or null for no answer. `exclude`: operators already used (the user's own server's).
+ * Up to `n` servers for a new key: verified, taking new people, answering. The fastest of
+ * each operator first; then, if that's fewer than `n`, the fastest of the rest. `ping`
+ * gives a round trip in ms, or null for no answer. `exclude`: operators to leave out
+ * entirely (`distinct: true` also stops at one per operator).
  */
-export async function pickServers(servers: Server[], o: { ping: (s: Server) => Promise<number | null>; n?: number; exclude?: string[] }): Promise<(Server & { ms: number })[]> {
+export async function pickServers(servers: Server[], o: { ping: (s: Server) => Promise<number | null>; n?: number; exclude?: string[]; distinct?: boolean }): Promise<(Server & { ms: number })[]> {
   const n = o.n ?? 3;
   const candidates = servers.filter(s => s.verified && s.enroll === 'open' && !o.exclude?.includes(s.operator));
   const timed = (await Promise.all(candidates.map(async s => ({ ...s, ms: await o.ping(s).catch(() => null) }))))
@@ -119,8 +137,12 @@ export async function pickServers(servers: Server[], o: { ping: (s: Server) => P
     .sort((a, b) => a.ms - b.ms);
   const picked: (Server & { ms: number })[] = [];
   for (const s of timed) if (picked.length < n && !picked.some(p => p.operator === s.operator)) picked.push(s);
+  if (!o.distinct) for (const s of timed) if (picked.length < n && !picked.includes(s)) picked.push(s);
   return picked;
 }
+
+/** Operators that run more than one of these servers: tell the user (COSIGN.md §9.5). */
+export const sharedOperators = (picked: Server[]) => [...new Set(picked.map(s => s.operator).filter((op, i, all) => all.indexOf(op) !== i))];
 
 // --- Ready-made I/O over nostr-tools ---------------------------------------------------
 
