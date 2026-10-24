@@ -19,6 +19,8 @@ import { extract } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Device, type MemberState } from './member/device.ts';
+import { chooseServers, createAccount } from './member/create.ts';
+import type { Seed } from './servers.ts';
 
 // nos.lol left out while it's down (2026-10-24); relays that fail are skipped anyway.
 const DEFAULT_RELAYS = ['wss://syb.lol', 'wss://relay.primal.net'];
@@ -161,6 +163,42 @@ async function nip04(x: Uint8Array, text: string, decrypt: boolean): Promise<str
   return `${b64(ct)}?iv=${b64(iv)}`;
 }
 
+// --- Create account ---------------------------------------------------------------
+
+let creating: Promise<void> | undefined;
+function create(name: string, say: (s: string) => void): Promise<void> {
+  return creating ??= (async () => {
+    say('Finding servers…');
+    // Tests (and, later, settings) can name servers to use alongside the ones found.
+    const { devSeeds } = await api.storage.local.get('devSeeds') as { devSeeds?: Seed[] };
+    const servers = await chooseServers(devSeeds ?? []);
+    const m = await createAccount({ name, servers, onStatus: say });
+    await saveMember(m);
+    const d = deviceFor(m);
+    await setNotNow([]);
+    changed();
+    say('Publishing your profile…');
+    await publishProfile(m, d).catch(() => { /* the account works without it; try again later */ });
+    // Every site that was waiting for you to sign in goes ahead: you started from it.
+    for (const a of asks.values()) if (a.kind === 'pair') { await memberGrant(d, a.origin); a.resolve(); }
+  })().finally(() => { creating = undefined; });
+}
+
+async function publishProfile(m: MemberState, d: Device) {
+  if (!m.ownGrant) { m.ownGrant = newKey(); await saveMember(m); }
+  const grant = getPublicKey(hexToBytes(m.ownGrant));
+  d.grant(grant, 'Cosign', deviceName());
+  const content = JSON.stringify({ name: m.profile?.name, display_name: m.profile?.name, ...(m.profile?.picture ? { picture: m.profile.picture } : {}) });
+  let ev;
+  for (let i = 0; ; i++) {
+    try { ev = await d.sign({ kind: 0, content, tags: [], created_at: Math.floor(Date.now() / 1000) }, grant); break; }
+    catch (e) { if (i >= 5 || !/^revoked:/.test((e as Error).message)) throw e; await new Promise(r => setTimeout(r, 1500)); }
+  }
+  const relays = [...new Set([...m.group.relays, ...DEFAULT_RELAYS])];
+  const pool = new SimplePool();
+  try { await Promise.any(pool.publish(relays, ev)); } finally { setTimeout(() => pool.destroy(), 5000); }
+}
+
 let joining: Promise<void> | undefined;
 function join(uri: string, status: (s: string) => void): Promise<void> {
   return joining ??= Device.join(uri, status).then(async m => {
@@ -249,6 +287,9 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
   if (!pairing) {
     if ((await notNow()).includes(origin)) throw new Error('Not signed in.');
     await ask(tabId, origin, 'pair');
+    // Signed in by phone (a pairing), or made an account here (a member).
+    const made = await loadMember();
+    if (made) return memberNip07(made, origin, tabId, method, params);
     ({ pairing, sites } = await load());
     if (!pairing) throw new Error('Not signed in.');
   } else if (!sites[origin]) {
@@ -353,7 +394,12 @@ async function answer(id: string, yes: boolean) {
 
 /** `busy`: you said Sign in and it's under way; the code is spent and isn't shown again. */
 interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean }
-let pairing: { t: Transfer<Ticket>; view: PairView } | undefined;
+/**
+ * `byLink`: the code went to Cosign on this same phone by the Open Cosign button, not
+ * shown for a camera. Then there's no "Sign in as …?" here: the code was never on a
+ * screen anyone could photograph, and you just said Connect in Cosign.
+ */
+let pairing: { t: Transfer<Ticket>; view: PairView; byLink?: boolean } | undefined;
 const pairPorts = new Set<chrome.runtime.Port>();
 
 function pairEmit() { for (const p of pairPorts) p.postMessage({ type: 'pair', view: pairing?.view ?? { status: '' } }); }
@@ -379,6 +425,10 @@ function startPairing() {
     }
     if (v.uri && v.uri !== view.uri && !view.busy) { view.uri = v.uri; view.status = ''; }
     view.confirm = !view.busy && v.session.phase === 'accept' && v.session.rendering ? v.session.rendering : undefined;
+    if (view.confirm && pairing?.byLink) {
+      Object.assign(view, { busy: true, uri: undefined, confirm: undefined, status: 'Signing in…' });
+      t.accept();
+    }
     if (v.stage === 'ended' && !finished) {
       finished = true;
       if (v.value) void finish(v.value);
@@ -440,7 +490,7 @@ async function state() {
     member: !!m,
     name: m ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
     pubkey: m?.group.groupX ?? p?.pubkey,
-    profile: p?.profile,
+    profile: m?.profile ?? p?.profile,
     perSite: p?.perSite,
     sites: Object.entries(sites).map(([origin, s]) => ({ origin, lastUsed: s.lastUsed })).sort((a, b) => b.lastUsed - a.lastUsed),
     notNow: await notNow(),
@@ -478,6 +528,7 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     port.onDisconnect.addListener(() => pairPorts.delete(port));
     port.onMessage.addListener((m: any) => {
       if (m.type === 'ping') return; // keeps the background awake while a code is showing
+    if (m.type === 'by-link') { if (pairing) pairing.byLink = true; return; }
     if (m.type === 'start') startPairing();
       if (m.type === 'retry') { pairing?.t.dispose(); pairing = undefined; startPairing(); }
       if (m.type === 'accept' && pairing) {
@@ -488,6 +539,14 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
       if (m.type === 'decline') pairing?.t.decline();
     });
     void load().then(({ pairing: p }) => p ? port.postMessage({ type: 'pair', view: { done: true, status: 'Signed in.' } }) : startPairing());
+  }
+  if (port.name === 'create') {
+    port.onMessage.addListener((m: any) => {
+      if (m.type === 'ping') return;
+      if (m.type !== 'create') return;
+      const say = (text: string, extra: object = {}) => { try { port.postMessage({ type: 'create', text, ...extra }); } catch { /* closed */ } };
+      create(String(m.name ?? ''), say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));
+    });
   }
   if (port.name === 'popup') {
     popupPorts.add(port);

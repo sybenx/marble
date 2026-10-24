@@ -55,7 +55,12 @@ try {
   await page.goto('http://localhost:8797/');
   check(await page.evaluate('typeof window.nostr?.signEvent === "function"') as boolean, 'window.nostr is there');
   const pk = call(page, 'window.nostr.getPublicKey()');
-  await sleep(5000);
+  await sleep(3000);
+  // The card leads with Create account (purple); Sign in with your phone sits just below.
+  const create = await purpleButton(page);
+  if (!create) throw new Error('no sign-in card');
+  await page.mouse.click(create.x, create.y + 50);
+  await sleep(4000);
   // A person takes a while to find their phone and scan; Firefox may put the
   // extension's background to sleep meanwhile.
   const delay = Number(process.env.SCAN_DELAY ?? 0);

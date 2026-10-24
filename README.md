@@ -60,7 +60,12 @@ server 1, paper 2), the extension can be a device of its own: it signs with one 
 your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssembly in
 `vendor/cosign-frost` (see `SOURCE`).
 
-- **Joining:** popup → *Join with a server code* → paste the `cosign:pair?…` code from
+- **Create account:** the sign-in card and the popup lead with *Create account*: a
+  name, and this browser and up to three servers (found on Nostr, `src/servers.ts`,
+  one per operator, fastest first) make your key; your profile is published. Public
+  servers get no NIP-46 signer key (COSIGN.md §9.2). Pictures and *I already have a
+  key* are still to come.
+- **Joining an existing weighted group:** popup → *Join with a server code* → paste the `cosign:pair?…` code from
   a weighted server's page. The browser and the servers make the key together (DKG);
   nobody ever holds it. *Create account* will do the same without a code once public
   servers take new accounts.
@@ -68,8 +73,9 @@ your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssem
   point, the next one 300 ms later if that one is slow.
 - **Destructive things** (emptying your follows, wiping your profile…) show a card:
   *Approve*, confirmed with your device lock (a passkey of the extension's own).
-- **Not yet:** *Create account*, picking three public servers, adding your phone,
-  the paper backup, and signing out (it would throw away this browser's part).
+- **Not yet:** adding your phone, the paper backup, swapping a dead server, and
+  signing out (it would throw away this browser's part). No public server announces
+  itself yet (SEEDS is empty until syb.lol runs the shared server).
 
 ## Tests
 
@@ -90,5 +96,7 @@ serves a test site on port 8799.
 `~/cosign/server` on port 8761 (in `.test-group/`), joins it through the popup, then
 signs, encrypts, approves a held event with a simulated device lock, survives server A
 going down, and removes a site. `test/weighted.ts` runs the weighted DKG alone.
+`test/create.ts` is Create account against two shared servers (`server.ts --root`,
+open enrollment) named to the extension as seeds.
 
 QRST is vendored from `~/cosign/site/vendor` (QRST commit in `vendor/QRST-COMMIT`).

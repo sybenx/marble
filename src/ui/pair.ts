@@ -70,5 +70,54 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
   $('.no').onclick = () => port.postMessage({ type: 'decline' });
   $('.retry').onclick = () => port.postMessage({ type: 'retry' });
   $('.show-qr').onclick = () => { preferQr = !preferQr; draw(last); };
+  $('.open').addEventListener('click', () => port.postMessage({ type: 'by-link' }));
   return () => { gone = true; clearInterval(ping); port.disconnect(); };
+}
+
+/**
+ * The way in, for a card or the popup: **Create account** first (a name, then this
+ * browser and a few servers make your key), **Sign in with your phone** below it for
+ * people who already use Cosign.
+ */
+export function mountSignIn(el: HTMLElement, onResize: () => void = () => {}) {
+  el.innerHTML = `
+    <div class="choose">
+      <button class="btn primary create" style="width:100%">Create account</button>
+      <button class="btn phone" style="width:100%;margin-top:8px">Sign in with your phone</button>
+    </div>
+    <form class="new" hidden>
+      <input class="name" maxlength="40" autocomplete="name" placeholder="Your name" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--fg)">
+      <button class="btn primary go" type="submit" style="width:100%;margin-top:8px">Create account</button>
+      <p class="status muted"></p>
+      <button class="link back" type="button">Back</button>
+    </form>
+    <div class="by-phone" hidden></div>`;
+  const $ = <T extends HTMLElement>(s: string) => el.querySelector(s) as T;
+  let unmount: (() => void) | undefined;
+  const show = (which: 'choose' | 'new' | 'by-phone') => {
+    for (const c of ['choose', 'new', 'by-phone']) $(`.${c}`).hidden = c !== which;
+    onResize();
+  };
+  $('.phone').onclick = () => { show('by-phone'); unmount ??= mountPairing($('.by-phone'), () => {}, onResize); };
+  $('.create').onclick = () => { show('new'); $<HTMLInputElement>('.name').focus(); };
+  $('.back').onclick = () => show('choose');
+
+  let port: chrome.runtime.Port | undefined;
+  $<HTMLFormElement>('.new').onsubmit = e => {
+    e.preventDefault();
+    const name = $<HTMLInputElement>('.name').value.trim();
+    if (!name) return $<HTMLInputElement>('.name').focus();
+    $<HTMLButtonElement>('.go').disabled = true; $('.back').hidden = true;
+    port ??= api.runtime.connect({ name: 'create' });
+    port.onMessage.addListener((m: any) => {
+      if (m.type !== 'create') return;
+      $('.status').textContent = m.done ? 'You’re in.' : m.text;
+      $('.status').classList.toggle('error', !!m.error);
+      if (m.error) { $<HTMLButtonElement>('.go').disabled = false; $('.back').hidden = false; }
+      onResize();
+    });
+    setInterval(() => { try { port?.postMessage({ type: 'ping' }); } catch { /* closed */ } }, 10_000);
+    port.postMessage({ type: 'create', name });
+  };
+  return () => unmount?.();
 }

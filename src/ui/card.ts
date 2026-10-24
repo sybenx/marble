@@ -2,7 +2,7 @@
 // signed in, "Let this site sign in as you?". Tapping Allow here is this device saying yes.
 
 import { api } from '../env.ts';
-import { mountPairing } from './pair.ts';
+import { mountSignIn } from './pair.ts';
 
 const id = location.hash.slice(1);
 // Safari on iPhone floats its toolbar over the bottom of the page, where this card sits.
@@ -44,8 +44,8 @@ async function main() {
     };
   } else if (info.kind === 'pair') {
     $('title').textContent = `Sign in to ${site}`;
-    $('body').innerHTML = `<p class="muted">with your phone</p><div id="pair"></div><div class="foot"><button class="link" id="later">Not now</button></div>`;
-    mountPairing($('pair'), () => {}, resize);
+    $('body').innerHTML = `<div id="pair" style="margin-top:12px"></div><div class="foot"><button class="link" id="later">Not now</button></div>`;
+    mountSignIn($('pair'), resize);
     ($('later') as HTMLButtonElement).onclick = () => answer(false);
   } else {
     const { pairing } = await api.storage.local.get('pairing') as { pairing?: { profile?: { name?: string } } };

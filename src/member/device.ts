@@ -25,6 +25,10 @@ export interface MemberState {
   signer?: string;
   /** Server member keys, fastest first, from real rounds. */
   order?: string[];
+  /** Your name and picture, as last published or read. */
+  profile?: { name?: string; picture?: string };
+  /** The extension's own grant, for what it signs itself (your profile at Create account). */
+  ownGrant?: string;
 }
 
 const HEDGE_MS = 300;

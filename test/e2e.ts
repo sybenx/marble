@@ -73,6 +73,7 @@ try {
   const pk = call(page, 'window.nostr.getPublicKey()');
   const card = await cardFrame(page, 'Sign in to localhost:8799');
   log('sign-in card is showing');
+  await card.click('.phone');
   await card.waitForSelector('.qr svg', { timeout: 30_000 });
   const uri = await card.$eval('.qr', el => (el as HTMLElement).dataset.uri!);
   const params = parseUri(uri);

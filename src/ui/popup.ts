@@ -3,7 +3,7 @@
 
 import { nip19 } from 'nostr-tools';
 import { api, isPhone } from '../env.ts';
-import { mountPairing } from './pair.ts';
+import { mountSignIn } from './pair.ts';
 
 if (isPhone()) document.documentElement.classList.add('phone');
 const $ = (s: string) => document.getElementById(s)!;
@@ -34,7 +34,7 @@ port.onMessage.addListener((s: any) => {
   if (s.type !== 'state') return;
   $('out').hidden = s.signedIn;
   $('in').hidden = !s.signedIn;
-  if (!s.signedIn) { unmount ??= mountPairing($('pair'), () => {}); return; }
+  if (!s.signedIn) { unmount ??= mountSignIn($('pair')); return; }
   unmount?.(); unmount = undefined;
 
   const npub = nip19.npubEncode(s.pubkey);

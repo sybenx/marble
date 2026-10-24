@@ -50,6 +50,8 @@ export class Mailbox {
   private seen = new Set<string>();
   private parts = new Parts();
   private closed = false;
+  /** Sent before any relay was up: they go out as soon as one is. */
+  private queue: Event[] = [];
   readonly pk: string;
 
   constructor(private sk: string, readonly relays: string[], private onMessage: (msg: any, fromPk: string, sentAt: number) => void) {
@@ -66,6 +68,8 @@ export class Mailbox {
       this.conns.set(url, r);
       // Member traffic is live: only what was sent in the last minute.
       r.subscribe([{ kinds: [KIND_MEMBER], '#p': [this.pk], since: now() - 60 }], { onevent: e => this.receive(e) });
+      for (const e of this.queue) r.publish(e).catch(() => {});
+      this.queue = [];
     } catch {
       if (!this.closed) setTimeout(() => this.connect(url), 3000);
     }
@@ -87,7 +91,11 @@ export class Mailbox {
   }
 
   send(toPk: string, msg: object) {
-    for (const e of sealParts(this.sk, toPk, msg)) for (const r of this.conns.values()) if (r?.connected) r.publish(e).catch(() => {});
+    const up = [...this.conns.values()].filter(r => r?.connected) as Relay[];
+    for (const e of sealParts(this.sk, toPk, msg)) {
+      if (!up.length) { this.queue.push(e); continue; }
+      for (const r of up) r.publish(e).catch(() => {});
+    }
   }
 
   close() { this.closed = true; for (const r of this.conns.values()) r?.close(); }

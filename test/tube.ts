@@ -32,6 +32,7 @@ await page.waitForTimeout(2000);
 await page.screenshot({ path: 'shots/tube-2-after-click.png' });
 const card = await cardFrame(page, 'Sign in to', 15_000);
 if (!card) { log('no Cosign card appeared'); await ctx.close(); process.exit(1); }
+await card.click('.phone');
 await card.waitForSelector('.qr svg', { timeout: 30_000 });
 const uri = await card.$eval('.qr', el => (el as HTMLElement).dataset.uri!);
 await page.screenshot({ path: 'shots/tube-3-card.png' });
