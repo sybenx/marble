@@ -72,9 +72,34 @@ try {
     await ctx.close();
   }
 
-  // --- A phone: the card stays in the page --------------------------------------------
+  // --- A phone: the decision in a tab of the extension's own, then back -----------------
   {
     const ctx = await launch(true);
+    const page = await ctx.newPage();
+    await page.goto('http://localhost:8789/');
+    void page.evaluate('window.nostr.getPublicKey()').catch(() => null);
+    const pointer = await cardIn(page, 'asking in its own tab', 6000);
+    check(!!pointer && !(await pointer.$('#yes')), 'phone: the page shows only a pointer, no Allow');
+    await sleep(800);
+    const tab = ctx.pages().find(p => p.url().includes('card.html') && p.url().includes('&window'));
+    check(!!tab, 'phone: the decision is in a tab of the extension’s own');
+    if (tab) {
+      check((await tab.textContent('.site'))?.trim() === 'localhost:8789', 'phone: it names the site, large');
+      await tab.waitForSelector('#yes:not([disabled])', { timeout: 5000 });
+      await tab.click('#yes');
+      await sleep(1000);
+      check(!ctx.pages().some(p => p.url().includes('&window')), 'phone: Allow in the tab is taken, and the tab goes away');
+      check(await page.evaluate('document.visibilityState') === 'visible', 'phone: back on the site');
+    }
+    await ctx.close();
+  }
+
+  // --- The fallback: the card stays in the page, hardened --------------------------------
+  {
+    const ctx = await launch(true);
+    const sw = ctx.serviceWorkers().find(w => w.url().endsWith('/background.js'))!;
+    await sw.evaluate(() => (globalThis as any).chrome.storage.local.set({ devInPageCard: true }));
+    await sleep(300);
     const page = await ctx.newPage();
     await page.goto('http://localhost:8789/');
     const pk = page.evaluate('window.nostr.getPublicKey()').then(() => 'answered', e => `answered: ${String(e.message ?? e).split('\n')[0]}`);

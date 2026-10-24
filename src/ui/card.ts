@@ -86,7 +86,7 @@ async function main() {
   } else if (pointer) {
     // The decision is in a window of the extension's own; here only a pointer to it.
     $('title').textContent = info.kind === 'approve' ? `${site} wants to make a big change` : `${site} wants to sign in`;
-    $('body').innerHTML = `<p class="muted">Cosign is asking in its own window.</p><button class="btn primary" id="show" style="width:100%">Show it</button>`;
+    $('body').innerHTML = `<p class="muted">Cosign is asking in ${flags.includes('tab') ? 'its own tab' : 'its own window'}.</p><button class="btn primary" id="show" style="width:100%">Show it</button>`;
     ($('show') as HTMLButtonElement).onclick = () => api.runtime.sendMessage({ type: 'card-focus', id });
   } else if (info.kind === 'approve') {
     const what = (info.detail ?? 'make a big change').replace(/^\w/, c => c.toUpperCase());

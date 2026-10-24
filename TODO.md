@@ -24,11 +24,11 @@ These wait until the freeze lifts.
 - Swap a server that stays down (reshare); show who runs each server in settings; "Use my
   own server".
 - Create account: a picture; "I already have a key" (import).
-- On phones the Allow card stays in the page, hardened: Allow works only after the card
-  has been still and in view for 800 ms, on a real click, and (Chromium only) while the
-  visibility check says it's fully visible. Firefox for Android and Safari on iOS have no
-  such visibility check, so a page drawing an invisible pass-through layer over the card
-  there is only partly caught (top-layer popovers and dialogs are; plain overlays aren't).
+- Clickjacking on phones, fixed: Allow and approvals open in a tab of the extension's own
+  and return to the site afterwards (as a window does on computers). The hardened in-page
+  card (real click, 800 ms settle, visibility check in Chromium) is only the fallback if
+  a tab can't be opened; there, Firefox for Android and Safari on iOS can't detect a plain
+  pass-through overlay. Not yet tried on a real phone.
 - Replace the native `confirm()` for "Sign out of this browser" with the extension's own.
 - Firefox for Android: tapping Open Cosign leaves an about:blank tab behind (the link uses
   `target=_blank`).

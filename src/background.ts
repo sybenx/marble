@@ -373,12 +373,17 @@ const host = (origin: string) => { try { return new URL(origin).host; } catch { 
 // A small card drawn over the page (an extension page in a frame the site can't
 // reach). One card per tab and site; every request waiting on it shares the answer.
 
-interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; detail?: string; window?: number; answered?: boolean; done: Promise<void>; resolve(): void; reject(e: Error): void }
+interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup'; detail?: string; window?: number; tab?: number; answered?: boolean; done: Promise<void>; resolve(): void; reject(e: Error): void }
 const asks = new Map<string, Ask>();
 /** Tabs whose page said it's on a phone-sized screen. */
 const narrowTabs = new Set<number>();
 // Closing the window without choosing is "Not now".
 api.windows?.onRemoved?.addListener((w: number) => { for (const a of asks.values()) if (a.window === w && !a.answered) void answer(a.id, false); });
+api.tabs?.onRemoved?.addListener((t: number) => { for (const a of asks.values()) if (a.tab === t && !a.answered) void answer(a.id, false); });
+/** Tests: the hardened in-page card instead of a window or tab (dev flag `devInPageCard`). */
+let forceInPage = false;
+api.storage.local.get('devInPageCard').then((r: any) => { forceInPage = !!r.devInPageCard; }).catch(() => {});
+api.storage.onChanged.addListener((c: any) => { if (c.devInPageCard) forceInPage = !!c.devInPageCard.newValue; });
 
 function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve' | 'notice' | 'backup', detail?: string): Promise<void> {
   // Approvals and notices are one each; sign-in and Allow are one per tab and site.
@@ -390,18 +395,33 @@ function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' |
   const done = new Promise<void>((y, n) => { resolve = y; reject = n; });
   const a: Ask = { id, tabId, origin, kind, detail, done, resolve, reject };
   asks.set(id, a);
-  // On a computer, Allow and approvals are decided in a window of the extension's own,
-  // which the page can't cover, fade or move under your pointer; the page only gets a
-  // pointer to it. Phones (no windows there) keep the card, hardened.
-  const own = (kind === 'allow' || kind === 'approve') && !narrowTabs.has(tabId) && !!api.windows?.create;
-  let win: number | undefined;
+  // Allow and approvals are decided where the page can't cover, fade or move them under
+  // your pointer: a window of the extension's own on a computer, a tab of its own on a
+  // phone (then back to the site). The page only gets a pointer. If neither can be opened,
+  // the in-page card, hardened, is the fallback.
+  const decision = kind === 'allow' || kind === 'approve';
+  const own = decision && !narrowTabs.has(tabId) && !!api.windows?.create && !forceInPage;
+  const ownTab = decision && narrowTabs.has(tabId) && !!api.tabs?.create && !forceInPage;
+  let win: number | undefined, tab: number | undefined;
   const close = () => {
     asks.delete(id);
     api.tabs.sendMessage(tabId, { type: 'card', url: null, id }).catch(() => {});
     if (win !== undefined) api.windows.remove(win).catch(() => {});
+    if (tab !== undefined) { api.tabs.remove(tab).catch(() => {}); api.tabs.update(tabId, { active: true }).catch(() => {}); }
   };
   done.then(close, close);
   const inPage = (hash: string) => api.tabs.sendMessage(tabId, { type: 'card', id, url: api.runtime.getURL(`card.html#${hash}`) }).catch(() => reject(new Error('Couldn’t show the sign-in card on this page.')));
+  if (ownTab) {
+    void (async () => {
+      try {
+        const t = await api.tabs.create({ url: api.runtime.getURL(`card.html#${id}&window`), active: true, openerTabId: tabId });
+        tab = t?.id;
+        a.tab = tab;
+        void inPage(`${id}&pointer&tab`);
+      } catch { void inPage(id); }
+    })();
+    return done;
+  }
   if (!own) { void inPage(id); return done; }
   void (async () => {
     try {
@@ -583,7 +603,12 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
   if (!isOurs(sender)) return false;
   switch (msg?.type) {
     case 'card-info': { const a = asks.get(msg.id); reply(a ? { kind: a.kind, origin: a.origin, detail: a.detail } : null); return false; }
-    case 'card-focus': { const a = asks.get(msg.id); if (a?.window !== undefined) void api.windows.update(a.window, { focused: true }).catch(() => {}); return false; }
+    case 'card-focus': {
+      const a = asks.get(msg.id);
+      if (a?.window !== undefined) void api.windows.update(a.window, { focused: true }).catch(() => {});
+      if (a?.tab !== undefined) void api.tabs.update(a.tab, { active: true }).catch(() => {});
+      return false;
+    }
     case 'card-answer': void answer(msg.id, !!msg.yes); return false;
     case 'remove-site': void forgetSite(msg.origin, true); return false;
     case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
