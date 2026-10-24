@@ -31,7 +31,8 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
     </div>
     <button class="btn retry" hidden>Try again</button>`;
   const $ = <T extends HTMLElement>(s: string) => el.querySelector(s) as T;
-  const port = api.runtime.connect({ name: 'pair' });
+  let port = api.runtime.connect({ name: 'pair' });
+  let gone = false;
   let preferQr = !isAndroid();
   let last: PairView = { status: '' };
 
@@ -56,11 +57,18 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
     if (v.done) onDone();
   };
 
-  port.onMessage.addListener((m: any) => { if (m.type === 'pair') draw(m.view); });
+  // If the background was restarted, the code it showed is dead: reconnect, which
+  // shows a fresh one. While connected, a ping every 10 s keeps it awake.
+  const wire = () => {
+    port.onMessage.addListener((m: any) => { if (m.type === 'pair') draw(m.view); });
+    port.onDisconnect.addListener(() => { if (!gone) setTimeout(() => { port = api.runtime.connect({ name: 'pair' }); wire(); port.postMessage({ type: 'start' }); }, 300); });
+  };
+  wire();
   port.postMessage({ type: 'start' });
+  const ping = setInterval(() => { try { port.postMessage({ type: 'ping' }); } catch { /* reconnecting */ } }, 10_000);
   $('.yes').onclick = () => port.postMessage({ type: 'accept' });
   $('.no').onclick = () => port.postMessage({ type: 'decline' });
   $('.retry').onclick = () => port.postMessage({ type: 'retry' });
   $('.show-qr').onclick = () => { preferQr = !preferQr; draw(last); };
-  return () => port.disconnect();
+  return () => { gone = true; clearInterval(ping); port.disconnect(); };
 }

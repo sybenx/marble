@@ -24,9 +24,18 @@ const base = {
 
 const manifests = {
   chrome: { ...base, minimum_chrome_version: '116', background: { service_worker: 'background.js' } },
+  // Firefox gets the older format on purpose: its newer format puts the background to
+  // sleep while a request is still waiting (a sign-in, a signature), which drops it.
+  // Firefox keeps supporting this one, desktop and Android, with a background that stays.
   firefox: {
-    ...base,
-    background: { scripts: ['background.js'] },
+    manifest_version: 2,
+    name: base.name, short_name: base.short_name, version, description: base.description, icons: base.icons,
+    browser_action: base.action,
+    permissions: base.permissions,
+    content_scripts: base.content_scripts,
+    content_security_policy: base.content_security_policy.extension_pages,
+    web_accessible_resources: base.web_accessible_resources[0].resources,
+    background: { scripts: ['background.js'], persistent: true },
     browser_specific_settings: {
       gecko: { id: 'cosign@aaro.cc', strict_min_version: '128.0', data_collection_permissions: { required: ['none'] } },
       gecko_android: { strict_min_version: '128.0' },

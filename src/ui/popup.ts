@@ -22,6 +22,8 @@ api.tabs.query({ active: true, currentWindow: true }).then(([t]) => {
 }).catch(() => {});
 
 const port = api.runtime.connect({ name: 'popup' });
+// Keeps the background awake while the popup is open (a join can take a while).
+setInterval(() => { try { port.postMessage({ type: 'ping' }); } catch { /* closed */ } }, 10_000);
 port.onMessage.addListener((s: any) => {
   if (s.type === 'join') {
     $('joinStatus').textContent = s.text;

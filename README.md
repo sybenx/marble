@@ -83,7 +83,7 @@ node build.mjs && node --experimental-transform-types test/e2e.ts
 Chromium with the extension: sign in by the card, sign, nip44, a second site's Allow,
 removing one site, removing the whole browser. `test/fake-phone.ts` stands in for the
 phone (it answers a code given as a link or a screenshot); `test/tube.ts` signs in to
-tube.syb.lol; `test/firefox.ts` does the same in desktop Firefox; `test/serve.mjs`
+tube.syb.lol; `test/firefox.ts` does the same in desktop Firefox (it needs a profile made first with `firefox -CreateProfile "cosigntest <dir>"`, passed as `FF_PROFILE`; `SCAN_DELAY=45` waits like a person scanning); `test/serve.mjs`
 serves a test site on port 8799.
 
 `test/member.ts` is phase 2 end to end: it sets up a fresh weighted group from

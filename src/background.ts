@@ -20,7 +20,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Device, type MemberState } from './member/device.ts';
 
-const DEFAULT_RELAYS = ['wss://syb.lol', 'wss://nos.lol', 'wss://relay.primal.net'];
+// nos.lol left out while it's down (2026-10-24); relays that fail are skipped anyway.
+const DEFAULT_RELAYS = ['wss://syb.lol', 'wss://relay.primal.net'];
 const BASE_URL = 'https://cosign.aaro.cc/';
 
 interface Pairing {
@@ -235,7 +236,9 @@ async function signOut() {
 let busy = 0;
 function setBusy(d: number) {
   busy += d;
-  api.action.setBadgeText({ text: busy > 0 ? '…' : '' }).catch?.(() => {});
+  // `action` in the newer format; Firefox's build uses the older `browserAction`.
+  const action = api.action ?? (api as any).browserAction;
+  action?.setBadgeText({ text: busy > 0 ? '…' : '' })?.catch?.(() => {});
 }
 
 async function nip07(origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
@@ -361,9 +364,19 @@ function startPairing() {
   const t = Transfer.show({ profile: signerTicket, store, env: browserEnv(), baseUrl: BASE_URL, origin: originClaim(), check: 'none' }, 'receiver');
   const view: PairView = { status: 'Getting a code…' };
   pairing = { t, view };
-  let finished = false;
+  let finished = false, contacted: ReturnType<typeof setTimeout> | undefined;
   t.onChange = () => {
     const v = t.view();
+    // A phone has reached the code: its answer should follow within seconds. If it
+    // doesn't, say so rather than sit there.
+    if (v.session.phase !== 'waiting' && v.session.phase !== 'accept' && !contacted && !finished) {
+      contacted = setTimeout(() => {
+        if (finished || view.confirm || view.busy || view.done) return;
+        finished = true; t.dispose();
+        view.error = 'Your phone’s answer didn’t arrive. Try again.'; view.uri = undefined;
+        pairEmit();
+      }, 20_000);
+    }
     if (v.uri && v.uri !== view.uri && !view.busy) { view.uri = v.uri; view.status = ''; }
     view.confirm = !view.busy && v.session.phase === 'accept' && v.session.rendering ? v.session.rendering : undefined;
     if (v.stage === 'ended' && !finished) {
@@ -464,7 +477,8 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     pairPorts.add(port);
     port.onDisconnect.addListener(() => pairPorts.delete(port));
     port.onMessage.addListener((m: any) => {
-      if (m.type === 'start') startPairing();
+      if (m.type === 'ping') return; // keeps the background awake while a code is showing
+    if (m.type === 'start') startPairing();
       if (m.type === 'retry') { pairing?.t.dispose(); pairing = undefined; startPairing(); }
       if (m.type === 'accept' && pairing) {
         Object.assign(pairing.view, { busy: true, uri: undefined, confirm: undefined, status: 'Signing in…' });
