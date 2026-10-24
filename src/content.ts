@@ -1,7 +1,7 @@
 // The bridge: window.nostr in the page talks to the extension through here, and the
 // extension draws its sign-in card over the page from here.
 
-import { api, isPhone } from './env.ts';
+import { api, isNarrow } from './env.ts';
 
 const TAG = '__cosign';
 
@@ -32,7 +32,7 @@ let frame: HTMLIFrameElement | undefined;
 let guard: MutationObserver | undefined;
 let shownId: string | undefined;
 
-const phone = isPhone();
+const phone = isNarrow();
 const HOST_STYLE = [
   'all: initial', 'position: fixed', 'z-index: 2147483647', 'display: block', 'opacity: 1', 'visibility: visible',
   'pointer-events: auto', 'transform: none', 'filter: none', 'clip-path: none',

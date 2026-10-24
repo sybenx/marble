@@ -4,12 +4,18 @@ export const api: typeof chrome = (globalThis as any).browser ?? (globalThis as 
 
 const ua = () => (globalThis.navigator?.userAgent ?? '');
 
-/** True on a phone or tablet, where a code can't be scanned from the same screen. */
-export function isPhone() {
-  return /Android|iPhone|iPad|Mobile/i.test(ua()) || (/Macintosh/.test(ua()) && (globalThis.navigator?.maxTouchPoints ?? 0) > 1);
-}
-
 export function isAndroid() { return /Android/i.test(ua()); }
+
+/**
+ * A phone-sized screen: the card is a sheet along the bottom and the popup fills the
+ * view. An iPad (which Safari reports as a Mac) isn't: it gets the corner card and a
+ * popover of fixed width. Whether to offer Open Cosign is `isAndroid`, the only place
+ * Cosign runs.
+ */
+export function isNarrow() {
+  const s = globalThis.screen;
+  return !!s && Math.min(s.width, s.height) < 600;
+}
 
 /** "Firefox on Mac", "Safari on iPhone": what your phone calls this browser. */
 export function deviceName() {

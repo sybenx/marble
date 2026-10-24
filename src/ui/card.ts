@@ -1,12 +1,12 @@
 // The card drawn over a page: "Sign in to this site with your phone", or, once
 // signed in, "Let this site sign in as you?". Tapping Allow here is this device saying yes.
 
-import { api } from '../env.ts';
+import { api, isNarrow } from '../env.ts';
 import { mountSignIn } from './pair.ts';
 
 const id = location.hash.slice(1);
 // Safari on iPhone floats its toolbar over the bottom of the page, where this card sits.
-if (/iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) document.body.classList.add('ios');
+if (isNarrow() && (/iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) document.body.classList.add('ios');
 const $ = (s: string) => document.getElementById(s)!;
 const host = (o: string) => { try { return new URL(o).host; } catch { return o; } };
 
