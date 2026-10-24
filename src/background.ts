@@ -440,7 +440,7 @@ function startPairing() {
     if (v.stage === 'ended' && !finished) {
       finished = true;
       if (v.value) void finish(v.value);
-      else { view.error = v.session.outcome === 'second-responder' ? 'Two phones answered that code, so nothing was sent. Try again.' : 'Not signed in. Try again.'; view.uri = undefined; }
+      else { view.error = v.session.outcome === 'second-responder' ? 'Two phones answered that code, so nothing was sent. Try again.' : `Not signed in (${v.session.outcome ?? 'ended'}). Try again.`; view.uri = undefined; }
     }
     pairEmit();
   };
