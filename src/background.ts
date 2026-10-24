@@ -21,6 +21,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Device, type MemberState } from './member/device.ts';
 import { chooseServers, createAccount } from './member/create.ts';
+import { makePending, unwrap, dealTo, type Pending } from './member/pending.ts';
+import { finalizeEvent } from 'nostr-tools/pure';
+import * as nip04lib from 'nostr-tools/nip04';
 import type { Seed } from './servers.ts';
 
 // nos.lol left out while it's down (2026-10-24); relays that fail are skipped anyway.
@@ -179,8 +182,26 @@ function create(name: string, say: (s: string) => void): Promise<void> {
     say('Finding servers…');
     // Tests (and, later, settings) can name servers to use alongside the ones found.
     const { devSeeds } = await api.storage.local.get('devSeeds') as { devSeeds?: Seed[] };
-    const servers = await chooseServers(devSeeds ?? []);
-    const m = await createAccount({ name, servers, onStatus: say });
+    const servers = await chooseServers(devSeeds ?? []).catch(() => []);
+    // Servers that don't answer in time don't hold you up: the key is made here instead,
+    // kept wrapped and used at once ("not protected yet"), and dealt to them later.
+    let gaveUp = false;
+    const made = await Promise.race([
+      createAccount({ name, servers, onStatus: say, gaveUp: () => gaveUp }).catch(() => null),
+      new Promise<null>(r => setTimeout(() => r(null), 30_000)),
+    ]);
+    gaveUp = !made;
+    if (!made) {
+      const p = await makePending(name);
+      await savePending(p);
+      await setNotNow([]);
+      changed();
+      await publishProfileLocally(p).catch(() => {});
+      for (const a of asks.values()) if (a.kind === 'pair') { await pendingGrant(a.origin); a.resolve(); }
+      void tryDeal();
+      return;
+    }
+    const m = made;
     await saveMember(m);
     const d = deviceFor(m);
     await setNotNow([]);
@@ -223,6 +244,83 @@ function joinExisting(say: (s: string, extra?: object) => void): Promise<void> {
     await setNotNow([]);
     changed();
   }).finally(() => { joining = undefined; });
+}
+
+// --- Not protected yet: a key made here, until servers take it -----------------------------
+
+async function loadPending(): Promise<Pending | undefined> {
+  return ((await api.storage.local.get('pending')) as { pending?: Pending }).pending;
+}
+const savePending = (p: Pending | undefined) => p ? api.storage.local.set({ pending: p }) : api.storage.local.remove('pending');
+
+async function pendingGrant(origin: string) {
+  const { sites } = await load();
+  if (!sites[origin]) { sites[origin] = { added: Date.now(), lastUsed: Date.now() }; await saveSites(sites); changed(); }
+}
+
+/** Sign with the key this browser holds whole, until it's dealt. */
+async function withKey<T>(p: Pending, f: (sk: Uint8Array) => T | Promise<T>): Promise<T> {
+  const sk = await unwrap(p);
+  try { return await f(sk); } finally { sk.fill(0); }
+}
+
+async function pendingNip07(p: Pending, origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+  void tryDeal();
+  const { sites } = await load();
+  if (!sites[origin]) {
+    if ((await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    await ask(tabId, origin, 'allow');
+    await pendingGrant(origin);
+  }
+  if (method === 'getPublicKey') return p.pubkey;
+  if (method === 'getRelays') return {};
+  return withKey(p, sk => {
+    switch (method) {
+      case 'signEvent': { const t = params.event ?? params; return finalizeEvent({ kind: t.kind, content: t.content ?? '', tags: t.tags ?? [], created_at: t.created_at ?? Math.floor(Date.now() / 1000) }, sk); }
+      case 'nip44.encrypt': return nip44.v2.encrypt(params.plaintext, nip44.v2.utils.getConversationKey(sk, params.peer));
+      case 'nip44.decrypt': return nip44.v2.decrypt(params.ciphertext, nip44.v2.utils.getConversationKey(sk, params.peer));
+      case 'nip04.encrypt': return nip04lib.encrypt(sk, params.peer, params.plaintext);
+      case 'nip04.decrypt': return nip04lib.decrypt(sk, params.peer, params.ciphertext);
+      default: throw new Error(`Not supported: ${method}`);
+    }
+  });
+}
+
+async function publishProfileLocally(p: Pending) {
+  const ev = await withKey(p, sk => finalizeEvent({ kind: 0, content: JSON.stringify({ name: p.name, display_name: p.name }), tags: [], created_at: Math.floor(Date.now() / 1000) }, sk));
+  if (((await api.storage.local.get('devNoPublish')) as { devNoPublish?: boolean }).devNoPublish) return;
+  const pool = new SimplePool();
+  try { await Promise.any(pool.publish(DEFAULT_RELAYS, ev)); } finally { setTimeout(() => pool.destroy(), 5000); }
+}
+
+/** Deal the pending key to servers as soon as two answer, become a device, wipe the key. */
+let dealing: Promise<void> | undefined, lastTry = 0;
+function tryDeal(): Promise<void> {
+  if (dealing || Date.now() - lastTry < 20_000) return dealing ?? Promise.resolve();
+  lastTry = Date.now();
+  return dealing = (async () => {
+    const p = await loadPending();
+    if (!p) return;
+    const { devSeeds } = await api.storage.local.get('devSeeds') as { devSeeds?: Seed[] };
+    const servers = await chooseServers(devSeeds ?? []).catch(() => []);
+    if (servers.length < 2) return;
+    const m = await dealTo(p, servers).catch(() => null);
+    if (!m) return;
+    await saveMember(m);
+    await savePending(undefined); // the whole key is gone from here: only this browser's 3 shares remain
+    deviceFor(m);
+    changed();
+    if (!deviceFor(m).safe()) void api.tabs.create({ url: api.runtime.getURL('safety.html#paper&setup') });
+  })().finally(() => { dealing = undefined; });
+}
+api.alarms?.create?.('deal', { periodInMinutes: 1 });
+api.alarms?.onAlarm?.addListener((a: { name: string }) => { if (a.name === 'deal') { void tryDeal(); void nag(); } });
+/** Still not protected after a day: a "!" on the toolbar icon until it is. */
+async function nag() {
+  const p = await loadPending();
+  const action = api.action ?? (api as any).browserAction;
+  if (p && Date.now() - p.since > 24 * 3600_000) action?.setBadgeText({ text: '!' })?.catch?.(() => {});
+  else if (!p && busy === 0) action?.setBadgeText({ text: '' })?.catch?.(() => {});
 }
 
 let joining: Promise<void> | undefined;
@@ -308,6 +406,8 @@ function setBusy(d: number) {
 async function nip07(origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
   const member = await loadMember();
   if (member) return memberNip07(member, origin, tabId, method, params);
+  const pending = await loadPending();
+  if (pending) return pendingNip07(pending, origin, tabId, method, params);
   let { pairing, sites } = await load();
 
   if (!pairing) {
@@ -316,6 +416,8 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
     // Signed in by phone (a pairing), or made an account here (a member).
     const made = await loadMember();
     if (made) return memberNip07(made, origin, tabId, method, params);
+    const madeHere = await loadPending();
+    if (madeHere) return pendingNip07(madeHere, origin, tabId, method, params);
     ({ pairing, sites } = await load());
     if (!pairing) throw new Error('Not signed in.');
   } else if (!sites[origin]) {
@@ -573,18 +675,22 @@ const popupPorts = new Set<chrome.runtime.Port>();
 async function state() {
   const { pairing: p, sites } = await load();
   const m = await loadMember();
+  const pend = !m ? await loadPending() : undefined;
+  if (pend) void tryDeal();
   return {
     type: 'state',
-    signedIn: !!p || !!m,
+    signedIn: !!p || !!m || !!pend,
+    /** Made here while no servers answered: whole on this browser until they do. */
+    pending: pend ? { since: pend.since, long: Date.now() - pend.since > 24 * 3600_000 } : undefined,
     /** Holds part of your key (phase 2), rather than signing through a pairing. */
     member: !!m,
     /** An account here with no other device and no paper: the popup keeps a card up. */
     unsafe: !!m && !m.removed && !deviceFor(m).safe(),
     /** Another device removed this browser from the key: final. */
     removed: m?.removed ? { by: m.removed.by } : undefined,
-    name: m ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
-    pubkey: m?.group.groupX ?? p?.pubkey,
-    profile: m?.profile ?? p?.profile,
+    name: m || pend ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
+    pubkey: m?.group.groupX ?? pend?.pubkey ?? p?.pubkey,
+    profile: m?.profile ?? (pend ? { name: pend.name } : undefined) ?? p?.profile,
     perSite: p?.perSite,
     sites: Object.entries(sites).map(([origin, s]) => ({ origin, lastUsed: s.lastUsed })).sort((a, b) => b.lastUsed - a.lastUsed),
     notNow: await notNow(),
@@ -662,7 +768,7 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     port.onDisconnect.addListener(() => safetyPorts.delete(port));
     port.onMessage.addListener(async (msg: any) => {
       const m = await loadMember();
-      if (!m) return port.postMessage({ type: 'paper', error: 'This browser doesn’t hold an account.' });
+      if (!m) return port.postMessage({ type: 'paper', error: (await loadPending()) ? 'Finish setup first: your servers haven’t answered yet, and a backup needs them.' : 'This browser doesn’t hold an account.' });
       const d = deviceFor(m);
       if (msg.type === 'invite') port.postMessage({ type: 'invite', code: d.invite() });
       if (msg.type === 'paper') d.makePaper().then(code => port.postMessage({ type: 'paper', code, pubkey: d.pubkey, name: m.profile?.name }), e => port.postMessage({ type: 'paper', error: (e as Error).message }));

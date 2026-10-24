@@ -18,7 +18,7 @@ const base = {
   // The same view as the toolbar popup, where an add-ons list offers "Settings" (Firefox
   // on Android's add-on page, chrome://extensions → Details → Extension options).
   options_ui: { page: 'popup.html', open_in_tab: false },
-  permissions: ['storage', 'activeTab'],
+  permissions: ['storage', 'activeTab', 'alarms'],
   content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: false }],
   // WebAssembly (Cosign's FROST, phase 2) needs 'wasm-unsafe-eval'; nothing else is relaxed.
   content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" },

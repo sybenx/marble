@@ -77,6 +77,13 @@ your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssem
   refresh (`refresh_plan`, `refresh_part`, and `mail` the servers kept while it was
   away) and moves to the new epoch, same npub (`src/member/refresh.ts`, ported from
   `~/cosign/server/refresh.ts`).
+- **When servers don't answer:** if Create account can't reach servers within ~30 s,
+  the key is made here (`src/member/pending.ts`), kept wrapped (AES-GCM under a
+  non-extractable browser key) and signs at once; the popup says "Not protected yet"
+  (with a "!" on the icon after a day), and sign-out/backup are off. Every minute, and
+  whenever a site asks or the popup opens, it tries again; once two servers answer, the
+  key is dealt to them (Cosign's 'dealt' enrollment: this browser 3 shares, each server
+  1) and the whole key is wiped.
 - **Keeping it safe:** an account that lives only in this browser is lost if the
   browser's data goes. Right after Create account the next step is *Make a paper
   backup* (or *Add your phone*); skippable, but the popup keeps a card up until one
@@ -109,7 +116,7 @@ serves a test site on port 8799.
 signs, encrypts, approves a held event with a simulated device lock, survives server A
 going down, and removes a site. `test/weighted.ts` runs the weighted DKG alone; `test/refresh.ts` runs a refresh with
 a removed server inside the extension.
-`test/create.ts` is Create account against two shared servers (`server.ts --root`,
+`test/offline.ts` is Create account with the servers down, then back. `test/create.ts` is Create account against two shared servers (`server.ts --root`,
 open enrollment) named to the extension as seeds.
 
 QRST is vendored from `~/cosign/site/vendor` (QRST commit in `vendor/QRST-COMMIT`).

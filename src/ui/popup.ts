@@ -53,13 +53,19 @@ port.onMessage.addListener((s: any) => {
     `<div class="item"><div><div class="host">${esc(host(x.origin))}</div><div class="muted">used ${ago(x.lastUsed)}</div></div><button class="btn small" data-origin="${esc(x.origin)}">Remove</button></div>`).join('');
   $('sites').hidden = s.sites.length === 0;
   $('none').hidden = s.sites.length > 0;
-  $('device').textContent = s.member ? '' : `Your phone lists this browser as “${s.name}”.`;
+  $('device').textContent = s.member || s.pending ? '' : `Your phone lists this browser as “${s.name}”.`;
   // Signing out would throw away this browser's part of your key; not offered until
   // adding your phone or printing a backup exists.
   $('signOut').hidden = !!s.member;
   $('memberNote').hidden = !s.member;
   $('safety').hidden = !s.unsafe;
   $('removed').hidden = !s.removed;
+  $('pending').hidden = !s.pending;
+  if (s.pending?.long) {
+    $('pendingTitle').textContent = 'Still not protected';
+    $('pendingText').textContent = 'It’s been over a day and no servers have answered. If this browser’s data is lost, your account is gone. Check your connection; Cosign keeps trying.';
+  }
+  if (s.pending) { $('safety').hidden = true; $('signOut').hidden = true; $('memberNote').hidden = true; }
   if (s.removed) $('removedBy').textContent = `${s.removed.by} removed it. It can’t sign any more.`;
 });
 

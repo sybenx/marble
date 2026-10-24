@@ -25,7 +25,7 @@ export async function chooseServers(extraSeeds: Seed[] = []): Promise<Server[]> 
   return pickServers(found, { ping: s => pingHost(s), n: 3 });
 }
 
-export async function createAccount(o: { name: string; servers: Server[]; onStatus: (s: string) => void }): Promise<MemberState> {
+export async function createAccount(o: { name: string; servers: Server[]; onStatus: (s: string) => void; gaveUp?: () => boolean }): Promise<MemberState> {
   if (!o.servers.length) throw new Error('No servers are taking new accounts right now. Try again later.');
   const sk = hex(), me = pubOf(sk);
   const relays = [...new Set(o.servers.flatMap(s => s.relays))].slice(0, 6);
@@ -64,6 +64,8 @@ export async function createAccount(o: { name: string; servers: Server[]; onStat
     };
     const plan = { session: hex(16), threshold: 4, holders: [1, 2, 3].map(idx => ({ idx, pk: me })).concat(ok.map((x, i) => ({ idx: 4 + i, pk: x.key.pk }))) };
 
+    // Past here a key gets made: don't start if the caller has already fallen back.
+    if (o.gaveUp?.()) throw new Error('gave up');
     const enrolled = await Promise.all(ok.map(x => ask(x.s.pk, { type: 'enroll', how: 'dkg', key: x.key.key, group, plan })));
     const bad = enrolled.find(e => e.type !== 'enrolled');
     if (bad) throw new Error(`A server couldn’t take your account (${bad.reason ?? 'no answer'}). Try again.`);
