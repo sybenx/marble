@@ -43,7 +43,8 @@ const ctx = await chromium.launchPersistentContext('', {
   executablePath: `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`,
   headless: !process.env.HEADED, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, ...(process.env.HEADED ? [] : ['--headless=new'])],
 });
-const sw = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent('serviceworker');
+const sw = ctx.serviceWorkers().find(w => w.url().endsWith('/background.js')) ?? await ctx.waitForEvent('serviceworker', w => w.url().endsWith('/background.js'));
+await sleep(1000);
 const extId = sw.url().split('/')[2];
 
 async function card(page: Page, want: string, timeout = 20_000): Promise<Frame> {
