@@ -5,11 +5,13 @@ import { api } from '../env.ts';
 import { mountPairing } from './pair.ts';
 
 const id = location.hash.slice(1);
+// Safari on iPhone floats its toolbar over the bottom of the page, where this card sits.
+if (/iPhone|iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) document.body.classList.add('ios');
 const $ = (s: string) => document.getElementById(s)!;
 const host = (o: string) => { try { return new URL(o).host; } catch { return o; } };
 
 function resize() {
-  requestAnimationFrame(() => parent.postMessage({ cosignCardHeight: document.documentElement.scrollHeight }, '*'));
+  requestAnimationFrame(() => parent.postMessage({ cosignCardHeight: Math.ceil(document.body.getBoundingClientRect().height) }, '*'));
 }
 new ResizeObserver(resize).observe(document.body);
 

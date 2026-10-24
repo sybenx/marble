@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Extension test site</title>
+<style>
+  body { font: 16px/1.45 -apple-system, system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 20px 16px; background: #faf9fc; color: #17151f; }
+  button { font: inherit; font-weight: 600; padding: 12px 16px; border-radius: 10px; border: 1px solid #ddd; background: #fff; margin: 4px 0; width: 100%; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 10px; font-size: 13px; }
+  .ok { color: #187a3c; } .err { color: #c4314b; }
+</style></head>
+<body>
+  <h1>Extension test site</h1>
+  <p id="ext"></p>
+  <button id="who">Sign in</button>
+  <button id="note">Sign a note</button>
+  <button id="dm">Encrypt and decrypt to myself</button>
+  <pre id="out">Nothing yet.</pre>
+<script>
+  const out = document.getElementById('out');
+  const show = (cls, text) => { out.className = cls; out.textContent = text; };
+  setTimeout(() => document.getElementById('ext').textContent = window.nostr ? 'An extension is here (window.nostr).' : 'No extension found.', 300);
+  async function run(f) { const t = performance.now(); show('', 'Waiting…'); try { const r = await f(); show('ok', `${Math.round(performance.now() - t)} ms\n` + (typeof r === 'string' ? r : JSON.stringify(r, null, 2))); } catch (e) { show('err', e.message || String(e)); } }
+  document.getElementById('who').onclick = () => run(() => window.nostr.getPublicKey());
+  document.getElementById('note').onclick = () => run(() => window.nostr.signEvent({ kind: 1, content: 'Hello from the Cosign extension test site', tags: [], created_at: Math.floor(Date.now() / 1000) }));
+  document.getElementById('dm').onclick = () => run(async () => { const me = await window.nostr.getPublicKey(); const c = await window.nostr.nip44.encrypt(me, 'a secret'); return 'decrypted: ' + await window.nostr.nip44.decrypt(me, c); });
+</script>
+</body></html>

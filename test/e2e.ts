@@ -125,18 +125,30 @@ try {
   await pop.waitForTimeout(2500);
   await pop.screenshot({ path: 'shots/desktop-popup-signed-in.png' });
 
-  // 7. Remove it "on the phone": revoke every grant this browser holds.
+  // 7. Remove one site "on the phone": only that site stops.
   const store = await (await ctx.serviceWorkers()[0]).evaluate(() => chrome.storage.local.get(['pairing', 'sites'])) as any;
   const { getPublicKey } = await import('nostr-tools/pure');
-  const keys = [store.pairing.sk, ...Object.values(store.sites).flatMap((s: any) => s.sk ? [s.sk] : [])].map((k: string) => getPublicKey(hexToBytes(k)));
-  log(`per-site grants: ${store.pairing.perSite ? 'yes' : 'no (older server: one grant for the browser)'}; revoking ${keys.length} key(s)`);
-  for (const k of keys) asB({ type: 'revoke', pk: k });
+  const pkOf = (k: string) => getPublicKey(hexToBytes(k));
+  check(!!store.pairing.perSite, `a grant per site (${Object.keys(store.sites).length} sites)`);
+  asB({ type: 'revoke', pk: pkOf(store.sites[SITE2.slice(0, -1)].sk) });
+  await page.waitForTimeout(3000);
+  const gone = await call(page2, `window.nostr.signEvent({ kind: 1, content: 'should not sign', tags: [] })`);
+  check(!gone.ok && /was removed on your phone/.test(gone.e), `removed site refused (${gone.ok ? 'it signed!' : gone.e.split('\n')[0].replace(/^.*Error: /, '')})`);
+  const still = await call(page, `window.nostr.signEvent({ kind: 1, content: 'still here', tags: [] })`);
+  check(still.ok && verifyEvent(still.r as Event), 'the other site still signs');
+  const p4 = call(page2, 'window.nostr.getPublicKey()');
+  await cardFrame(page2, 'Let 127.0.0.1:8799 sign in as');
+  check(true, 'removed site asks Allow again');
+  void p4;
+
+  // 8. Remove the whole browser "on the phone": every site stops, and it's signed out.
+  asB({ type: 'revoke', pk: pkOf(store.pairing.sk) });
   await page.waitForTimeout(3000);
   const after = await call(page, `window.nostr.signEvent({ kind: 1, content: 'should not sign', tags: [] })`);
-  check(!after.ok && /removed/i.test(after.e), `after removal: refused (${after.ok ? 'it signed!' : after.e.replace(/^.*Error: /, '')})`);
+  check(!after.ok && /browser was removed/i.test(after.e), `browser removed: refused (${after.ok ? 'it signed!' : after.e.split('\n')[0].replace(/^.*Error: /, '')})`);
   const p3 = call(page, 'window.nostr.getPublicKey()');
   await cardFrame(page, 'Sign in to localhost:8799');
-  check(true, 'after removal: the site gets the sign-in card again');
+  check(true, 'browser removed: the site gets the sign-in card again');
   void p3;
 } catch (e) {
   failed++;

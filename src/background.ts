@@ -61,7 +61,8 @@ function linkFor(p: Pairing): Link {
   return link;
 }
 
-const removedErr = (e: unknown) => /removed|not connected|not valid/i.test(String((e as Error)?.message ?? e));
+// Servers since Cosign 0.5.0 start every error with a code; older ones only had English.
+const removedErr = (e: unknown) => /^(revoked|not-connected):|removed|not connected/i.test(String((e as Error)?.message ?? e));
 
 async function signOutLocally() {
   link?.close(); link = undefined;
@@ -172,7 +173,12 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
     return result;
   } catch (e) {
     if (removedErr(e)) {
-      if (sites[origin]?.sk) { await forgetSite(origin, false); throw new Error(`${host(origin)} was removed on your phone.`); }
+      if (sites[origin]?.sk) {
+        await forgetSite(origin, false);
+        // Was it just this site, or this whole browser?
+        const alive = await l.call(l.add(pairing.sk), 'get_public_key', [], 20_000).then(() => true, err => !removedErr(err));
+        if (alive) throw new Error(`${host(origin)} was removed on your phone.`);
+      }
       await signOutLocally();
       throw new Error('This browser was removed on your phone. Sign in again.');
     }
