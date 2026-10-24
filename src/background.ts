@@ -106,6 +106,7 @@ async function memberGrant(d: Device, origin: string): Promise<string> {
 }
 
 async function memberNip07(m: MemberState, origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+  if (m.removed) throw new Error('This browser was removed from your key, so it can’t sign any more.');
   const d = deviceFor(m);
   const { sites } = await load();
   if (!sites[origin]) {
@@ -189,8 +190,10 @@ function create(name: string, say: (s: string) => void): Promise<void> {
     // Every site that was waiting for you to sign in goes ahead: you started from it.
     const tabs = new Set<number>();
     for (const a of asks.values()) if (a.kind === 'pair') { await memberGrant(d, a.origin); a.resolve(); if (a.tabId !== undefined) tabs.add(a.tabId); }
-    // The next step: a way back if this browser's data goes. Skippable; the popup keeps asking.
-    if (!d.safe()) for (const tab of tabs) void ask(tab, '', 'backup').catch(() => {});
+    // The next setup step: a way back if this browser's data goes. Skippable; the popup
+    // keeps a card up until it's done.
+    if (!d.safe()) void api.tabs.create({ url: api.runtime.getURL('safety.html#paper&setup') });
+    void tabs;
   })().finally(() => { creating = undefined; });
 }
 
@@ -576,7 +579,9 @@ async function state() {
     /** Holds part of your key (phase 2), rather than signing through a pairing. */
     member: !!m,
     /** An account here with no other device and no paper: the popup keeps a card up. */
-    unsafe: !!m && !deviceFor(m).safe(),
+    unsafe: !!m && !m.removed && !deviceFor(m).safe(),
+    /** Another device removed this browser from the key: final. */
+    removed: m?.removed ? { by: m.removed.by } : undefined,
     name: m ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
     pubkey: m?.group.groupX ?? p?.pubkey,
     profile: m?.profile ?? p?.profile,

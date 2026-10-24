@@ -23,6 +23,7 @@
 </style></head>
 <body>
   <div class="brand noprint"><img src="icon-48.png" alt=""> Cosign</div>
+  <p class="muted noprint" id="setupStep" hidden style="margin:0">Last step</p>
   <h1 class="noprint">Keep your account safe</h1>
   <p class="muted noprint">Your account lives in this browser and your servers. If this browser’s data is lost, a paper backup or your phone gets you back in.</p>
   <div class="tabs noprint"><button class="btn" id="tabPaper">Paper backup</button><button class="btn" id="tabPhone">Add your phone</button></div>
@@ -31,6 +32,7 @@
     <div id="paperStart" class="noprint">
       <p>A code to print or write down and keep somewhere safe, away from this computer. Anyone who has it and your servers can get your account back, after a 3-day wait that you can stop.</p>
       <button class="btn primary" id="makePaper" style="width:100%">Make my paper backup</button>
+      <button class="link" id="skip" hidden style="display:block;margin:6px auto 0">Skip for now</button>
       <p class="muted" id="paperStatus"></p>
     </div>
     <div id="paperDone" hidden>

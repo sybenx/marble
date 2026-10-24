@@ -19,7 +19,7 @@ function show(which: 'paper' | 'phone') {
   $('phone').hidden = which !== 'phone';
   $('tabPaper').classList.toggle('on', which === 'paper');
   $('tabPhone').classList.toggle('on', which === 'phone');
-  history.replaceState(null, '', `#${which}`);
+  history.replaceState(null, '', `#${which}${location.hash.includes('setup') ? '&setup' : ''}`);
   if (which === 'phone') port.postMessage({ type: 'invite' });
 }
 $('tabPaper').onclick = () => show('paper');
@@ -129,4 +129,9 @@ port.onMessage.addListener((m: any) => {
   if (m.type === 'added') $('phoneStatus').textContent = `${m.name} is now one of your devices. You’re covered.`;
 });
 
-show(location.hash === '#phone' ? 'phone' : 'paper');
+// Opened as the step right after Create account: say so, and let it be skipped.
+const setup = location.hash.includes('setup');
+$('setupStep').hidden = !setup;
+$('skip').hidden = !setup;
+$('skip').onclick = () => window.close();
+show(location.hash.startsWith('#phone') ? 'phone' : 'paper');

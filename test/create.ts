@@ -91,7 +91,11 @@ try {
   check(!!pe && verifyEvent(pe) && pe.kind === 0 && JSON.parse(pe.content).name === 'Test Person', 'profile signed (not posted: a test)');
 
   // The next step: a paper backup, offered on the page and kept up in the popup.
-  await card(page, 'One more step', 10_000).then(() => check(true, 'right after: "One more step: a paper backup"'), () => check(false, 'right after: "One more step: a paper backup"'));
+  // The next setup step opens by itself: the backup page, marked "Last step", skippable.
+  let step: Page | undefined;
+  for (let i = 0; i < 40 && !step; i++) { step = ctx.pages().find(p => p.url().includes('safety.html#paper&setup')); if (!step) await sleep(250); }
+  check(!!step && (await step.isVisible('#setupStep')) && (await step.isVisible('#skip')), 'right after: the backup page opens as the last setup step, with Skip for now');
+  await step?.close();
   const extId = sw.url().split('/')[2];
   const pop0 = await ctx.newPage();
   await pop0.goto(`chrome-extension://${extId}/popup.html`);

@@ -59,6 +59,8 @@ port.onMessage.addListener((s: any) => {
   $('signOut').hidden = !!s.member;
   $('memberNote').hidden = !s.member;
   $('safety').hidden = !s.unsafe;
+  $('removed').hidden = !s.removed;
+  if (s.removed) $('removedBy').textContent = `${s.removed.by} removed it. It can’t sign any more.`;
 });
 
 $('sites').addEventListener('click', e => {
