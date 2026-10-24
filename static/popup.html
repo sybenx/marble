@@ -13,6 +13,13 @@
     <h1>Sign in with your phone</h1>
     <p class="muted">Then every site that uses Nostr just works in this browser.</p>
     <div id="pair"></div>
+    <button class="link" id="joinOpen">Join with a server code</button>
+    <div id="joinForm" hidden>
+      <p class="muted">Paste the pairing code from your server’s page. This browser and your servers make your key together, and this browser keeps part of it.</p>
+      <textarea id="joinCode" rows="3" style="width:100%;font:13px ui-monospace,monospace;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--soft);color:var(--fg)" placeholder="cosign:pair?…"></textarea>
+      <button class="btn primary" id="joinGo" style="width:100%;margin-top:8px">Join</button>
+      <p class="muted" id="joinStatus"></p>
+    </div>
   </div>
   <div id="in" hidden>
     <div class="me"><img class="avatar" id="avatar" alt=""><div><div class="name" id="name"></div><div class="muted" id="npub"></div></div></div>
@@ -26,6 +33,7 @@
     </section>
     <p class="muted" id="device"></p>
     <button class="btn danger" id="signOut" style="width:100%">Sign out of this browser</button>
+    <p class="muted" id="memberNote" hidden>This browser holds part of your key and signs with your servers; your phone isn’t needed.</p>
   </div>
   <script src="popup.js"></script>
 </body></html>

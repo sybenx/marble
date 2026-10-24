@@ -23,6 +23,12 @@ api.tabs.query({ active: true, currentWindow: true }).then(([t]) => {
 
 const port = api.runtime.connect({ name: 'popup' });
 port.onMessage.addListener((s: any) => {
+  if (s.type === 'join') {
+    $('joinStatus').textContent = s.text;
+    $('joinStatus').classList.toggle('error', !!s.error);
+    ($('joinGo') as HTMLButtonElement).disabled = !s.error && !s.done;
+    return;
+  }
   if (s.type !== 'state') return;
   $('out').hidden = s.signedIn;
   $('in').hidden = !s.signedIn;
@@ -44,7 +50,11 @@ port.onMessage.addListener((s: any) => {
     `<div class="item"><div><div class="host">${esc(host(x.origin))}</div><div class="muted">used ${ago(x.lastUsed)}</div></div><button class="btn small" data-origin="${esc(x.origin)}">Remove</button></div>`).join('');
   $('sites').hidden = s.sites.length === 0;
   $('none').hidden = s.sites.length > 0;
-  $('device').textContent = `Your phone lists this browser as “${s.name}”.`;
+  $('device').textContent = s.member ? '' : `Your phone lists this browser as “${s.name}”.`;
+  // Signing out would throw away this browser's part of your key; not offered until
+  // adding your phone or printing a backup exists.
+  $('signOut').hidden = !!s.member;
+  $('memberNote').hidden = !s.member;
 });
 
 $('sites').addEventListener('click', e => {
@@ -54,4 +64,13 @@ $('sites').addEventListener('click', e => {
 $('allow').onclick = () => here && api.runtime.sendMessage({ type: 'allow-site', origin: here });
 $('signOut').onclick = () => {
   if (confirm('Sign out of this browser? Every site here stops signing as you.')) api.runtime.sendMessage({ type: 'sign-out' });
+};
+
+$('joinOpen').onclick = () => { $('joinForm').hidden = false; $('joinOpen').hidden = true; ($('joinCode') as HTMLTextAreaElement).focus(); };
+$('joinGo').onclick = () => {
+  const uri = ($('joinCode') as HTMLTextAreaElement).value.trim();
+  if (!uri) return;
+  ($('joinGo') as HTMLButtonElement).disabled = true;
+  $('joinStatus').textContent = 'Connecting…';
+  port.postMessage({ type: 'join', uri });
 };

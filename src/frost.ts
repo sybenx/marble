@@ -32,3 +32,7 @@ export const commit = (g: Group, idx: number, share: string) => JSON.parse(w.com
 export const sign = (g: Group, idx: number, share: string, nonces: string, msg: string, commits: Commit[]) => w.sign(j(g), idx, share, nonces, msg, j(commits));
 export const verifyPartial = (g: Group, msg: string, commits: Commit[], idx: number, z: string) => w.verifyPartial(j(g), msg, j(commits), idx, z);
 export const aggregate = (g: Group, msg: string, commits: Commit[], partials: [number, string][]) => w.aggregate(j(g), msg, j(commits), j(partials));
+
+// Threshold ECDH for NIP-04/NIP-44 (not FROST): each share gives λ_i·s_i·P; the sum is s·P.
+export const ecdhPartial = (idx: number, share: string, participants: number[], peerX: string) => w.ecdhPartial(idx, share, Uint16Array.from(participants), peerX);
+export const ecdhCombine = (points: string[]) => w.ecdhCombine(points);

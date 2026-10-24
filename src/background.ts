@@ -13,6 +13,12 @@ import { SimplePool } from 'nostr-tools/pool';
 import { signerTicket, type Ticket } from './ticket.ts';
 import { Link, newKey } from './link.ts';
 import { api, deviceName } from './env.ts';
+import * as nip44 from 'nostr-tools/nip44';
+import { getPublicKey } from 'nostr-tools/pure';
+import { extract } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { Device, type MemberState } from './member/device.ts';
 
 const DEFAULT_RELAYS = ['wss://syb.lol', 'wss://nos.lol', 'wss://relay.primal.net'];
 const BASE_URL = 'https://cosign.aaro.cc/';
@@ -61,6 +67,109 @@ function linkFor(p: Pairing): Link {
   return link;
 }
 
+// --- Phase 2: this browser as a device holding part of your key -----------------
+//
+// When it is one, sites sign through the device (this browser + one server) instead of
+// through the phase 1 pairing. Each website's grant key only names the grant.
+
+let device: Device | undefined;
+async function loadMember(): Promise<MemberState | undefined> {
+  return ((await api.storage.local.get('member')) as { member?: MemberState }).member;
+}
+const saveMember = (m: MemberState) => api.storage.local.set({ member: m });
+function deviceFor(m: MemberState): Device {
+  if (!device || device.st.sk !== m.sk) { device?.close(); device = new Device(m, st => void saveMember(st)); }
+  return device;
+}
+
+async function memberGrant(d: Device, origin: string): Promise<string> {
+  const { sites } = await load();
+  const have = sites[origin];
+  if (have?.sk) return getPublicKey(hexToBytes(have.sk));
+  const sk = newKey();
+  sites[origin] = { sk, added: Date.now(), lastUsed: Date.now() };
+  await saveSites(sites);
+  const pk = getPublicKey(hexToBytes(sk));
+  d.grant(pk, origin, deviceName());
+  changed();
+  return pk;
+}
+
+async function memberNip07(m: MemberState, origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+  const d = deviceFor(m);
+  const { sites } = await load();
+  if (!sites[origin]) {
+    if ((await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    await ask(tabId, origin, 'allow');
+  }
+  const grant = await memberGrant(d, origin);
+  if (method === 'getPublicKey') return d.pubkey;
+  if (method === 'getRelays') return {};
+  // A grant just sent may not have reached the servers yet: try again for a few seconds.
+  const fresh = Date.now() - ((await load()).sites[origin]?.added ?? 0) < 15_000;
+  const retrying = async <T>(f: () => Promise<T>): Promise<T> => {
+    for (let i = 0; ; i++) {
+      try { return await f(); } catch (e) {
+        if (!(fresh && i < 4 && /^revoked:/.test((e as Error).message))) throw e;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+  };
+  setBusy(1);
+  try {
+    let result: unknown;
+    switch (method) {
+      case 'signEvent': {
+        const t = params.event ?? params;
+        const tmpl = { kind: t.kind, content: t.content ?? '', tags: t.tags ?? [], created_at: t.created_at ?? Math.floor(Date.now() / 1000) };
+        try { result = await retrying(() => d.sign(tmpl, grant)); }
+        catch (e) {
+          const held = /^needs-approval:\s*(.*)$/s.exec((e as Error).message);
+          if (!held) throw e;
+          await ask(tabId, origin, 'approve', held[1]);
+          result = await d.sign(tmpl, grant, true);
+        }
+        break;
+      }
+      case 'nip44.encrypt': result = nip44.v2.encrypt(params.plaintext, extract(sha256, await retrying(() => d.ecdh(params.peer, grant)), utf8ToBytes('nip44-v2'))); break;
+      case 'nip44.decrypt': result = nip44.v2.decrypt(params.ciphertext, extract(sha256, await retrying(() => d.ecdh(params.peer, grant)), utf8ToBytes('nip44-v2'))); break;
+      case 'nip04.encrypt': result = await nip04(await retrying(() => d.ecdh(params.peer, grant)), params.plaintext, false); break;
+      case 'nip04.decrypt': result = await nip04(await retrying(() => d.ecdh(params.peer, grant)), params.ciphertext, true); break;
+      default: throw new Error(`Not supported: ${method}`);
+    }
+    const now = await load();
+    if (now.sites[origin]) { now.sites[origin].lastUsed = Date.now(); await saveSites(now.sites); }
+    return result;
+  } catch (e) {
+    if (/^revoked:/.test((e as Error).message)) { await forgetSite(origin, false); throw new Error(`${host(origin)} was removed.`); }
+    throw new Error(String((e as Error).message).replace(/^(needs-approval|refused):\s*/, ''));
+  } finally { setBusy(-1); }
+}
+
+/** NIP-04: AES-256-CBC keyed by the shared x coordinate. */
+async function nip04(x: Uint8Array, text: string, decrypt: boolean): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', x as BufferSource, { name: 'AES-CBC' }, false, ['encrypt', 'decrypt']);
+  const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
+  const unb64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  if (decrypt) {
+    const [ct, iv] = text.split('?iv=');
+    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-CBC', iv: unb64(iv) }, key, unb64(ct)));
+  }
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(text)));
+  return `${b64(ct)}?iv=${b64(iv)}`;
+}
+
+let joining: Promise<void> | undefined;
+function join(uri: string, status: (s: string) => void): Promise<void> {
+  return joining ??= Device.join(uri, status).then(async m => {
+    await saveMember(m);
+    deviceFor(m);
+    await setNotNow([]);
+    changed();
+  }).finally(() => { joining = undefined; });
+}
+
 // Servers since Cosign 0.5.0 start every error with a code; older ones only had English.
 const removedErr = (e: unknown) => /^(revoked|not-connected):|removed|not connected/i.test(String((e as Error)?.message ?? e));
 
@@ -103,7 +212,9 @@ async function forgetSite(origin: string, tellServer: boolean) {
   delete sites[origin];
   await saveSites(sites);
   changed();
-  if (tellServer && pairing && s.sk) {
+  const m = await loadMember();
+  if (tellServer && m && s.sk) deviceFor(m).forget(getPublicKey(hexToBytes(s.sk)));
+  else if (tellServer && pairing && s.sk) {
     const l = linkFor(pairing);
     l.call(l.add(s.sk), 'logout', [], 20_000).catch(() => {});
   }
@@ -128,6 +239,8 @@ function setBusy(d: number) {
 }
 
 async function nip07(origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+  const member = await loadMember();
+  if (member) return memberNip07(member, origin, tabId, method, params);
   let { pairing, sites } = await load();
 
   if (!pairing) {
@@ -193,17 +306,18 @@ const host = (origin: string) => { try { return new URL(origin).host; } catch { 
 // A small card drawn over the page (an extension page in a frame the site can't
 // reach). One card per tab and site; every request waiting on it shares the answer.
 
-interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow'; done: Promise<void>; resolve(): void; reject(e: Error): void }
+interface Ask { id: string; tabId?: number; origin: string; kind: 'pair' | 'allow' | 'approve'; detail?: string; done: Promise<void>; resolve(): void; reject(e: Error): void }
 const asks = new Map<string, Ask>();
 
-function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow'): Promise<void> {
-  const existing = [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
+function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' | 'approve', detail?: string): Promise<void> {
+  // Approvals are one per event; sign-in and Allow are one per tab and site.
+  const existing = kind !== 'approve' && [...asks.values()].find(a => a.tabId === tabId && a.origin === origin && a.kind === kind);
   if (existing) return existing.done;
   if (tabId === undefined) return Promise.reject(new Error('Not signed in.'));
   const id = newKey().slice(0, 32);
   let resolve!: () => void, reject!: (e: Error) => void;
   const done = new Promise<void>((y, n) => { resolve = y; reject = n; });
-  const a: Ask = { id, tabId, origin, kind, done, resolve, reject };
+  const a: Ask = { id, tabId, origin, kind, detail, done, resolve, reject };
   asks.set(id, a);
   const close = () => { asks.delete(id); api.tabs.sendMessage(tabId, { type: 'card', url: null, id }).catch(() => {}); };
   done.then(close, close);
@@ -217,9 +331,13 @@ async function answer(id: string, yes: boolean) {
   if (yes) {
     if (a.kind === 'allow') {
       const { pairing, sites } = await load();
-      if (pairing) await grantFor(pairing, sites, a.origin).catch(e => a.reject(e));
+      const m = await loadMember();
+      if (m) await memberGrant(deviceFor(m), a.origin);
+      else if (pairing) await grantFor(pairing, sites, a.origin).catch(e => a.reject(e));
     }
     a.resolve();
+  } else if (a.kind === 'approve') {
+    a.reject(new Error('You didn’t approve it.'));
   } else {
     await setNotNow([...new Set([...(await notNow()), a.origin])]);
     a.reject(new Error('You said not now.'));
@@ -301,11 +419,14 @@ async function fetchProfile(p: Pairing) {
 const popupPorts = new Set<chrome.runtime.Port>();
 async function state() {
   const { pairing: p, sites } = await load();
+  const m = await loadMember();
   return {
     type: 'state',
-    signedIn: !!p,
-    name: p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
-    pubkey: p?.pubkey,
+    signedIn: !!p || !!m,
+    /** Holds part of your key (phase 2), rather than signing through a pairing. */
+    member: !!m,
+    name: m ? deviceName() : p?.perSite === false && p.claim ? new URL(p.claim).host : p?.name,
+    pubkey: m?.group.groupX ?? p?.pubkey,
     profile: p?.profile,
     perSite: p?.perSite,
     sites: Object.entries(sites).map(([origin, s]) => ({ origin, lastUsed: s.lastUsed })).sort((a, b) => b.lastUsed - a.lastUsed),
@@ -328,7 +449,7 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
   }
   if (!isOurs(sender)) return false;
   switch (msg?.type) {
-    case 'card-info': { const a = asks.get(msg.id); reply(a ? { kind: a.kind, origin: a.origin } : null); return false; }
+    case 'card-info': { const a = asks.get(msg.id); reply(a ? { kind: a.kind, origin: a.origin, detail: a.detail } : null); return false; }
     case 'card-answer': void answer(msg.id, !!msg.yes); return false;
     case 'remove-site': void forgetSite(msg.origin, true); return false;
     case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
@@ -358,5 +479,10 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
     popupPorts.add(port);
     port.onDisconnect.addListener(() => popupPorts.delete(port));
     void state().then(s => port.postMessage(s));
+    port.onMessage.addListener((m: any) => {
+      if (m.type !== 'join') return;
+      const say = (text: string, extra: object = {}) => { try { port.postMessage({ type: 'join', text, ...extra }); } catch { /* popup closed */ } };
+      join(String(m.uri ?? ''), say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));
+    });
   }
 });

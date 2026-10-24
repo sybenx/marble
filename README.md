@@ -53,6 +53,24 @@ Android) and `dist/safari` (used by the Xcode project in `safari/`).
   phone: Settings → Apps → Safari → Extensions → Cosign → Allow Extension, and set
   *All Websites* to **Allow** (otherwise Safari asks on every site).
 
+## Phase 2 (in progress): this browser holds part of your key
+
+With Cosign's weighted keys (COSIGN.md 0.2: 4 points to sign, each device 3, each
+server 1, paper 2), the extension can be a device of its own: it signs with one of
+your servers, no phone needed. Code in `src/member/`, Cosign's FROST as WebAssembly in
+`vendor/cosign-frost` (see `SOURCE`).
+
+- **Joining:** popup → *Join with a server code* → paste the `cosign:pair?…` code from
+  a weighted server's page. The browser and the servers make the key together (DKG);
+  nobody ever holds it. *Create account* will do the same without a code once public
+  servers take new accounts.
+- **Signing:** this browser runs each round and asks its fastest server for the last
+  point, the next one 300 ms later if that one is slow.
+- **Destructive things** (emptying your follows, wiping your profile…) show a card:
+  *Approve*, confirmed with your device lock (a passkey of the extension's own).
+- **Not yet:** *Create account*, picking three public servers, adding your phone,
+  the paper backup, and signing out (it would throw away this browser's part).
+
 ## Tests
 
 With the throwaway Cosign servers running (`~/cosign/server`: `node server.ts data/a`
@@ -67,5 +85,10 @@ removing one site, removing the whole browser. `test/fake-phone.ts` stands in fo
 phone (it answers a code given as a link or a screenshot); `test/tube.ts` signs in to
 tube.syb.lol; `test/firefox.ts` does the same in desktop Firefox; `test/serve.mjs`
 serves a test site on port 8799.
+
+`test/member.ts` is phase 2 end to end: it sets up a fresh weighted group from
+`~/cosign/server` on port 8761 (in `.test-group/`), joins it through the popup, then
+signs, encrypts, approves a held event with a simulated device lock, survives server A
+going down, and removes a site. `test/weighted.ts` runs the weighted DKG alone.
 
 QRST is vendored from `~/cosign/site/vendor` (QRST commit in `vendor/QRST-COMMIT`).

@@ -6,3 +6,4 @@ safari/build
 safari/**/xcuserdata
 shots
 .ffprofile
+.test-group
