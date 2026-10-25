@@ -277,11 +277,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
         lookedAt = 0
         scope.launch {
             if (restored.await()) afterPaint()
-            if (Sources.viewAs != null) knowInterests()
             launch { loadStories(onScreen) }
             val posts = try { buildPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             if (posts == null) return@launch feed.update { it.copy(loading = false, failed = it.posts.isEmpty() && it.stories.isEmpty()) }
             feed.update { it.copy(posts = posts, loading = false, at = System.currentTimeMillis()) }
+            if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             saveFeed()
             loadPreviews(posts.map { it.e })
         }
@@ -299,6 +299,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         allStories.value = all
         val box = Calm.todays(all.filter { unseen("t:" + it.id) && "t:" + it.id !in skip }, interests, Clock.now())
         feed.update { it.copy(stories = box) }
+        if (box.isNotEmpty()) Startup.mark("feed stories ${box.size}")
         saveFeed()
     }
 
