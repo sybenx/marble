@@ -284,7 +284,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
                     if (waiting + fresh > 0) Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(9.dp)
-                        .background(if (waiting > 0) Vault.Amber else Vault.Teal, CircleShape))
+                        .background(if (waiting > 0) Vault.Amber else Vault.Accent, CircleShape))
                 }
             }
             Spacer(Modifier.width(4.dp))
@@ -303,13 +303,13 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                 if (feed.failed) item(key = "failed") {
                     Column(Modifier.padding(24.dp)) {
                         Text("Discover isn't answering right now.", color = Vault.Text)
-                        TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Teal) }
+                        TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Accent) }
                     }
                 }
                 // Today's stories, kept together at the top; never between the posts.
                 if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved) { nav.open(Route.Stories) } }
                 if (posts.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
+                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
                 }
                 if (posts.isNotEmpty()) item(key = "from people") {
                     Text("From people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted, modifier = Modifier.padding(start = 18.dp, top = 6.dp, bottom = 10.dp))
@@ -375,7 +375,7 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
     Row(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
         Column(Modifier.weight(1f)) {
             Text(androidx.compose.ui.text.buildAnnotatedString {
-                withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Teal)) { append(TopicFeeds.name(c.topic)) }
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(TopicFeeds.name(c.topic)) }
                 append(" · " + c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "")
             }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
@@ -405,7 +405,7 @@ private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
         Text("💬 Discussed on ", color = Vault.Muted, style = style, maxLines = 1)
         list.forEachIndexed { i, d ->
             if (i > 0) Text(" · ", color = Vault.Muted, style = style)
-            Text(d.site + (d.comments?.let { " ($it)" } ?: ""), color = Vault.Teal, style = style, maxLines = 1,
+            Text(d.site + (d.comments?.let { " ($it)" } ?: ""), color = Vault.Accent, style = style, maxLines = 1,
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { openInBrowser(context, d.url) }.padding(vertical = 2.dp))
         }
     }
@@ -465,7 +465,7 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     val list = remember(all, dismissed) { all?.filter { "t:" + it.id !in dismissed } ?: emptyList() }
     val state = rememberLazyListState()
     SeenWatcher(state, social) { listOf(it) }
-    if (all == null) Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
+    if (all == null) Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
     else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         items(list, key = { "t:" + it.id }) { s ->
@@ -712,13 +712,13 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     // Why it's here: its topic, then who vouches for it.
     pick?.reason?.takeIf { it.isNotEmpty() }?.let { r ->
         Text(androidx.compose.ui.text.buildAnnotatedString {
-            withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Teal)) { append(r.substringBefore(" · ")) }
+            withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(r.substringBefore(" · ")) }
             if (" · " in r) append(" · " + r.substringAfter(" · "))
         }, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth().clickable { nav.thread(n.id) }.padding(start = 68.dp, end = 16.dp, top = 12.dp))
     }
     Row(
-        Modifier.fillMaxWidth().background(if (lit) Vault.TealGround else Color.Transparent)
+        Modifier.fillMaxWidth().background(if (lit) Vault.AccentGround else Color.Transparent)
             .clickable { nav.thread(n.id) }.padding(start = 16.dp + (indent * 14).dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
     ) {
         Avatar(author, n.pubkey, if (indent > 0) 32 else 40, Modifier.clickable { nav.profile(n.pubkey) })
@@ -773,7 +773,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 // Save: into your bookmarks.
                 if (onSave != null) {
                     Spacer(Modifier.weight(1f))
-                    Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Teal else Vault.Muted,
+                    Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Accent else Vault.Muted,
                         modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = onSave).padding(10.dp))
                 }
             }
@@ -849,7 +849,7 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
     data class Vid(val v: VideoRef) : Media()
 
     fun annotated(people: Map<String, Person>, nav: Nav): AnnotatedString = buildAnnotatedString {
-        val style = TextLinkStyles(SpanStyle(color = Vault.Teal))
+        val style = TextLinkStyles(SpanStyle(color = Vault.Accent))
         for (p in parts) when (p) {
             is Part.Plain -> append(p.s)
             is Part.Link -> withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
@@ -982,7 +982,7 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     val shown = thread
     Box(Modifier.weight(1f)) {
         when {
-            shown == null -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
+            shown == null -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             shown.isEmpty() -> Text("Couldn't find this post.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
                 items(shown, key = { it.first.id }) { (e, depth) ->
@@ -991,7 +991,7 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
                     if (depth == 0) HorizontalDivider(color = Vault.Edge)
                 }
                 if (loading) item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Teal, strokeWidth = 2.dp) }
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
                 }
             }
         }
@@ -1022,10 +1022,10 @@ private fun ReplyBox(parent: Event, people: Map<String, Person>, social: Social,
                 shape = RoundedCornerShape(20.dp),
                 colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, disabledContainerColor = Vault.Surface,
                     focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent,
-                    focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, disabledTextColor = Vault.Muted, cursorColor = Vault.Teal))
+                    focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, disabledTextColor = Vault.Muted, cursorColor = Vault.Accent))
             Spacer(Modifier.width(6.dp))
             val ready = text.isNotBlank() && !sending
-            Box(Modifier.padding(bottom = 4.dp).size(48.dp).clip(CircleShape).background(if (ready) Vault.Teal else Vault.Surface).clickable(enabled = ready) {
+            Box(Modifier.padding(bottom = 4.dp).size(48.dp).clip(CircleShape).background(if (ready) Vault.Accent else Vault.Surface).clickable(enabled = ready) {
                 sending = true
                 scope.launch {
                     if (social.reply(parent, text) != null) { text = ""; onSent() }
@@ -1102,17 +1102,17 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                 when {
                     pk == social.me -> Text("This is you", color = Vault.Muted)
                     pk in busy || follows == null -> OutlinedButton({}, Modifier.height(44.dp), enabled = false, border = BorderStroke(1.dp, Vault.Line)) {
-                        CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Teal, strokeWidth = 2.dp)
+                        CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp)
                     }
                     pk in follows!! -> OutlinedButton({ social.follow(pk, false) }, Modifier.height(44.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Following · Unfollow", color = Vault.Text) }
-                    else -> Button({ social.follow(pk, true) }, Modifier.height(44.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Follow") }
+                    else -> Button({ social.follow(pk, true) }, Modifier.height(44.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Follow") }
                 }
                 Spacer(Modifier.height(8.dp))
             }
             HorizontalDivider(color = Vault.Edge)
         }
         when {
-            notes.isNullOrEmpty() && !settled -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) } }
+            notes.isNullOrEmpty() && !settled -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
             notes.isNullOrEmpty() -> item(key = "none") { Text("No posts yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
             else -> {
                 items(notes!!, key = { it.id }) { n ->
@@ -1121,7 +1121,7 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                 }
                 item(key = "more") {
                     LaunchedEffect(notes!!.size, settled) { nextPage() }
-                    if (paging || !settled) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Teal, strokeWidth = 2.dp) }
+                    if (paging || !settled) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
                 }
             }
         }
@@ -1192,7 +1192,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             trailingIcon = { if (q.isNotEmpty()) IconButton({ q = ""; social.clearSearch(); focus.requestFocus() }) { Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted) } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Teal),
+                unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
         )
     }
     val f = found ?: return@Column Text("Search names, words or #hashtags. Paste a link to someone or a post to open it.",
@@ -1200,8 +1200,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         // Still looking: a spinner while there's nothing yet, a thin bar once results are showing.
         if (f.loading) item(key = "loading") {
-            if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
-            else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Teal, trackColor = Color.Transparent)
+            if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+            else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         }
         if (f.people.isNotEmpty()) {
             item(key = "ph") { Heading("People") }
@@ -1238,9 +1238,9 @@ private fun PersonRow(pk: String, p: Person?, h: Hit?, nav: Nav) =
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(p?.shown ?: h?.name ?: shortNpub(pk), color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false))
-                if (h?.nip05 == Nip05.Check.OK) Icon(Icons.Filled.CheckCircle, "Checked", tint = Vault.Teal, modifier = Modifier.padding(start = 5.dp).size(15.dp))
-                if (h?.follow == true) Text("Following", color = Vault.Teal, style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(start = 6.dp).border(1.dp, Vault.TealEdge, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+                if (h?.nip05 == Nip05.Check.OK) Icon(Icons.Filled.CheckCircle, "Checked", tint = Vault.Accent, modifier = Modifier.padding(start = 5.dp).size(15.dp))
+                if (h?.follow == true) Text("Following", color = Vault.Accent, style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 6.dp).border(1.dp, Vault.AccentEdge, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
             }
             // Their address (unless it named someone else), and how many follow them.
             val line = listOfNotNull(p?.nip05?.removePrefix("_@")?.takeIf { h?.nip05 != Nip05.Check.WRONG && !it.startsWith("npub1") }, h?.followers?.takeIf { it > 0 }?.let { followers(it) })
@@ -1280,7 +1280,7 @@ private fun BellScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(
         }
         item(key = "nh") { Heading("Replies, mentions and likes") }
         if (notices.list.isEmpty()) item(key = "empty") {
-            if (notices.loading) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
+            if (notices.loading) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             else Text("Nothing yet. When someone replies to you, mentions you or likes your notes, it shows up here.", color = Vault.Muted,
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
         }
@@ -1302,7 +1302,7 @@ private fun NoticeRow(n: Notice, people: Map<String, Person>, fresh: Boolean, so
         else -> n.about?.let { social.note(it)?.content } ?: ""
     }
     Row(
-        Modifier.fillMaxWidth().background(if (fresh) Vault.TealGround else Color.Transparent)
+        Modifier.fillMaxWidth().background(if (fresh) Vault.AccentGround else Color.Transparent)
             .clickable { n.about?.let(nav::thread) }.padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
         Avatar(who, n.event.pubkey, 36, Modifier.clickable { nav.profile(n.event.pubkey) })

@@ -15,7 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import cc.aaro.cosign.R
 
-// "Vault": warm black, amber wherever a key leaves this phone, teal wherever one
+// "Vault": warm black, amber wherever a key leaves this phone, cobalt (the accent) wherever one
 // arrives. Amber is never used for "verified" or "safe" (§11.2b). In light mode the same
 // calm: warm paper instead of warm black, the teal deeper so it reads on white.
 
@@ -36,9 +36,13 @@ object Vault {
     val AmberEdge get() = pick(0xFF5A4520, 0xFFE3C27E)
     val AmberText get() = pick(0xFFE9CF97, 0xFF7A5210)
     val AmberGround get() = pick(0xFF221A0D, 0xFFFBF0D9)
-    val Teal get() = pick(0xFF7FC8C0, 0xFF2C7F77)
-    val TealEdge get() = pick(0xFF2F4A47, 0xFFA9D3CE)
-    val TealGround get() = pick(0xFF16201F, 0xFFE4F2F0)
+    /**
+     * The accent (links, buttons, topic labels, what's on): Marble's cobalt, the app icon's hue (227°).
+     * Dark mode lighter so it reads: #8DA2F0 on the dark ground is 7.7:1; #2E4CB8 on paper 6.7:1.
+     */
+    val Accent get() = pick(0xFF8DA2F0, 0xFF2E4CB8)
+    val AccentEdge get() = pick(0xFF2E3A66, 0xFFB9C5F0)
+    val AccentGround get() = pick(0xFF161A2B, 0xFFE6EBFA)
     val Danger get() = pick(0xFFE5736B, 0xFFC2453C)
     /** Behind a sheet: the page dimmed. */
     val Scrim get() = Color(if (dark) 0xCC0B0A09 else 0x8C1F1B16)
@@ -46,7 +50,7 @@ object Vault {
 
 // Kept for the few places that name the direction's color directly.
 val Release get() = Vault.Amber
-val Receipt get() = Vault.Teal
+val Receipt get() = Vault.Accent
 val Danger get() = Vault.Danger
 
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
@@ -65,7 +69,7 @@ val PlexMono = FontFamily(
 private fun scheme() = (if (Vault.dark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()).copy(
     primary = Vault.Text,
     onPrimary = Vault.Ground,
-    secondary = Vault.Teal,
+    secondary = Vault.Accent,
     background = Vault.Ground,
     surface = Vault.Ground,
     surfaceVariant = Vault.Surface,
