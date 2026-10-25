@@ -28,6 +28,9 @@ import type { Seed } from './servers.ts';
 
 // nos.lol left out while it's down (2026-10-24); relays that fail are skipped anyway.
 const DEFAULT_RELAYS = ['wss://syb.lol', 'wss://relay.primal.net'];
+// Tried for the sign-in code when neither of those passes QRST's echo test; without them
+// the code never appeared.
+const FALLBACK_RELAYS = ['wss://nos.lol', 'wss://relay.damus.io'];
 const BASE_URL = 'https://cosign.aaro.cc/';
 
 interface Pairing {
@@ -412,6 +415,7 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
 
   if (!pairing) {
     if ((await notNow()).includes(origin)) throw new Error('Not signed in.');
+    startPairing(); // the code is ready by the time you tap Sign in with Marble
     await ask(tabId, origin, 'pair');
     // Signed in by phone (a pairing), or made an account here (a member).
     const made = await loadMember();
@@ -587,10 +591,19 @@ function pairEmit() { for (const p of pairPorts) p.postMessage({ type: 'pair', v
 
 function startPairing() {
   if (pairing && !pairing.view.error && !pairing.view.done) return pairEmit();
-  const store = new Store(undefined, () => Math.floor(Date.now() / 1000), [], DEFAULT_RELAYS);
-  const t = Transfer.show({ profile: signerTicket, store, env: browserEnv(), baseUrl: BASE_URL, origin: originClaim(), check: 'none' }, 'receiver');
+  const store = new Store(undefined, () => Math.floor(Date.now() / 1000), FALLBACK_RELAYS, DEFAULT_RELAYS);
+  // Shows the code 0.4 s after the first relay passes, not QRST's 1.2 s: a second relay
+  // that answers in that time is still listed, and a slow one no longer holds up the code.
+  const t = Transfer.show({ profile: signerTicket, store, env: browserEnv(), baseUrl: BASE_URL, origin: originClaim(), check: 'none', timing: { graceMs: 400 } }, 'receiver');
   const view: PairView = { status: 'Getting a code…' };
   pairing = { t, view };
+  // QRST keeps trying relays until one works; say so instead of "Getting a code…" for ever.
+  const me = pairing;
+  setTimeout(() => {
+    if (pairing !== me || view.uri || view.error || view.done || view.busy) return;
+    view.status = 'Still getting a code. Check your internet connection.';
+    pairEmit();
+  }, 6000);
   let finished = false, contacted: ReturnType<typeof setTimeout> | undefined;
   t.onChange = () => {
     const v = t.view();
@@ -696,7 +709,9 @@ async function state() {
     notNow: await notNow(),
   };
 }
-function changed() { void state().then(s => { for (const p of popupPorts) p.postMessage(s); }); }
+function changed() { void state().then(s => { for (const p of popupPorts) p.postMessage(s); cachePopup(s); }); }
+/** The popup draws this at once, before the background (maybe asleep) answers. */
+function cachePopup(s: object) { void api.storage.local.set({ popupCache: s }).catch(() => {}); }
 
 // --- Wiring -----------------------------------------------------------------------
 
@@ -794,7 +809,10 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
   if (port.name === 'popup') {
     popupPorts.add(port);
     port.onDisconnect.addListener(() => popupPorts.delete(port));
-    void state().then(s => port.postMessage(s));
+    void state().then(s => {
+      port.postMessage(s); cachePopup(s);
+      if (!s.signedIn) startPairing(); // ready before Sign in with Marble is tapped
+    });
     port.onMessage.addListener((m: any) => {
       const say = (text: string, extra: object = {}) => { try { port.postMessage({ type: 'join', text, ...extra }); } catch { /* popup closed */ } };
       if (m.type === 'join-existing') joinExisting(say).then(() => say('Done.', { done: true }), e => say((e as Error).message, { error: true }));

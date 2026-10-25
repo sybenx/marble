@@ -36,7 +36,7 @@ async function purpleButton(page: Page): Promise<{ x: number; y: number } | null
   const p = pixels(SHOT), scale = p.w / 1000;
   // Rows that are mostly purple across a button's width; the logo and the purple
   // "Not now" link are far narrower.
-  const purple = (x: number, y: number) => { const [r, g, bl] = p.at(x, y); return Math.abs(r - 0x6b) < 14 && Math.abs(g - 0x4e) < 14 && bl > 235; };
+  const purple = (x: number, y: number) => { const [r, g, bl] = p.at(x, y); return ((Math.abs(r - 0x6b) < 14 && Math.abs(g - 0x4e) < 14) || (Math.abs(r - 138) < 14 && Math.abs(g - 116) < 14)) && bl > 235; }; // light or dark
   const rows: { y: number; x0: number; x1: number }[] = [];
   for (let y = 0; y < p.h; y += 2) {
     let n = 0, x0 = 1e9, x1 = -1;

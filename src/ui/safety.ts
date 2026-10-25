@@ -1,7 +1,7 @@
 // Keeping an account that lives in this browser safe: a paper backup, or your phone.
 // Opened from the popup's card and from the step right after Create account.
 
-import { nip19 } from 'nostr-tools';
+import { bech32 } from '@scure/base';
 import { api } from '../env.ts';
 import { qrSvg } from './pair.ts';
 import { deviceLock } from './lock.ts';
@@ -111,7 +111,7 @@ port.onMessage.addListener((m: any) => {
     $('paperStart').hidden = true; $('paperDone').hidden = false;
     $('paperQr').innerHTML = qrSvg(m.code);
     $('paperCode').textContent = m.code;
-    const who = `${m.name ?? 'your account'} (${nip19.npubEncode(m.pubkey).slice(0, 16)}…)`;
+    const who = `${m.name ?? 'your account'} (${bech32.encode('npub', bech32.toWords(hexToBytes(m.pubkey)), 1000).slice(0, 16)}…)`;
     $('paperWho').textContent = `For ${who}, made ${new Date().toLocaleDateString()}`;
     backup = { code: m.code, words: showWords(m.code), label: `Marble backup — ${who}` };
     // 24 words come once a restore can find the servers from the words alone (Cosign's

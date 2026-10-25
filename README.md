@@ -123,4 +123,9 @@ a removed server inside the extension.
 `test/offline.ts` is Create account with the servers down, then back. `test/create.ts` is Create account against two shared servers (`server.ts --root`,
 open enrollment) named to the extension as seeds.
 
+`test/qr.ts` checks the sign-in code shows within a second of opening the popup or a
+site's card (Chromium; `CHROME_ARGS="--host-resolver-rules=MAP syb.lol 127.0.0.1"` tries
+it with a relay down); `test/qr-ff.ts` does the card in Firefox. `test/popup-speed.ts`
+times opening the popup.
+
 QRST is vendored from `~/cosign/site/vendor` (QRST commit in `vendor/QRST-COMMIT`).

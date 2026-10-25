@@ -22,7 +22,8 @@ const base = {
   content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: false }],
   // WebAssembly (Cosign's FROST, phase 2) needs 'wasm-unsafe-eval'; nothing else is relaxed.
   content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" },
-  web_accessible_resources: [{ resources: ['inpage.js', 'card.html', 'card.js', 'style.css', 'icon-48.png'], matches: ['<all_urls>'] }],
+  // MEASURE=1 (tests only): the popup too, so a test page can time it in a frame.
+  web_accessible_resources: [{ resources: ['inpage.js', 'card.html', 'card.js', 'style.css', 'icon-48.png', ...(process.env.MEASURE ? ['popup.html', 'popup.js'] : [])], matches: ['<all_urls>'] }],
 };
 
 const manifests = {
@@ -54,7 +55,7 @@ for (const t of targets) {
   mkdirSync(out, { recursive: true });
   await build({
     entryPoints: { background: 'src/background.ts', content: 'src/content.ts', inpage: 'src/inpage.ts', card: 'src/ui/card.ts', popup: 'src/ui/popup.ts', safety: 'src/ui/safety.ts', 'spike-weighted': 'src/spike/weighted.ts', 'spike-refresh': 'src/spike/refresh.ts' },
-    outdir: out, bundle: true, format: 'iife', target: ['chrome116', 'firefox128', 'safari16'], minify: false, logLevel: 'warning',
+    outdir: out, bundle: true, format: 'iife', target: ['chrome116', 'firefox128', 'safari16'], minify: true, sourcemap: 'linked', logLevel: 'warning',
     // wasm-bindgen's default loader looks at import.meta.url; ours loads the module itself.
     define: { 'import.meta.url': 'undefined' },
   });

@@ -1,12 +1,15 @@
 // The toolbar popup: who you're signed in as, the sites using this browser, and the
 // way out.
 
-import { nip19 } from 'nostr-tools';
+import { bech32 } from '@scure/base';
+import { hexToBytes } from '@noble/hashes/utils.js';
 import { api, isNarrow } from '../env.ts';
 import { mountSignIn, qrSvg } from './pair.ts';
 
 if (isNarrow()) document.documentElement.classList.add('phone');
 const $ = (s: string) => document.getElementById(s)!;
+// Just the npub encoding, not all of nostr-tools: the popup should open at once.
+const npubOf = (hex: string) => bech32.encode('npub', bech32.toWords(hexToBytes(hex)), 1000);
 const host = (o: string) => { try { return new URL(o).host; } catch { return o; } };
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const ago = (ms: number) => {
@@ -24,7 +27,24 @@ api.tabs.query({ active: true, currentWindow: true }).then(([t]) => {
 const port = api.runtime.connect({ name: 'popup' });
 // Keeps the background awake while the popup is open (a join can take a while).
 setInterval(() => { try { port.postMessage({ type: 'ping' }); } catch { /* closed */ } }, 10_000);
+let shownMark = false;
+const mark = () => {
+  if (shownMark) return;
+  shownMark = true;
+  requestAnimationFrame(() => {
+    performance.mark('marble-content');
+    // Timing runs only (a test page frames the popup with #measure).
+    if (location.hash === '#measure' && parent !== window) parent.postMessage({ marbleContent: performance.now() }, '*');
+  });
+};
+// Draw the last known state at once; the background's answer replaces it a moment later.
+let live = false;
+api.storage.local.get('popupCache').then((r: any) => { if (!live && r?.popupCache) { render(r.popupCache); mark(); } }).catch(() => {});
 port.onMessage.addListener((s: any) => {
+  if (s.type === 'state') { live = true; render(s); mark(); return; }
+  render(s);
+});
+function render(s: any) {
   if (s.type === 'join' && s.code) { $('joinQr').innerHTML = qrSvg(s.code); $('joinDeviceCode').textContent = s.code; }
   if (s.type === 'join') {
     $('joinStatus').textContent = s.text;
@@ -38,7 +58,7 @@ port.onMessage.addListener((s: any) => {
   if (!s.signedIn) { unmount ??= mountSignIn($('pair')); return; }
   unmount?.(); unmount = undefined;
 
-  const npub = nip19.npubEncode(s.pubkey);
+  const npub = npubOf(s.pubkey);
   $('name').textContent = s.profile?.name ?? `${npub.slice(0, 12)}…${npub.slice(-6)}`;
   $('npub').textContent = s.profile?.name ? `${npub.slice(0, 12)}…${npub.slice(-6)}` : 'Signed in';
   const av = $('avatar') as HTMLImageElement;
@@ -67,7 +87,7 @@ port.onMessage.addListener((s: any) => {
   }
   if (s.pending) { $('safety').hidden = true; $('signOut').hidden = true; $('memberNote').hidden = true; }
   if (s.removed) $('removedBy').textContent = `${s.removed.by} removed it. It can’t sign any more.`;
-});
+}
 
 $('sites').addEventListener('click', e => {
   const b = (e.target as HTMLElement).closest('button[data-origin]') as HTMLButtonElement | null;
