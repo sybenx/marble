@@ -14,6 +14,8 @@ export ANDROID_HOME=${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools
 VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts)
 [ -n "$VERSION" ] || { echo "no versionName"; exit 1; }
 [ -e "Marble-$VERSION.apk" ] && { echo "Marble-$VERSION.apk already exists: bump the version first"; exit 1; }
+# Release only what's committed: unfinished edits someone is still working on must not ship.
+[ -z "$(git status --porcelain --ignore-submodules=dirty)" ] || { git status --short; echo "uncommitted changes: commit or stash them first"; exit 1; }
 
 (cd android && JAVA_HOME=${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home} ./gradlew -q :app:assembleRelease)
 rm -f Marble-*.apk Marble.apk
