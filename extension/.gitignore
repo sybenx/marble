@@ -1,0 +1,13 @@
+node_modules
+dist
+*.zip
+*.xpi
+safari/build
+safari/**/xcuserdata
+shots
+.ffprofile
+.test-group
+.test-shared
+.test-offline
+.test-three
+marble-firefox.xpi
