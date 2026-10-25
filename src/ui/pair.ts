@@ -16,7 +16,7 @@ export function qrSvg(text: string): string {
   return `<svg viewBox="0 0 ${m.length} ${m.length}" shape-rendering="crispEdges" role="img" aria-label="Sign-in code"><rect width="${m.length}" height="${m.length}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
 }
 
-export interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean; note?: string }
+export interface PairView { uri?: string; status: string; offline?: boolean; confirm?: string; error?: string; done?: boolean; busy?: boolean; note?: string }
 
 /** Draw the pairing into `el`. Calls `onDone` once signed in. */
 export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () => void = () => {}) {
@@ -39,7 +39,7 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
   const draw = (v: PairView) => {
     last = v;
     const showing = !!v.uri && !v.confirm && !v.error && !v.done;
-    const waiting = !v.uri && !v.confirm && !v.error && !v.done && !v.busy;
+    const waiting = !v.uri && !v.confirm && !v.error && !v.done && !v.busy && !v.offline;
     // The code's square is there from the start, so nothing jumps when the code arrives.
     $('.qr').hidden = !((showing || waiting) && preferQr);
     if (waiting) { $('.qr').innerHTML = ''; delete $('.qr').dataset.uri; }
@@ -52,7 +52,7 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
     $('.status').classList.toggle('error', !!v.error);
     $('.confirm').hidden = !v.confirm;
     if (v.confirm) $('.who').textContent = `Sign in as ${v.confirm}?`;
-    $('.retry').hidden = !v.error;
+    $('.retry').hidden = !v.error && !v.offline;
     onResize();
     if (v.done) onDone();
   };

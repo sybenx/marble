@@ -9,7 +9,8 @@ const check = (ok: boolean, what: string) => { log(`${ok ? 'PASS' : 'FAIL'} ${wh
 const LIMIT = Number(process.env.QR_LIMIT_MS ?? 1000);
 const http = createServer((_, res) => { res.setHeader('content-type', 'text/html'); res.end('<h1>site</h1>'); }).listen(8784);
 const ext = new URL('../dist/chrome', import.meta.url).pathname;
-const ctx = await chromium.launchPersistentContext('', { executablePath: `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`, headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', ...(process.env.CHROME_ARGS ? process.env.CHROME_ARGS.split('|') : [])] });
+const LAUNCH = { executablePath: `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`, headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', ...(process.env.CHROME_ARGS ? process.env.CHROME_ARGS.split('|') : [])] };
+const ctx = await chromium.launchPersistentContext('', LAUNCH);
 const sw = ctx.serviceWorkers().find(w => w.url().endsWith('/background.js')) ?? await ctx.waitForEvent('serviceworker', w => w.url().endsWith('/background.js'));
 await new Promise(r => setTimeout(r, 1000));
 const id = sw.url().split('/')[2];
@@ -20,6 +21,25 @@ async function timeQr(scope: Page | Frame, label: string, t: number) {
   const ms = Date.now() - t;
   const status = await scope.textContent('.by-phone .status').catch(() => '');
   check(ok && ms <= LIMIT, `${label}: QR shows ${ok ? `${ms} ms after opening` : 'never (20 s)'}${ok ? '' : `; it says "${status}"`}`);
+}
+async function offline() {
+  const off = await chromium.launchPersistentContext('', { ...LAUNCH, offline: true });
+  try {
+    const w = off.serviceWorkers()[0] ?? await off.waitForEvent('serviceworker');
+    await new Promise(r => setTimeout(r, 500));
+    const p = await off.newPage();
+    await p.goto(`chrome-extension://${w.url().split('/')[2]}/popup.html`);
+    await p.click('button.phone');
+    const said = await p.waitForSelector('.by-phone .retry:not([hidden])', { timeout: 8000 }).then(() => p.textContent('.by-phone .status'), () => '');
+    const box = await p.isVisible('.by-phone .qr');
+    check(/network/.test(said ?? '') && !box, `offline: "${said}" with Retry, no empty box`);
+    await off.setOffline(false);
+    const t = Date.now();
+    // It keeps trying by itself; Retry only starts over sooner.
+    const tapped = await p.click('.by-phone .retry', { timeout: 1000 }).then(() => true, () => false);
+    const ok = await p.waitForSelector('.by-phone .qr svg', { timeout: 10_000 }).then(() => true, () => false);
+    check(ok, `back online: QR ${ok ? `in ${Date.now() - t} ms` : 'never'} (${tapped ? 'after Retry' : 'by itself'})`);
+  } finally { await off.close(); }
 }
 try {
   const pop = await ctx.newPage();
@@ -37,5 +57,6 @@ try {
   for (let i = 0; i < 40 && !card; i++) { card = page.frames().find(f => f.url().includes('/card.html')); if (!card) await page.waitForTimeout(250); }
   await card!.waitForSelector('button.phone', { timeout: 5000 });
   await timeQr(card!, 'site card', asked);
+  if (!process.env.CHROME_ARGS) await offline();
 } catch (e) { failed++; log(`FAIL ${(e as Error).stack}`); }
 finally { await ctx.close(); http.close(); log(failed ? `${failed} failed` : 'all passed'); process.exit(failed ? 1 : 0); }

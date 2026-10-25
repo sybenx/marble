@@ -597,13 +597,15 @@ function startPairing() {
   const t = Transfer.show({ profile: signerTicket, store, env: browserEnv(), baseUrl: BASE_URL, origin: originClaim(), check: 'none', timing: { graceMs: 400 } }, 'receiver');
   const view: PairView = { status: 'Getting a code…' };
   pairing = { t, view };
-  // QRST keeps trying relays until one works; say so instead of "Getting a code…" for ever.
+  // QRST keeps trying relays until one works; say so (with Retry) instead of "Getting a
+  // code…" for ever. The code is drawn the moment one arrives.
   const me = pairing;
-  setTimeout(() => {
+  const slow = () => {
     if (pairing !== me || view.uri || view.error || view.done || view.busy) return;
-    view.status = 'Still getting a code. Check your internet connection.';
+    Object.assign(view, { status: 'Can’t reach the network — retrying…', offline: true });
     pairEmit();
-  }, 6000);
+  };
+  setTimeout(slow, navigator.onLine === false ? 0 : 6000);
   let finished = false, contacted: ReturnType<typeof setTimeout> | undefined;
   t.onChange = () => {
     const v = t.view();
@@ -617,7 +619,7 @@ function startPairing() {
         pairEmit();
       }, 20_000);
     }
-    if (v.uri && v.uri !== view.uri && !view.busy) { view.uri = v.uri; view.status = ''; }
+    if (v.uri && v.uri !== view.uri && !view.busy) { view.uri = v.uri; view.status = ''; view.offline = undefined; }
     view.confirm = !view.busy && v.session.phase === 'accept' && v.session.rendering ? v.session.rendering : undefined;
     if (view.confirm && pairing?.byLink) {
       Object.assign(view, { busy: true, uri: undefined, confirm: undefined, status: 'Signing in…' });
