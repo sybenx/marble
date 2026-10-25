@@ -49,6 +49,16 @@ object Curate {
 
     fun heavy(text: String) = HEAVY.containsMatchIn(text)
 
+    /**
+     * A newsletter or promo digest: "In this week's issue", "Issue #42", a weekly roundup, a subscribe or
+     * sponsored block. Kept out of Discover from strangers (someone you follow can post theirs).
+     */
+    private val DIGEST = Regex("(?i)\\b(in (this|today'?s|this week'?s|this month'?s) (issue|edition|newsletter)|this week'?s (issue|edition)|" +
+        "(issue|edition|ep(isode)?\\.?) ?(no\\.? ?|#) ?\\d{1,4}\\b|weekly (digest|roundup|round-up|recap|newsletter)|" +
+        "subscribe (now|here|today|for free|to (my|our|the) (newsletter|substack))|(this (issue|edition|newsletter) is )?sponsored by|" +
+        "(link|news) ?(roundup|round-up|digest)|unsubscribe)\\b")
+    fun digest(text: String) = DIGEST.containsMatchIn(text)
+
     /** The text a person would read, without links, tags and mentions. */
     fun substance(text: String) = NOISE.replace(text, " ").filter { it.isLetterOrDigit() || it.isWhitespace() }.replace(Regex("\\s+"), " ").trim()
     private fun media(e: Event) = MEDIA.containsMatchIn(e.content) || e.tags.any { it.size > 1 && it[0] == "imeta" }

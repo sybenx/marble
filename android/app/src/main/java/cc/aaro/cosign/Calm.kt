@@ -58,6 +58,8 @@ object Calm {
             e.kind == 1 && (text.length < 60 || (link(e) == null && videos(e) == 0)) -> "no link or video, or too short"
             !readable -> "not in a language you read"
             !standing.follow && Curate.heavy(text) -> "personal or grief post from a stranger"
+            // A link roundup counts too: five links or more.
+            !standing.follow && (Curate.digest(e.content) || urls(e).count { !IMG.containsMatchIn(it) } >= 5) -> "newsletter or digest from a stranger"
             !standing.follow && standing.trustedBy < 3 && standing.followers < 300 -> "nobody you know follows them"
             else -> null
         }

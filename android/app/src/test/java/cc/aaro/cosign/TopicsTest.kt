@@ -153,6 +153,22 @@ class TopicsTest {
         assertEquals("news feed or bot account", Calm.drop(linkPost(11, ok), "me", emptySet(), 26, "Ann", true, friend))
     }
 
+    @Test fun newslettersStayOutFromStrangers() {
+        val stranger = Standing(false, 5, 0)
+        for (t in listOf("📰 **In this week's issue:** Bitcoin Core just changed the rules for AI-discoverable bugs https://nostrmag.com/x",
+                "Issue #42 of the AI weekly is out, with the best agent tools of the week https://example.com/issue-42",
+                "Our weekly roundup of local LLM news, models and tools you missed https://example.com/roundup",
+                "New models everywhere. This edition is sponsored by Acme AI, subscribe now https://example.com/a",
+                "Five good reads this week about LLM agents and the tools around them: https://a.com/1 https://b.com/2 https://c.com/3 https://d.com/4 https://e.com/5"))
+            assertEquals(t, "newsletter or digest from a stranger", Calm.drop(linkPost(t.length, t), "me", emptySet(), 1, "Ann", true, stranger))
+        // From someone you follow it can stay; and ordinary words near these don't trip it.
+        val issue = "In this week's issue: the local LLM I run on my laptop and what it costs https://example.com/n"
+        assertEquals(null, Calm.drop(linkPost(1, issue), "me", emptySet(), 1, "Ann", true, friend))
+        for (t in listOf("Fixed the issue with my local LLM setup, here's what worked for me https://example.com/fix",
+                "This week I finally ran an LLM agent on my own laptop, notes here https://example.com/week"))
+            assertEquals(t, null, Calm.drop(linkPost(t.length + 7, t), "me", emptySet(), 1, "Ann", true, stranger))
+    }
+
     @Test fun reasonsSayWhy() {
         val w = mapOf("ai" to 1.0)
         val e = linkPost(1, "Wrote up how I run a local LLM with ollama https://example.com/x")
