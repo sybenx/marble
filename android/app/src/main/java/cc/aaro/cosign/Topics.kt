@@ -286,20 +286,22 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
  */
 class Seen(private val file: File) {
     private val at = java.util.Collections.synchronizedMap(LinkedHashMap<String, Long>())
+    /** Every key's short form: a post seen here and the same post from another phone are one. */
+    private val shorts = java.util.Collections.synchronizedSet(HashSet<String>())
     init {
         try {
             val now = System.currentTimeMillis() / 1000
-            file.readLines().filter { it.isNotBlank() }.forEach { l -> at[l.substringBefore(' ')] = l.substringAfter(' ', "").toLongOrNull() ?: now }
+            file.readLines().filter { it.isNotBlank() }.forEach { l -> val k = l.substringBefore(' '); at[k] = l.substringAfter(' ', "").toLongOrNull() ?: now; shorts += SeenSync.short(k) }
         } catch (_: Exception) {}
     }
-    /** Seen here, or (by its short key) on another of your phones. */
-    operator fun contains(id: String) = id in at || SeenSync.short(id) in at
+    /** Seen here, or on another of your phones. */
+    operator fun contains(id: String) = SeenSync.short(id) in shorts
     /** Seen just now; true if it's new. */
     fun add(id: String, time: Long = System.currentTimeMillis() / 1000): Boolean {
-        if (id in this) return false
+        if (!shorts.add(SeenSync.short(id))) return false
         at[id] = time
         try {
-            if (at.size > 20_000) { val keep = synchronized(at) { at.entries.toList().takeLast(15_000) }; at.clear(); keep.forEach { at[it.key] = it.value }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
+            if (at.size > 20_000) { val keep = synchronized(at) { at.entries.toList().takeLast(15_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
             else file.appendText("$id $time\n")
         } catch (_: Exception) {}
         return true

@@ -273,7 +273,6 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
         feed.update { it.copy(loading = true, failed = false) }
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
-        scope.launch { afterPaint(); pullSeen() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         lookedAt = 0
         scope.launch {
@@ -397,6 +396,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
+        // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
+        scope.launch { restored.await(); afterPaint(); pullSeen() }
         scope.launch {
             try {
                 previews.value = Preview.load(CosignApp.instance)
@@ -550,7 +551,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val now = Clock.now()
         val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW), now), encrypt = true) ?: return
         val signed = try { phone.signOwn(Event(me, now, 30078, listOf(listOf("d", SeenSync.TAG)), text).withId()) } catch (_: Exception) { return }
-        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
+        val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
+        val n = Fetch.publish(to, signed)
+        if (debuggable) android.util.Log.i("CosignSync", "seen sent: ${text.length} chars to $n of ${to.size} relays")
     }
 
     /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
@@ -563,6 +566,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return
         if (got.createdAt <= prefs.getLong("seenPulled", 0)) return
         val keys = SeenSync.decode(toSelf(got.content, encrypt = false) ?: return)
+        if (debuggable) android.util.Log.i("CosignSync", "seen pulled: ${keys.size} keys from ${relays.size} relays")
         var added = 0
         for ((k, t) in keys) if (seen.add(k, t)) added++
         prefs.edit().putLong("seenPulled", got.createdAt).apply()

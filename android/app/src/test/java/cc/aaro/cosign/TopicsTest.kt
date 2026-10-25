@@ -108,6 +108,9 @@ class TopicsTest {
         val json = SeenSync.encode(listOf(SeenSync.short(post) to now - 3600, "t0123456789abcdef" to now - 7200, "ffffffffffffffff" to now - 8 * 86_400), now)
         SeenSync.decode(json).forEach { (k, t) -> here.add(k, t) }
         assertTrue(post in here && "t:0123456789abcdef" in here)
+        // Seen here and on the other phone: one entry, not two.
+        assertFalse(here.add("t:0123456789abcdef"))
+        assertFalse(here.add(post))
         assertFalse("f".repeat(64) in here)                                  // older than a week: not sent
         // At most CAP keys, the newest; small enough for NIP-44 (64 KB).
         val many = (1..5000).map { "%016x".format(it) to now - it }
