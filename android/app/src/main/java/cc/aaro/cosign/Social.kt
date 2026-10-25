@@ -8,6 +8,7 @@ import cc.aaro.cosign.core.Json
 import cc.aaro.cosign.core.Nip19
 import cc.aaro.cosign.core.isHex32
 import cc.aaro.cosign.core.toHex
+import cc.aaro.cosign.core.hexToBytes
 import cc.aaro.cosign.net.Conn
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.CoroutineScope
@@ -68,6 +69,20 @@ data class Person(val pubkey: String, val name: String?, val picture: String?, v
 }
 
 /** Someone with no name yet, shown by a piece of their account ID (without the "npub1" in front). */
+/**
+ * A post's address for other apps (NIP-19 nevent): its id, the relays to look on, its author and kind,
+ * so an app that has never seen it can find it, not only one that already has it.
+ */
+fun nevent(id: String, author: String, kind: Int, relays: List<String>): String {
+    val out = java.io.ByteArrayOutputStream()
+    fun tlv(t: Int, v: ByteArray) { out.write(t); out.write(v.size); out.write(v) }
+    tlv(0, id.hexToBytes())
+    relays.forEach { tlv(1, it.toByteArray()) }
+    tlv(2, author.hexToBytes())
+    tlv(3, java.nio.ByteBuffer.allocate(4).putInt(kind).array())
+    return Bech32.encode("nevent", out.toByteArray())
+}
+
 fun shortNpub(pk: String) = try { Nip19.npub(pk).let { it.drop(5).take(6) + "…" + it.takeLast(4) } } catch (_: Exception) { pk.take(8) }
 
 /**
@@ -933,6 +948,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** The relays someone says they write to (their NIP-65 list): up to four; kept on disk for a week, so the next visit asks them at once. */
     private val outboxes = ConcurrentHashMap<String, Pair<List<String>, Long>>()
+
+    /** [e]'s nevent, with two relays to find it on: where its author posts, if that's known here, else two big ones. */
+    fun neventOf(e: Event) = nevent(e.id, e.pubkey, e.kind, ((outboxes[e.pubkey]?.first ?: emptyList()) + listOf("wss://relay.damus.io", "wss://nos.lol")).distinct().take(2))
     private val outboxFile = File(context.cacheDir, "outboxes.json")
     private suspend fun outboxOf(pk: String): List<String> {
         if (outboxes.isEmpty()) loadOutboxes()

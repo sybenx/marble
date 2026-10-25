@@ -403,6 +403,7 @@ private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean) = Box {
 /** "⋯" on a post: follow its topic, more or less like this, hide the person; report. */
 @Composable
 private fun PostMenu(p: Pick, name: String, social: Social) = Box {
+    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf(false) }
     val followed = p.topic in social.followedTopics.collectAsState().value
@@ -413,6 +414,7 @@ private fun PostMenu(p: Pick, name: String, social: Social) = Box {
         DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic) })
         DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id) })
         DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey) })
+        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; copy(context, social, webLink(social, p.e), "Link copied") })
         DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
     }
     if (reporting) ReportDialog(name, onClose = { reporting = false }) { reason -> reporting = false; social.report(p.e, reason) }
@@ -633,7 +635,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Row(Modifier.padding(end = 32.dp).align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
                     Text(author?.shown ?: shortNpub(n.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).clickable { nav.profile(n.pubkey) })
-                    Text("  ${since(n.createdAt)}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(4.dp))
+                    PostTime(n, nav.social)
                 }
                 if (n.pubkey != nav.social.me) Box(Modifier.align(Alignment.CenterEnd)) { menu?.invoke() ?: NoteMenu(n, author?.shown ?: shortNpub(n.pubkey), nav.social) }
             }
@@ -701,6 +704,7 @@ private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
 /** "⋯": not interested in this note, or mute its author (on this phone and in your mute list). */
 @Composable
 private fun NoteMenu(n: Event, name: String, social: Social) = Box {
+    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf(false) }
     // A plain icon on every card (an IconButton each costs a visible frame on a slow phone); the menu only once it's open.
@@ -710,6 +714,7 @@ private fun NoteMenu(n: Event, name: String, social: Social) = Box {
         DropdownMenuItem({ Text("Mute $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, {
             open = false; social.mute(n.pubkey); social.message.value = "You won't see $name any more."
         })
+        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; copy(context, social, webLink(social, n), "Link copied") })
         DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
     }
     if (reporting) ReportDialog(name, onClose = { reporting = false }) { reason -> reporting = false; social.report(n, reason) }
@@ -825,6 +830,26 @@ internal fun Avatar(p: Person?, pubkey: String, size: Int, modifier: Modifier = 
         }
     }
 }
+
+/**
+ * A post's time ("6h"). Tap it to copy the post's ID (its nevent), to find it in another app; the post
+ * itself doesn't open. Pressed, it shows it can be tapped, and nothing more.
+ */
+@Composable
+private fun PostTime(e: Event, social: Social, style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodySmall) {
+    val context = LocalContext.current
+    Text(since(e.createdAt), color = Vault.Muted, style = style, maxLines = 1,
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClickLabel = "Copy the post's ID") { copy(context, social, social.neventOf(e), "Post ID copied") }.padding(horizontal = 4.dp, vertical = 2.dp))
+}
+
+/** Onto the clipboard; said briefly where Android doesn't show it itself (it does from Android 13). */
+private fun copy(context: android.content.Context, social: Social, text: String, said: String) {
+    context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText(said, text))
+    if (android.os.Build.VERSION.SDK_INT < 33) social.message.value = said
+}
+
+/** A link to a post that opens anywhere, for people without Marble. */
+private fun webLink(social: Social, e: Event) = "https://njump.me/" + social.neventOf(e)
 
 private fun since(t: Long): String {
     val s = System.currentTimeMillis() / 1000 - t
@@ -1187,7 +1212,8 @@ private fun NoticeRow(n: Notice, people: Map<String, Person>, fresh: Boolean, so
             Row {
                 Text(who?.shown ?: shortNpub(n.event.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                Text(" $what · ${since(n.event.createdAt)}", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                Text(" $what · ", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                PostTime(n.event, social, MaterialTheme.typography.bodyMedium)
             }
             if (text.isNotBlank()) Text(text, color = if (n.type == Notice.Type.REPLY || n.type == Notice.Type.MENTION) Vault.Text else Vault.Muted,
                 style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)

@@ -171,4 +171,12 @@ class SocialTest {
         assertEquals(true, links.take(code, fresh = true))       // scanned again on purpose: acted on
         assertEquals(true, links.take("nostrconnect://" + "2".repeat(64) + "?secret=x", fresh = false))
     }
+
+    @Test fun aPostsIdIsAnNeventOtherAppsCanFind() {
+        val id = "9739a916c3b6acb295231ed16654fd1e6379fe214eddec360c4514b495f259c9"
+        val code = nevent(id, fiatjaf, 1, listOf("wss://relay.damus.io", "wss://nos.lol"))
+        assertEquals(true, code.startsWith("nevent1"))
+        assertEquals(Ref.Note(id), Ref.parse(code))                  // and Marble reads it back as that post
+        assertEquals(Ref.Note(id), Ref.parse("https://njump.me/$code".substringAfterLast('/')))
+    }
 }
