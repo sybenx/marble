@@ -33,7 +33,15 @@ object Curate {
     private val HEAVY = Regex(
         "(?i)\\b(suicid(e|al)|kill(ing)? (myself|herself|himself)|want(ed)? to die|self[- ]?harm|hang(ed)? (himself|herself|myself)|overdos(e|ed)|" +
             "funeral|passed away|rest in peace|died|dead body|lost my (son|daughter|child|baby|mom|mum|mother|dad|father|wife|husband|brother|sister)|" +
-            "buried my|miscarriage|terminal(ly)? ill|cancer|chemo(therapy)?|grief|grieving|massacre|murder(ed)?|beheaded)\\b")
+            "buried my|miscarriage|terminal(ly)? ill|cancer|chemo(therapy)?|grief|grieving|massacre|murder(ed)?|beheaded|" +
+            // Despair, in a stranger's own words: never Discover's to show. Kept broad on purpose (a missed one
+            // costs far more than a hidden one); "dont", "don't" and "don’t" alike.
+            "wanna die|will die|going to die|gonna die|wish i (was|were) dead|wish i could die|better off dead|better off without me|" +
+            "kill (myself|me)|end (it all|my life)|ending (it all|my life)|(want|going|gonna) to end it|" +
+            "(do not|don'?t|don’t|dont) want to (be here|live|exist|wake up|be alive)|no reason to live|nothing to live for|" +
+            "(can'?t|can’t|cant|cannot) go on|(cut|cutting|hurt|hurting) myself|" +
+            "feel(s|ing)? (so |really |completely |so very )?(empty|hopeless|worthless)|i feel nothing|i hate my life|" +
+            "no one would (miss|care)|nobody would (miss|care))\\b")
     private val NOISE = Regex("https?://\\S+|nostr:\\S+|#[\\p{L}\\p{N}_]+|@\\S+|:[a-z0-9_]+:")
     private val GM = Regex("(?i)^\\W*(gm|good morning|gn|good night|pv|gfy)\\b.{0,30}$")
     private val TEST = Regex("(?i)^\\W*test( post)?\\W*$")

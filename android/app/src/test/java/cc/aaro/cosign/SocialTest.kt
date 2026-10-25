@@ -77,6 +77,16 @@ class SocialTest {
         assertEquals(false, Curate.keep(note("Day 1 and I can't sleep. I lost my son yesterday. I just want to die")))
         assertEquals(false, Curate.keep(note("Buried my mum today. Thank you all for the kind words")))
         assertEquals(true, Curate.keep(note("The cancellation fee for this flight is absurd, honestly")))   // "cancer" is a word, not a substring
+        // Despair: the wording that got through once, and its kind.
+        for (t in listOf("Thinking about how one day the people here will die and those keys will just be left",
+                "It feels empty. i dont want to cry, i dont feel like it", "honestly i don't want to be here anymore",
+                "I just wanna die tbh", "some days I want to end it all", "nobody would miss me if I was gone",
+                "i keep hurting myself and nobody notices", "i can't go on like this, i feel so hopeless"))
+            assertEquals(t, false, Curate.keep(note(t)))
+        // Everyday words near those stay.
+        for (t in listOf("The battery on this old phone is finally dying, time for a new one", "This empty room feels peaceful after the move, finally done",
+                "Ending the week with a long walk by the river", "I want to live somewhere with real winters one day"))
+            assertEquals(t, true, Curate.keep(note(t)))
     }
 
     @Test fun aPageHasTwoPostsAPersonAndOneGreeting() {
