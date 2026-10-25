@@ -912,16 +912,29 @@ private fun ServerChoiceSheet(choice: List<cc.aaro.cosign.net.Servers.Server>, s
             Spacer(Modifier.height(12.dp))
             if (status != null) Text(status, color = Vault.Muted)
             else if (choice.isEmpty()) Text("No other public server found right now. A server of your own shows a code on its page: scan it with Add a device's scanner.", color = Vault.Muted)
-            for (s in choice) TextButton({
+            val add = { s: cc.aaro.cosign.net.Servers.Server ->
                 picked = s
                 val ask = lockIntent(context, "Add ${s.name}", "Confirm it's you to add a server to your key")
                 if (ask == null) phone.lockMissing() else lock.launch(ask)
-            }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(s.name, color = Vault.Teal)
-                    Text(if (code != null) s.relays.firstOrNull()?.removePrefix("wss://")?.removePrefix("ws://") ?: "its own address"
-                        else "Run by ${cc.aaro.cosign.core.Nip19.npub(s.operator).take(12)}…${if (s.version.isNotEmpty()) " · Cosign ${s.version}" else ""}",
+            }
+            // Each server as a plain card; what to tap is a real button. A server's own code names no
+            // address of its own (only the relay it's reached through), so that relay isn't shown as if it were the server.
+            for (s in choice) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.name, color = Vault.Text, style = MaterialTheme.typography.titleSmall)
+                    Text(if (code != null) "The server whose page showed this code" else "A public server" + if (s.version.isNotEmpty()) " · Cosign ${s.version}" else "",
                         color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                if (code == null) {
+                    Spacer(Modifier.width(10.dp))
+                    Button({ add(s) }, colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Add") }
+                }
+            }
+            if (code != null && choice.size == 1) {
+                Spacer(Modifier.height(14.dp))
+                Button({ add(choice[0]) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+                    Text("Add this server", style = MaterialTheme.typography.labelLarge)
                 }
             }
             Spacer(Modifier.height(12.dp))
