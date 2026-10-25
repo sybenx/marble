@@ -65,7 +65,7 @@ class Nip55Activity : ComponentActivity() {
     @Composable
     private fun Sheet(s: Stage) {
         BackHandler { reject() }
-        Box(Modifier.fillMaxSize().background(Color(0xCC0B0A09)), contentAlignment = Alignment.BottomCenter) {
+        Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
             Column(
                 Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
                     .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),

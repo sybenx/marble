@@ -24,7 +24,8 @@ class SignerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Proc.signerOnly("SignerActivity")
-        enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        // The bars' icons follow the phone's light or dark setting, as the app does.
+        enableEdgeToEdge(SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT), SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         val s = intent.getStringExtra("slot")?.let { CosignApp.instance.signers.signer(it) } ?: return finish()
         setContent {
             CosignTheme {

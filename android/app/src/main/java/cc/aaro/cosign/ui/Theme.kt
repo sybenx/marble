@@ -2,8 +2,10 @@ package cc.aaro.cosign.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -14,31 +16,38 @@ import androidx.compose.ui.unit.sp
 import cc.aaro.cosign.R
 
 // "Vault": warm black, amber wherever a key leaves this phone, teal wherever one
-// arrives. Amber is never used for "verified" or "safe" (§11.2b).
+// arrives. Amber is never used for "verified" or "safe" (§11.2b). In light mode the same
+// calm: warm paper instead of warm black, the teal deeper so it reads on white.
 
 object Vault {
-    val Ground = Color(0xFF13110F)
-    val Surface = Color(0xFF1E1B18)
-    val Edge = Color(0xFF2A2622)
-    val Line = Color(0xFF34302B)
-    val Field = Color(0xFF4A443C)
-    val Text = Color(0xFFEDE6DA)
-    val Muted = Color(0xFFA69D90)
-    val Amber = Color(0xFFF2B33D)
-    val OnAmber = Color(0xFF1A1406)
-    val AmberEdge = Color(0xFF5A4520)
-    val AmberText = Color(0xFFE9CF97)
-    val AmberGround = Color(0xFF221A0D)
-    val Teal = Color(0xFF7FC8C0)
-    val TealEdge = Color(0xFF2F4A47)
-    val TealGround = Color(0xFF16201F)
-    val Danger = Color(0xFFE5736B)
+    /** The phone's light or dark setting, kept by [CosignTheme]: every colour below follows it, live. */
+    var dark by mutableStateOf(true)
+    private fun pick(night: Long, day: Long) = Color(if (dark) night else day)
+
+    val Ground get() = pick(0xFF13110F, 0xFFF7F3EC)
+    val Surface get() = pick(0xFF1E1B18, 0xFFFFFDF9)
+    val Edge get() = pick(0xFF2A2622, 0xFFE6DFD4)
+    val Line get() = pick(0xFF34302B, 0xFFD6CDBF)
+    val Field get() = pick(0xFF4A443C, 0xFFB3AA9B)
+    val Text get() = pick(0xFFEDE6DA, 0xFF1F1B16)
+    val Muted get() = pick(0xFFA69D90, 0xFF6B6257)
+    val Amber get() = pick(0xFFF2B33D, 0xFFE9A21F)
+    val OnAmber get() = pick(0xFF1A1406, 0xFF1A1406)
+    val AmberEdge get() = pick(0xFF5A4520, 0xFFE3C27E)
+    val AmberText get() = pick(0xFFE9CF97, 0xFF7A5210)
+    val AmberGround get() = pick(0xFF221A0D, 0xFFFBF0D9)
+    val Teal get() = pick(0xFF7FC8C0, 0xFF2C7F77)
+    val TealEdge get() = pick(0xFF2F4A47, 0xFFA9D3CE)
+    val TealGround get() = pick(0xFF16201F, 0xFFE4F2F0)
+    val Danger get() = pick(0xFFE5736B, 0xFFC2453C)
+    /** Behind a sheet: the page dimmed. */
+    val Scrim get() = Color(if (dark) 0xCC0B0A09 else 0x8C1F1B16)
 }
 
 // Kept for the few places that name the direction's color directly.
-val Release = Vault.Amber
-val Receipt = Vault.Teal
-val Danger = Vault.Danger
+val Release get() = Vault.Amber
+val Receipt get() = Vault.Teal
+val Danger get() = Vault.Danger
 
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 private fun sans(weight: Int) = Font(
@@ -53,7 +62,7 @@ val PlexMono = FontFamily(
     Font(R.font.ibmplexmono_medium, FontWeight.Medium),
 )
 
-private val scheme = darkColorScheme(
+private fun scheme() = (if (Vault.dark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()).copy(
     primary = Vault.Text,
     onPrimary = Vault.Ground,
     secondary = Vault.Teal,
@@ -80,5 +89,9 @@ private val type = Typography(
     labelMedium = TextStyle(fontFamily = PlexSans, fontWeight = FontWeight.Medium, fontSize = 14.sp),
 )
 
+/** Marble's look, light or dark as the phone is set (and changing with it while open). */
 @Composable
-fun CosignTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = scheme, typography = type, content = content)
+fun CosignTheme(content: @Composable () -> Unit) {
+    Vault.dark = androidx.compose.foundation.isSystemInDarkTheme()
+    MaterialTheme(colorScheme = scheme(), typography = type, content = content)
+}
