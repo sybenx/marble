@@ -314,8 +314,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /**
      * The first few posts, from quick asks: what's hot on the search relays over the last two days and in
-     * your three strongest topics, with trust from who you follow, and follower counts for a few others.
-     * Never more than a second and a half; the full ranking comes after and fills in below.
+     * your three strongest topics, with trust from who you follow (asked at the same time), and follower counts for a few others.
+     * About two seconds on a good connection, a few at most on a slow one; the full ranking comes after and fills in below.
      */
     private suspend fun quickPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
         val me = reader ?: return@coroutineScope emptyList()
@@ -324,28 +324,34 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val weights = topicWeights()
         // Who you follow (from the relays that answer fastest), then what they've posted: the first thing to trust.
         val followsAsk = async {
-            follows.value ?: kotlinx.coroutines.withTimeoutOrNull(1200) {
-                followsIn(Fetch.query(listOf("wss://purplepag.es", "wss://relay.primal.net", "wss://relay.damus.io"), listOf(mapOf("kinds" to listOf(3), "authors" to listOf(me), "limit" to 1)), 1200, graceMs = 200).maxByOrNull { it.createdAt })
+            follows.value ?: kotlinx.coroutines.withTimeoutOrNull(3000) {
+                followsIn(Fetch.query(listOf("wss://purplepag.es", "wss://relay.primal.net", "wss://relay.damus.io"), listOf(mapOf("kinds" to listOf(3), "authors" to listOf(me), "limit" to 1)), 3000, graceMs = 200).maxByOrNull { it.createdAt })
             } ?: emptySet()
-        }
-        val theirs = async {
-            val f = followsAsk.await()
-            if (f.isEmpty()) emptyList() else Fetch.query(bigRelays.take(3), listOf(mapOf("kinds" to Calm.POOL_KINDS, "authors" to f.take(500).toList(), "since" to since, "limit" to 300)), 1200, graceMs = 300)
         }
         val filters = listOf(mapOf<String, Any>("kinds" to Calm.POOL_KINDS, "search" to "sort:hot", "since" to since, "limit" to 100)) +
             weights.keys.take(3).mapNotNull { t -> TopicGuess.queries(t).firstOrNull()?.let { q -> mapOf<String, Any>("kinds" to Calm.POOL_KINDS, "search" to "$q sort:hot", "since" to since, "limit" to 50) } }
-        val hot = async { Fetch.query(searchRelays.take(2), filters, 1500, graceMs = 1500) }
-        val follows = followsAsk.await()
-        val got = (theirs.await() + hot.await())
+        val hot = async { Fetch.query(searchRelays.take(2), filters, 3000, graceMs = 600) }
+        // What the people you follow posted lately: the likeliest to pass, asked as soon as their list is in.
+        val theirs = async {
+            val f = followsAsk.await()
+            if (f.isEmpty()) emptyList() else Fetch.query(bigRelays.take(3), listOf(mapOf("kinds" to Calm.POOL_KINDS, "authors" to f.take(500).toList(), "since" to since, "limit" to 200)), 2000, graceMs = 400)
+        }
+        val t0 = android.os.SystemClock.uptimeMillis()
+        fun step(what: String) { if (debuggable) android.util.Log.i("CosignStartup", "quick $what at +${android.os.SystemClock.uptimeMillis() - t0} ms") }
+        val follows = followsAsk.await().also { step("follows ${it.size}") }
+        // What's hot, people you follow first; a hundred and fifty at most (checking them all is the slow part on a phone).
+        val got = (theirs.await().also { step("theirs ${it.size}") } + hot.await().also { step("hot ${it.size}") })
             .filter { it.createdAt in since..now + 600 && unseen(it.id) && it.id !in skip && !interests.hidden("hiddenPeople", it.pubkey) }.distinctBy { it.id }
+            .sortedByDescending { it.pubkey in follows }.take(150)
         val liked = liked.value + readerLiked
         val names = People.known.value
         val perAuthor = got.groupingBy { it.pubkey }.eachCount()
         val passes = got.filter { e -> Calm.drop(e, me, liked, perAuthor[e.pubkey] ?: 0, names[e.pubkey]?.name, true, Standing(true, 0, 0)) == null &&
             TopicGuess.hits(e, strict = true).any { (weights[it.topic] ?: 0.0) > 0 } && forDiscover(e) }
-        val strangers = passes.map { it.pubkey }.distinct().filter { it !in follows }.take(20)
+        val strangers = passes.map { it.pubkey }.distinct().filter { it !in follows }.take(12)
         val followers = ConcurrentHashMap<String, Long>()
-        if (strangers.isNotEmpty()) kotlinx.coroutines.withTimeoutOrNull(600) { Fetch.counts(SearchRelays.COUNTS[0], strangers.associateWith { mapOf("kinds" to listOf(3), "#p" to listOf(it)) }, 600, inFlight = 20) { pk, c -> followers[pk] = c } }
+        if (strangers.isNotEmpty()) kotlinx.coroutines.withTimeoutOrNull(1000) { Fetch.counts(SearchRelays.COUNTS[0], strangers.associateWith { mapOf("kinds" to listOf(3), "#p" to listOf(it)) }, 1000, inFlight = 12) { pk, c -> followers[pk] = c } }
+        step("counts ${followers.size}")
         val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now) }
         if (debuggable) Startup.mark("feed quick asked ${got.size}, passed ${passes.size}, follows ${follows.size}, counted ${followers.size}, picked ${picks.size}")
         Calm.diversify(picks, max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
