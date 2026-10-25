@@ -73,6 +73,19 @@ class TopicsTest {
         assertFalse(other.adopt(org.json.JSONObject(withMore).put("v", 2).put("at", other.at + 50).toString()))
     }
 
+    @Test fun likesAreCountedOnce() {
+        val i = Interests(FakePrefs())
+        assertEquals(null, i.likesTo)
+        i.seed(mapOf("ai" to 2.0), likesTo = 1_700_000_000L)
+        assertEquals(1_700_000_000L, i.likesTo)
+        i.liked(listOf("food"), caughtUp = false)          // not caught up: the next catch-up still counts from before
+        assertEquals(1_700_000_000L, i.likesTo)
+        i.liked(listOf("food"), caughtUp = true)
+        assertTrue(i.likesTo!! > 1_700_000_000L)
+        // The web's field, and Marble's, travel in the same copy.
+        assertEquals(i.likesTo, Interests(FakePrefs()).apply { adopt(i.toJson()) }.likesTo)
+    }
+
     @Test fun seenStaysSeen() {
         val f = File.createTempFile("seen", ".txt").apply { deleteOnExit() }
         Seen(f).apply { add("t:abc"); add("t:abc"); add("note1") }

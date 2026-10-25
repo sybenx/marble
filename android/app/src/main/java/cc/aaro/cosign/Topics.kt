@@ -147,7 +147,22 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         topics.take(2).forEachIndexed { i, t -> weights[t] = ((weights[t] ?: 0.0) + by / (i + 1)).coerceAtLeast(0.0) }
         save()
     }
-    @Synchronized fun seed(votes: Map<String, Double>) { votes.forEach { (t, v) -> weights[t] = (weights[t] ?: 0.0) + v }; prefs.edit().putBoolean("interestsSeeded", true).apply(); save() }
+    /** Learned in one go, from what you liked before up to [likesTo] (seconds): the 90 days at first, then what's new since. */
+    @Synchronized fun seed(votes: Map<String, Double>, likesTo: Long? = null) {
+        votes.forEach { (t, v) -> weights[t] = (weights[t] ?: 0.0) + v }
+        likesTo?.let { extra.put("likesTo", it) }
+        prefs.edit().putBoolean("interestsSeeded", true).apply(); save()
+    }
+    /**
+     * Likes up to this time (seconds) are counted already: the next catch-up reads only newer ones. Shared with
+     * discover.syb.lol, so a like is counted once whichever app sees it first. Null: never caught up.
+     */
+    val likesTo: Long? @Synchronized get() = extra.optLong("likesTo", 0).takeIf { it > 0 }
+    /** A like made here, learned at once: counted, as far as the next catch-up is concerned, if likes were caught up to now. */
+    @Synchronized fun liked(topics: List<String>, caughtUp: Boolean) {
+        if (caughtUp) extra.put("likesTo", System.currentTimeMillis() / 1000)
+        learn(topics, 1.0)
+    }
     @Synchronized fun follow(topic: String, on: Boolean) { if (on) { followed += topic; lessTopic -= topic } else followed -= topic; save() }
     @Synchronized fun lessOfTopic(topic: String) { lessTopic[topic] = (lessTopic[topic] ?: 0) + 1; followed -= topic; save() }
     @Synchronized fun lessOfSource(source: String) { lessSource[source] = (lessSource[source] ?: 0) + 1; save() }

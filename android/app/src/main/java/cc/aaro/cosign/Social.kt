@@ -420,20 +420,40 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (interestsKnown) return
         interestsKnown = true
-        if (pullInterests(me)) rerank()
+        if (pullInterests(me)) { catchUpLikes(me); rerank() }
         else if (!interests.seeded) { seedInterests(me); rerank() }
+        else catchUpLikes(me)
         if (interests.at > prefs.getLong("interestsSent", 0)) interestsChanged()
     }
 
+    /** Likes made since the profile last counted them, here or in any other app: learned, then counted. */
+    private suspend fun catchUpLikes(me: String) {
+        val since = (interests.likesTo ?: interests.at).takeIf { it > 0 } ?: return
+        val now = Clock.now()
+        val likes = Fetch.query(readRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "since" to since + 1, "limit" to 200), 8000)
+        // Nothing new: nothing to change (or to send), and the same window is looked at again next time.
+        if (likes.isEmpty()) { likesCaughtUp = true; return }
+        val votes = HashMap<String, Double>()
+        val ids = likes.filter { it.content != "-" }.mapNotNull { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }.distinct()
+        for (chunk in ids.chunked(150)) Fetch.query(readRelays().take(6), mapOf("ids" to chunk), 8000)
+            .forEach { e -> TopicGuess.of(e).take(2).forEachIndexed { i, t -> votes[t] = (votes[t] ?: 0.0) + 1.0 / (i + 1) } }
+        interests.seed(votes, likesTo = now)
+        likesCaughtUp = true
+    }
+    /** Likes are counted up to now: a like made here can say so. */
+    @Volatile private var likesCaughtUp = false
+
     private suspend fun seedInterests(me: String) {
-        val mine = Fetch.query(readRelays().take(6), mapOf("kinds" to listOf(7, 6, 1), "authors" to listOf(me), "since" to Clock.now() - 90 * 86_400L, "limit" to 400), 8000)
+        val now = Clock.now()
+        val mine = Fetch.query(readRelays().take(6), mapOf("kinds" to listOf(7, 6, 1), "authors" to listOf(me), "since" to now - 90 * 86_400L, "limit" to 400), 8000)
         val votes = HashMap<String, Double>()
         fun vote(e: Event, by: Double) = TopicGuess.of(e).take(2).forEachIndexed { i, t -> votes[t] = (votes[t] ?: 0.0) + by / (i + 1) }
         mine.filter { it.kind == 1 }.forEach { vote(it, 0.3) }
         mine.filter { it.kind == 6 }.forEach { r -> reposted(r)?.let { vote(it, 2.0) } }
         val likedIds = mine.filter { it.kind == 7 && it.content != "-" }.mapNotNull { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }.distinct().take(300)
         for (chunk in likedIds.chunked(150)) Fetch.query(readRelays().take(6), mapOf("ids" to chunk), 8000).forEach { vote(it, 1.0) }
-        interests.seed(votes)
+        interests.seed(votes, likesTo = now)
+        likesCaughtUp = true
     }
 
     /** Put what's below where you are in order again (what you like is better known now). */
@@ -885,7 +905,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (note.id in liked.value) return
         mark(note.id, true)
-        interests.learn(TopicGuess.of(reposted(note) ?: note), 1.0)
+        interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
         scope.launch {
             val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
             if (!act(Event(me, Clock.now(), 7, tags, "+").withId())) mark(note.id, false)
