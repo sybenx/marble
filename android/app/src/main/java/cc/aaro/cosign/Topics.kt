@@ -279,16 +279,61 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     }
 }
 
-/** What's been on your screen properly (most of it, for a second and a half): never shown again. On this phone only. */
+/**
+ * What's been on your screen properly (most of it, for a second and a half): never shown again. Kept on
+ * this phone, and the last week of it on your account too, encrypted to you ([SeenSync]), so your other
+ * phones don't show it again either. Lines are "key time"; keys from another phone are short ones.
+ */
 class Seen(private val file: File) {
-    private val ids = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
-    init { try { file.readLines().filter { it.isNotBlank() }.forEach { ids += it } } catch (_: Exception) {} }
-    operator fun contains(id: String) = id in ids
-    fun add(id: String) {
-        if (!ids.add(id)) return
+    private val at = java.util.Collections.synchronizedMap(LinkedHashMap<String, Long>())
+    init {
         try {
-            if (ids.size > 20_000) { val keep = synchronized(ids) { ids.toList().takeLast(15_000) }; ids.clear(); ids += keep; file.writeText(keep.joinToString("\n", postfix = "\n")) }
-            else file.appendText(id + "\n")
+            val now = System.currentTimeMillis() / 1000
+            file.readLines().filter { it.isNotBlank() }.forEach { l -> at[l.substringBefore(' ')] = l.substringAfter(' ', "").toLongOrNull() ?: now }
         } catch (_: Exception) {}
     }
+    /** Seen here, or (by its short key) on another of your phones. */
+    operator fun contains(id: String) = id in at || SeenSync.short(id) in at
+    /** Seen just now; true if it's new. */
+    fun add(id: String, time: Long = System.currentTimeMillis() / 1000): Boolean {
+        if (id in this) return false
+        at[id] = time
+        try {
+            if (at.size > 20_000) { val keep = synchronized(at) { at.entries.toList().takeLast(15_000) }; at.clear(); keep.forEach { at[it.key] = it.value }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
+            else file.appendText("$id $time\n")
+        } catch (_: Exception) {}
+        return true
+    }
+    /** What's been seen since [since] (seconds), short keys, newest last. */
+    fun since(since: Long): List<Pair<String, Long>> = synchronized(at) { at.entries.filter { it.value >= since }.map { SeenSync.short(it.key) to it.value } }
+}
+
+/**
+ * The seen list on your account (NIP-78, d "discover/seen", NIP-44 to yourself): the last week, at most
+ * [CAP] keys, by day, so it stays small (about 36 KB at most). Keys are short: a post's id's first 16
+ * hex characters, a story's "t" and its 16. Two copies merge into everything either has seen.
+ */
+object SeenSync {
+    const val TAG = "discover/seen"
+    const val WINDOW = 7 * 86_400L
+    const val CAP = 2000
+
+    fun short(key: String) = if (key.startsWith("t:")) "t" + key.drop(2).take(16) else if (key.length > 17 && key.first() != 't') key.take(16) else key
+
+    /** The account's copy: {"v":1,"at":…,"days":{"<day number>":"key key …"}}, the newest [CAP] within [WINDOW] of [now]. */
+    fun encode(keys: List<Pair<String, Long>>, now: Long): String {
+        val recent = keys.filter { it.second > now - WINDOW }.sortedBy { it.second }.distinctBy { it.first }.takeLast(CAP)
+        val days = org.json.JSONObject()
+        recent.groupBy { it.second / 86_400 }.forEach { (d, l) -> days.put(d.toString(), l.joinToString(" ") { it.first }) }
+        return org.json.JSONObject().put("v", 1).put("at", now).put("days", days).toString()
+    }
+
+    /** The keys in a copy, each with the start of its day; empty if it isn't one (or is a later version). */
+    fun decode(json: String): List<Pair<String, Long>> = try {
+        val o = org.json.JSONObject(json)
+        if (o.optInt("v") != 1) emptyList() else {
+            val days = o.optJSONObject("days") ?: org.json.JSONObject()
+            days.keys().asSequence().flatMap { d -> days.optString(d).split(' ').filter { it.isNotEmpty() }.map { it to (d.toLongOrNull() ?: 0) * 86_400 } }.toList()
+        }
+    } catch (_: Exception) { emptyList() }
 }

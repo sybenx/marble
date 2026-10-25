@@ -93,6 +93,29 @@ class TopicsTest {
         assertTrue("t:abc" in again && "note1" in again)
         assertFalse("other" in again)
         assertEquals(2, f.readLines().count { it.isNotBlank() })
+        // A file from before times were kept still reads.
+        val old = File.createTempFile("seen", ".txt").apply { deleteOnExit(); writeText("t:old\n") }
+        assertTrue("t:old" in Seen(old))
+    }
+
+    @Test fun seenTravelsShortAndBounded() {
+        val post = "ab".repeat(32)
+        assertEquals("abababababababab", SeenSync.short(post))
+        assertEquals("t0123456789abcdef", SeenSync.short("t:0123456789abcdef"))
+        // Another phone's list: its short keys count as seen here.
+        val f = File.createTempFile("seen", ".txt").apply { deleteOnExit() }
+        val here = Seen(f)
+        val json = SeenSync.encode(listOf(SeenSync.short(post) to now - 3600, "t0123456789abcdef" to now - 7200, "ffffffffffffffff" to now - 8 * 86_400), now)
+        SeenSync.decode(json).forEach { (k, t) -> here.add(k, t) }
+        assertTrue(post in here && "t:0123456789abcdef" in here)
+        assertFalse("f".repeat(64) in here)                                  // older than a week: not sent
+        // At most CAP keys, the newest; small enough for NIP-44 (64 KB).
+        val many = (1..5000).map { "%016x".format(it) to now - it }
+        val big = SeenSync.encode(many, now)
+        assertEquals(SeenSync.CAP, SeenSync.decode(big).size)
+        assertTrue(big.length < 45_000)
+        assertTrue(SeenSync.decode(big).any { it.first == "%016x".format(1) })
+        assertTrue(SeenSync.decode("{\"v\":2}").isEmpty())
     }
 
     private fun linkPost(n: Int, text: String, by: String = "%064x".format(1000 + n), tags: List<String> = emptyList(), at: Long = now - 3600) =

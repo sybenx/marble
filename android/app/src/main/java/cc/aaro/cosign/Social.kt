@@ -241,7 +241,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** The topics you follow, for the screen. */
     val followedTopics = MutableStateFlow(interests.followed.toSet())
     /** It's been on screen properly: never again. */
-    fun saw(key: String) = seen.add(key)
+    fun saw(key: String) { if (seen.add(key)) seenChanged() }
     private fun unseen(key: String) = key !in seen && key !in dismissed.value
     /** Today's stories, all of them, for "More stories" (seen ones are left out there). */
     val allStories = MutableStateFlow<List<TopicCard>>(emptyList())
@@ -273,6 +273,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
         feed.update { it.copy(loading = true, failed = false) }
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
+        scope.launch { afterPaint(); pullSeen() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         lookedAt = 0
         scope.launch {
@@ -530,6 +531,45 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if ((try { org.json.JSONObject(json).optInt("v") } catch (_: Exception) { 0 }) > 1) { newerProfile = true; return true }
         if (interests.adopt(json)) { followedTopics.value = interests.followed.toSet(); prefs.edit().putLong("interestsSent", interests.at).apply() }
         return true
+    }
+
+    // What you've seen, on your account too (SeenSync): read once a start, after the first screen and never
+    // before it; written a couple of minutes after the last thing you saw, merged with what's there first.
+    private var seenSending: Job? = null
+    @Volatile private var seenPulled = false
+
+    private fun seenChanged() {
+        if (Sources.viewAs != null) return
+        seenSending?.cancel()
+        seenSending = scope.launch { delay(120_000); sendSeen() }
+    }
+
+    private suspend fun sendSeen() {
+        val me = me ?: return
+        pullSeen(again = true)
+        val now = Clock.now()
+        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW), now), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, now, 30078, listOf(listOf("d", SeenSync.TAG)), text).withId()) } catch (_: Exception) { return }
+        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
+    }
+
+    /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
+    private suspend fun pullSeen(again: Boolean = false) {
+        val me = me ?: return
+        if (Sources.viewAs != null || (seenPulled && !again)) return
+        seenPulled = true
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(SeenSync.TAG), "limit" to 4), 6000)
+            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return
+        if (got.createdAt <= prefs.getLong("seenPulled", 0)) return
+        val keys = SeenSync.decode(toSelf(got.content, encrypt = false) ?: return)
+        var added = 0
+        for ((k, t) in keys) if (seen.add(k, t)) added++
+        prefs.edit().putLong("seenPulled", got.createdAt).apply()
+        if (added > 0) feed.update { cur -> cur.copy(posts = cur.posts.filterIndexed { i, p -> i <= lookedAt + 1 || unseen(p.e.id) }) }
+        // This phone has seen things the account's copy hasn't: send the union.
+        val theirs = keys.map { it.first }.toSet()
+        if (!again && seen.since(Clock.now() - SeenSync.WINDOW).any { it.first !in theirs }) seenChanged()
     }
 
     /** NIP-44 with yourself (the signer pins the other side to your own key). Blocks for a few seconds: never on the open path. */
