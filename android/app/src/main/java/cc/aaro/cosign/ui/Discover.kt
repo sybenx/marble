@@ -78,6 +78,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -142,6 +143,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val nav = Nav(open = open, back = back, social = social) { urls, i -> viewing = urls to i }
+    // Debug builds: a profile asked for by intent (MainActivity's test hook).
+    val asked by DebugOpen.profile.collectAsState()
+    LaunchedEffect(asked) { asked?.let { stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
     when (val top = stack.lastOrNull()) {
         null -> Home(phone, ui, social, feedState, header, nav)
         Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
@@ -445,14 +449,17 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                      onReply: (() -> Unit)? = null) {
     // A repost: the post it shares, under a line saying who shared it.
     if (n.kind == 6) {
-        val inner = remember(n.id) { nav.social.reposted(n) } ?: return
+        // What it reposts: carried in it, or (only pointed at) fetched once it's on screen.
+        var inner by remember(n.id) { mutableStateOf(nav.social.reposted(n)) }
+        if (inner == null) { n.firstTag("e")?.let { id -> LaunchedEffect(n.id) { inner = nav.social.fetchNote(id) } }; return }
+        val shared = inner!!
         val liked2 by nav.social.liked.collectAsState()
         Column {
             Row(Modifier.padding(start = 68.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Glyphs.repost, null, tint = Vault.Muted, modifier = Modifier.size(14.dp))
                 Text("  ${people[n.pubkey]?.shown ?: shortNpub(n.pubkey)} reposted", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            NoteCard(inner, people, inner.id in liked2, nav, onLike = { nav.social.like(inner) }, maxLines = maxLines)
+            NoteCard(shared, people, shared.id in liked2, nav, onLike = { nav.social.like(shared) }, maxLines = maxLines)
         }
         return
     }
@@ -744,25 +751,34 @@ private fun ReplyBox(parent: Event, people: Map<String, Person>, social: Social,
 @Composable
 private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
     val people by People.known.collectAsState()
+    ProfileTimer(pk) { people[pk]?.name != null }
     val liked by social.liked.collectAsState()
     val follows by social.follows.collectAsState()
     val busy by social.busy.collectAsState()
     val p = people[pk]
-    LaunchedEffect(pk) { People.want(listOf(pk)) }
+    LaunchedEffect(pk) { social.profileNow(pk) }
     TopBar(p?.shown ?: "Profile", nav)
     // Their posts, a page at a time: more as you reach the end.
+    // Each relay's posts come in as it answers, newest first; "none" only once every relay has.
     var notes by remember(pk) { mutableStateOf<List<Event>?>(null) }
+    var settled by remember(pk) { mutableStateOf(false) }
     var more by remember(pk) { mutableStateOf(true) }
     var paging by remember(pk) { mutableStateOf(false) }
-    LaunchedEffect(pk) { notes = social.notesBy(pk) }
+    LaunchedEffect(pk) {
+        social.notesBy(pk) { got -> notes = ((notes ?: emptyList()) + got).distinctBy { it.id }.sortedByDescending { it.createdAt } }
+        settled = true
+    }
+    LaunchedEffect(pk) { val t0 = android.os.SystemClock.uptimeMillis(); snapshotFlow { notes?.size ?: -1 }.first { it >= 0 }.let { n ->
+        if (debugBuild) android.util.Log.i("CosignProfile", "${pk.take(8)} posts ($n) at ${android.os.SystemClock.uptimeMillis() - t0} ms") } }
     val scope = rememberCoroutineScope()
     val nextPage = {
         val have = notes
-        if (have != null && have.isNotEmpty() && more && !paging) {
+        if (settled && have != null && have.isNotEmpty() && more && !paging) {
             paging = true
             scope.launch {
-                val next = social.notesBy(pk, until = have.minOf { it.createdAt }).filter { n -> have.none { it.id == n.id } }
-                if (next.isEmpty()) more = false else notes = have + next
+                val next = ArrayList<Event>()
+                social.notesBy(pk, until = have.minOf { it.createdAt }) { got -> next += got.filter { n -> have.none { it.id == n.id } } }
+                if (next.isEmpty()) more = false else notes = have + next.distinctBy { it.id }.sortedByDescending { it.createdAt }
                 paging = false
             }
         }
@@ -799,19 +815,37 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
             HorizontalDivider(color = Vault.Edge)
         }
         when {
-            notes == null -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) } }
-            notes!!.isEmpty() -> item(key = "none") { Text("No posts yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+            notes.isNullOrEmpty() && !settled -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) } }
+            notes.isNullOrEmpty() -> item(key = "none") { Text("No posts yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
             else -> {
                 items(notes!!, key = { it.id }) { n ->
                     NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                     HorizontalDivider(color = Vault.Edge)
                 }
                 item(key = "more") {
-                    LaunchedEffect(notes!!.size) { nextPage() }
-                    if (paging) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Teal, strokeWidth = 2.dp) }
+                    LaunchedEffect(notes!!.size, settled) { nextPage() }
+                    if (paging || !settled) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Teal, strokeWidth = 2.dp) }
                 }
             }
         }
+    }
+}
+
+/** A debug build: the timing logs that name what you look at are for these only. */
+private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
+
+/** Debug builds: a profile to open, asked for by intent. */
+object DebugOpen { val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+
+/** Debug builds: how long after opening a profile its name is on screen. */
+@Composable
+private fun ProfileTimer(pk: String, named: () -> Boolean) {
+    val has by androidx.compose.runtime.rememberUpdatedState(named)
+    LaunchedEffect(pk) {
+        if (!debugBuild) return@LaunchedEffect
+        val t0 = android.os.SystemClock.uptimeMillis()
+        snapshotFlow { has() }.first { it }
+        android.util.Log.i("CosignProfile", "${pk.take(8)} name at ${android.os.SystemClock.uptimeMillis() - t0} ms")
     }
 }
 

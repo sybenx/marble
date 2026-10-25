@@ -8,6 +8,7 @@ import cc.aaro.cosign.core.Json
 import cc.aaro.cosign.core.Nip19
 import cc.aaro.cosign.core.isHex32
 import cc.aaro.cosign.core.toHex
+import cc.aaro.cosign.net.Conn
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -525,33 +526,71 @@ class Social private constructor(private val phone: Phone, context: Context) {
         return out
     }
 
-    /**
-     * What someone posted, newest first: their posts, reposts and videos, read from the relays
-     * they say they write to (their outbox) as well as the usual ones. [until]: older than this, for the next page.
-     */
-    suspend fun notesBy(pk: String, until: Long? = null): List<Event> {
+    /** Someone's name and picture, straight from the two fast relays (over connections kept open a while), not the batched path. */
+    fun profileNow(pk: String) {
+        for (url in SearchRelays.FAST) scope.launch { People.add(Conn.of(url).req(listOf(mapOf("kinds" to listOf(0), "authors" to listOf(pk), "limit" to 1)), 4000)) }
         People.want(listOf(pk))
-        val outbox = outboxOf(pk)
+    }
+
+    /**
+     * What someone posted (posts, reposts, videos), delivered relay by relay as each answers, so one
+     * slow relay never holds the screen: syb.lol and relay.ditto.pub at once over kept connections,
+     * and, in parallel, the relays they say they write to (remembered between visits) and yours.
+     * [until]: older than this, for the next page. Returns when every relay has answered or given up.
+     */
+    suspend fun notesBy(pk: String, until: Long? = null, onSome: (List<Event>) -> Unit) = kotlinx.coroutines.coroutineScope {
         val filter = buildMap<String, Any> { put("kinds", listOf(1, 6, 21, 22)); put("authors", listOf(pk)); put("limit", 30); until?.let { put("until", it - 1) } }
-        val ns = Fetch.query((outbox + readRelays().take(3) + Sources.PROFILES.take(2)).distinct(), filter, 7000).filter { it.pubkey == pk }
-        // Reposts carry what they repost; anything they only point at is fetched.
-        val inner = ns.filter { it.kind == 6 }.mapNotNull { r -> reposted(r) }
-        val missing = ns.filter { it.kind == 6 && reposted(it) == null }.mapNotNull { it.firstTag("e") }.filter { note(it) == null }
-        if (missing.isNotEmpty()) remember(Fetch.query(readRelays() + outbox, mapOf("ids" to missing.take(30)), 5000))
-        remember(ns.filter { it.kind != 6 } + inner)
-        People.want(inner.map { it.pubkey })
-        return ns.sortedByDescending { it.createdAt }
+        val lock = Any()
+        fun deliver(got: List<Event>) {
+            val mine = got.filter { it.pubkey == pk && it.kind in listOf(1, 6, 21, 22) }
+            if (mine.isEmpty()) return
+            val inner = mine.filter { it.kind == 6 }.mapNotNull { reposted(it) }
+            remember(mine.filter { it.kind != 6 } + inner)
+            People.want(inner.map { it.pubkey })
+            synchronized(lock) { onSome(mine) }
+        }
+        for (url in SearchRelays.FAST) launch { deliver(Conn.of(url).req(listOf(filter), 5000)) }
+        launch {
+            val others = (outboxOf(pk) + readRelays().take(3) + Sources.PROFILES.take(2)).distinct() - SearchRelays.FAST.toSet()
+            for (url in others) launch { deliver(Fetch.query(listOf(url), filter, 6000)) }
+        }
+    }
+
+    /** A post by id, for a repost that only points at it: asked for when that repost comes on screen. */
+    suspend fun fetchNote(id: String): Event? {
+        note(id)?.let { return it }
+        val got = kotlinx.coroutines.coroutineScope {
+            SearchRelays.FAST.map { url -> async { Conn.of(url).req(listOf(mapOf("ids" to listOf(id))), 4000) } }.awaitAll().flatten()
+        }.firstOrNull { it.id == id && it.kind == 1 } ?: return null
+        remember(listOf(got))
+        People.want(listOf(got.pubkey))
+        return got
     }
 
     /** The post a repost (kind 6) carries in its content, if it's there and genuine; else the one it points at, if it's been seen. */
     fun reposted(r: Event): Event? = (try { Event.fromMap(Json.parse(r.content))?.takeIf { it.kind == 1 && it.verify() } } catch (_: Exception) { null })
         ?: r.firstTag("e")?.let { note(it) }
 
-    /** The relays someone says they write to (their NIP-65 list): up to four. */
-    private val outboxes = ConcurrentHashMap<String, List<String>>()
-    private suspend fun outboxOf(pk: String): List<String> = outboxes[pk] ?: run {
+    /** The relays someone says they write to (their NIP-65 list): up to four; kept on disk for a week, so the next visit asks them at once. */
+    private val outboxes = ConcurrentHashMap<String, Pair<List<String>, Long>>()
+    private val outboxFile = File(context.cacheDir, "outboxes.json")
+    private suspend fun outboxOf(pk: String): List<String> {
+        if (outboxes.isEmpty()) loadOutboxes()
+        outboxes[pk]?.let { (l, at) -> if (System.currentTimeMillis() - at < 7 * 86_400_000L) return l }
         val l = Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(10002), "authors" to listOf(pk), "limit" to 1), 4000).maxByOrNull { it.createdAt }
-        (l?.tags?.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "read" && it[1].startsWith("wss://") }?.map { it[1] }?.take(4) ?: emptyList()).also { outboxes[pk] = it }
+        val list = l?.tags?.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "read" && it[1].startsWith("wss://") }?.map { it[1] }?.take(4) ?: emptyList()
+        outboxes[pk] = list to System.currentTimeMillis()
+        saveOutboxes()
+        return list
+    }
+    private fun loadOutboxes() = try {
+        (Json.parse(outboxFile.readText()) as? Map<*, *>)?.forEach { (k, v) ->
+            val m = v as? Map<*, *> ?: return@forEach
+            outboxes[k as String] = ((m["r"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()) to ((m["at"] as? Long) ?: 0L)
+        }
+    } catch (_: Exception) {}
+    private fun saveOutboxes() = synchronized(outboxFile) {
+        try { outboxFile.writeText(Json.stringify(outboxes.entries.sortedByDescending { it.value.second }.take(500).associate { (k, v) -> k to mapOf("r" to v.first, "at" to v.second) })) } catch (_: Exception) {}
     }
 
     /** The relays someone reads from (their inbox): where a reply or a reaction to them should go. */
