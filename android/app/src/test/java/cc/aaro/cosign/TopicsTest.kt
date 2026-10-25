@@ -123,7 +123,7 @@ class TopicsTest {
 }
 
 /** SharedPreferences in memory, for what Interests keeps. */
-private class FakePrefs : SharedPreferences {
+internal class FakePrefs : SharedPreferences {
     val m = HashMap<String, Any?>()
     override fun getAll() = m
     override fun getString(k: String, d: String?) = m[k] as? String ?: d

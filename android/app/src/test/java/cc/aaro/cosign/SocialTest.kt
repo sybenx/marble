@@ -162,4 +162,13 @@ class SocialTest {
         assertEquals(false, own("https://cosign.example", "Connected by code", null))
         assertEquals(false, own("Marble", "Signed in with Marble", "b".repeat(64)))
     }
+
+    @Test fun aLinkIsActedOnOnce() {
+        val links = HandledLinks(FakePrefs())
+        val code = "cosign:server?pk=" + "1".repeat(64) + "&t=abc&r=wss%3A%2F%2Fsyb.lol"
+        assertEquals(true, links.take(code, fresh = false))      // opened Marble: acted on
+        assertEquals(false, links.take(code, fresh = false))     // the same link, handed back when the activity is recreated: not again
+        assertEquals(true, links.take(code, fresh = true))       // scanned again on purpose: acted on
+        assertEquals(true, links.take("nostrconnect://" + "2".repeat(64) + "?secret=x", fresh = false))
+    }
 }

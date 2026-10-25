@@ -271,7 +271,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
-                ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) } }
+                // Tap it away (it also goes by itself after a while).
+                ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) } }
                 if (feed.items.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
                 }

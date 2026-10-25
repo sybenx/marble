@@ -27,8 +27,9 @@ class MainActivity : ComponentActivity() {
     private var backToCaller = false
     /** When a link last brought a code: the sign-in it starts shows up a moment later, from the signer. */
     private var linkAt = 0L
-    /** A link that came before the signer said which account is on screen. */
-    private var waiting: Intent? = null
+    /** A link that came before the signer said which account is on screen, and whether it was new then. */
+    private var waiting: Pair<Intent, Boolean>? = null
+    private val handled by lazy { HandledLinks(getSharedPreferences("links", MODE_PRIVATE)) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,13 +38,14 @@ class MainActivity : ComponentActivity() {
         // The bars' icons follow the phone's light or dark setting, as the app does.
         enableEdgeToEdge(SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT), SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         val accounts = CosignApp.instance.accounts
-        if (savedInstanceState == null) opened(intent)
+        // The link this activity was created with may be one from long ago (see [HandledLinks]).
+        if (savedInstanceState == null) opened(intent, fresh = false)
         setContent {
             CosignTheme {
                 // Nothing to draw until the signer process has said how each account is.
                 val ready by accounts.ready.collectAsState()
                 if (!ready) return@CosignTheme
-                LaunchedEffect(Unit) { waiting?.let { waiting = null; opened(it) } }
+                LaunchedEffect(Unit) { waiting?.let { (i, fresh) -> waiting = null; opened(i, fresh) } }
                 // The key on screen; switching keys swaps everything below.
                 val slot by accounts.activeSlot.collectAsState()
                 val phone = accounts.phone(slot) ?: accounts.active
@@ -79,6 +81,10 @@ class MainActivity : ComponentActivity() {
                     }
                     if (stage == null) hadConnect = false
                 }
+                // Something went wrong in the background (a step of yours that failed, a server out of reach):
+                // said for a while, then gone, so it doesn't greet you every time you open Marble.
+                // Not while setting up, where the message is what you're looking at.
+                LaunchedEffect(ui.error) { if (ui.error != null && ui.member != null) { kotlinx.coroutines.delay(12_000); phone.clearError() } }
                 App(phone, ui)
                 }
             }
@@ -87,16 +93,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        opened(intent)
+        opened(intent, fresh = true)
     }
 
     /** A code handed over by the camera app or a link; the app asks before doing anything with it. */
-    private fun opened(intent: Intent?) {
+    private fun opened(intent: Intent?, fresh: Boolean) {
         // Reopened from Recents, Android hands back the link that first opened Cosign, maybe
         // hours old: that's not something you just scanned.
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
-        if (!CosignApp.instance.accounts.ready.value) { waiting = intent; return }
-        if (intent.action == Intent.ACTION_VIEW) intent.dataString?.let {
+        if (!CosignApp.instance.accounts.ready.value) { waiting = intent to fresh; return }
+        if (intent.action == Intent.ACTION_VIEW) intent.dataString?.takeIf { handled.take(it, fresh) }?.let {
             CosignApp.instance.phone.scanned(it)
             linkAt = android.os.SystemClock.uptimeMillis()
         }
