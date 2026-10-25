@@ -18,7 +18,6 @@ These wait until the freeze lifts.
   nothing new holds a piece). Recommendation: a device.
 
 ## Not built yet
-- The marble icon: replace static/icon-*.png (and the Safari app icon) when the Cosign session makes it.
 - Report a device lost from the extension (it only follows a refresh today).
 - Sign out in device mode. It's hidden because it would discard this browser's part of
   the key; it could be allowed once a phone or paper exists.
