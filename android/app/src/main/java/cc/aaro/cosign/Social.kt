@@ -355,8 +355,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 loadTranslations()
                 val m = try { Json.parse(feedFile.readText()) as? Map<*, *> } catch (_: Exception) { null } ?: return@launch
                 // What was on screen first; what was left for later pages after it's painted (or now, if that's all there is).
-                val order = (m["order"] as? List<*>)?.mapNotNull { it as? String }?.toSet() ?: return@launch
                 val allNotes = (m["notes"] as? List<*>)?.mapNotNull { Event.fromMap(it) } ?: return@launch
+                // A feed saved before stories (0.12.6): its posts, as they were.
+                val order = (m["order"] as? List<*>)?.mapNotNull { it as? String }?.toSet() ?: allNotes.map { it.id }.toSet()
                 val allCards = (m["cards"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) } ?: emptyList()
                 fun ok(e: Event) = Curate.keep(e) && forDiscover(e) && unseen(e.id)
                 val notes = allNotes.filter { it.id in order && ok(it) }.associateBy { it.id }
@@ -448,7 +449,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     // Your account's copy: NIP-78 app data, NIP-44 encrypted to yourself, so only you can read it and
     // your other phones start from it. Saved a minute after the last change, in the background.
-    private val interestsTag = "marble/interests"
+    /** Shared with discover.syb.lol: one profile for both (spec: interest-profile.md in the notes). */
+    private val interestsTag = "discover/interests"
     @Volatile private var interestsKnown = false
     private var sending: Job? = null
 
@@ -457,8 +459,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
         sending = scope.launch { delay(60_000); sendInterests() }
     }
 
+    @Volatile private var newerProfile = false
+
     private suspend fun sendInterests() {
         val me = me ?: return
+        if (newerProfile) return
         val at = interests.at
         val text = toSelf(interests.toJson(), encrypt = true) ?: return
         val ev = Event(me, Clock.now(), 30078, listOf(listOf("d", interestsTag)), text).withId()
@@ -472,15 +477,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(interestsTag), "limit" to 4), 6000)
             .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return false
         val json = toSelf(got.content, encrypt = false) ?: return true
+        // A later version than this app knows: leave it alone, and don't write over it.
+        if ((try { org.json.JSONObject(json).optInt("v") } catch (_: Exception) { 0 }) > 1) { newerProfile = true; return true }
         if (interests.adopt(json)) { followedTopics.value = interests.followed.toSet(); prefs.edit().putLong("interestsSent", interests.at).apply() }
         return true
     }
 
-    /**
-     * NIP-44 with yourself, as this app: blocks for a moment, so never on the open path. Null until the
-     * signer has a call for it (its own grant can't read messages through NIP-55): till then the copy stays on this phone.
-     */
-    private fun toSelf(text: String, encrypt: Boolean): String? = null
+    /** NIP-44 with yourself (the signer pins the other side to your own key). Blocks for a few seconds: never on the open path. */
+    private fun toSelf(text: String, encrypt: Boolean): String? = phone.nip44Self(text, encrypt)
 
     /** You opened a link card: a little more of its topic. */
     fun opened(c: TopicCard) = interests.learn(listOf(c.topic), 1.0)

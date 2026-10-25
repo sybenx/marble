@@ -66,6 +66,11 @@ class TopicsTest {
         assertTrue(other.at > phone.at)
         assertEquals(0, changes - 1)                      // taking a copy isn't a change to send back
         assertFalse(other.adopt("not json"))
+        // Another app's fields survive this app writing it back; a later version isn't taken.
+        val withMore = org.json.JSONObject(phone.toJson()).put("at", other.at + 5).put("sites", org.json.JSONArray(listOf("x"))).toString()
+        assertTrue(other.adopt(withMore))
+        assertEquals("x", org.json.JSONObject(other.toJson()).getJSONArray("sites").getString(0))
+        assertFalse(other.adopt(org.json.JSONObject(withMore).put("v", 2).put("at", other.at + 50).toString()))
     }
 
     @Test fun seenStaysSeen() {

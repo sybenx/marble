@@ -136,6 +136,8 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     private val lessSource = HashMap<String, Int>()
     /** When it last changed, in seconds: the newer copy wins, this phone's or your account's. */
     @Volatile var at = 0L; private set
+    /** Fields this app doesn't know (another app's, or a later version's): kept and written back as they were. */
+    private var extra = org.json.JSONObject()
     val seeded get() = prefs.getBoolean("interestsSeeded", false)
 
     init { prefs.getString("interests", null)?.let { try { read(org.json.JSONObject(it)) } catch (_: Exception) {} } }
@@ -161,14 +163,14 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     @Synchronized fun sourcePenalty(source: String) = 1.0 / (1 shl (lessSource[source] ?: 0).coerceAtMost(4))
 
     /** All of it, as the copy on your account holds it (before it's encrypted). */
-    @Synchronized fun toJson(): String = org.json.JSONObject().put("v", 1).put("at", at)
+    @Synchronized fun toJson(): String = org.json.JSONObject(extra.toString()).put("v", 1).put("at", at)
         .put("weights", org.json.JSONObject(weights as Map<*, *>)).put("followed", org.json.JSONArray(followed.toList()))
         .put("lessTopics", org.json.JSONObject(lessTopic as Map<*, *>)).put("lessSources", org.json.JSONObject(lessSource as Map<*, *>)).toString()
 
     /** Your account's copy, if it's newer than this phone's: true if taken. */
     @Synchronized fun adopt(json: String): Boolean {
         val o = try { org.json.JSONObject(json) } catch (_: Exception) { return false }
-        if (o.optLong("at") <= at) return false
+        if (o.optInt("v") != 1 || o.optLong("at") <= at) return false
         read(o)
         prefs.edit().putString("interests", toJson()).putBoolean("interestsSeeded", true).apply()
         return true
@@ -181,7 +183,9 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         o.optJSONObject("lessTopics")?.let { w -> w.keys().forEach { k -> lessTopic[k] = w.optInt(k) } }
         o.optJSONObject("lessSources")?.let { w -> w.keys().forEach { k -> lessSource[k] = w.optInt(k) } }
         at = o.optLong("at")
+        extra = org.json.JSONObject(o.toString()).apply { KNOWN.forEach { remove(it) } }
     }
+    private companion object { val KNOWN = listOf("v", "at", "weights", "followed", "lessTopics", "lessSources") }
 
     @Synchronized private fun save() {
         at = maxOf(at + 1, System.currentTimeMillis() / 1000)
