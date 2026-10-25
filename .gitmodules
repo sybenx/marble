@@ -1,0 +1,3 @@
+[submodule "cosign"]
+	path = cosign
+	url = https://github.com/sybenx/cosign.git
