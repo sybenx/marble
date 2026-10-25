@@ -879,6 +879,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** Someone's name and picture, straight from the two fast relays (over connections kept open a while), not the batched path. */
+    /** A profile's posts as last shown (the last ten profiles), so coming back to one finds it as you left it. */
+    data class ProfilePosts(val notes: List<Event>?, val settled: Boolean, val more: Boolean)
+    private val profiles = object : LinkedHashMap<String, ProfilePosts>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ProfilePosts>?) = size > 10
+    }
+    fun profilePosts(pk: String): ProfilePosts? = synchronized(profiles) { profiles[pk] }
+    fun keepProfilePosts(pk: String, p: ProfilePosts) = synchronized(profiles) { profiles[pk] = p }
+
     fun profileNow(pk: String) {
         for (url in SearchRelays.FAST) scope.launch { People.add(Conn.of(url).req(listOf(mapOf("kinds" to listOf(0), "authors" to listOf(pk), "limit" to 1)), 4000)) }
         People.want(listOf(pk))

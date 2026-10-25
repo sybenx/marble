@@ -144,8 +144,12 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val stack = remember { mutableStateListOf<Route>() }
     val feedState = rememberLazyListState()
     val header = remember { TopCollapse() }
+    // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
+    // a screen that's closed forgets it.
+    val kept = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    fun keyOf(i: Int) = "$i:${stack[i]}"
     val open: (Route) -> Unit = { stack.add(it) }
-    val back: () -> Unit = { stack.removeAt(stack.lastIndex) }
+    val back: () -> Unit = { kept.removeState(keyOf(stack.lastIndex)); stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
     // Read on open and when you come back to it; nothing in between.
     LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices() }
@@ -158,15 +162,18 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val nav = Nav(open = open, back = back, social = social) { urls, i -> viewing = urls to i }
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val asked by DebugOpen.profile.collectAsState()
-    LaunchedEffect(asked) { asked?.let { stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
-    when (val top = stack.lastOrNull()) {
-        null -> Home(phone, ui, social, feedState, header, nav)
-        Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
-        Route.Bell -> BellScreen(phone, ui, social, nav)
-        Route.Search -> SearchScreen(social, nav)
-        Route.Stories -> StoriesScreen(social, nav)
-        is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
-        is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
+    LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
+    val top = stack.lastOrNull()
+    if (top == null) Home(phone, ui, social, feedState, header, nav)
+    else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
+        when (top) {
+            Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
+            Route.Bell -> BellScreen(phone, ui, social, nav)
+            Route.Search -> SearchScreen(social, nav)
+            Route.Stories -> StoriesScreen(social, nav)
+            is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
+            is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
+        }
     }
 
     viewing?.let { (urls, i) -> ImageViewer(urls, i) { viewing = null } }
@@ -415,8 +422,15 @@ private fun PostMenu(p: Pick, name: String, social: Social) = Box {
 @Composable
 private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
     TopBar("Today's stories", nav)
-    var all by remember { mutableStateOf<List<TopicCard>?>(null) }
-    LaunchedEffect(Unit) { all = social.unseenStories() }
+    // Which stories this list showed, kept while you read one, so coming back finds the same list in the same place.
+    var ids by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<List<String>?>(null) }
+    var all by remember { mutableStateOf(ids?.let { known -> social.allStories.value.associateBy { it.id }.let { byId -> known.mapNotNull { byId[it] } } }?.ifEmpty { null }) }
+    LaunchedEffect(Unit) {
+        if (all != null) return@LaunchedEffect
+        val known = ids
+        all = if (known == null) social.unseenStories().also { l -> ids = l.map { it.id } }
+            else social.allStories.value.associateBy { it.id }.let { byId -> known.mapNotNull { byId[it] } }.ifEmpty { social.unseenStories() }
+    }
     val dismissed by social.dismissed.collectAsState()
     val saved by social.saved.collectAsState()
     val list = remember(all, dismissed) { all?.filter { "t:" + it.id !in dismissed } ?: emptyList() }
@@ -921,14 +935,18 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
     TopBar(p?.shown ?: "Profile", nav)
     // Their posts, a page at a time: more as you reach the end.
     // Each relay's posts come in as it answers, newest first; "none" only once every relay has.
-    var notes by remember(pk) { mutableStateOf<List<Event>?>(null) }
-    var settled by remember(pk) { mutableStateOf(false) }
-    var more by remember(pk) { mutableStateOf(true) }
+    // Back from a post: the posts as they were, at once, so the list is where you left it (nothing loads again or moves).
+    val before = remember(pk) { social.profilePosts(pk) }
+    var notes by remember(pk) { mutableStateOf(before?.notes) }
+    var settled by remember(pk) { mutableStateOf(before?.settled ?: false) }
+    var more by remember(pk) { mutableStateOf(before?.more ?: true) }
     var paging by remember(pk) { mutableStateOf(false) }
     LaunchedEffect(pk) {
+        if (before?.settled == true) return@LaunchedEffect
         social.notesBy(pk) { got -> notes = ((notes ?: emptyList()) + got).distinctBy { it.id }.sortedByDescending { it.createdAt } }
         settled = true
     }
+    LaunchedEffect(pk, notes, settled, more) { social.keepProfilePosts(pk, Social.ProfilePosts(notes, settled, more)) }
     LaunchedEffect(pk) { val t0 = android.os.SystemClock.uptimeMillis(); snapshotFlow { notes?.size ?: -1 }.first { it >= 0 }.let { n ->
         if (debugBuild) android.util.Log.i("CosignProfile", "${pk.take(8)} posts ($n) at ${android.os.SystemClock.uptimeMillis() - t0} ms") } }
     val scope = rememberCoroutineScope()
@@ -1036,6 +1054,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         if (t.isEmpty()) { social.clearSearch(); return@LaunchedEffect }
         Ref.parse(t)?.let { open(it); return@LaunchedEffect }
         if (t.length < 2) return@LaunchedEffect
+        // Back from a result: these are its results already; searching again would reload them and lose your place.
+        if (social.found.value?.query == t) return@LaunchedEffect
         delay(350)
         social.search(t)
     }
