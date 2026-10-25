@@ -50,6 +50,24 @@ class TopicsTest {
         assertEquals(0.5, again.sourcePenalty("bbc"), 0.0)
     }
 
+    @Test fun theNewerCopyWins() {
+        var changes = 0
+        val phone = Interests(FakePrefs()) { changes++ }
+        phone.follow("art", true)
+        assertEquals(1, changes)
+        val account = phone.toJson()
+        // Another phone, older: takes the account's copy, and learning on from it doesn't lose it.
+        val other = Interests(FakePrefs())
+        assertTrue(other.adopt(account))
+        assertTrue("art" in other.followed)
+        assertFalse(other.adopt(account))                 // not newer
+        other.learn(listOf("food"), 1.0)
+        assertFalse(other.adopt(account))                 // this phone's is newer now
+        assertTrue(other.at > phone.at)
+        assertEquals(0, changes - 1)                      // taking a copy isn't a change to send back
+        assertFalse(other.adopt("not json"))
+    }
+
     @Test fun seenStaysSeen() {
         val f = File.createTempFile("seen", ".txt").apply { deleteOnExit() }
         Seen(f).apply { add("t:abc"); add("t:abc"); add("note1") }

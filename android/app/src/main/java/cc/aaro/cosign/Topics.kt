@@ -23,7 +23,16 @@ import kotlin.math.ln
 data class TopicCard(
     val id: String, val url: String, val title: String, val summary: String, val image: String?,
     val sourceId: String, val sourceName: String, val publishedAt: Long, val topic: String,
-)
+) {
+    fun toMap() = mapOf("id" to id, "url" to url, "title" to title, "summary" to summary, "image" to image, "source" to sourceId, "sourceName" to sourceName, "at" to publishedAt, "topic" to topic)
+    companion object {
+        fun fromMap(x: Any?): TopicCard? {
+            val m = x as? Map<*, *> ?: return null
+            return TopicCard(m["id"] as? String ?: return null, m["url"] as? String ?: return null, m["title"] as? String ?: return null, m["summary"] as? String ?: "",
+                m["image"] as? String, m["source"] as? String ?: "", m["sourceName"] as? String ?: "", m["at"] as? Long ?: 0, m["topic"] as? String ?: return null)
+        }
+    }
+}
 
 data class Topic(val id: String, val name: String)
 
@@ -32,7 +41,11 @@ object TopicFeeds {
     private val http by lazy { Fetch.http.newBuilder().callTimeout(10, TimeUnit.SECONDS).build() }
     @Volatile var topics: List<Topic> = emptyList(); private set
     /** What to call a topic. The one about Nostr apps goes by what they are. */
-    fun name(id: String) = if (id == "nostr") "Open social apps" else topics.firstOrNull { it.id == id }?.name ?: id
+    fun name(id: String) = if (id == "nostr") "Open social apps" else topics.firstOrNull { it.id == id }?.name ?: NAMES[id] ?: id
+    /** The names as the site gives them, for before it has been read. */
+    private val NAMES = mapOf("ai" to "AI and agents", "games" to "Games and game making", "bitcoin" to "Bitcoin", "software" to "Building software",
+        "privacy" to "Privacy and security", "gadgets" to "Phones and gadgets", "selfhosting" to "Self-hosting", "food" to "Food",
+        "art" to "Art and design", "photos" to "Photos and places", "news" to "General news")
 
     /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site. */
     suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = withContext(Dispatchers.IO) {
@@ -111,15 +124,21 @@ object TopicGuess {
 }
 
 /**
- * What you care about, on this phone only: topic weights learned from what you like and open, the
- * topics you follow, and what you've said you want less of (a topic, a site).
+ * What you care about, worked out on this phone and nowhere else: topic weights learned from what
+ * you like and open, the topics you follow, and what you've said you want less of (a topic, a site).
+ * A copy goes to your own account encrypted to yourself, so your other phones have it too; no
+ * server reads or ranks it. [changed]: it changed here (time to save that copy).
  */
-class Interests(private val prefs: android.content.SharedPreferences) {
-    private val weights = HashMap<String, Double>(prefs.getString("interests", null)?.let { s -> (Json.parse(s) as? Map<*, *>)?.entries?.associate { (k, v) -> k as String to ((v as? Number)?.toDouble() ?: 0.0) } } ?: emptyMap())
-    val followed: MutableSet<String> = prefs.getStringSet("followedTopics", emptySet())!!.toMutableSet()
-    private val lessTopic = HashMap<String, Int>(prefs.getStringSet("lessTopics", emptySet())!!.associate { it.substringBefore(':') to (it.substringAfter(':').toIntOrNull() ?: 1) })
-    private val lessSource = HashMap<String, Int>(prefs.getStringSet("lessSources", emptySet())!!.associate { it.substringBefore(':') to (it.substringAfter(':').toIntOrNull() ?: 1) })
+class Interests(private val prefs: android.content.SharedPreferences, private val changed: () -> Unit = {}) {
+    private val weights = HashMap<String, Double>()
+    val followed: MutableSet<String> = LinkedHashSet()
+    private val lessTopic = HashMap<String, Int>()
+    private val lessSource = HashMap<String, Int>()
+    /** When it last changed, in seconds: the newer copy wins, this phone's or your account's. */
+    @Volatile var at = 0L; private set
     val seeded get() = prefs.getBoolean("interestsSeeded", false)
+
+    init { prefs.getString("interests", null)?.let { try { read(org.json.JSONObject(it)) } catch (_: Exception) {} } }
 
     @Synchronized fun learn(topics: List<String>, by: Double) {
         if (topics.isEmpty()) return
@@ -141,11 +160,33 @@ class Interests(private val prefs: android.content.SharedPreferences) {
     }
     @Synchronized fun sourcePenalty(source: String) = 1.0 / (1 shl (lessSource[source] ?: 0).coerceAtMost(4))
 
+    /** All of it, as the copy on your account holds it (before it's encrypted). */
+    @Synchronized fun toJson(): String = org.json.JSONObject().put("v", 1).put("at", at)
+        .put("weights", org.json.JSONObject(weights as Map<*, *>)).put("followed", org.json.JSONArray(followed.toList()))
+        .put("lessTopics", org.json.JSONObject(lessTopic as Map<*, *>)).put("lessSources", org.json.JSONObject(lessSource as Map<*, *>)).toString()
+
+    /** Your account's copy, if it's newer than this phone's: true if taken. */
+    @Synchronized fun adopt(json: String): Boolean {
+        val o = try { org.json.JSONObject(json) } catch (_: Exception) { return false }
+        if (o.optLong("at") <= at) return false
+        read(o)
+        prefs.edit().putString("interests", toJson()).putBoolean("interestsSeeded", true).apply()
+        return true
+    }
+
+    private fun read(o: org.json.JSONObject) {
+        weights.clear(); followed.clear(); lessTopic.clear(); lessSource.clear()
+        o.optJSONObject("weights")?.let { w -> w.keys().forEach { k -> weights[k] = w.optDouble(k, 0.0).coerceAtLeast(0.0) } }
+        o.optJSONArray("followed")?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let { followed += it } }
+        o.optJSONObject("lessTopics")?.let { w -> w.keys().forEach { k -> lessTopic[k] = w.optInt(k) } }
+        o.optJSONObject("lessSources")?.let { w -> w.keys().forEach { k -> lessSource[k] = w.optInt(k) } }
+        at = o.optLong("at")
+    }
+
     @Synchronized private fun save() {
-        prefs.edit().putString("interests", org.json.JSONObject(weights as Map<*, *>).toString())
-            .putStringSet("followedTopics", followed.toSet())
-            .putStringSet("lessTopics", lessTopic.map { (k, v) -> "$k:$v" }.toSet())
-            .putStringSet("lessSources", lessSource.map { (k, v) -> "$k:$v" }.toSet()).apply()
+        at = maxOf(at + 1, System.currentTimeMillis() / 1000)
+        prefs.edit().putString("interests", toJson()).apply()
+        changed()
     }
 }
 

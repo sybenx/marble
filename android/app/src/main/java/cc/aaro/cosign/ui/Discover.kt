@@ -281,7 +281,6 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                         TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Teal) }
                     }
                 }
-                if (feed.items.isEmpty() && !feed.loading && feed.at > 0L && !feed.failed) item(key = "caught up") { CaughtUp() }
                 if (feed.items.isNotEmpty()) item(key = "title") {
                     Text("Discover", style = MaterialTheme.typography.titleSmall, color = Vault.Muted, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
                 }
@@ -295,8 +294,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                 }
                 if (feed.items.isNotEmpty()) item(key = "end") {
                     LaunchedEffect(feed.items.size) { social.loadMore() }
-                    if (feed.loading) Text("Loading…", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
-                    else if (!feed.more) CaughtUp()
+                    // Discover doesn't run out: the next page is on its way.
+                    if (feed.loading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal, modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
                 }
             }
         }
@@ -368,14 +367,6 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
             Text("Search people, posts, #tags", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
         }
     }
-}
-
-/** Seen it all: nothing old comes round again. */
-@Composable
-private fun CaughtUp() = Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-    Text("You're all caught up.", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
-    Spacer(Modifier.height(4.dp))
-    Text("New things come every 30 minutes.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
 }
 
 /**
