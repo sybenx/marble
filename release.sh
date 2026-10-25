@@ -34,9 +34,12 @@ else
 fi
 cp "Marble-$VERSION.apk" Marble.apk
 
-git add -A && git commit -q -m "Release Marble $VERSION
+git add -A
+git diff --cached --quiet || git commit -q -m "Release Marble $VERSION
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" && git push -q origin main
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+# Push even when there was nothing to commit: the release tag is made from origin's main.
+git push -q origin main || { echo "push failed: not releasing"; exit 1; }
 # Notes: release-notes/<version>.md if there is one, then the same lines every release has.
 NOTES="Android build of Marble $VERSION. Install over the previous version; your account stays on your phone.
 
