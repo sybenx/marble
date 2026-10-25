@@ -4,61 +4,214 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Marble</title>
-<meta name="description" content="One account for the open social web. Yours alone, safe if you lose your phone, and it signs you in anywhere with a scan.">
+<meta name="description" content="Find people and posts on the open social web, and get Marble: one account for all of it. Yours alone, safe if you lose your phone, and it signs you in anywhere with a scan.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F7F3EC" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="canonical" href="https://sybenx.github.io/marble/">
+<meta name="theme-color" content="#13110F" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="canonical" href="https://marble.syb.lol/">
+<link rel="modulepreload" href="/js/app.js">
+<link rel="modulepreload" href="/js/pool.js">
+<link rel="modulepreload" href="/js/ids.js">
+<link rel="modulepreload" href="/js/data.js">
+<link rel="modulepreload" href="/js/render.js">
+<link rel="modulepreload" href="/js/search.js">
+<link rel="modulepreload" href="/js/search-rank.js">
+<link rel="modulepreload" href="/js/vendor/noble.js">
+<script>
+  // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/pool.js).
+  if (/^\/(e|p|a|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
+    window.marbleWarm = ["wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
+      .map((u) => { try { return new WebSocket(u); } catch { return null; } }).filter(Boolean);
+  }
+</script>
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Marble">
 <meta property="og:title" content="Marble">
 <meta property="og:description" content="One account for the open social web. Yours alone, safe if you lose your phone, and it signs you in anywhere with a scan.">
-<meta property="og:url" content="https://sybenx.github.io/marble/">
-<meta property="og:image" content="https://sybenx.github.io/marble/og.jpg">
+<meta property="og:url" content="https://marble.syb.lol/">
+<meta property="og:image" content="https://marble.syb.lol/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="A glass swirl marble, and the words: Marble. One account for the open social web.">
 <meta name="twitter:card" content="summary_large_image">
 <style>
   :root {
-    --bg: #F7F3EC; --ink: #1d1d1d; --muted: #5d5850; --accent: #2C7F77;
-    --on-accent: #F7F3EC; --card: #fff; --line: rgba(0, 0, 0, .09);
-    --shadow: rgba(40, 30, 10, .28);
+    --bg: #F7F3EC; --ink: #1F1B16; --muted: #6B6257; --accent: #2E4CB8; --accent-soft: #E3E8F9;
+    --on-accent: #F7F3EC; --card: #FFFDF9; --line: #E6DFD4; --field: #FFFDF9; --field-line: #D6CDBF;
+    --shadow: rgba(40, 30, 10, .28); --skeleton: #EDE7DD; --ok: #2E4CB8;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #141414; --ink: #ECE8E1; --muted: #a29d95; --accent: #7FC8C0;
-      --on-accent: #10201E; --card: #1e1e1e; --line: rgba(255, 255, 255, .09);
-      --shadow: rgba(0, 0, 0, .7);
+      --bg: #13110F; --ink: #EDE6DA; --muted: #A69D90; --accent: #9DB0F5; --accent-soft: #232A42;
+      --on-accent: #101A3D; --card: #1E1B18; --line: #2A2622; --field: #1E1B18; --field-line: #34302B;
+      --shadow: rgba(0, 0, 0, .7); --skeleton: #2A2622; --ok: #9DB0F5;
     }
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
     overflow-x: hidden;
   }
   a { color: var(--accent); text-underline-offset: 2px; }
+  button { font: inherit; color: inherit; }
   .wrap { max-width: 960px; margin: 0 auto; padding-inline: 16px; }
   section { padding-block: 40px; }
   h2 { font-size: 26px; line-height: 1.25; margin: 0 0 24px; letter-spacing: -.01em; }
   h3 { font-size: 18px; margin: 0 0 6px; }
   p { margin: 0 0 12px; }
   .muted { color: var(--muted); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-  /* Hero */
-  .hero { text-align: center; padding-block: 56px 48px; }
-  .marble {
-    display: block; width: min(72vw, 300px); aspect-ratio: 1; margin: 0 auto;
-    filter: drop-shadow(0 14px 18px var(--shadow));
-  }
+  /* The top: Marble and its search. Big on the front page, a bar everywhere else. */
+  .top { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 16px 8px; }
+  .brand { display: flex; flex-direction: column; align-items: center; color: var(--ink); text-decoration: none; }
+  .marble { display: block; width: 132px; aspect-ratio: 1; filter: drop-shadow(0 10px 14px var(--shadow)); }
   .marble img { display: block; width: 100%; height: 100%; clip-path: circle(48.6%); }
-  h1 { font-size: clamp(44px, 11vw, 64px); line-height: 1.05; margin: 28px 0 10px; letter-spacing: -.02em; }
-  .tagline { font-size: clamp(19px, 4.6vw, 23px); color: var(--muted); margin: 0 auto 32px; max-width: 30ch; }
+  .word { font-size: 44px; font-weight: 700; line-height: 1.1; letter-spacing: -.02em; margin: 14px 0 22px; }
+  .search { position: relative; width: 100%; max-width: 580px; margin: 0; }
+  .search svg { position: absolute; left: 18px; top: 50%; width: 20px; height: 20px; translate: 0 -50%; color: var(--muted); pointer-events: none; }
+  .search input {
+    width: 100%; font: inherit; font-size: 17px; color: var(--ink); background: var(--field);
+    border: 1px solid var(--field-line); border-radius: 999px; padding: 14px 20px 14px 50px; outline: none;
+    -webkit-appearance: none; appearance: none;
+  }
+  .search input::placeholder { color: var(--muted); }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search input::-webkit-search-cancel-button { display: none; }
+  .hint { color: var(--muted); font-size: 15px; margin: 12px 0 0; }
+
+  body:not([data-page="home"]) .top {
+    position: sticky; top: 0; z-index: 5; flex-direction: row; gap: 14px; padding: 10px 16px;
+    background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  body:not([data-page="home"]) .brand { flex-direction: row; gap: 8px; flex: none; }
+  body:not([data-page="home"]) .marble { width: 34px; filter: drop-shadow(0 2px 3px var(--shadow)); }
+  body:not([data-page="home"]) .word { font-size: 22px; margin: 0; }
+  body:not([data-page="home"]) .search input { padding-block: 9px; font-size: 16px; }
+  body:not([data-page="home"]) .search svg { left: 16px; width: 18px; height: 18px; }
+  body:not([data-page="home"]) .hint, body:not([data-page="home"]) #landing { display: none; }
+  @media (max-width: 520px) { body:not([data-page="home"]) .word { display: none; } }
+
+  /* Pages: a post, a person, a search */
+  #view > div { max-width: 640px; margin: 0 auto; padding: 16px 16px 64px; }
+  body[data-page="home"] #view > div { padding: 0; }
+  .list { display: grid; gap: 10px; }
+  .list, .thread, .reply { grid-template-columns: minmax(0, 1fr); }
+  .results section { padding-block: 8px 20px; }
+  .results h2, .replies h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 6px 4px 10px; letter-spacing: 0; }
+  .card {
+    display: block; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px;
+    overflow-wrap: anywhere; cursor: pointer;
+  }
+  .card.main { cursor: auto; padding: 18px 18px 14px; }
+  .card.compact { padding: 10px 14px; border-radius: 14px; }
+  .card:not(.main):hover { border-color: var(--field-line); }
+  .who { display: flex; align-items: center; gap: 10px; min-width: 0; margin-bottom: 8px; }
+  .who-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+  .who-name { color: var(--ink); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who-name:hover { text-decoration: underline; }
+  .who-sub { display: flex; gap: 8px; color: var(--muted); font-size: 14px; min-width: 0; white-space: nowrap; }
+  .who-sub > * { overflow: hidden; text-overflow: ellipsis; }
+  .who-sub > :empty { display: none; }
+  .when { color: var(--muted); text-decoration: none; flex: none; }
+  .when:hover { text-decoration: underline; }
+  .addr.ok::after { content: " ✓"; color: var(--ok); }
+  .av {
+    --s: 40px; position: relative; flex: none; width: var(--s); height: var(--s); border-radius: 50%; overflow: hidden;
+    background: var(--accent-soft); display: inline-grid; place-items: center;
+  }
+  .av b { color: var(--accent); font-size: calc(var(--s) * .42); font-weight: 600; }
+  .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .text { line-height: 1.5; }
+  .text.big { font-size: 19px; line-height: 1.5; }
+  .text a, .about a { overflow-wrap: anywhere; }
+  .mention, .tag { text-decoration: none; }
+  .mention:hover, .tag:hover { text-decoration: underline; }
+  .emoji { height: 1.3em; width: auto; vertical-align: -.25em; }
+  .media { margin-top: 10px; display: grid; gap: 4px; border-radius: 14px; overflow: hidden; }
+  .media.grid { grid-template-columns: 1fr 1fr; }
+  .media img, .media video { display: block; width: 100%; max-height: 520px; object-fit: cover; background: var(--skeleton); cursor: zoom-in; }
+  .media.grid img { aspect-ratio: 1; }
+  .media video { cursor: auto; }
+  .quote-slot { display: block; margin-top: 10px; }
+  .quote-slot .card { background: var(--bg); }
+  .quote.loading { display: block; height: 64px; border-radius: 14px; background: var(--skeleton); }
+  .quote.missing { display: block; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); text-decoration: none; }
+  .context, .reposted { color: var(--muted); font-size: 14px; margin: -4px 0 6px; }
+  .context a { text-decoration: none; }
+  .reposted { margin: 0 4px 6px; }
+  .cw summary { cursor: pointer; color: var(--muted); }
+  .meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  .link { background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; font-size: 14px; font-weight: 600; }
+  .more { justify-self: center; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 20px; color: var(--accent); font-weight: 600; font-size: 15px; cursor: pointer; }
+  .thread { display: grid; gap: 10px; }
+  .up .card { opacity: .85; }
+  .gap { justify-self: start; margin-left: 30px; color: var(--muted); text-decoration: none; }
+  .replies { padding-block: 10px 0; }
+  .reply.nested { margin-left: 18px; padding-left: 12px; border-left: 2px solid var(--line); margin-top: 8px; }
+  .reply { display: grid; }
+  .teaser img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; }
+  .teaser h3 { margin: 0 0 4px; }
+  .teaser p { color: var(--muted); margin: 0; }
+  .empty { text-align: center; padding-block: 48px; }
+  .loading-text { padding: 6px 4px; }
+  .list > .note { margin: 0 4px; font-size: 14px; }
+  .skeleton { cursor: auto; }
+  .bar { display: block; height: 14px; border-radius: 7px; background: var(--skeleton); margin: 10px 0; }
+  .who .bar { margin: 4px 0; width: 140px; }
+  .w60 { width: 60%; } .who .w40 { width: 140px; } .who .w20 { width: 80px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .skeleton .bar, .skeleton .av, .quote.loading { animation: pulse 1.2s ease-in-out infinite alternate; }
+    @keyframes pulse { to { opacity: .45; } }
+  }
+
+  /* People */
+  .person-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; color: var(--ink); text-decoration: none; min-width: 0; }
+  .person-row:hover { border-color: var(--field-line); }
+  .pr-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+  .pr-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-sub { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--muted); font-size: 14px; }
+  .pr-sub .addr { overflow-wrap: anywhere; }
+  .pr-about { color: var(--muted); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
+  .person-head { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; margin-bottom: 14px; padding-bottom: 14px; overflow-wrap: anywhere; }
+  .banner { height: 140px; background: linear-gradient(135deg, #5D79E0, #2E4CB8 55%, #101E4D); }
+  .banner img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .person-id { display: flex; align-items: flex-end; gap: 14px; padding: 0 18px; margin-top: -40px; }
+  .person-id .av { border: 4px solid var(--card); box-sizing: content-box; }
+  .person-id > div { min-width: 0; padding-bottom: 2px; }
+  .person-id h1 { font-size: 24px; line-height: 1.2; margin: 0; overflow: hidden; text-overflow: ellipsis; }
+  .person-id .who-sub { margin: 2px 0 0; white-space: normal; }
+  .about { padding: 10px 18px 0; }
+  .links { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; padding: 6px 18px 0; margin: 0; font-size: 15px; }
+  .tabs { display: flex; gap: 6px; margin: 0 0 12px; }
+  .tabs button { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 15px; cursor: pointer; color: var(--muted); }
+  .tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+
+  /* Articles */
+  .article { overflow-wrap: anywhere; }
+  .article h1 { font-size: clamp(28px, 6vw, 38px); line-height: 1.2; margin: 18px 0 16px; letter-spacing: -.01em; }
+  .article .cover { width: 100%; max-height: 360px; object-fit: cover; border-radius: 18px; display: block; cursor: zoom-in; }
+  .dated { font-size: 14px; }
+  .prose { font-size: 18px; line-height: 1.65; }
+  .prose img { max-width: 100%; border-radius: 12px; cursor: zoom-in; }
+  .prose pre { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; overflow-x: auto; }
+  .prose blockquote { border-left: 3px solid var(--accent); margin: 0 0 12px; padding-left: 14px; color: var(--muted); }
+  .prose h2 { font-size: 24px; margin: 28px 0 10px; } .prose h3 { font-size: 20px; margin: 22px 0 8px; }
+
+  dialog#zoom { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
+  dialog#zoom::backdrop { background: rgba(10, 9, 8, .86); }
+  dialog#zoom img { display: block; max-width: 96vw; max-height: 96vh; object-fit: contain; }
+
+  /* The rest of the front page: what Marble is */
+  #landing { border-top: 1px solid var(--line); margin-top: 56px; }
+  .intro { text-align: center; padding-block: 48px 24px; }
+  .tagline { font-size: clamp(22px, 5vw, 28px); font-weight: 600; margin: 0 auto 24px; max-width: 24ch; line-height: 1.3; letter-spacing: -.01em; text-wrap: balance; }
   .button {
     display: inline-block; background: var(--accent); color: var(--on-accent);
     font-weight: 600; font-size: 19px; text-decoration: none;
@@ -66,15 +219,11 @@
   }
   .button:hover { filter: brightness(1.08); }
   .button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-  .hero .note { font-size: 15px; color: var(--muted); margin-top: 14px; }
-
-  /* What it does */
+  .intro .note { font-size: 15px; color: var(--muted); margin-top: 14px; }
   .points { display: grid; gap: 16px; }
   .point { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
   .point svg { width: 28px; height: 28px; color: var(--accent); margin-bottom: 10px; display: block; }
   .point p { margin: 0; color: var(--muted); }
-
-  /* Why it's safe */
   .safe { max-width: 640px; }
   .safe ul { list-style: none; padding: 0; margin: 20px 0 0; }
   .safe li { padding: 14px 0 14px 30px; border-top: 1px solid var(--line); position: relative; }
@@ -84,20 +233,16 @@
   }
   .safe li b { display: block; }
   .safe li span { color: var(--muted); }
-
-  /* Get it */
   .get, .get .side { display: grid; gap: 16px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
-  .card h3 { font-size: 20px; margin-bottom: 12px; }
-  .card .button { font-size: 17px; padding: 13px 26px; margin: 4px 0 18px; }
+  .get-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
+  .get-card h3 { font-size: 20px; margin-bottom: 12px; }
+  .get-card .button { font-size: 17px; padding: 13px 26px; margin: 4px 0 18px; }
   .ways { list-style: none; padding: 0; margin: 0; }
   .ways li { padding: 10px 0; border-top: 1px solid var(--line); }
   .ways li span { color: var(--muted); }
   .soon { display: inline-block; font-size: 13px; font-weight: 600; color: var(--muted);
           border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin-left: 4px; }
   code { font: 15px ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-
-  /* Small print */
   footer { border-top: 1px solid var(--line); padding-block: 40px 56px; font-size: 15px; color: var(--muted); }
   footer h2 { font-size: 17px; color: var(--ink); margin: 0 0 10px; }
   footer ul { padding-left: 18px; margin: 0 0 28px; }
@@ -106,33 +251,52 @@
   .builton { color: var(--ink); }
 
   @media (min-width: 760px) {
+    .top { padding-top: 72px; }
+    .marble { width: 168px; }
+    .word { font-size: 52px; }
     section { padding-block: 52px; }
     h2 { font-size: 30px; }
-    .hero { padding-block: 80px 64px; }
     .points { grid-template-columns: repeat(3, 1fr); }
     .get { grid-template-columns: 1.4fr 1fr; align-items: start; }
     .small { grid-template-columns: 1.6fr 1fr; gap: 40px; }
+    /* the bar's search box sits over the page's column */
+    body:not([data-page="home"]) .top { display: grid; grid-template-columns: 1fr minmax(0, 608px) 1fr; }
+    body:not([data-page="home"]) .brand { justify-self: start; }
   }
 </style>
 </head>
-<body>
+<body data-page="home">
+<script>if (location.pathname !== "/" || location.search) document.body.dataset.page = "view";</script>
 
-<header class="hero wrap">
-  <picture class="marble">
-    <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="img/marble-dark.avif">
-    <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="img/marble-dark.webp">
-    <source media="(prefers-color-scheme: dark)" srcset="img/marble-dark.jpg">
-    <source type="image/avif" srcset="img/marble-light.avif">
-    <source type="image/webp" srcset="img/marble-light.webp">
-    <img src="img/marble-light.jpg" width="500" height="500" alt="A glass marble with a green, blue and copper swirl inside">
-  </picture>
-  <h1>Marble</h1>
-  <p class="tagline">One account for the open social web.</p>
-  <a class="button" href="#get">Get Marble</a>
-  <p class="note">Free, for Android. iPhone is coming.</p>
+<header class="top">
+  <a class="brand" href="/" aria-label="Marble, the front page">
+    <picture class="marble">
+      <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="/img/marble-dark.avif">
+      <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="/img/marble-dark.webp">
+      <source media="(prefers-color-scheme: dark)" srcset="/img/marble-dark.jpg">
+      <source type="image/avif" srcset="/img/marble-light.avif">
+      <source type="image/webp" srcset="/img/marble-light.webp">
+      <img src="/img/marble-light.jpg" width="500" height="500" alt="" fetchpriority="high">
+    </picture>
+    <span class="word">Marble</span>
+  </a>
+  <form class="search" id="search" role="search" action="/">
+    <label for="q" class="visually-hidden">Search people, posts, #tags</label>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+    <input id="q" name="q" type="search" placeholder="Search people, posts, #tags" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+  </form>
+  <p class="hint">Or paste a link to a post or a profile.</p>
 </header>
 
-<main>
+<main id="view" aria-live="polite"></main>
+
+<div id="landing">
+<section class="wrap intro" aria-labelledby="tagline">
+  <p class="tagline" id="tagline">One account for the open social web.</p>
+  <a class="button" href="#get">Get Marble</a>
+  <p class="note">Free, for Android. iPhone is coming.</p>
+</section>
+
 <section class="wrap" aria-labelledby="what">
   <h2 id="what">What it does</h2>
   <div class="points">
@@ -169,7 +333,7 @@
 <section class="wrap" id="get" aria-labelledby="get-it">
   <h2 id="get-it">Get it</h2>
   <div class="get">
-    <div class="card">
+    <div class="get-card">
       <h3>Android</h3>
       <a class="button" href="https://github.com/sybenx/marble/releases/latest/download/Marble.apk">Download Marble</a>
       <ul class="ways">
@@ -178,28 +342,27 @@
       </ul>
     </div>
     <div class="side">
-      <div class="card">
+      <div class="get-card">
         <h3>iPhone <span class="soon">Coming</span></h3>
         <p class="muted" style="margin:0">Marble for iPhone is on the way.</p>
       </div>
-      <div class="card">
+      <div class="get-card">
         <h3>Your own server</h3>
         <p style="margin:0"><a href="https://github.com/sybenx/cosign-umbrel">Run your own server on Umbrel</a> <span class="muted">and hold a piece of your account at home.</span></p>
       </div>
     </div>
   </div>
 </section>
-</main>
 
 <footer>
   <div class="wrap small">
     <div>
       <h2>Privacy</h2>
       <ul>
-        <li>The servers that hold part of your account see what you do through them, like a post or a sign-in. Never your messages, and never enough to act as you.</li>
-        <li>When you search for people, what you type goes to the servers Marble searches. When Marble checks an address like name@example.com, that site can see your IP address.</li>
-        <li>Pictures and videos load from wherever they're kept. Those places can see your IP address, as in any app that shows you a picture.</li>
-        <li>This page has no tracking, no cookies and nothing loaded from anywhere else.</li>
+        <li>This site is plain files: everything happens in your browser. It has no tracking, no cookies, and nothing of its own loaded from anywhere else.</li>
+        <li>When you search here, what you type goes only to the servers Marble searches. When you open a post or a profile, the servers that keep it see which one.</li>
+        <li>When Marble checks an address like name@example.com, that site can see your IP address. Pictures and videos load from wherever they're kept, and those places can too.</li>
+        <li>In the app, the servers that hold part of your account see what you do through them, like a post or a sign-in. Never your messages, and never enough to act as you.</li>
       </ul>
     </div>
     <div>
@@ -212,6 +375,9 @@
     </div>
   </div>
 </footer>
+</div>
 
+<dialog id="zoom" aria-label="Picture"><img alt=""></dialog>
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>
