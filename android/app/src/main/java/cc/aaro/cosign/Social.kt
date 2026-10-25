@@ -278,9 +278,18 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch {
             if (restored.await()) afterPaint()
             launch { loadStories(onScreen) }
+            // Nothing to show yet (a new phone, say): a few good posts from quick asks first, in a second or two.
+            if (f.posts.isEmpty() || force) launch {
+                val quick = try { quickPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
+                if (quick.isNotEmpty() && feed.value.loading) { feed.update { if (it.posts.isEmpty() || force) it.copy(posts = quick) else it }; Startup.mark("feed quick ${quick.size}"); loadPreviews(quick.map { it.e }) }
+            }
             val posts = try { buildPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             if (posts == null) return@launch feed.update { it.copy(loading = false, failed = it.posts.isEmpty() && it.stories.isEmpty()) }
-            feed.update { it.copy(posts = posts, loading = false, at = System.currentTimeMillis()) }
+            // What's on screen stays where it is; the full ranking fills in below it.
+            feed.update { cur ->
+                val keep = if (force && cur.posts.none { p -> posts.any { it.e.id == p.e.id } }) emptyList() else cur.posts.take(lookedAt + 3)
+                cur.copy(posts = (keep + posts.filter { p -> keep.none { it.e.id == p.e.id } }).take(maxOf(20, keep.size)), loading = false, at = System.currentTimeMillis())
+            }
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             saveFeed()
             loadPreviews(posts.map { it.e })
@@ -301,6 +310,45 @@ class Social private constructor(private val phone: Phone, context: Context) {
         feed.update { it.copy(stories = box) }
         if (box.isNotEmpty()) Startup.mark("feed stories ${box.size}")
         saveFeed()
+    }
+
+    /**
+     * The first few posts, from quick asks: what's hot on the search relays over the last two days and in
+     * your three strongest topics, with trust from who you follow, and follower counts for a few others.
+     * Never more than a second and a half; the full ranking comes after and fills in below.
+     */
+    private suspend fun quickPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
+        val me = reader ?: return@coroutineScope emptyList()
+        val now = Clock.now()
+        val since = now - Calm.WINDOW
+        val weights = topicWeights()
+        // Who you follow (from the relays that answer fastest), then what they've posted: the first thing to trust.
+        val followsAsk = async {
+            follows.value ?: kotlinx.coroutines.withTimeoutOrNull(1200) {
+                followsIn(Fetch.query(listOf("wss://purplepag.es", "wss://relay.primal.net", "wss://relay.damus.io"), listOf(mapOf("kinds" to listOf(3), "authors" to listOf(me), "limit" to 1)), 1200, graceMs = 200).maxByOrNull { it.createdAt })
+            } ?: emptySet()
+        }
+        val theirs = async {
+            val f = followsAsk.await()
+            if (f.isEmpty()) emptyList() else Fetch.query(bigRelays.take(3), listOf(mapOf("kinds" to Calm.POOL_KINDS, "authors" to f.take(500).toList(), "since" to since, "limit" to 300)), 1200, graceMs = 300)
+        }
+        val filters = listOf(mapOf<String, Any>("kinds" to Calm.POOL_KINDS, "search" to "sort:hot", "since" to since, "limit" to 100)) +
+            weights.keys.take(3).mapNotNull { t -> TopicGuess.queries(t).firstOrNull()?.let { q -> mapOf<String, Any>("kinds" to Calm.POOL_KINDS, "search" to "$q sort:hot", "since" to since, "limit" to 50) } }
+        val hot = async { Fetch.query(searchRelays.take(2), filters, 1500, graceMs = 1500) }
+        val follows = followsAsk.await()
+        val got = (theirs.await() + hot.await())
+            .filter { it.createdAt in since..now + 600 && unseen(it.id) && it.id !in skip && !interests.hidden("hiddenPeople", it.pubkey) }.distinctBy { it.id }
+        val liked = liked.value + readerLiked
+        val names = People.known.value
+        val perAuthor = got.groupingBy { it.pubkey }.eachCount()
+        val passes = got.filter { e -> Calm.drop(e, me, liked, perAuthor[e.pubkey] ?: 0, names[e.pubkey]?.name, true, Standing(true, 0, 0)) == null &&
+            TopicGuess.hits(e, strict = true).any { (weights[it.topic] ?: 0.0) > 0 } && forDiscover(e) }
+        val strangers = passes.map { it.pubkey }.distinct().filter { it !in follows }.take(20)
+        val followers = ConcurrentHashMap<String, Long>()
+        if (strangers.isNotEmpty()) kotlinx.coroutines.withTimeoutOrNull(600) { Fetch.counts(SearchRelays.COUNTS[0], strangers.associateWith { mapOf("kinds" to listOf(3), "#p" to listOf(it)) }, 600, inFlight = 20) { pk, c -> followers[pk] = c } }
+        val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now) }
+        if (debuggable) Startup.mark("feed quick asked ${got.size}, passed ${passes.size}, follows ${follows.size}, counted ${followers.size}, picked ${picks.size}")
+        Calm.diversify(picks, max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
     }
 
     /** The relays a topic's posts are looked for on: those that search, and the big ones for its hashtags. */

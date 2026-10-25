@@ -56,7 +56,8 @@ data class Discussion(val url: String, val site: String, val comments: Long? = n
 data class Topic(val id: String, val name: String)
 
 object TopicFeeds {
-    private const val INDEX = "https://sybenx.github.io/topic-feeds/index.json"
+    private const val BASE = "https://sybenx.github.io/topic-feeds"
+    private const val INDEX = "$BASE/index.json"
     private val http by lazy { Fetch.http.newBuilder().callTimeout(10, TimeUnit.SECONDS).build() }
     @Volatile var topics: List<Topic> = emptyList(); private set
     /** What to call a topic. The one about Nostr apps goes by what they are. */
@@ -72,9 +73,13 @@ object TopicFeeds {
         val fresh = System.currentTimeMillis() - file.lastModified() < 30 * 60_000L
         if (file.exists() && (fresh || cachedOnly)) parse(file.readText())?.let { return@withContext it }
         if (cachedOnly) return@withContext emptyList()
-        val indexText = get(INDEX) ?: return@withContext (if (file.exists()) parse(file.readText()) else null) ?: emptyList()
-        val list = ((Json.parse(indexText) as? Map<*, *>)?.get("topics") as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
-        val bodies = coroutineScope { list.map { t -> async { (t["url"] as? String)?.let { get(it) } } }.awaitAll() }
+        // The topics' files asked for alongside the index (their addresses are known), not after it: one round trip, not two.
+        val (indexText, bodies) = coroutineScope {
+            val known = NAMES.keys.plus("nostr").associateWith { id -> async { get("$BASE/topics/$id.json") } }
+            val indexText = get(INDEX) ?: return@coroutineScope null
+            val list = ((Json.parse(indexText) as? Map<*, *>)?.get("topics") as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
+            indexText to list.map { t -> async { known[t["id"]]?.await() ?: (t["url"] as? String)?.let { get(it) } } }.awaitAll()
+        } ?: return@withContext (if (file.exists()) parse(file.readText()) else null) ?: emptyList()
         // Kept as the site sent it: the index, then each topic's file.
         val text = org.json.JSONArray(listOf(indexText) + bodies.filterNotNull()).toString()
         try { file.writeText(text) } catch (_: Exception) {}
