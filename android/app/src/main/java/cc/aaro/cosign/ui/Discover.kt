@@ -438,8 +438,8 @@ private fun PostMenu(p: Pick, name: String, social: Social) = Box {
     Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
     if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
         DropdownMenuItem({ Text(if (followed) "Stop following “$topic”" else "Follow “$topic”", color = Vault.Text) }, { open = false; social.followTopic(p.topic, !followed) })
-        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic) })
-        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic, p.e) })
+        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id, p.e) })
         DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey) })
         DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; copy(context, social, webLink(social, p.e), "Link copied") })
         DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
@@ -752,7 +752,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else openInBrowser(context, link) } }
+            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else { nav.social.openedLink(n); openInBrowser(context, link) } } }
             if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {

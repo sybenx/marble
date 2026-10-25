@@ -235,6 +235,15 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     @Synchronized fun lessOfTopic(topic: String) { lessTopic[topic] = (lessTopic[topic] ?: 0) + 1; followed -= topic; save() }
     @Synchronized fun lessOfSource(source: String) { lessSource[source] = (lessSource[source] ?: 0) + 1; save() }
 
+    /**
+     * Newsletters and digests from people you don't follow: shown, but low down, until you show you like them
+     * (a like, its link opened, More like this); Not interested on one pushes them further down. A count in the
+     * shared profile ("newsletters"): above 0, you like them.
+     */
+    @Synchronized fun newsletters(by: Int) { extra.put("newsletters", (extra.optInt("newsletters", 0) + by).coerceIn(-3, 3)); save() }
+    /** What a stranger's newsletter's score is multiplied by, for you. */
+    @Synchronized fun digestWeight(): Double = extra.optInt("newsletters", 0).let { if (it > 0) 1.0 else if (it < 0) 0.05 else 0.2 }
+
     /** Hidden for good ("Hide" in a card's ⋯): someone's posts, or a site's stories. In the shared profile, so every phone hides them. */
     @Synchronized fun hide(kind: String, id: String) {
         val list = extra.optJSONArray(kind) ?: org.json.JSONArray().also { extra.put(kind, it) }
