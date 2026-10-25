@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marble</title>
+<meta name="description" content="One account for the open social web. Yours alone, safe if you lose your phone, and it signs you in anywhere with a scan.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F7F3EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141414" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="canonical" href="https://sybenx.github.io/marble/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Marble">
+<meta property="og:title" content="Marble">
+<meta property="og:description" content="One account for the open social web. Yours alone, safe if you lose your phone, and it signs you in anywhere with a scan.">
+<meta property="og:url" content="https://sybenx.github.io/marble/">
+<meta property="og:image" content="https://sybenx.github.io/marble/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A glass swirl marble, and the words: Marble. One account for the open social web.">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --bg: #F7F3EC; --ink: #1d1d1d; --muted: #5d5850; --accent: #2C7F77;
+    --on-accent: #F7F3EC; --card: #fff; --line: rgba(0, 0, 0, .09);
+    --shadow: rgba(40, 30, 10, .28);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141414; --ink: #ECE8E1; --muted: #a29d95; --accent: #7FC8C0;
+      --on-accent: #10201E; --card: #1e1e1e; --line: rgba(255, 255, 255, .09);
+      --shadow: rgba(0, 0, 0, .7);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  .wrap { max-width: 960px; margin: 0 auto; padding-inline: 16px; }
+  section { padding-block: 40px; }
+  h2 { font-size: 26px; line-height: 1.25; margin: 0 0 24px; letter-spacing: -.01em; }
+  h3 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+
+  /* Hero */
+  .hero { text-align: center; padding-block: 56px 48px; }
+  .marble {
+    display: block; width: min(72vw, 300px); aspect-ratio: 1; margin: 0 auto;
+    filter: drop-shadow(0 14px 18px var(--shadow));
+  }
+  .marble img { display: block; width: 100%; height: 100%; clip-path: circle(48.6%); }
+  h1 { font-size: clamp(44px, 11vw, 64px); line-height: 1.05; margin: 28px 0 10px; letter-spacing: -.02em; }
+  .tagline { font-size: clamp(19px, 4.6vw, 23px); color: var(--muted); margin: 0 auto 32px; max-width: 30ch; }
+  .button {
+    display: inline-block; background: var(--accent); color: var(--on-accent);
+    font-weight: 600; font-size: 19px; text-decoration: none;
+    padding: 16px 36px; border-radius: 999px;
+  }
+  .button:hover { filter: brightness(1.08); }
+  .button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .hero .note { font-size: 15px; color: var(--muted); margin-top: 14px; }
+
+  /* What it does */
+  .points { display: grid; gap: 16px; }
+  .point { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+  .point svg { width: 28px; height: 28px; color: var(--accent); margin-bottom: 10px; display: block; }
+  .point p { margin: 0; color: var(--muted); }
+
+  /* Why it's safe */
+  .safe { max-width: 640px; }
+  .safe ul { list-style: none; padding: 0; margin: 20px 0 0; }
+  .safe li { padding: 14px 0 14px 30px; border-top: 1px solid var(--line); position: relative; }
+  .safe li::before {
+    content: ""; position: absolute; left: 4px; top: 23px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .safe li b { display: block; }
+  .safe li span { color: var(--muted); }
+
+  /* Get it */
+  .get, .get .side { display: grid; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
+  .card h3 { font-size: 20px; margin-bottom: 12px; }
+  .card .button { font-size: 17px; padding: 13px 26px; margin: 4px 0 18px; }
+  .ways { list-style: none; padding: 0; margin: 0; }
+  .ways li { padding: 10px 0; border-top: 1px solid var(--line); }
+  .ways li span { color: var(--muted); }
+  .soon { display: inline-block; font-size: 13px; font-weight: 600; color: var(--muted);
+          border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin-left: 4px; }
+  code { font: 15px ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+
+  /* Small print */
+  footer { border-top: 1px solid var(--line); padding-block: 40px 56px; font-size: 15px; color: var(--muted); }
+  footer h2 { font-size: 17px; color: var(--ink); margin: 0 0 10px; }
+  footer ul { padding-left: 18px; margin: 0 0 28px; }
+  footer li { margin-bottom: 6px; }
+  .small { display: grid; gap: 8px; }
+  .builton { color: var(--ink); }
+
+  @media (min-width: 760px) {
+    section { padding-block: 52px; }
+    h2 { font-size: 30px; }
+    .hero { padding-block: 80px 64px; }
+    .points { grid-template-columns: repeat(3, 1fr); }
+    .get { grid-template-columns: 1.4fr 1fr; align-items: start; }
+    .small { grid-template-columns: 1.6fr 1fr; gap: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <picture class="marble">
+    <source media="(prefers-color-scheme: dark)" type="image/avif" srcset="img/marble-dark.avif">
+    <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="img/marble-dark.webp">
+    <source media="(prefers-color-scheme: dark)" srcset="img/marble-dark.jpg">
+    <source type="image/avif" srcset="img/marble-light.avif">
+    <source type="image/webp" srcset="img/marble-light.webp">
+    <img src="img/marble-light.jpg" width="500" height="500" alt="A glass marble with a green, blue and copper swirl inside">
+  </picture>
+  <h1>Marble</h1>
+  <p class="tagline">One account for the open social web.</p>
+  <a class="button" href="#get">Get Marble</a>
+  <p class="note">Free, for Android. iPhone is coming.</p>
+</header>
+
+<main>
+<section class="wrap" aria-labelledby="what">
+  <h2 id="what">What it does</h2>
+  <div class="points">
+    <div class="point">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+      <h3>Your account</h3>
+      <p>It's yours alone. No company holds it, and no company can take it away.</p>
+    </div>
+    <div class="point">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M9.5 9.5h5v5h-5z"/><path d="M11 18h2"/></svg>
+      <h3>Sign in anywhere with your phone</h3>
+      <p>A site shows a code. You scan it with Marble. You're in, with no password.</p>
+    </div>
+    <div class="point">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>
+      <h3>Discover</h3>
+      <p>Posts from people you'll like, plus today's stories.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" aria-labelledby="safe">
+  <div class="safe">
+    <h2 id="safe">Why it's safe</h2>
+    <p>Your account is split between your phone and a few servers. Your phone and one server have to work together to do anything as you. Nobody, not even you, has the whole thing in one place.</p>
+    <ul>
+      <li><b>Lose your phone, keep your account.</b> <span>Get it back on a new phone from your paper backup or another device.</span></li>
+      <li><b>A server alone can't act as you.</b> <span>If one goes down or goes bad, your account carries on with the others.</span></li>
+      <li><b>Your paper backup is the spare.</b> <span>Print it once and keep it somewhere safe, like your passport.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="wrap" id="get" aria-labelledby="get-it">
+  <h2 id="get-it">Get it</h2>
+  <div class="get">
+    <div class="card">
+      <h3>Android</h3>
+      <a class="button" href="https://github.com/sybenx/marble/releases/latest/download/Marble.apk">Download Marble</a>
+      <ul class="ways">
+        <li><b>Obtainium</b> <span>keeps Marble up to date. Add</span> <code>github.com/sybenx/marble</code></li>
+        <li><b>Zapstore</b> <span class="soon">Coming</span></li>
+      </ul>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h3>iPhone <span class="soon">Coming</span></h3>
+        <p class="muted" style="margin:0">Marble for iPhone is on the way.</p>
+      </div>
+      <div class="card">
+        <h3>Your own server</h3>
+        <p style="margin:0"><a href="https://github.com/sybenx/cosign-umbrel">Run your own server on Umbrel</a> <span class="muted">and hold a piece of your account at home.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap small">
+    <div>
+      <h2>Privacy</h2>
+      <ul>
+        <li>The servers that hold part of your account see what you do through them, like a post or a sign-in. Never your messages, and never enough to act as you.</li>
+        <li>When you search for people, what you type goes to the servers Marble searches. When Marble checks an address like name@example.com, that site can see your IP address.</li>
+        <li>Pictures and videos load from wherever they're kept. Those places can see your IP address, as in any app that shows you a picture.</li>
+        <li>This page has no tracking, no cookies and nothing loaded from anywhere else.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Open source</h2>
+      <ul>
+        <li><a href="https://github.com/sybenx/marble">Marble on GitHub</a></li>
+        <li><a href="https://github.com/sybenx/cosign">Cosign on GitHub</a></li>
+      </ul>
+      <p class="builton">Marble is one app built on <a href="https://cosign.aaro.cc">Cosign</a>. Any app can be.</p>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
