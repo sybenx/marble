@@ -34,8 +34,8 @@ protocol around it hasn't had an outside review yet.
 ## Getting Marble
 
 Releases are on GitHub (github.com/sybenx/marble/releases), so Obtainium can follow
-them: add `https://github.com/sybenx/marble` as an app. The newest build is also at
-https://cosign.aaro.cc/cosign.apk.
+them: add `https://github.com/sybenx/marble` as an app. The newest build is always at
+https://github.com/sybenx/marble/releases/latest/download/Marble.apk.
 
 For approvals while Android has put Marble to sleep, install **ntfy**. Without it,
 approvals arrive while Marble is running in the background.
