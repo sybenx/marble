@@ -105,6 +105,10 @@ import cc.aaro.cosign.People
 import cc.aaro.cosign.Person
 import cc.aaro.cosign.Phone
 import cc.aaro.cosign.PlaceCard
+import cc.aaro.cosign.Item
+import cc.aaro.cosign.TopicCard
+import cc.aaro.cosign.TopicFeeds
+import androidx.lifecycle.repeatOnLifecycle
 import cc.aaro.cosign.Ref
 import cc.aaro.cosign.Social
 import cc.aaro.cosign.Startup
@@ -139,6 +143,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     if (stack.isNotEmpty()) BackHandler(onBack = back)
     // Read on open and when you come back to it; nothing in between.
     LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices() }
+    // And every 30 minutes while it's open: new things come in below what you're reading.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
 
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
@@ -202,15 +209,32 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
     val muted by social.muted.collectAsState()
     val dismissed by social.dismissed.collectAsState()
     val snoozed by social.snoozed.collectAsState()
-    val mixed = remember(feed.notes, videos, muted, dismissed, snoozed) {
-        mix(feed.notes.filter { it.pubkey !in muted && it.id !in dismissed && !social.snoozedNow(it.pubkey) }, videos)
+    val mixed = remember(feed.items, videos, muted, dismissed, snoozed) {
+        mix(feed.items.filter { it.key !in dismissed && (it !is Item.Post || it.e.pubkey !in muted && !social.snoozedNow(it.e.pubkey)) }, videos)
     }
-    // How far down you've looked, in notes: a video that comes late goes below it.
-    val notesNow by androidx.compose.runtime.rememberUpdatedState(feed.notes)
+    // How far down you've looked, in posts and stories: a video that comes late goes below it.
+    val itemsNow by androidx.compose.runtime.rememberUpdatedState(feed.items)
     LaunchedEffect(state) {
         snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key }.collect { key ->
-            val i = notesNow.indexOfFirst { it.id == key }
+            val i = itemsNow.indexOfFirst { it.key == key }
             if (i > social.lookedAt) social.lookedAt = i
+        }
+    }
+    // What's been on screen properly (most of it, or most of the screen, for a second and a half) doesn't come back.
+    LaunchedEffect(state) {
+        val since = HashMap<String, Long>()
+        while (true) {
+            delay(250)
+            val info = state.layoutInfo
+            val top = info.viewportStartOffset; val bottom = info.viewportEndOffset
+            val now = android.os.SystemClock.uptimeMillis()
+            val showing = info.visibleItemsInfo.mapNotNull { v ->
+                val k = (v.key as? String)?.takeIf { it.startsWith("t:") || cc.aaro.cosign.core.isHex32(it) } ?: return@mapNotNull null
+                val shown = minOf(v.offset + v.size, bottom) - maxOf(v.offset, top)
+                k.takeIf { v.size > 0 && shown >= 0.6f * minOf(v.size, bottom - top) }
+            }.toSet()
+            since.keys.retainAll(showing)
+            for (k in showing) if (now - since.getOrPut(k) { now } >= 1500) social.saw(k)
         }
     }
     val context = LocalContext.current
@@ -243,12 +267,12 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
         }
 
-        PullToRefreshBox(feed.loading && feed.notes.isNotEmpty(), { social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
+        PullToRefreshBox(feed.loading && feed.items.isNotEmpty(), { social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
                 ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) } }
-                if (feed.notes.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
+                if (feed.items.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
                 }
                 if (feed.failed) item(key = "failed") {
@@ -257,19 +281,22 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                         TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Teal) }
                     }
                 }
-                if (feed.notes.isNotEmpty()) item(key = "title") {
+                if (feed.items.isEmpty() && !feed.loading && feed.at > 0L && !feed.failed) item(key = "caught up") { CaughtUp() }
+                if (feed.items.isNotEmpty()) item(key = "title") {
                     Text("Discover", style = MaterialTheme.typography.titleSmall, color = Vault.Muted, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
                 }
-                items(mixed, key = { if (it is Event) it.id else "place:" + (it as PlaceCard).id }) { item ->
-                    if (item is PlaceCard) VideoCard(item) { openInBrowser(context, item.url) }
-                    else (item as Event).let { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12) }
+                items(mixed, key = { if (it is Item) it.key else "place:" + (it as PlaceCard).id }) { item ->
+                    when (item) {
+                        is PlaceCard -> VideoCard(item) { openInBrowser(context, item.url) }
+                        is Item.Card -> StoryCard(item.c, social) { social.opened(item.c); openInBrowser(context, item.c.url) }
+                        is Item.Post -> NoteCard(item.e, people, item.e.id in liked, nav, onLike = { social.like(item.e) }, maxLines = 12)
+                    }
                     HorizontalDivider(color = Vault.Edge)
                 }
-                if (feed.notes.isNotEmpty()) item(key = "end") {
-                    LaunchedEffect(feed.notes.size) { social.loadMore() }
-                    Text(if (feed.loading) "Loading…" else if (!feed.more) "That's all for now." else "",
-                        color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
-                    feed.source?.let { Text("Discover from ${it.removePrefix("wss://").substringBefore('/')}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+                if (feed.items.isNotEmpty()) item(key = "end") {
+                    LaunchedEffect(feed.items.size) { social.loadMore() }
+                    if (feed.loading) Text("Loading…", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp))
+                    else if (!feed.more) CaughtUp()
                 }
             }
         }
@@ -343,8 +370,73 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
     }
 }
 
-/** Notes, with a place's cards between them: from [Social.Videos.start] on, one every 4 to 6 notes, never two together. */
-private fun mix(notes: List<Event>, v: Social.Videos): List<Any> {
+/** Seen it all: nothing old comes round again. */
+@Composable
+private fun CaughtUp() = Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Text("You're all caught up.", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+    Spacer(Modifier.height(4.dp))
+    Text("New things come every 30 minutes.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+}
+
+/**
+ * A story on a site, like a newspaper's: its picture, where it's from and when, the headline and a
+ * line or two. Tapping opens it on the site. Its topic is under it (follow it, or less of it); ⋯ for the rest.
+ */
+@Composable
+private fun StoryCard(c: TopicCard, social: Social, onOpen: () -> Unit) = Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp)) {
+    c.image?.let { img ->
+        Box(Modifier.fillMaxWidth().aspectRatio(1.91f).clip(RoundedCornerShape(12.dp)).background(Vault.Surface)) { NetImage(img, Modifier.fillMaxSize(), 1080) }
+        Spacer(Modifier.height(10.dp))
+    }
+    Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Spacer(Modifier.height(4.dp))
+    Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    val summary = c.summary.takeIf { it.isNotEmpty() && !it.startsWith(c.title.take(40)) }
+    if (summary != null) {
+        Spacer(Modifier.height(4.dp))
+        Text(summary, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TopicChip(c.topic, social)
+        Spacer(Modifier.weight(1f))
+        StoryMenu(c, social)
+    }
+}
+
+/** A story's topic. Tap: follow it (more like this), or less about it. */
+@Composable
+private fun TopicChip(topic: String, social: Social) = Box {
+    var open by remember { mutableStateOf(false) }
+    val followed by social.followedTopics.collectAsState()
+    val name = TopicFeeds.name(topic)
+    Text((if (topic in followed) "✓ " else "") + name, color = Vault.Teal, style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { open = true }.border(1.dp, Vault.TealEdge, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) { TopicChoices(topic, social) { open = false } }
+}
+
+@Composable
+private fun TopicChoices(topic: String, social: Social, close: () -> Unit) {
+    val followed = topic in social.followedTopics.collectAsState().value
+    val name = TopicFeeds.name(topic)
+    DropdownMenuItem({ Text(if (followed) "Stop following $name" else "Follow $name", color = Vault.Text) }, { close(); social.followTopic(topic, !followed) })
+    DropdownMenuItem({ Text("Less about $name", color = Vault.Text) }, { close(); social.lessAbout(topic) })
+}
+
+/** "⋯" on a story: not this one, less of its topic, or less from its site. */
+@Composable
+private fun StoryMenu(c: TopicCard, social: Social) = Box {
+    var open by remember { mutableStateOf(false) }
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
+    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text("Not interested", color = Vault.Text) }, { open = false; social.notInterested(c) })
+        TopicChoices(c.topic, social) { open = false }
+        DropdownMenuItem({ Text("Less from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.lessFrom(c) })
+    }
+}
+
+/** Posts and stories, with a place's cards between them: from [Social.Videos.start] on, one every 4 to 6, never two together. */
+private fun mix(notes: List<Item>, v: Social.Videos): List<Any> {
     if (v.cards.isEmpty() || v.start < 0) return notes
     val out = ArrayList<Any>(notes.size + v.cards.size)
     var next = v.start; var shown = 0

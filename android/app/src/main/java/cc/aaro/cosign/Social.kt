@@ -178,7 +178,10 @@ fun rootOf(e: Event): String? {
     return es.firstOrNull { it.getOrNull(3) == "root" }?.get(1) ?: es.firstOrNull { it.getOrNull(3).isNullOrEmpty() }?.get(1)
 }
 
-data class Feed(val notes: List<Event> = emptyList(), val loading: Boolean = false, val source: String? = null, val failed: Boolean = false, val at: Long = 0, val more: Boolean = true)
+/** Discover: posts and link cards, in the order they're shown. */
+data class Feed(val items: List<Item> = emptyList(), val loading: Boolean = false, val source: String? = null, val failed: Boolean = false, val at: Long = 0, val more: Boolean = true) {
+    val notes get() = items.mapNotNull { (it as? Item.Post)?.e }
+}
 
 data class Notice(val event: Event, val type: Type, val about: String?) {
     enum class Type { REPLY, MENTION, REACTION, REPOST }
@@ -227,21 +230,39 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     // --- Discover -----------------------------------------------------------------
 
-    /** Load the feed: from the first source that has notes. [force]: even if it's fresh. */
+    /** What's been on your screen already: Discover doesn't show it again. On this phone only. */
+    private val seen = Seen(File(context.filesDir, "seen-" + (phone.ui.value.member?.group?.groupX?.take(16) ?: phone.slot) + ".txt"))
+    /** What you're interested in, learned on this phone. */
+    val interests = Interests(prefs)
+    /** The topics you follow, for the screen. */
+    val followedTopics = MutableStateFlow(interests.followed.toSet())
+    /** Candidates that didn't make it onto the last page: the next page takes from these first. */
+    @Volatile private var pool: Pair<List<Event>, List<TopicCard>> = emptyList<Event>() to emptyList()
+
+    /** It's been on screen properly: never again. */
+    fun saw(key: String) = seen.add(key)
+    private fun unseen(key: String) = key !in seen && key !in dismissed.value
+
+    /**
+     * Load Discover: posts from the first source that has them, and link cards on topics, put in order
+     * by what you like. [force] (you pulled down): only things you haven't seen, not even the ones on screen now.
+     */
     fun loadFeed(force: Boolean = false) {
         val f = feed.value
-        if (f.loading || (!force && f.notes.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
+        if (f.loading || (!force && f.items.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
             // The notes are fresh enough; the videos may not be loaded yet.
             if (!f.loading && videos.value.cards.isEmpty()) loadPlaces()
             return
         }
         feed.update { it.copy(loading = true, failed = false) }
-        scope.launch { afterPaint(); knowFollows(); knowMutes() }
+        scope.launch { afterPaint(); knowFollows(); knowMutes(); seedInterests() }
+        val onScreen = if (force) f.items.take(lookedAt + 2).map { it.key }.toSet() else emptySet()
         lookedAt = 0
         loadPlaces()
         scope.launch {
             // With last time's feed to show, that goes on screen first; without one, this is what's awaited.
-            if (feed.value.notes.isNotEmpty() || feedFile.exists()) afterPaint()
+            if (feed.value.items.isNotEmpty() || feedFile.exists()) afterPaint()
+            val topicCards = async { kotlinx.coroutines.withTimeoutOrNull(6000) { try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { null } } ?: TopicFeeds.load(CosignApp.instance, cachedOnly = true) }
             // The curated feed first. If it has less than a screenful or two, the next source tops it up
             // (after it, never mixed in). A bit more is asked for than is shown, as some is left out.
             var used: String? = null
@@ -249,33 +270,37 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val foreign = ArrayList<Event>()
             for (src in Sources.FEEDS) {
                 Startup.mark("feed asked")
-                val got = Fetch.query(listOf(src), mapOf("kinds" to FEED_KINDS, "limit" to 60), 8000)
+                val got = Fetch.query(listOf(src), mapOf("kinds" to FEED_KINDS, "limit" to 100), 8000)
                 Startup.mark("feed fetched ${got.size}")
-                // Roots with something in them, nothing heavy; then two per person and one "GM" a page.
+                // Roots with something in them, nothing heavy, nothing you've seen; then two per person and one "GM" a page.
                 // The curated source keeps its own order (its ranking); the others go newest first.
-                val ok = got.filter { it.kind in FEED_KINDS && Curate.keep(it) && forDiscover(it) && fresh.none { f -> f.id == it.id } }
-                val notes = Curate.page(if (src == Sources.FEEDS[0]) ok else ok.sortedByDescending { it.createdAt }, already = fresh)
+                val ok = got.filter { it.kind in FEED_KINDS && Curate.keep(it) && forDiscover(it) && unseen(it.id) && it.id !in onScreen && fresh.none { f -> f.id == it.id } }
+                val notes = Curate.page(if (src == Sources.FEEDS[0]) ok else ok.sortedByDescending { it.createdAt }, perAuthor = 3, already = fresh)
                 Startup.mark("feed filtered ${notes.size}")
-                foreign += got.filter { it.kind in FEED_KINDS && Curate.keep(it) && foreignOk(it) && foreign.none { f -> f.id == it.id } }
+                foreign += got.filter { it.kind in FEED_KINDS && Curate.keep(it) && foreignOk(it) && unseen(it.id) && foreign.none { f -> f.id == it.id } }
                 if (notes.isEmpty()) continue
                 if (used == null) used = src
                 fresh += notes
-                if (fresh.size >= 20) break
+                if (fresh.size >= 30) break
             }
-            if (fresh.size < 3) return@launch feed.update { it.copy(loading = false, failed = it.notes.isEmpty()) }
+            val cards = topicCards.await().filter { unseen("t:" + it.id) && "t:" + it.id !in onScreen }
+            Startup.mark("topic cards ${cards.size}")
+            if (fresh.isEmpty() && cards.isEmpty() && !force) return@launch feed.update { it.copy(loading = false, failed = it.items.isEmpty()) }
             remember(fresh)
             People.want(fresh.map { it.pubkey })
-            // What's on screen stays where it is; the new notes come after it. A refresh you asked for starts over.
+            // What's on screen stays where it is; the new things come after it. A refresh you asked for starts over.
             feed.update { cur ->
-                val keep = if (force || cur.notes.isEmpty()) emptyList() else cur.notes.take(lookedAt + 3)
-                Feed(keep + fresh.filter { n -> keep.none { it.id == n.id } }, source = used, at = System.currentTimeMillis())
+                val keep = if (force || cur.items.isEmpty()) emptyList() else cur.items.take(lookedAt + 3)
+                val page = Arrange.page(fresh.filter { n -> keep.none { it.key == n.id } }, cards.filter { c -> keep.none { it.key == "t:" + c.id } }, interests)
+                pool = fresh.filter { n -> page.none { it.key == n.id } } to cards.filter { c -> page.none { it.key == "t:" + c.id } }
+                Feed(keep + page, source = used, at = System.currentTimeMillis(), more = used != null || pool.second.isNotEmpty())
             }
             saveFeed()
             translateIn(foreign)
         }
     }
 
-    // The last feed, on disk, so opening shows it at once (filtered again: you may have muted someone since).
+    // The last feed, on disk, so opening shows it at once (filtered again: you may have muted someone since, or seen it).
     private val feedFile = File(context.cacheDir, "feed-" + (phone.ui.value.member?.group?.groupX?.take(16) ?: phone.slot) + ".json")
 
     /** Called once the whole object is set up: the filters below need it. */
@@ -283,37 +308,98 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch {
             loadTranslations()
             val m = try { Json.parse(feedFile.readText()) as? Map<*, *> } catch (_: Exception) { null } ?: return@launch
-            val notes = (m["notes"] as? List<*>)?.mapNotNull { Event.fromMap(it) }?.filter { Curate.keep(it) && forDiscover(it) }?.let { Curate.page(it) } ?: return@launch
-            if (notes.isEmpty()) return@launch
-            remember(notes)
-            feed.update { if (it.notes.isNotEmpty()) it else it.copy(notes = notes, source = m["source"] as? String, at = m["at"] as? Long ?: 0) }
+            val notes = (m["notes"] as? List<*>)?.mapNotNull { Event.fromMap(it) }?.filter { Curate.keep(it) && forDiscover(it) && unseen(it.id) }?.associateBy { it.id } ?: return@launch
+            val cards = TopicFeeds.load(CosignApp.instance, cachedOnly = true).associateBy { "t:" + it.id }
+            val items = (m["order"] as? List<*>)?.mapNotNull { k -> (k as? String)?.takeIf { unseen(it) }?.let { notes[it]?.let { e -> Item.Post(e) } ?: cards[it]?.let { c -> Item.Card(c) } } } ?: return@launch
+            if (items.isEmpty()) return@launch
+            remember(notes.values.toList())
+            feed.update { if (it.items.isNotEmpty()) it else it.copy(items = items, source = m["source"] as? String, at = m["at"] as? Long ?: 0) }
             afterPaint()
-            People.want(notes.map { it.pubkey })
-            Startup.mark("feed from cache ${notes.size}")
+            People.want(notes.values.map { it.pubkey })
+            Startup.mark("feed from cache ${items.size}")
         }
     }
 
     private fun saveFeed() {
         val f = feed.value
-        try { feedFile.writeText(Json.stringify(mapOf("source" to f.source, "at" to f.at, "notes" to f.notes.take(40).map { it.toMap() }))) } catch (_: Exception) {}
+        val items = f.items.take(60)
+        try { feedFile.writeText(Json.stringify(mapOf("source" to f.source, "at" to f.at, "order" to items.map { it.key },
+            "notes" to items.mapNotNull { (it as? Item.Post)?.e?.toMap() }))) } catch (_: Exception) {}
     }
 
-    /** Older notes from the same source. */
+    /** The next page: what didn't fit on the last one, and older posts from the same source. */
     fun loadMore() {
         val f = feed.value
-        val src = f.source ?: return
-        if (f.loading || !f.more || f.notes.isEmpty()) return
+        if (f.loading || !f.more || f.items.isEmpty()) return
         feed.update { it.copy(loading = true) }
         scope.launch {
-            val until = f.notes.minOf { it.createdAt } - 1
-            val got = Fetch.query(listOf(src), mapOf("kinds" to FEED_KINDS, "limit" to 60, "until" to until), 8000)
-            val ok = got.filter { it.kind in FEED_KINDS && Curate.keep(it) && forDiscover(it) && f.notes.none { n -> n.id == it.id } }
-            val more = Curate.page(if (src == Sources.FEEDS[0]) ok else ok.sortedByDescending { it.createdAt }, already = f.notes)
-            remember(more)
-            People.want(more.map { it.pubkey })
-            feed.update { it.copy(notes = it.notes + more, loading = false, more = got.isNotEmpty()) }
+            val src = f.source
+            val (leftPosts, leftCards) = pool
+            val got = if (src == null || leftPosts.size >= 12) emptyList() else
+                Fetch.query(listOf(src), mapOf("kinds" to FEED_KINDS, "limit" to 60, "until" to (f.notes.minOfOrNull { it.createdAt } ?: Clock.now()) - 1), 8000)
+            val ok = got.filter { it.kind in FEED_KINDS && Curate.keep(it) && forDiscover(it) && unseen(it.id) && f.notes.none { n -> n.id == it.id } && leftPosts.none { n -> n.id == it.id } }
+            val older = Curate.page(if (src == Sources.FEEDS[0]) ok else ok.sortedByDescending { it.createdAt }, perAuthor = 3, already = f.notes)
+            val posts = (leftPosts + older).filter { unseen(it.id) }
+            val cards = leftCards.filter { unseen("t:" + it.id) }
+            val page = Arrange.page(posts, cards, interests)
+            pool = posts.filter { n -> page.none { it.key == n.id } } to cards.filter { c -> page.none { it.key == "t:" + c.id } }
+            remember(posts)
+            People.want(posts.map { it.pubkey })
+            feed.update { cur -> cur.copy(items = cur.items + page.filter { p -> cur.items.none { it.key == p.key } }, loading = false,
+                more = page.isNotEmpty() && (got.isNotEmpty() || pool.first.isNotEmpty() || pool.second.isNotEmpty())) }
             translateIn(got.filter { it.kind in FEED_KINDS && Curate.keep(it) && foreignOk(it) })
         }
+    }
+
+    // --- What you like: topics, learned on this phone ------------------------------------
+
+    /** Once per account: what you've liked and shared in the last 90 days says what you're into. */
+    private suspend fun seedInterests() {
+        val me = me ?: return
+        if (interests.seeded) return
+        val mine = Fetch.query(readRelays().take(6), mapOf("kinds" to listOf(7, 6, 1), "authors" to listOf(me), "since" to Clock.now() - 90 * 86_400L, "limit" to 400), 8000)
+        if (mine.isEmpty()) return
+        val votes = HashMap<String, Double>()
+        fun vote(e: Event, by: Double) = TopicGuess.of(e).take(2).forEachIndexed { i, t -> votes[t] = (votes[t] ?: 0.0) + by / (i + 1) }
+        mine.filter { it.kind == 1 }.forEach { vote(it, 0.3) }
+        mine.filter { it.kind == 6 }.forEach { r -> reposted(r)?.let { vote(it, 2.0) } }
+        val likedIds = mine.filter { it.kind == 7 && it.content != "-" }.mapNotNull { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }.distinct().take(300)
+        for (chunk in likedIds.chunked(150)) Fetch.query(readRelays().take(6), mapOf("ids" to chunk), 8000).forEach { vote(it, 1.0) }
+        interests.seed(votes)
+    }
+
+    /** You opened a link card: a little more of its topic. */
+    fun opened(c: TopicCard) = interests.learn(listOf(c.topic), 1.0)
+
+    fun followTopic(topic: String, on: Boolean) {
+        interests.follow(topic, on)
+        followedTopics.value = interests.followed.toSet()
+        if (on) message.value = "You'll see more about ${TopicFeeds.name(topic).lowercase()}."
+    }
+
+    /** Less about a topic, or less from a site: the cards below where you are go, and fewer come after. */
+    fun lessAbout(topic: String) {
+        interests.lessOfTopic(topic)
+        followedTopics.value = interests.followed.toSet()
+        drop { it is Item.Card && it.c.topic == topic }
+        message.value = "Less about ${TopicFeeds.name(topic).lowercase()} from now on."
+    }
+    fun lessFrom(c: TopicCard) {
+        interests.lessOfSource(c.sourceId)
+        drop { it is Item.Card && it.c.sourceId == c.sourceId }
+        message.value = "Less from ${c.sourceName} from now on."
+    }
+    /** Not this card: gone, and a little less of its topic. */
+    fun notInterested(c: TopicCard) {
+        interests.learn(listOf(c.topic), -1.0)
+        dismissed.update { it + ("t:" + c.id) }
+        prefs.edit().putStringSet("dismissed", dismissed.value.toList().takeLast(2000).toSet()).apply()
+    }
+
+    /** Take out of Discover what's below where you've looked; what you're reading stays. */
+    private fun drop(what: (Item) -> Boolean) {
+        feed.update { cur -> cur.copy(items = cur.items.filterIndexed { i, it -> i <= lookedAt + 1 || !what(it) }) }
+        pool = pool.first to pool.second.filter { !what(Item.Card(it)) }
     }
 
     // --- Places: a few videos from sites you're signed in to, mixed into Discover ---------
@@ -345,7 +431,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val late = System.currentTimeMillis() - opened
             val start = when {
                 // Within the budget, or before Discover had anything to show: near the top.
-                late <= 1500 || feed.value.notes.isEmpty() -> 1
+                late <= 1500 || feed.value.items.isEmpty() -> 1
                 // A little late: below what you've looked at.
                 else -> lookedAt + 4
             }
@@ -681,6 +767,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (note.id in liked.value) return
         mark(note.id, true)
+        interests.learn(TopicGuess.of(reposted(note) ?: note), 1.0)
         scope.launch {
             val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
             if (!act(Event(me, Clock.now(), 7, tags, "+").withId())) mark(note.id, false)
@@ -781,9 +868,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             People.want(add.map { it.pubkey })
             // Below what's on screen, by time among the rest; nothing you're looking at moves.
             feed.update { cur ->
-                val keep = cur.notes.take(lookedAt + 3)
-                val rest = (cur.notes.drop(keep.size) + add.filter { a -> cur.notes.none { it.id == a.id } }).sortedByDescending { it.createdAt }
-                cur.copy(notes = keep + rest)
+                val keep = cur.items.take(lookedAt + 3)
+                val rest = cur.items.drop(keep.size) + add.filter { a -> cur.items.none { it.key == a.id } }.map { Item.Post(it) }
+                cur.copy(items = keep + rest)
             }
             saveFeed()
         }
@@ -795,6 +882,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Not this note, and less like it: the same author is left out of Discover for three days. */
     fun notInterested(e: Event) {
+        interests.learn(TopicGuess.of(e), -1.0)
         dismissed.update { it + e.id }
         snoozed.update { it + (e.pubkey to System.currentTimeMillis() + 3 * 86_400_000L) }
         prefs.edit().putStringSet("dismissed", dismissed.value.toList().takeLast(2000).toSet())
