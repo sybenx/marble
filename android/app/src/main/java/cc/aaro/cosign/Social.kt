@@ -49,6 +49,11 @@ object Sources {
     val extra = MutableStateFlow<List<String>>(emptyList())
     /** Debug builds only: publish your own likes, follows and mutes to [extra] alone, nowhere public. */
     @Volatile var localOnly = false
+    /**
+     * Android brought Marble back after closing it in the background (you were in the browser, say): the
+     * page goes back on screen as it was, what you'd seen included. A fresh start leaves out what's been seen.
+     */
+    @Volatile var resumed = false
     /** Debug builds only: build the home feed as this account sees it (its follows, likes and topics), read-only, to compare with a mock made for it. */
     @Volatile var viewAs: String? = null
 }
@@ -260,6 +265,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun unseen(key: String) = key !in seen && key !in dismissed.value
     /** Today's stories, all of them, for "More stories" (seen ones are left out there). */
     val allStories = MutableStateFlow<List<TopicCard>>(emptyList())
+    /** These stories again, in this order (More stories coming back from one), from the phone's copy if need be. */
+    suspend fun storiesById(ids: List<String>): List<TopicCard> {
+        if (allStories.value.isEmpty()) allStories.value = TopicFeeds.load(CosignApp.instance, cachedOnly = true)
+        val byId = allStories.value.associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
     suspend fun unseenStories(): List<TopicCard> {
         // Opened from last time's feed, the full list may not be read yet: the phone's copy, or the site's.
         if (allStories.value.isEmpty()) allStories.value = TopicFeeds.load(CosignApp.instance, cachedOnly = true).ifEmpty { try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { emptyList() } }
@@ -281,18 +293,21 @@ class Social private constructor(private val phone: Phone, context: Context) {
      */
     fun loadFeed(force: Boolean = false) {
         val f = feed.value
+        // Coming back to Marble (from the browser, say) changes nothing on screen: not the box, not the posts,
+        // not their order. Only a refresh you ask for (pulling down) starts over.
         if (f.loading || (!force && f.posts.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
-            // The box's stories were all seen last time: the next ones, from what's on the phone.
-            if (!f.loading && f.stories.none { unseen("t:" + it.id) }) scope.launch { refillStories() }
+            // No box at all (all of last time's had been seen): fill it; that changes nothing you're looking at.
+            if (!f.loading && f.stories.isEmpty()) scope.launch { refillStories() }
             return
         }
         feed.update { it.copy(loading = true, failed = false) }
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
-        lookedAt = 0
+        if (force) lookedAt = 0
         scope.launch {
             if (restored.await()) afterPaint()
-            launch { loadStories(onScreen) }
+            // The box changes only when you ask (or when there's none yet); otherwise just the full list for More stories.
+            launch { if (force || feed.value.stories.isEmpty()) loadStories(onScreen) else allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value } }
             // Nothing to show yet (a new phone, say): a few good posts from quick asks first, in a second or two.
             if (f.posts.isEmpty() || force) launch {
                 val quick = try { quickPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
@@ -300,10 +315,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
             }
             val posts = try { buildPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             if (posts == null) return@launch feed.update { it.copy(loading = false, failed = it.posts.isEmpty() && it.stories.isEmpty()) }
-            // What's on screen stays where it is; the full ranking fills in below it.
+            // Pulled: what you just pulled for (the quick posts at the top, if any, stay there). On its own (every
+            // 30 minutes, or back after a while): everything stays as it is, the new posts come in below it.
             feed.update { cur ->
-                val keep = if (force && cur.posts.none { p -> posts.any { it.e.id == p.e.id } }) emptyList() else cur.posts.take(lookedAt + 3)
-                cur.copy(posts = (keep + posts.filter { p -> keep.none { it.e.id == p.e.id } }).take(maxOf(20, keep.size)), loading = false, at = System.currentTimeMillis())
+                val keep = if (force) (if (cur.posts.none { p -> posts.any { it.e.id == p.e.id } }) emptyList() else cur.posts.take(lookedAt + 3)) else cur.posts
+                val fresh = posts.filter { p -> keep.none { it.e.id == p.e.id } }
+                cur.copy(posts = keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             saveFeed()
@@ -314,7 +331,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** The box again, from the stories already on the phone (no waiting on the site). */
     private suspend fun refillStories() {
         val all = allStories.value.ifEmpty { TopicFeeds.load(CosignApp.instance, cachedOnly = true).also { allStories.value = it } }
-        feed.update { it.copy(stories = Calm.todays(all.filter { unseen("t:" + it.id) }, interests, Clock.now())) }
+        // Only into an empty box: a box on screen is never swapped for another.
+        val box = Calm.todays(all.filter { unseen("t:" + it.id) }, interests, Clock.now())
+        feed.update { if (it.stories.isNotEmpty()) it else it.copy(stories = box) }
     }
 
     /** The box: today's stories that fit you best, one per topic. */
@@ -474,14 +493,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val posts = (m["posts"] as? List<*>)?.mapNotNull { x ->
                     val p = x as? Map<*, *> ?: return@mapNotNull null
                     val e = Event.fromMap(p["event"]) ?: return@mapNotNull null
-                    if (!unseen(e.id) || !forDiscover(e) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
+                    if ((!Sources.resumed && !unseen(e.id)) || !forDiscover(e) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
                     Pick(e, p["topic"] as? String ?: return@mapNotNull null, 0.0, p["reason"] as? String ?: "", (p["likes"] as? Long)?.toInt() ?: 0, (p["more"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList())
                 } ?: emptyList()
-                val stories = (m["stories"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) }?.filter { unseen("t:" + it.id) } ?: emptyList()
+                val stories = (m["stories"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) }?.filter { Sources.resumed || unseen("t:" + it.id) } ?: emptyList()
                 if (stories.isEmpty()) launch { refillStories() }
                 if (posts.isEmpty() && stories.isEmpty()) return@launch
                 remember(posts.map { it.e })
-                feed.update { if (it.posts.isNotEmpty()) it else it.copy(posts = posts, stories = stories, at = m["at"] as? Long ?: 0) }
+                feed.update { if (it.posts.isNotEmpty()) it else it.copy(posts = posts, stories = stories.ifEmpty { it.stories }, at = m["at"] as? Long ?: 0) }
                 restored.complete(true)
                 People.want(posts.map { it.e.pubkey })
                 Startup.mark("feed from cache ${posts.size}")

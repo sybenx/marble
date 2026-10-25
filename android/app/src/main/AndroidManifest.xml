@@ -55,6 +55,18 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="qrst" />
             </intent-filter>
+            <!-- Search Marble from a launcher that takes search addresses (KISS: marble://search?q=%s),
+                 and from one that sends Android's own search. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="marble" android:host="search" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- A site's nostrconnect:// code, from the camera app or a link on this phone.
                  Another signer app may claim it too; Android then asks which. -->
             <intent-filter>

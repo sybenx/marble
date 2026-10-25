@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Recreated by Android with your place saved: Discover comes back as it was (see Sources.resumed).
+        if (savedInstanceState != null) Sources.resumed = true
         // Debug builds: the home feed as another account sees it, read-only (--es as <hex key>), to compare with a mock made for it.
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) intent?.getStringExtra("as")?.let { Sources.viewAs = it }
         Startup.mark("activity", once = false)
@@ -104,6 +106,16 @@ class MainActivity : ComponentActivity() {
         // hours old: that's not something you just scanned.
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         if (!CosignApp.instance.accounts.ready.value) { waiting = intent to fresh; return }
+        // A search from the launcher (marble://search?q=…, or Android's own): every time, as asked; it isn't a code.
+        val searched = when {
+            intent.action == Intent.ACTION_SEARCH -> intent.getStringExtra(android.app.SearchManager.QUERY)
+            intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "marble" && intent.data?.host == "search" -> intent.data?.getQueryParameter("q")
+            else -> null
+        }
+        if (intent.action == Intent.ACTION_SEARCH || intent.data?.scheme == "marble") {
+            searched?.trim()?.take(200)?.takeIf { it.isNotEmpty() }?.let { cc.aaro.cosign.ui.OpenSearch.query.value = it }
+            return
+        }
         if (intent.action == Intent.ACTION_VIEW) intent.dataString?.takeIf { handled.take(it, fresh) }?.let {
             CosignApp.instance.phone.scanned(it)
             linkAt = android.os.SystemClock.uptimeMillis()

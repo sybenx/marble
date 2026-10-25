@@ -139,14 +139,31 @@ private sealed class Route {
     data object Stories : Route()
     data class Thread(val id: String, val reply: Boolean = false) : Route()
     data class Profile(val pubkey: String) : Route()
+
+    /** As text, so the stack of screens survives Android recreating Marble. */
+    fun save(): String = when (this) {
+        Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"
+    }
+    companion object {
+        fun of(s: String): Route? = when {
+            s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories
+            s.startsWith("thread:") -> s.split(':').let { Thread(it[1], it.getOrNull(2) == "true") }
+            s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
+            else -> null
+        }
+    }
 }
 
 @Composable
 fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val social = remember(phone) { Social.of(phone) }
-    val stack = remember { mutableStateListOf<Route>() }
+    // Which screens are open, kept when Android recreates Marble (after the browser, say), so you come back to the same one.
+    val stack = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Route>, String>(
+        save = { l -> l.map { it.save() } }, restore = { l -> mutableStateListOf<Route>().apply { addAll(l.mapNotNull { Route.of(it) }) } })) { mutableStateListOf() }
     val feedState = rememberLazyListState()
-    val header = remember { TopCollapse() }
+    // How far the header had folded, kept with the list's place when Android recreates Marble.
+    val header = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<TopCollapse, Float>({ it.px }, { TopCollapse().apply { px = it } })) { TopCollapse() }
     // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
     // a screen that's closed forgets it.
     val kept = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
@@ -166,6 +183,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it })
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
+    val searchAsked by OpenSearch.query.collectAsState()
+    LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
     val asked by DebugOpen.profile.collectAsState()
     LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
     val top = stack.lastOrNull()
@@ -439,7 +458,7 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
         if (all != null) return@LaunchedEffect
         val known = ids
         all = if (known == null) social.unseenStories().also { l -> ids = l.map { it.id } }
-            else social.allStories.value.associateBy { it.id }.let { byId -> known.mapNotNull { byId[it] } }.ifEmpty { social.unseenStories() }
+            else social.storiesById(known).ifEmpty { social.unseenStories() }
     }
     val dismissed by social.dismissed.collectAsState()
     val saved by social.saved.collectAsState()
@@ -1113,6 +1132,9 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
 private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
 /** Debug builds: a profile to open, asked for by intent. */
+/** A search asked for from outside (a launcher's search: marble://search?q=…): Discover opens search with it. */
+object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+
 object DebugOpen { val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
 /** Debug builds: how long after opening a profile its name is on screen. */
@@ -1135,6 +1157,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
     var q by remember { mutableStateOf(found?.query ?: "") }
+    // A search that came from outside (the launcher) while this was open: the box shows it too.
+    val running = found?.query
+    LaunchedEffect(running) { if (running != null && running != q.trim()) q = running }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (found == null) focus.requestFocus() }
     val scope = rememberCoroutineScope()
