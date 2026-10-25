@@ -3,6 +3,6 @@
     <color name="ground">#FFF7F3EC</color>
     <!-- The icon's ground, the same in both modes. Launchers keep an icon from when the app was
          installed and don't redraw it when the phone changes mode (checked on Pixel Launcher), so a
-         dark ground showed as a black ring in light mode. Light, like the system's own icons. -->
+         dark ground showed as a black ring in light mode. Paper cream, round Marble teal. -->
     <color name="icon_ground">#FFF7F3EC</color>
 </resources>

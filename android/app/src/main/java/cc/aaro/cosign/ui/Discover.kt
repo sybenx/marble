@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -470,17 +471,24 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
     fun mix(a: Float, b: Float) = a + (b - a) * f
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(mix(OPEN_H, SLIM_H).dp)) {
         val w = maxWidth.value
-        // The marble: 72dp, centred under the bell; shrinking to nothing just left of the name.
+        // The marble (the swirl render, light or dark): 72dp, centred under the bell; shrinking to nothing just left of the name.
         val m = mix(72f, 0f)
-        val mx = mix(w / 2, 24f); val my = mix(92f, 32f)
-        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_foreground), null,
+        val mx = mix(w / 2, 30f); val my = mix(92f, 32f)
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), null,
             Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).size((m * 1.8f).dp).clickable(enabled = m > 8f, onClick = onName))
+        // Folded: the flat swirl (the themed icon's glyph) in its little disc, growing in as the marble goes.
+        val g = 28f * f * f
+        if (g > 1f) Box(Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp).size(g.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
+            .clickable(onClick = onName), contentAlignment = Alignment.Center) {
+            Icon(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_monochrome), null, tint = if (Vault.dark) Color(0xFFB9C5FF) else Color(0xFF34427A),
+                modifier = Modifier.requiredSize((g * 1.5f).dp))
+        }
         // The name: 32sp centred under the marble, scaling to the bar's 22sp at the left.
         var nameW by remember { androidx.compose.runtime.mutableIntStateOf(0) }
         val scale = mix(1f, 22f / 32f)
         val nameWdp = with(d) { nameW.toDp().value }
         Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1,
-            modifier = Modifier.offset(mix((w - nameWdp) / 2, 24f).dp, mix(132f, 18f).dp)
+            modifier = Modifier.offset(mix((w - nameWdp) / 2, 52f).dp, mix(132f, 18f).dp)
                 .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
                 .onSizeChanged { nameW = it.width }.clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Back to the top", onClick = onName))
         Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)

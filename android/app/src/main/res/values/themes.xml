@@ -2,6 +2,8 @@
     <style name="Theme.Cosign" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/ground</item>
         <item name="android:windowSplashScreenBackground">@color/ground</item>
+        <!-- The marble on the splash: the swirl render (light or dark), not the launcher icon. -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_marble</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
