@@ -490,6 +490,12 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onCl
 }
 
 /**
+ * This app's own grant, as your servers list it: an app on this phone (no site above it) named as this
+ * app is, or as it was called before it was Marble (the name a grant was first made with stays on older ones).
+ */
+internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone" && s.origin in setOf("Marble", "Cosign")
+
+/**
  * Your account, behind your picture on the home screen: your profile, devices, connected
  * apps and sites, keeping it safe, and what changed. How it works (servers, relays) is under Advanced.
  */
@@ -558,9 +564,11 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 Text("Sign in to a site", style = MaterialTheme.typography.labelLarge)
             }
         }
-        if (ui.sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows.") }
+        // Marble's own way in (its likes, follows and saved interests) isn't one of them: removing it would break Marble.
+        val sites = ui.sites.filterNot { ownGrant(it) }
+        if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows.") }
         // One entry per website, with each way it's connected inside.
-        items(ui.sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
+        items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
             SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
         }
 

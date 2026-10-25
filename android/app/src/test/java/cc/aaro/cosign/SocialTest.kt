@@ -153,4 +153,13 @@ class SocialTest {
         assertNull(parentOf(ev(listOf("e", quoted, "", "mention"))))
         assertNull(parentOf(ev(listOf("p", fiatjaf))))
     }
+
+    @Test fun marblesOwnGrantIsNotListed() {
+        val own = { origin: String, via: String?, parent: String? -> cc.aaro.cosign.ui.ownGrant(Site("a".repeat(64), origin, 0, 0, parent, via)) }
+        assertEquals(true, own("Marble", "App on this phone", null))
+        assertEquals(true, own("Cosign", "App on this phone", null))       // granted before the rename
+        assertEquals(false, own("Amethyst", "App on this phone", null))    // another app on the phone
+        assertEquals(false, own("https://cosign.example", "Connected by code", null))
+        assertEquals(false, own("Marble", "Signed in with Marble", "b".repeat(64)))
+    }
 }
