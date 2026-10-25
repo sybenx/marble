@@ -1,6 +1,9 @@
 package cc.aaro.cosign.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -159,7 +162,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
 
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
-    val nav = Nav(open = open, back = back, social = social) { urls, i -> viewing = urls to i }
+    // The marble, full screen, grown from where it was tapped.
+    var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it })
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val asked by DebugOpen.profile.collectAsState()
     LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
@@ -177,6 +182,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     }
 
     viewing?.let { (urls, i) -> ImageViewer(urls, i) { viewing = null } }
+    marbleFrom?.let { MarbleView(it) { marbleFrom = null } }
     VideoFullScreen()
 
     social.held.collectAsState().value?.let { h ->
@@ -199,7 +205,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     }
 }
 
-private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> }) {
+private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
+                  val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}) {
     fun thread(id: String) = open(Route.Thread(id))
     /** Open the post with the reply box ready. */
     fun reply(id: String) = open(Route.Thread(id, reply = true))
@@ -252,7 +259,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
         }
         val waiting = ui.asks.size + ui.batchAsks.size
         val fresh = notices.list.count { it.event.createdAt > seen }
-        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }) {
+        val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, pull = { pull.distanceFraction }, onMarble = nav.marble) {
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -267,7 +275,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
         // The spinner only when you pulled: a refresh in the background (it can take a while) stays out of sight.
         var pulled by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) pulled = false }
-        PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
+        PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize(), state = pull) {
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
@@ -448,6 +456,64 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     }
 }
 
+/**
+ * The marble, full screen and still: large on the app's ground (the light or dark render), grown from the
+ * header where it was tapped, leaning a little as the phone tilts. A tap or back closes it. With
+ * animations off on the phone (Remove animations), it simply appears, and doesn't move.
+ */
+@Composable
+private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val still = remember { android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val shown = remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0f) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { if (!still) shown.animateTo(1f, androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+    val close: () -> Unit = { scope.launch { if (!still) shown.animateTo(0f, androidx.compose.animation.core.tween(220)); onClose() } }
+    BackHandler(onBack = close)
+    // Tilt: how far the phone has turned since the view opened, smoothed, a few degrees at most.
+    var lean by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    if (!still) androidx.compose.runtime.DisposableEffect(Unit) {
+        val sm = context.getSystemService(android.hardware.SensorManager::class.java)
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR)
+        var base: FloatArray? = null
+        val m = FloatArray(9); val o = FloatArray(3)
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                android.hardware.SensorManager.getRotationMatrixFromVector(m, e.values); android.hardware.SensorManager.getOrientation(m, o)
+                val b = base ?: o.copyOf().also { base = it }
+                val tx = ((o[2] - b[2]).coerceIn(-0.35f, 0.35f)) / 0.35f      // roll: left and right
+                val ty = ((o[1] - b[1]).coerceIn(-0.35f, 0.35f)) / 0.35f      // pitch: towards and away
+                lean = lean + (androidx.compose.ui.geometry.Offset(tx, ty) - lean) * 0.12f
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        if (sensor != null) sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sm?.unregisterListener(listener) }
+    }
+    var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Vault.Ground)
+            .onGloballyPositioned { centre = it.boundsInRoot().center }
+            .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = close),
+        contentAlignment = Alignment.Center,
+    ) {
+        // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
+        val size = minOf(maxWidth, maxHeight) * 1.45f
+        val d = androidx.compose.ui.platform.LocalDensity.current
+        val sizePx = with(d) { size.toPx() }
+        val start = with(d) { (72f * 1.8f).dp.toPx() } / sizePx       // the header's marble, the same picture
+        val leanPx = with(d) { 12.dp.toPx() }
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), "The marble",
+            Modifier.requiredSize(size).graphicsLayer {
+                val p = shown.value
+                val sc = start + (1f - start) * p
+                scaleX = sc; scaleY = sc
+                translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p
+                translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p
+            })
+    }
+}
+
 /** How far the home header has folded away, in pixels (0: open, [range]: today's slim bar). */
 private class TopCollapse {
     var px by androidx.compose.runtime.mutableFloatStateOf(0f)
@@ -480,7 +546,8 @@ private const val SLIM_H = 132f
  * or changes colour. [actions]: the bell and your picture, top right in both shapes.
  */
 @Composable
-private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, pull: () -> Float = { 0f }, onMarble: (androidx.compose.ui.geometry.Offset) -> Unit = {},
+                    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     val d = androidx.compose.ui.platform.LocalDensity.current
     top.range = with(d) { (OPEN_H - SLIM_H).dp.toPx() }
     val f = (top.px / top.range).coerceIn(0f, 1f)
@@ -490,8 +557,15 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         // The marble (the swirl render, light or dark): 72dp, centred under the bell; shrinking to nothing just left of the name.
         val m = mix(72f, 0f)
         val mx = mix(w / 2, 30f); val my = mix(92f, 32f)
-        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), null,
-            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).size((m * 1.8f).dp).clickable(enabled = m > 8f, onClick = onName))
+        // Pulling down past the top: it grows a little with the pull (refresh comes at the same point as ever), and springs back.
+        val grow by androidx.compose.animation.core.animateFloatAsState(1f + 0.3f * pull().coerceIn(0f, 1.2f),
+            androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow), label = "marble pull")
+        var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), "The marble",
+            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).size((m * 1.8f).dp).graphicsLayer { scaleX = grow; scaleY = grow }
+                .onGloballyPositioned { centre = it.boundsInRoot().center }
+                // Tap: the marble, full screen.
+                .clip(CircleShape).clickable(enabled = m > 8f, onClickLabel = "Look at the marble") { onMarble(centre) })
         // Folded: the flat swirl (the themed icon's glyph) in its little disc, growing in as the marble goes.
         val g = 28f * f * f
         if (g > 1f) Box(Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp).size(g.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
