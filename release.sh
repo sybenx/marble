@@ -1,8 +1,8 @@
 #!/bin/sh
 # Build Marble for Android and publish it as a GitHub release of github.com/sybenx/marble
-# (which Obtainium follows), with two copies of the APK: Marble-<version>.apk, and
-# Marble.apk, so https://github.com/sybenx/marble/releases/latest/download/Marble.apk is
-# always the newest. Every build is signed with the same key, so each one installs over
+# (which Obtainium follows), with one APK, Marble.apk: one file per release, so Obtainium
+# never has to ask which, and https://github.com/sybenx/marble/releases/latest/download/Marble.apk
+# is always the newest. Marble-<version>.apk stays on this Mac only. Every build is signed with the same key, so each one installs over
 # the last.
 #
 #   ./release.sh        (bump versionCode and versionName in android/app/build.gradle.kts first)
@@ -47,5 +47,5 @@ Updating from 0.11.0 or older with Obtainium: 0.11.1 moved to a new signing cert
 [ -f "release-notes/$VERSION.md" ] && NOTES="$(cat "release-notes/$VERSION.md")
 
 $NOTES"
-gh release create "v$VERSION" "Marble-$VERSION.apk" Marble.apk --repo sybenx/marble --title "Marble $VERSION" --notes "$NOTES"
+gh release create "v$VERSION" Marble.apk --repo sybenx/marble --title "Marble $VERSION" --notes "$NOTES"
 echo "Marble $VERSION is at https://github.com/sybenx/marble/releases/latest/download/Marble.apk"
