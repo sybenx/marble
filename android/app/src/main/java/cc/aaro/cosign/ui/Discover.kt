@@ -105,9 +105,13 @@ import cc.aaro.cosign.People
 import cc.aaro.cosign.Person
 import cc.aaro.cosign.Phone
 import cc.aaro.cosign.PlaceCard
-import cc.aaro.cosign.Item
 import cc.aaro.cosign.TopicCard
 import cc.aaro.cosign.TopicFeeds
+import cc.aaro.cosign.Pick
+import cc.aaro.cosign.Preview
+import cc.aaro.cosign.Calm
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.withStyle
 import androidx.lifecycle.repeatOnLifecycle
 import cc.aaro.cosign.Ref
 import cc.aaro.cosign.Social
@@ -128,6 +132,7 @@ private sealed class Route {
     data object Account : Route()
     data object Bell : Route()
     data object Search : Route()
+    data object Stories : Route()
     data class Thread(val id: String, val reply: Boolean = false) : Route()
     data class Profile(val pubkey: String) : Route()
 }
@@ -158,6 +163,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
         Route.Bell -> BellScreen(phone, ui, social, nav)
         Route.Search -> SearchScreen(social, nav)
+        Route.Stories -> StoriesScreen(social, nav)
         is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
         is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
     }
@@ -201,45 +207,28 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
     val feed by social.feed.collectAsState()
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
+    val saved by social.saved.collectAsState()
+    val previews by social.previews.collectAsState()
     val notices by social.notices.collectAsState()
     val seen by social.seenAt.collectAsState()
-    val videos by social.videos.collectAsState()
     val me = ui.member!!.group.groupX
     LaunchedEffect(me) { People.want(listOf(me)) }
     val muted by social.muted.collectAsState()
     val dismissed by social.dismissed.collectAsState()
-    val snoozed by social.snoozed.collectAsState()
-    val mixed = remember(feed.items, videos, muted, dismissed, snoozed) {
-        mix(feed.items.filter { it.key !in dismissed && (it !is Item.Post || it.e.pubkey !in muted && !social.snoozedNow(it.e.pubkey)) }, videos)
-    }
-    // How far down you've looked, in posts and stories: a video that comes late goes below it.
-    val itemsNow by androidx.compose.runtime.rememberUpdatedState(feed.items)
+    val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
+    val stories = remember(feed.stories, dismissed) { feed.stories.filter { "t:" + it.id !in dismissed } }
+    // How far down you've looked, in posts: what's above it stays put when the order changes.
+    val postsNow by androidx.compose.runtime.rememberUpdatedState(posts)
     LaunchedEffect(state) {
         snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key }.collect { key ->
-            val i = itemsNow.indexOfFirst { it.key == key }
+            val i = postsNow.indexOfFirst { it.e.id == key }
             if (i > social.lookedAt) social.lookedAt = i
         }
     }
-    // What's been on screen properly (most of it, or most of the screen, for a second and a half) doesn't come back.
-    LaunchedEffect(state) {
-        val since = HashMap<String, Long>()
-        while (true) {
-            delay(250)
-            val info = state.layoutInfo
-            val top = info.viewportStartOffset; val bottom = info.viewportEndOffset
-            val now = android.os.SystemClock.uptimeMillis()
-            val showing = info.visibleItemsInfo.mapNotNull { v ->
-                val k = (v.key as? String)?.takeIf { it.startsWith("t:") || cc.aaro.cosign.core.isHex32(it) } ?: return@mapNotNull null
-                val shown = minOf(v.offset + v.size, bottom) - maxOf(v.offset, top)
-                k.takeIf { v.size > 0 && shown >= 0.6f * minOf(v.size, bottom - top) }
-            }.toSet()
-            since.keys.retainAll(showing)
-            for (k in showing) if (now - since.getOrPut(k) { now } >= 1500) social.saw(k)
-        }
-    }
-    val context = LocalContext.current
+    val storiesNow by androidx.compose.runtime.rememberUpdatedState(stories)
+    SeenWatcher(state, social) { k -> if (k == "stories") storiesNow.map { "t:" + it.id } else listOf(k) }
     LaunchedEffect(Unit) { Startup.mark("home composed", once = false) }
-    if (mixed.isNotEmpty()) LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("first cards painted", once = false); social.painted.complete(Unit) }
+    if (posts.isNotEmpty() || stories.isNotEmpty()) LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("first cards painted", once = false); social.painted.complete(Unit) }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         // The name: back to the top of the feed (opening the header up again); already there, refresh it (as pulling down does).
@@ -267,38 +256,177 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
         }
 
-        PullToRefreshBox(feed.loading && feed.items.isNotEmpty(), { social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
+        // The spinner only when you pulled: a refresh in the background (it can take a while) stays out of sight.
+        var pulled by remember { mutableStateOf(false) }
+        LaunchedEffect(feed.loading) { if (!feed.loading) pulled = false }
+        PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
                 // Tap it away (it also goes by itself after a while).
                 ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) } }
-                if (feed.items.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
-                }
                 if (feed.failed) item(key = "failed") {
                     Column(Modifier.padding(24.dp)) {
                         Text("Discover isn't answering right now.", color = Vault.Text)
                         TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Teal) }
                     }
                 }
-                if (feed.items.isNotEmpty()) item(key = "title") {
-                    Text("Discover", style = MaterialTheme.typography.titleSmall, color = Vault.Muted, modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
+                // Today's stories, kept together at the top; never between the posts.
+                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved) { nav.open(Route.Stories) } }
+                if (posts.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
+                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
                 }
-                items(mixed, key = { if (it is Item) it.key else "place:" + (it as PlaceCard).id }) { item ->
-                    when (item) {
-                        is PlaceCard -> VideoCard(item) { openInBrowser(context, item.url) }
-                        is Item.Card -> StoryCard(item.c, social) { social.opened(item.c); openInBrowser(context, item.c.url) }
-                        is Item.Post -> NoteCard(item.e, people, item.e.id in liked, nav, onLike = { social.like(item.e) }, maxLines = 12)
-                    }
+                if (posts.isNotEmpty()) item(key = "from people") {
+                    Text("From people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted, modifier = Modifier.padding(start = 18.dp, top = 6.dp, bottom = 10.dp))
+                }
+                items(posts, key = { it.e.id }) { p ->
                     HorizontalDivider(color = Vault.Edge)
+                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
+                        saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
                 }
-                if (feed.items.isNotEmpty()) item(key = "end") {
-                    LaunchedEffect(feed.items.size) { social.loadMore() }
-                    // Discover doesn't run out: the next page is on its way.
-                    if (feed.loading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal, modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
+                // It ends.
+                if (posts.isNotEmpty() && !feed.loading) item(key = "end") {
+                    HorizontalDivider(color = Vault.Edge)
+                    Text("That's everything for now. New posts show up through the day.", color = Vault.Field, style = MaterialTheme.typography.bodySmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 28.dp))
                 }
             }
+        }
+    }
+}
+
+/**
+ * What's been on screen properly (most of it, or most of the screen, for a second and a half) doesn't
+ * come back. [keys]: what a list item stands for (a post's id; the stories box, its stories).
+ */
+@Composable
+private fun SeenWatcher(state: LazyListState, social: Social, keys: (String) -> List<String>) = LaunchedEffect(state) {
+    val since = HashMap<String, Long>()
+    while (true) {
+        delay(250)
+        val info = state.layoutInfo
+        val top = info.viewportStartOffset; val bottom = info.viewportEndOffset
+        val now = android.os.SystemClock.uptimeMillis()
+        val showing = info.visibleItemsInfo.mapNotNull { v ->
+            val k = (v.key as? String)?.takeIf { it == "stories" || it.startsWith("t:") || cc.aaro.cosign.core.isHex32(it) } ?: return@mapNotNull null
+            val shown = minOf(v.offset + v.size, bottom) - maxOf(v.offset, top)
+            k.takeIf { v.size > 0 && shown >= 0.6f * minOf(v.size, bottom - top) }
+        }.toSet()
+        since.keys.retainAll(showing)
+        for (k in showing) if (now - since.getOrPut(k) { now } >= 1500) keys(k).forEach(social::saw)
+    }
+}
+
+/** Today's stories: a few headlines at the top, each with its topic, site and age. "More stories" for the rest. */
+@Composable
+private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, onMore: () -> Unit) = Column(
+    Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 18.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
+        .background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp)).padding(vertical = 4.dp),
+) {
+    Text("Today's stories", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp))
+    stories.forEachIndexed { i, s ->
+        if (i > 0) HorizontalDivider(color = Vault.Edge)
+        StoryRow(s, social, s.url in saved)
+    }
+    HorizontalDivider(color = Vault.Edge)
+    Text("More stories ›", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onMore).padding(horizontal = 16.dp, vertical = 12.dp))
+}
+
+/** One story: topic · site · age, the headline, its picture; tap to read it on the site. */
+@Composable
+private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
+    val context = LocalContext.current
+    Row(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Teal)) { append(TopicFeeds.name(c.topic)) }
+                append(" · " + c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "")
+            }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            Discussions(c.discussions)
+        }
+        c.image?.let { NetImage(it, Modifier.padding(start = 12.dp).size(64.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Edge), 256) }
+        StoryMenu(c, social, saved)
+    }
+}
+
+/**
+ * Where a story is being talked about, each a tap away from the article: "💬 312 comments on Hacker News",
+ * or, when it's in several places, "Discussed on Hacker News · Stacker News".
+ */
+@Composable
+private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
+    if (list.isEmpty()) return
+    val context = LocalContext.current
+    val style = MaterialTheme.typography.labelMedium
+    if (list.size == 1) {
+        val d = list[0]
+        Text("💬 " + (d.comments?.let { "$it comment${if (it == 1L) "" else "s"} on " } ?: "Comments on ") + d.site, color = Vault.Muted, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+        return
+    }
+    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("💬 Discussed on ", color = Vault.Muted, style = style, maxLines = 1)
+        list.forEachIndexed { i, d ->
+            if (i > 0) Text(" · ", color = Vault.Muted, style = style)
+            Text(d.site + (d.comments?.let { " ($it)" } ?: ""), color = Vault.Teal, style = style, maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+        }
+    }
+}
+
+/** "⋯" on a story: follow its topic, more or less like this, hide the site, save it. */
+@Composable
+private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean) = Box {
+    var open by remember { mutableStateOf(false) }
+    val followed = c.topic in social.followedTopics.collectAsState().value
+    val name = TopicFeeds.name(c.topic)
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
+    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { open = false; social.followTopic(c.topic, !followed) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(c.topic) })
+        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(c.topic, "t:" + c.id) })
+        DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hideSource(c) })
+        DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { open = false; social.save(c.url, isLink = true) })
+    }
+}
+
+/** "⋯" on a post: follow its topic, more or less like this, hide the person; report. */
+@Composable
+private fun PostMenu(p: Pick, name: String, social: Social) = Box {
+    var open by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf(false) }
+    val followed = p.topic in social.followedTopics.collectAsState().value
+    val topic = TopicFeeds.name(p.topic)
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
+    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text(if (followed) "Stop following “$topic”" else "Follow “$topic”", color = Vault.Text) }, { open = false; social.followTopic(p.topic, !followed) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic) })
+        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id) })
+        DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey) })
+        DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
+    }
+    if (reporting) ReportDialog(name, onClose = { reporting = false }) { reason -> reporting = false; social.report(p.e, reason) }
+}
+
+/** All of today's stories, the topics you follow first; ones you've seen aren't here. Back goes to the feed where you were. */
+@Composable
+private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Today's stories", nav)
+    var all by remember { mutableStateOf<List<TopicCard>?>(null) }
+    LaunchedEffect(Unit) { all = social.unseenStories() }
+    val dismissed by social.dismissed.collectAsState()
+    val saved by social.saved.collectAsState()
+    val list = remember(all, dismissed) { all?.filter { "t:" + it.id !in dismissed } ?: emptyList() }
+    val state = rememberLazyListState()
+    SeenWatcher(state, social) { listOf(it) }
+    if (all == null) Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Teal) }
+    else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+        items(list, key = { "t:" + it.id }) { s ->
+            StoryRow(s, social, s.url in saved)
+            HorizontalDivider(color = Vault.Edge)
         }
     }
 }
@@ -371,102 +499,6 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
 }
 
 /**
- * A story on a site, like a newspaper's: its picture, where it's from and when, the headline and a
- * line or two. Tapping opens it on the site. Its topic is under it (follow it, or less of it); ⋯ for the rest.
- */
-@Composable
-private fun StoryCard(c: TopicCard, social: Social, onOpen: () -> Unit) = Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp)) {
-    c.image?.let { img ->
-        Box(Modifier.fillMaxWidth().aspectRatio(1.91f).clip(RoundedCornerShape(12.dp)).background(Vault.Surface)) { NetImage(img, Modifier.fillMaxSize(), 1080) }
-        Spacer(Modifier.height(10.dp))
-    }
-    Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    Spacer(Modifier.height(4.dp))
-    Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-    val summary = c.summary.takeIf { it.isNotEmpty() && !it.startsWith(c.title.take(40)) }
-    if (summary != null) {
-        Spacer(Modifier.height(4.dp))
-        Text(summary, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    }
-    Spacer(Modifier.height(6.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        TopicChip(c.topic, social)
-        Spacer(Modifier.weight(1f))
-        StoryMenu(c, social)
-    }
-}
-
-/** A story's topic. Tap: follow it (more like this), or less about it. */
-@Composable
-private fun TopicChip(topic: String, social: Social) = Box {
-    var open by remember { mutableStateOf(false) }
-    val followed by social.followedTopics.collectAsState()
-    val name = TopicFeeds.name(topic)
-    Text((if (topic in followed) "✓ " else "") + name, color = Vault.Teal, style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { open = true }.border(1.dp, Vault.TealEdge, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
-    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) { TopicChoices(topic, social) { open = false } }
-}
-
-@Composable
-private fun TopicChoices(topic: String, social: Social, close: () -> Unit) {
-    val followed = topic in social.followedTopics.collectAsState().value
-    val name = TopicFeeds.name(topic)
-    DropdownMenuItem({ Text(if (followed) "Stop following $name" else "Follow $name", color = Vault.Text) }, { close(); social.followTopic(topic, !followed) })
-    DropdownMenuItem({ Text("Less about $name", color = Vault.Text) }, { close(); social.lessAbout(topic) })
-}
-
-/** "⋯" on a story: not this one, less of its topic, or less from its site. */
-@Composable
-private fun StoryMenu(c: TopicCard, social: Social) = Box {
-    var open by remember { mutableStateOf(false) }
-    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
-    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
-        DropdownMenuItem({ Text("Not interested", color = Vault.Text) }, { open = false; social.notInterested(c) })
-        TopicChoices(c.topic, social) { open = false }
-        DropdownMenuItem({ Text("Less from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.lessFrom(c) })
-    }
-}
-
-/** Posts and stories, with a place's cards between them: from [Social.Videos.start] on, one every 4 to 6, never two together. */
-private fun mix(notes: List<Item>, v: Social.Videos): List<Any> {
-    if (v.cards.isEmpty() || v.start < 0) return notes
-    val out = ArrayList<Any>(notes.size + v.cards.size)
-    var next = v.start; var shown = 0
-    notes.forEachIndexed { i, n ->
-        if (i == next && shown < v.cards.size) { out += v.cards[shown]; next += 4 + shown % 3; shown++ }
-        out += n
-    }
-    return out
-}
-
-/** A video from a place you're signed in to: a big picture with its length, the title, the channel, and where it's from. */
-@Composable
-private fun VideoCard(c: PlaceCard, onOpen: () -> Unit) = Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp)) {
-    // No thumbnail: a plain card, the length beside the title instead.
-    if (c.thumb != null) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
-            NetImage(c.thumb, Modifier.fillMaxSize(), 1080, description = c.title)
-            c.duration?.let { d ->
-                Text(length(d), color = Color.White, style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).background(Color(0xCC000000), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-    }
-    Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    Spacer(Modifier.height(4.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(c.label, color = Vault.Teal, style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.border(1.dp, Vault.TealEdge, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(c.channel + if (c.thumb == null && c.duration != null) " · ${length(c.duration)}" else "", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-private fun length(s: Int) = if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-
-/**
  * Open a page in a Custom Tab, inside this app, when the browser has them. These two extras
  * are what androidx.browser's CustomTabsIntent sets; any other browser just opens the page.
  */
@@ -530,7 +562,8 @@ private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
 
 @Composable
 private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav: Nav, onLike: () -> Unit, maxLines: Int = Int.MAX_VALUE, indent: Int = 0, lit: Boolean = false,
-                     onReply: (() -> Unit)? = null) {
+                     onReply: (() -> Unit)? = null, pick: Pick? = null, previews: Map<String, Preview> = emptyMap(), saved: Boolean = false, onSave: (() -> Unit)? = null,
+                     menu: (@Composable () -> Unit)? = null) {
     // A repost: the post it shares, under a line saying who shared it.
     if (n.kind == 6) {
         // What it reposts: carried in it, or (only pointed at) fetched once it's on screen.
@@ -552,7 +585,21 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     val translations by nav.social.translations.collectAsState()
     val tr = translations[n.id]?.takeIf { it.from != null }
     var original by remember(n.id) { mutableStateOf(false) }
-    val body = remember(n.id, tr, original) { Body.of(n, if (tr != null && !original) tr.text else n.content) }
+    // A link with a preview shows as a card instead of in the text; an article as a card of its own.
+    val link = remember(n.id) { if (pick != null) Calm.link(n) else null }
+    val card = if (n.kind == 30023) remember(n.id) { Preview(n.firstTag("title") ?: "Article", n.firstTag("image"), n.firstTag("summary") ?: "", "Article") } else link?.let { previews[it] }
+    val body = remember(n.id, tr, original, card != null) {
+        val text = if (tr != null && !original) tr.text else if (n.kind == 30023) "" else n.content
+        Body.of(n, if (card != null && link != null) text.replace(link, "").trim() else text)
+    }
+    // Why it's here: its topic, then who vouches for it.
+    pick?.reason?.takeIf { it.isNotEmpty() }?.let { r ->
+        Text(androidx.compose.ui.text.buildAnnotatedString {
+            withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Teal)) { append(r.substringBefore(" · ")) }
+            if (" · " in r) append(" · " + r.substringAfter(" · "))
+        }, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().clickable { nav.thread(n.id) }.padding(start = 68.dp, end = 16.dp, top = 12.dp))
+    }
     Row(
         Modifier.fillMaxWidth().background(if (lit) Vault.TealGround else Color.Transparent)
             .clickable { nav.thread(n.id) }.padding(start = 16.dp + (indent * 14).dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
@@ -566,7 +613,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).clickable { nav.profile(n.pubkey) })
                     Text("  ${since(n.createdAt)}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                if (n.pubkey != nav.social.me) Box(Modifier.align(Alignment.CenterEnd)) { NoteMenu(n, author?.shown ?: shortNpub(n.pubkey), nav.social) }
+                if (n.pubkey != nav.social.me) Box(Modifier.align(Alignment.CenterEnd)) { menu?.invoke() ?: NoteMenu(n, author?.shown ?: shortNpub(n.pubkey), nav.social) }
             }
             val to = remember(n.id) { n.tags.lastOrNull { it.size > 1 && it[0] == "p" }?.get(1) }
             LaunchedEffect(n.id) { People.want(body.mentions + listOfNotNull(to)) }
@@ -586,7 +633,9 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             val full = maxLines == Int.MAX_VALUE
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
-            body.media.take(if (full) 4 else 1).forEach { m ->
+            val context = LocalContext.current
+            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else openInBrowser(context, link) } }
+            if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
                     is Body.Img -> NetImage(m.url, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(if (full) 0.6f else 1f, 2.2f)).clip(RoundedCornerShape(12.dp))
@@ -594,7 +643,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                     is Body.Vid -> VideoCard(m.v)
                 }
             }
-            if (!full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+            if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            if (card == null && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, 1) else nav.thread(n.id) })
             // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
@@ -602,8 +652,27 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onLike).padding(10.dp))
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
+                // Save: into your bookmarks.
+                if (onSave != null) {
+                    Spacer(Modifier.weight(1f))
+                    Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Teal else Vault.Muted,
+                        modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = onSave).padding(10.dp))
+                }
             }
         }
+    }
+}
+
+/** A link's preview: the page's picture, its site, title and a line of summary. */
+@Composable
+private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
+    Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).background(Vault.Surface).clickable(onClick = onOpen),
+) {
+    c.image?.let { NetImage(it, Modifier.fillMaxWidth().heightIn(max = 190.dp).aspectRatio(1.91f).background(Vault.Edge), 1080) }
+    Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
+        if (c.site.isNotEmpty()) Text(c.site, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
+        if (c.summary.isNotEmpty()) Text(c.summary, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
     }
 }
 

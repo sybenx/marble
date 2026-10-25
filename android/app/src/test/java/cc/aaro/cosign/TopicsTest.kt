@@ -95,30 +95,90 @@ class TopicsTest {
         assertEquals(2, f.readLines().count { it.isNotBlank() })
     }
 
-    @Test fun pagesMixAndCap() {
-        val i = Interests(FakePrefs())
-        val posts = (1..10).map { post(it, "Thinking about things $it") }
-        // Twelve stories on one topic, four of them from one site.
-        val cards = (1..12).map { card(it, "news", if (it <= 4) "bbc" else "s$it") }
-        val page = Arrange.page(posts, cards, i, now)
-        val stories = page.filterIsInstance<Item.Card>()
-        assertEquals(3, stories.size)                                   // three a topic a page
-        assertTrue(stories.count { it.c.sourceId == "bbc" } <= 2)       // two a site
-        page.zipWithNext().forEach { (a, b) -> assertFalse(a is Item.Card && b is Item.Card) }
+    private fun linkPost(n: Int, text: String, by: String = "%064x".format(1000 + n), tags: List<String> = emptyList(), at: Long = now - 3600) =
+        Event(by, at, 1, tags.map { listOf("t", it) }, text, id = "%064x".format(n))
+    private val friend = Standing(follow = true, trustedBy = 0, followers = 0)
+
+    @Test fun topicsAreStrictInTheFeed() {
+        // One passing word isn't a topic; two are, and so is a hashtag.
+        assertTrue(TopicGuess.hits(post(1, "Our state government is a joke, like an NPC"), strict = true).none { it.topic == "software" })
+        assertEquals("ai", TopicGuess.hits(post(2, "Running a local model with ollama on my laptop"), strict = true).first().topic)
+        assertEquals("games", TopicGuess.hits(post(3, "Look at this level from my game", listOf("gamedev")), strict = true).first().topic)
+        assertTrue(TopicGuess.hits(post(8, "EU funding for bird protection in Cyprus", listOf("tech")), strict = true).isEmpty())   // a hashtag the text doesn't bear out
+        assertTrue(TopicGuess.hits(post(4, "rust never sleeps"), strict = true).isEmpty())
+        // Everyday words alone don't make a label: a post about a law that mentions phones and leaks isn't "Phones and gadgets".
+        assertTrue(TopicGuess.hits(post(5, "Now he wants age checks built into your phone and the app store. A breach leaked IDs."), strict = true).none { it.topic == "gadgets" || it.topic == "privacy" })
+        assertTrue(TopicGuess.hits(post(6, "Join us after dinner for coffee and the new episode"), strict = true).none { it.topic == "food" })
+        assertEquals("food", TopicGuess.hits(post(7, "My sourdough recipe, and how baking it changed my mornings"), strict = true).first().topic)
     }
 
-    @Test fun whatYouFollowComesFirst() {
-        val i = Interests(FakePrefs()).apply { follow("food", true) }
-        val page = Arrange.page(listOf(post(1, "Hello there")), listOf(card(1, "games"), card(2, "food")), i, now)
-        assertEquals("food", (page.first { it is Item.Card } as Item.Card).c.topic)
+    @Test fun theMocksRulesLeaveOut() {
+        val ok = "Wrote up how I run a local LLM with ollama on an old laptop, and what it costs https://example.com/llm-laptop"
+        assertEquals(null, Calm.drop(linkPost(1, ok), "me", emptySet(), 1, "Ann", true, friend))
+        assertEquals("own post", Calm.drop(linkPost(2, ok, by = "me"), "me", emptySet(), 1, "Me", true, friend))
+        assertEquals("already liked", Calm.drop(linkPost(3, ok), "me", setOf("%064x".format(3)), 1, "Ann", true, friend))
+        assertEquals("bot", Calm.drop(linkPost(4, ok), "me", emptySet(), 1, "Price Bot", true, friend))
+        assertEquals("good-morning post", Calm.drop(linkPost(5, "GM everyone, coffee and a local LLM today https://example.com/gm-post-here"), "me", emptySet(), 1, "Ann", true, friend))
+        assertEquals("no link or video, or too short", Calm.drop(linkPost(6, "Thinking about local models a lot today, they are getting good"), "me", emptySet(), 1, "Ann", true, friend))
+        assertEquals("not in a language you read", Calm.drop(linkPost(7, ok), "me", emptySet(), 1, "Ann", false, friend))
+        assertEquals("nobody you know follows them", Calm.drop(linkPost(8, ok), "me", emptySet(), 1, "Ann", true, Standing(false, 2, 120)))
+        assertEquals(null, Calm.drop(linkPost(9, ok), "me", emptySet(), 1, "Ann", true, Standing(false, 3, 0)))
+        assertEquals(null, Calm.drop(linkPost(10, ok), "me", emptySet(), 1, "Ann", true, Standing(false, 0, 300)))
+        assertEquals("news feed or bot account", Calm.drop(linkPost(11, ok), "me", emptySet(), 26, "Ann", true, friend))
     }
 
-    @Test fun freshBeatsOld() {
-        val i = Interests(FakePrefs())
-        val page = Arrange.page(emptyList(), listOf(card(1, "games", at = now - 3 * 86400), card(2, "food", at = now - 600)), i, now)
-        assertEquals("c2", (page.first() as Item.Card).c.id)
-        // Out of posts: stories may follow stories.
-        assertEquals(2, page.size)
+    @Test fun reasonsSayWhy() {
+        val w = mapOf("ai" to 1.0)
+        val e = linkPost(1, "Wrote up how I run a local LLM with ollama https://example.com/x")
+        assertEquals("AI and agents · from someone you follow", Calm.score(e, w, friend, emptySet(), emptySet(), false, now)!!.reason)
+        assertEquals("AI and agents · followed by 12 people you follow", Calm.score(e, w, Standing(false, 12, 0), emptySet(), emptySet(), false, now)!!.reason)
+        assertEquals("AI and agents · 1.5k followers", Calm.score(e, w, Standing(false, 0, 1500), emptySet(), emptySet(), false, now)!!.reason)
+        assertEquals("AI and agents · liked by 2 people you follow", Calm.score(e, w, Standing(false, 5, 0), setOf("a", "b", "c"), setOf("a", "b"), false, now)!!.reason)
+        assertEquals(null, Calm.score(e, mapOf("food" to 1.0), friend, emptySet(), emptySet(), false, now))   // not one of your topics
+    }
+
+    @Test fun onePerPersonAndFewPerTopic() {
+        val topics = TopicGuess.topics
+        val picks = (1..60).map { i -> Pick(linkPost(i, "x", by = "%064x".format(if (i <= 3) 7 else i)), topics[i % 3], 100.0 - i, "") } +
+            (61..120).map { i -> Pick(linkPost(i, "x"), topics[i % topics.size], 10.0 - i / 100.0, "") }
+        val out = Calm.diversify(picks)
+        assertEquals(20, out.size)                                                  // and then it ends
+        assertEquals(out.size, out.map { it.e.pubkey }.distinct().size)             // one per person
+        assertTrue(out.take(10).groupingBy { it.topic }.eachCount().values.all { it <= 2 })
+        assertTrue(out.groupingBy { it.topic }.eachCount().values.all { it <= 5 })
+    }
+
+    @Test fun theSameStoryIsOneCard() {
+        val a = Pick(linkPost(1, "Big news https://example.com/a"), "ai", 3.0, "")
+        val b = Pick(linkPost(2, "Same link here https://example.com/a"), "ai", 2.0, "")
+        val c = Pick(linkPost(3, "Something else entirely https://example.com/c"), "ai", 1.0, "")
+        val out = Calm.collapse(listOf(a, b, c)) { "Bea" }
+        assertEquals(2, out.size)
+        assertEquals(listOf("Bea"), out[0].more)
+    }
+
+    @Test fun theBoxHasTheBestFitOnePerTopic() {
+        val i = Interests(FakePrefs()).apply { learn(listOf("games"), 3.0); learn(listOf("food"), 1.0) }
+        val s = listOf(card(1, "food", at = now - 600), card(2, "games", at = now - 7200), card(3, "games", at = now - 600), card(4, "art", at = now - 60), card(5, "ai", at = now - 3 * 86400))
+        val box = Calm.todays(s, i, now)
+        assertEquals(listOf("c3", "c1", "c4"), box.map { it.id })       // games first (and its newest), one per topic, nothing older than two days
+        i.follow("art", true)
+        assertEquals("art", Calm.stories(s, i, now).first().topic)      // followed topics first on "More stories"
+        i.hide("hiddenSources", "s4")
+        assertTrue(Calm.stories(s, i, now).none { it.id == "c4" })
+    }
+
+    @Test fun storiesKnowWhereTheyreDiscussed() {
+        val d = Discussion.list(listOf(mapOf("url" to "https://news.ycombinator.com/item?id=1", "site" to "Hacker News", "comments" to 312L),
+            mapOf("url" to "https://stacker.news/items/2", "site" to "Stacker News")), "https://example.com/a")
+        assertEquals(listOf(Discussion("https://news.ycombinator.com/item?id=1", "Hacker News", 312L), Discussion("https://stacker.news/items/2", "Stacker News")), d)
+        // A text post on Stacker News is its own discussion: nothing more to show.
+        assertTrue(Discussion.list(listOf(mapOf("url" to "https://stacker.news/items/3", "site" to "Stacker News")), "https://stacker.news/items/3").isEmpty())
+        // The older single field still works.
+        assertEquals("Lobsters", Discussion.list(null, "https://example.com/b", "https://lobste.rs/s/x").single().site)
+        // Kept when saved and read back.
+        val c = TopicCard("c", "https://example.com/a", "T", "", null, "s", "S", 1L, "ai", d)
+        assertEquals(c, TopicCard.fromMap(c.toMap()))
     }
 }
 

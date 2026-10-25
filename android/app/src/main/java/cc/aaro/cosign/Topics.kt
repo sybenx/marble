@@ -23,13 +23,32 @@ import kotlin.math.ln
 data class TopicCard(
     val id: String, val url: String, val title: String, val summary: String, val image: String?,
     val sourceId: String, val sourceName: String, val publishedAt: Long, val topic: String,
+    /** Where people are talking about it (Hacker News, Stacker News, Lobsters…), apart from the article itself. */
+    val discussions: List<Discussion> = emptyList(),
 ) {
-    fun toMap() = mapOf("id" to id, "url" to url, "title" to title, "summary" to summary, "image" to image, "source" to sourceId, "sourceName" to sourceName, "at" to publishedAt, "topic" to topic)
+    fun toMap() = mapOf("id" to id, "url" to url, "title" to title, "summary" to summary, "image" to image, "source" to sourceId, "sourceName" to sourceName, "at" to publishedAt, "topic" to topic,
+        "discussions" to discussions.map { mapOf("url" to it.url, "site" to it.site, "comments" to it.comments) })
     companion object {
         fun fromMap(x: Any?): TopicCard? {
             val m = x as? Map<*, *> ?: return null
             return TopicCard(m["id"] as? String ?: return null, m["url"] as? String ?: return null, m["title"] as? String ?: return null, m["summary"] as? String ?: "",
-                m["image"] as? String, m["source"] as? String ?: "", m["sourceName"] as? String ?: "", m["at"] as? Long ?: 0, m["topic"] as? String ?: return null)
+                m["image"] as? String, m["source"] as? String ?: "", m["sourceName"] as? String ?: "", m["at"] as? Long ?: 0, m["topic"] as? String ?: return null,
+                Discussion.list(m["discussions"], m["url"] as String))
+        }
+    }
+}
+
+/** A discussion of a story: the page, the site, and how many comments when the feed says. */
+data class Discussion(val url: String, val site: String, val comments: Long? = null) {
+    companion object {
+        /** From a feed item's "discussions" (or the older single "discussion"); not the article's own page. */
+        fun list(x: Any?, article: String, single: Any? = null): List<Discussion> =
+            ((x as? List<*>)?.mapNotNull { d -> (d as? Map<*, *>)?.let { m -> Discussion((m["url"] as? String)?.takeIf { it.startsWith("https://") } ?: return@let null, m["site"] as? String ?: "", m["comments"] as? Long) } }
+                ?.ifEmpty { null } ?: listOfNotNull((single as? String)?.takeIf { it.startsWith("https://") }?.let { Discussion(it, siteOf(it)) }))
+                .filter { it.url != article }.distinctBy { it.url }
+        private fun siteOf(url: String) = when {
+            "news.ycombinator.com" in url -> "Hacker News"; "stacker.news" in url -> "Stacker News"; "lobste.rs" in url -> "Lobsters"
+            else -> try { java.net.URI(url).host.removePrefix("www.") } catch (_: Exception) { "" }
         }
     }
 }
@@ -76,51 +95,95 @@ object TopicFeeds {
             TopicCard(m["id"] as? String ?: return@mapNotNull null, (m["url"] as? String)?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null,
                 (m["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null, (m["summary"] as? String)?.trim().orEmpty(),
                 (m["image"] as? String)?.takeIf { it.startsWith("https://") }, src["id"] as? String ?: "", src["name"] as? String ?: "",
-                (m["published_at"] as? Long) ?: (m["first_seen"] as? Long) ?: 0L, m["topic"] as? String ?: return@mapNotNull null)
-        }.distinctBy { it.id }
+                (m["published_at"] as? Long) ?: (m["first_seen"] as? Long) ?: 0L, m["topic"] as? String ?: return@mapNotNull null,
+                Discussion.list(m["discussions"], m["url"] as String, m["discussion"]))
+        }
+            // The same article from several feeds: one card, with every place it's discussed.
+            .groupBy { it.id }.values.map { same -> same[0].copy(discussions = same.flatMap { it.discussions }.distinctBy { it.url }) }
     }
 }
 
 /** Which of the twelve topics a post is about, from its words and hashtags (the mock's lists, keyed like the topic feeds). */
 object TopicGuess {
-    private class T(val id: String, words: List<String>, val tags: Set<String>) {
-        val res = words.map { w -> Regex("(^|[^\\p{L}\\p{N}])" + Regex.escape(w).replace(" ", "\\E[\\s-]?\\Q") + "(?=$|[^\\p{L}\\p{N}])", RegexOption.IGNORE_CASE) }
+    private class T(val id: String, words: List<String>, val tags: Set<String>, val q: List<String> = emptyList()) {
+        /** Whole words: one word looked up, a phrase found with spaces round it (so "game" isn't in "games"). */
+        val terms = words.map { norm(it) }
     }
+    /**
+     * Everyday words that say little on their own ("phone", "game", "dinner", "war"): half as much as a
+     * word only the topic uses. A label takes a hashtag, or words adding up to two of the topic's own.
+     */
+    private val WEAK = setOf("agent", "agents", "gemini", "developer", "developers", "coding", "terminal", "rust", "swift", "python", "linux",
+        "nas", "relay", "relays", "primal", "outbox", "nip", "nips", "lightning", "mining", "miners",
+        "security", "leak", "leaked", "breach", "hacked", "exploit", "vpn", "tor",
+        "food", "dinner", "lunch", "breakfast", "coffee", "cake", "soup", "bread", "roast",
+        "photo", "photos", "travel", "beach", "mountains", "sunset", "sunrise", "landscape",
+        "game", "games", "steam", "unity", "unreal", "phone", "hardware", "keyboard", "apple", "android", "pixel",
+        "art", "design", "designer", "sketch", "drawing", "painting",
+        "government", "politics", "election", "regulation", "war", "parliament", "president", "minister")
+    private fun norm(s: String) = NONWORD.replace(s.lowercase(), " ").trim()
+    private val NONWORD = Regex("[^\\p{L}\\p{N}]+")
     private val ALL = listOf(
         T("ai", listOf("ai", "llm", "llms", "claude", "chatgpt", "gpt", "openai", "anthropic", "agent", "agents", "agentic", "vibe coding", "vibecoding", "qwen", "ollama", "gemini", "deepseek", "local model", "machine learning"),
-            setOf("ai", "llm", "vibecoding", "aiagents", "artificialintelligence", "machinelearning")),
+            setOf("ai", "llm", "vibecoding", "aiagents", "artificialintelligence", "machinelearning"), listOf("AI", "LLM", "vibe coding")),
         T("software", listOf("programming", "programmer", "developer", "developers", "github", "open source", "opensource", "coding", "javascript", "typescript", "rust", "python", "kotlin", "swift", "compiler", "codebase", "pull request", "linux", "terminal"),
-            setOf("programming", "dev", "opensource", "coding", "developer", "rust", "python", "javascript", "foss", "linux")),
+            setOf("programming", "dev", "opensource", "coding", "developer", "rust", "python", "javascript", "foss", "linux"), listOf("programming", "open source")),
         T("selfhosting", listOf("self-host", "self-hosted", "self-hosting", "selfhost", "selfhosted", "selfhosting", "homelab", "umbrel", "start9", "docker", "vps", "raspberry pi", "nas", "home server", "proxmox"),
-            setOf("selfhosting", "selfhosted", "homelab", "umbrel")),
-        T("nostr", listOf("relay", "relays", "nip", "nips", "amethyst", "damus", "primal", "ditto", "blossom", "zapstore", "outbox"), setOf("nostrdev", "asknostr", "nostrapps")),
+            setOf("selfhosting", "selfhosted", "homelab", "umbrel"), listOf("self-hosting", "homelab")),
+        T("nostr", listOf("relay", "relays", "nip", "nips", "amethyst", "damus", "primal", "ditto", "blossom", "zapstore", "outbox"), setOf("nostrdev", "asknostr", "nostrapps"), listOf("nostr client", "relay")),
         T("bitcoin", listOf("bitcoin", "btc", "sats", "satoshi", "lightning", "coldcard", "mining", "miners", "hodl", "self-custody", "ecash", "cashu"),
-            setOf("bitcoin", "btc", "plebchain", "lightning", "cashu", "ecash")),
+            setOf("bitcoin", "btc", "plebchain", "lightning", "cashu", "ecash"), listOf("bitcoin")),
         T("privacy", listOf("privacy", "surveillance", "security", "leak", "leaked", "breach", "hacked", "encryption", "encrypted", "vpn", "tor", "grapheneos", "spyware", "malware", "exploit", "vulnerability", "censorship", "kyc"),
-            setOf("privacy", "security", "cybersecurity", "surveillance", "infosec", "censorship")),
+            setOf("privacy", "security", "cybersecurity", "surveillance", "infosec", "censorship"), listOf("privacy", "security")),
         T("food", listOf("food", "cooking", "recipe", "roast", "dinner", "lunch", "breakfast", "dessert", "coffee", "bbq", "baking", "bread", "pizza", "steak", "soup", "cake"),
-            setOf("foodstr", "food", "cooking", "coffeechain", "dessertstr", "zapcooking", "recipe", "baking")),
+            setOf("foodstr", "food", "cooking", "coffeechain", "dessertstr", "zapcooking", "recipe", "baking"), listOf("foodstr", "recipe")),
         T("photos", listOf("photography", "photo", "photos", "sunrise", "sunset", "landscape", "mountains", "beach", "scenery", "cityscape", "skyline", "travel", "hiking"),
-            setOf("photography", "photostr", "cityscapes", "travel", "landscape", "nature", "sunrise", "sunset", "streetphotography")),
+            setOf("photography", "photostr", "cityscapes", "travel", "landscape", "nature", "sunrise", "sunset", "streetphotography"), listOf("photography", "travel")),
         T("games", listOf("game", "games", "gaming", "gamedev", "game dev", "indie game", "unity", "godot", "unreal", "minecraft", "steam", "level design", "webgl"),
-            setOf("gaming", "gamedev", "indiedev", "games", "videogames")),
+            setOf("gaming", "gamedev", "indiedev", "games", "videogames"), listOf("gamedev", "indie game")),
         T("gadgets", listOf("apple", "iphone", "android", "pixel", "macbook", "ipad", "app store", "gadget", "hardware", "keyboard", "phone"),
-            setOf("apple", "android", "tech", "gadgets", "hardware")),
+            setOf("apple", "android", "tech", "gadgets", "hardware"), listOf("iphone", "android")),
         T("art", listOf("art", "artist", "drawing", "illustration", "painting", "design", "designer", "sketch", "pixel art", "pixelart"),
-            setOf("art", "artstr", "design", "illustration", "pixelart", "digitalart")),
-        T("news", listOf("government", "politics", "election", "regulation", "war", "parliament", "president", "minister"), setOf("politics", "news")),
+            setOf("art", "artstr", "design", "illustration", "pixelart", "digitalart"), listOf("art", "pixel art")),
+        T("news", listOf("government", "politics", "election", "regulation", "war", "parliament", "president", "minister"), setOf("politics", "news"), listOf("free speech", "government")),
     )
     private val NOISE = Regex("nostr:\\S+|https?://\\S+")
 
-    /** The topics a post is about, strongest first: a hashtag counts more than a word. */
-    fun of(e: Event): List<String> {
-        val text = NOISE.replace(e.content, " ")
+    /** One topic a post is about, and how clearly: a hashtag counts 1, each different word 0.5 (an everyday one 0.25), up to 1.5. */
+    data class Hit(val topic: String, val strength: Double)
+
+    /**
+     * The topics a post is about, clearest first. [strict] (what the feed labels posts with): a hashtag
+     * the text bears out, or words adding up to two of the topic's own; one passing word isn't enough.
+     * Learning from what you like isn't strict: a like says more than a label does.
+     */
+    fun hits(e: Event, strict: Boolean = false): List<Hit> {
+        val text = " " + norm(textOf(e)) + " "
+        val words = text.split(' ').toHashSet()
         val tags = e.tags.filter { it.size > 1 && it[0] == "t" }.map { it[1].lowercase() }.toSet()
         return ALL.mapNotNull { t ->
-            val score = (if (t.tags.any { it in tags }) 2 else 0) + t.res.count { it.containsMatchIn(text) }.coerceAtMost(3)
-            if (score > 0) t.id to score else null
-        }.sortedByDescending { it.second }.map { it.first }
+            val byTag = t.tags.any { it in tags }
+            val found = t.terms.filter { if (' ' in it) text.contains(" $it ") else it in words }
+            val said = found.sumOf { if (it in WEAK) 0.25 else 0.5 }.coerceAtMost(1.5)
+            // In the feed a hashtag counts only if the post also says something of the topic (hashtags get stuffed).
+            val tagged = byTag && (!strict || found.isNotEmpty())
+            if (tagged || (if (strict) said >= 1.0 else found.isNotEmpty())) Hit(t.id, (if (tagged) 1.0 else 0.0) + said) else null
+        }.sortedByDescending { it.strength }
     }
+
+    /** The topics a post is about, strongest first: a hashtag counts more than a word. */
+    fun of(e: Event): List<String> = hits(e).map { it.topic }
+
+    /** What a post says, for matching: an article's title and summary too; no links or mentions. */
+    fun textOf(e: Event): String {
+        val s = if (e.kind == 30023) listOf("title", "summary").mapNotNull { k -> e.tags.firstOrNull { it.size > 1 && it[0] == k }?.get(1) }.joinToString("\n") + "\n" + e.content.take(3000) else e.content
+        return NOISE.replace(s, " ")
+    }
+
+    /** What to search for, to find posts on a topic (relays that search), and its hashtags. */
+    fun queries(topic: String) = ALL.firstOrNull { it.id == topic }?.q ?: emptyList()
+    fun tags(topic: String) = ALL.firstOrNull { it.id == topic }?.tags ?: emptySet()
+    val topics get() = ALL.map { it.id }
 }
 
 /**
@@ -166,6 +229,13 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     @Synchronized fun follow(topic: String, on: Boolean) { if (on) { followed += topic; lessTopic -= topic } else followed -= topic; save() }
     @Synchronized fun lessOfTopic(topic: String) { lessTopic[topic] = (lessTopic[topic] ?: 0) + 1; followed -= topic; save() }
     @Synchronized fun lessOfSource(source: String) { lessSource[source] = (lessSource[source] ?: 0) + 1; save() }
+
+    /** Hidden for good ("Hide" in a card's ⋯): someone's posts, or a site's stories. In the shared profile, so every phone hides them. */
+    @Synchronized fun hide(kind: String, id: String) {
+        val list = extra.optJSONArray(kind) ?: org.json.JSONArray().also { extra.put(kind, it) }
+        if ((0 until list.length()).none { list.optString(it) == id }) { list.put(id); save() }
+    }
+    @Synchronized fun hidden(kind: String, id: String) = extra.optJSONArray(kind)?.let { l -> (0 until l.length()).any { l.optString(it) == id } } == true
 
     /** 0..1 for a topic: followed is the most; learned weight relative to your strongest; each "less" halves it. */
     @Synchronized fun of(topic: String?): Double {
@@ -220,50 +290,5 @@ class Seen(private val file: File) {
             if (ids.size > 20_000) { val keep = synchronized(ids) { ids.toList().takeLast(15_000) }; ids.clear(); ids += keep; file.writeText(keep.joinToString("\n", postfix = "\n")) }
             else file.appendText(id + "\n")
         } catch (_: Exception) {}
-    }
-}
-
-/** One thing in Discover: a post, or a link card. */
-sealed class Item {
-    abstract val key: String
-    data class Post(val e: Event) : Item() { override val key get() = e.id }
-    data class Card(val c: TopicCard) : Item() { override val key get() = "t:" + c.id }
-}
-
-/**
- * Putting a page together: each candidate scored by how well it matches your interests, then how
- * fresh it is (a day's half-life); then picked best first, with no more than [perTopic] from a topic
- * and [perSource] from a site on a page, and never two link cards in a row.
- */
-object Arrange {
-    fun page(posts: List<Event>, cards: List<TopicCard>, interests: Interests, now: Long = System.currentTimeMillis() / 1000,
-             size: Int = 24, perTopic: Int = 3, perSource: Int = 2): List<Item> {
-        fun fresh(t: Long) = exp(-((now - t).coerceAtLeast(0) / 3600.0) / 34.6)   // half-life of a day
-        // Posts keep a little of the curated source's own order.
-        val scored = posts.mapIndexed { i, e ->
-            val topic = TopicGuess.of(e).firstOrNull()
-            Triple<Item, String?, Double>(Item.Post(e), topic, 0.55 * interests.of(topic) + 0.3 * fresh(e.createdAt) + 0.15 * (1 - i.toDouble() / posts.size.coerceAtLeast(1)))
-        } + cards.map { c ->
-            Triple<Item, String?, Double>(Item.Card(c), c.topic, (0.6 * interests.of(c.topic) + 0.4 * fresh(c.publishedAt)) * interests.sourcePenalty(c.sourceId))
-        }
-        val left = scored.sortedByDescending { it.third }.toMutableList()
-        val out = ArrayList<Item>()
-        val byTopic = HashMap<String, Int>(); val bySource = HashMap<String, Int>()
-        while (out.size < size && left.isNotEmpty()) {
-            val lastWasCard = out.lastOrNull() is Item.Card
-            fun fits(t: Triple<Item, String?, Double>, alone: Boolean): Boolean {
-                val (item, topic, _) = t
-                val src = (item as? Item.Card)?.c?.sourceId
-                return !(alone && lastWasCard && item is Item.Card) && (topic == null || (byTopic[topic] ?: 0) < perTopic) && (src == null || (bySource[src] ?: 0) < perSource)
-            }
-            // Out of posts to put between them: cards may follow cards.
-            val i = left.indexOfFirst { fits(it, true) }.takeIf { it >= 0 } ?: left.indexOfFirst { fits(it, false) }
-            if (i < 0) break
-            val (item, topic, _) = left.removeAt(i)
-            out += item
-            topic?.let { byTopic[it] = (byTopic[it] ?: 0) + 1 }
-            (item as? Item.Card)?.c?.sourceId?.let { bySource[it] = (bySource[it] ?: 0) + 1 }
-        }
-        return out
     }
 }

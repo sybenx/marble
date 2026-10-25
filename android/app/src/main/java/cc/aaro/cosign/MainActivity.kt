@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Debug builds: the home feed as another account sees it, read-only (--es as <hex key>), to compare with a mock made for it.
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) intent?.getStringExtra("as")?.let { Sources.viewAs = it }
         Startup.mark("activity", once = false)
         // The app is always dark; keep the system bar icons light whatever the phone's theme.
         // The bars' icons follow the phone's light or dark setting, as the app does.
