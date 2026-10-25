@@ -324,6 +324,8 @@ object SeenSync {
     const val TAG = "discover/seen"
     const val WINDOW = 7 * 86_400L
     const val CAP = 2000
+    /** How long relays keep the account's copy after the last write (NIP-40 expiration). */
+    const val EXPIRES = 14 * 86_400L
 
     fun short(key: String) = if (key.startsWith("t:")) "t" + key.drop(2).take(16) else if (key.length > 17 && key.first() != 't') key.take(16) else key
 

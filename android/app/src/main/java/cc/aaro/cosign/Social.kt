@@ -604,7 +604,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         pullSeen(again = true)
         val now = Clock.now()
         val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW), now), encrypt = true) ?: return
-        val signed = try { phone.signOwn(Event(me, now, 30078, listOf(listOf("d", SeenSync.TAG)), text).withId()) } catch (_: Exception) { return }
+        // NIP-40: relays may drop it two weeks after the last write, so it doesn't outlive your use of Marble (each write moves it on).
+        val tags = listOf(listOf("d", SeenSync.TAG), listOf("expiration", (now + SeenSync.EXPIRES).toString()))
+        val signed = try { phone.signOwn(Event(me, now, 30078, tags, text).withId()) } catch (_: Exception) { return }
         val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
         val n = Fetch.publish(to, signed)
         if (debuggable) android.util.Log.i("CosignSync", "seen sent: ${text.length} chars to $n of ${to.size} relays")
