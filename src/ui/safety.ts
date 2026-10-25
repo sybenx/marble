@@ -87,9 +87,9 @@ $('saveImg').onclick = async () => {
   const g = c.getContext('2d')!;
   g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   g.imageSmoothingEnabled = false; g.drawImage(img, 80, 60, 640, 640);
-  g.fillStyle = '#000'; g.font = '600 28px system-ui'; g.fillText('Cosign backup', 80, 40);
-  g.font = '18px system-ui'; g.fillText(backup!.label.replace('Cosign backup — ', ''), 80, 740);
-  g.fillText('To use it: Cosign → Restore a backup → scan this.', 80, 780);
+  g.fillStyle = '#000'; g.font = '600 28px system-ui'; g.fillText('Marble backup', 80, 40);
+  g.font = '18px system-ui'; g.fillText(backup!.label.replace('Marble backup — ', ''), 80, 740);
+  g.fillText('To use it: Marble → Restore a backup → scan this.', 80, 780);
   const a = document.createElement('a');
   a.href = c.toDataURL('image/png'); a.download = 'cosign-backup.png'; a.click();
 };
@@ -113,7 +113,7 @@ port.onMessage.addListener((m: any) => {
     $('paperCode').textContent = m.code;
     const who = `${m.name ?? 'your account'} (${nip19.npubEncode(m.pubkey).slice(0, 16)}…)`;
     $('paperWho').textContent = `For ${who}, made ${new Date().toLocaleDateString()}`;
-    backup = { code: m.code, words: showWords(m.code), label: `Cosign backup — ${who}` };
+    backup = { code: m.code, words: showWords(m.code), label: `Marble backup — ${who}` };
     // 24 words come once a restore can find the servers from the words alone (Cosign's
     // backup_find); until then they're for testing only.
     api.storage.local.get('dev').then((r: any) => { if (r.dev) $('keepWords').hidden = false; }).catch(() => {});

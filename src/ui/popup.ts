@@ -63,7 +63,7 @@ port.onMessage.addListener((s: any) => {
   $('pending').hidden = !s.pending;
   if (s.pending?.long) {
     $('pendingTitle').textContent = 'Still not protected';
-    $('pendingText').textContent = 'It’s been over a day and no servers have answered. If this browser’s data is lost, your account is gone. Check your connection; Cosign keeps trying.';
+    $('pendingText').textContent = 'It’s been over a day and no servers have answered. If this browser’s data is lost, your account is gone. Check your connection; Marble keeps trying.';
   }
   if (s.pending) { $('safety').hidden = true; $('signOut').hidden = true; $('memberNote').hidden = true; }
   if (s.removed) $('removedBy').textContent = `${s.removed.by} removed it. It can’t sign any more.`;

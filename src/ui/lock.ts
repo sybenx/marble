@@ -17,8 +17,8 @@ export async function deviceLock(): Promise<boolean> {
   try {
     if (!lock) {
       const c = await navigator.credentials.create({ publicKey: {
-        rp: { name: 'Cosign' }, challenge, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'Cosign', displayName: 'Cosign on this device' },
+        rp: { name: 'Marble' }, challenge, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'Marble', displayName: 'Marble on this device' },
         authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
       } }) as PublicKeyCredential;
       await api.storage.local.set({ lock: { id: b64(c.rawId) } });

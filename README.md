@@ -1,4 +1,8 @@
-# Cosign extension
+# Marble extension (Cosign)
+
+The app is called **Marble**; the protocol underneath is Cosign. Extension IDs
+(`cosign@aaro.cc`, `cc.aaro.cosign.extension`) and the `cosign:` codes stay as they are,
+so updates and Marble's phone app keep working.
 
 Sign in to Nostr sites with your phone. The extension gives every page `window.nostr`
 (NIP-07), so sites that already support extensions just work. Your key never sits in

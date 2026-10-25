@@ -221,7 +221,7 @@ function create(name: string, say: (s: string) => void): Promise<void> {
 async function publishProfile(m: MemberState, d: Device) {
   if (!m.ownGrant) { m.ownGrant = newKey(); await saveMember(m); }
   const grant = getPublicKey(hexToBytes(m.ownGrant));
-  d.grant(grant, 'Cosign', deviceName());
+  d.grant(grant, 'Marble', deviceName());
   const content = JSON.stringify({ name: m.profile?.name, display_name: m.profile?.name, ...(m.profile?.picture ? { picture: m.profile.picture } : {}) });
   let ev;
   for (let i = 0; ; i++) {
@@ -747,7 +747,7 @@ api.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
         if (p.t.view().session.phase !== 'waiting') return;
         p.t.dispose(); pairing = undefined;
         startPairing();
-        if (pairing) (pairing as { view: PairView }).view.note = 'That didn’t go through. Tap Open Cosign to try again.';
+        if (pairing) (pairing as { view: PairView }).view.note = 'That didn’t go through. Tap Open Marble to try again.';
         pairEmit();
       }, 4000);
       return;

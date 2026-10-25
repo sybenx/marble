@@ -9,12 +9,12 @@ const targets = process.argv.slice(2).length ? process.argv.slice(2) : ['chrome'
 
 const base = {
   manifest_version: 3,
-  name: 'Cosign',
-  short_name: 'Cosign',
+  name: 'Marble',
+  short_name: 'Marble',
   version,
-  description: 'Sign in to Nostr sites with your phone. Your key never sits in the browser.',
+  description: 'Sign in to Nostr sites with Marble. Your key is never in one place.',
   icons: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png', 96: 'icon-96.png', 128: 'icon-128.png', 256: 'icon-256.png', 512: 'icon-512.png' },
-  action: { default_popup: 'popup.html', default_title: 'Cosign', default_icon: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png' } },
+  action: { default_popup: 'popup.html', default_title: 'Marble', default_icon: { 16: 'icon-16.png', 32: 'icon-32.png', 48: 'icon-48.png' } },
   // The same view as the toolbar popup, where an add-ons list offers "Settings" (Firefox
   // on Android's add-on page, chrome://extensions → Details → Extension options).
   options_ui: { page: 'popup.html', open_in_tab: false },

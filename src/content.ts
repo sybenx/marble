@@ -18,8 +18,8 @@ window.addEventListener('message', e => {
   const { id, method, params } = e.data;
   // `narrow`: a phone-sized screen, where approvals stay on the page (no windows there).
   api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow() })
-    .then((r: any) => window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Cosign.' }) }, target()))
-    .catch((err: Error) => window.postMessage({ [TAG]: 'res', id, error: err?.message ?? 'Cosign isn’t answering. Reload the page.' }, target()));
+    .then((r: any) => window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Marble.' }) }, target()))
+    .catch((err: Error) => window.postMessage({ [TAG]: 'res', id, error: err?.message ?? 'Marble isn’t answering. Reload the page.' }, target()));
 });
 
 // --- The card -------------------------------------------------------------------

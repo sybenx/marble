@@ -22,7 +22,7 @@ export interface PairView { uri?: string; status: string; confirm?: string; erro
 export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () => void = () => {}) {
   el.innerHTML = `
     <div class="qr" hidden></div>
-    <a class="btn primary open" hidden target="_blank" rel="noopener">Open Cosign</a>
+    <a class="btn primary open" hidden target="_blank" rel="noopener">Open Marble</a>
     <button class="link show-qr" hidden>Show a code instead</button>
     <p class="status muted"></p>
     <div class="confirm" hidden>
@@ -47,8 +47,8 @@ export function mountPairing(el: HTMLElement, onDone: () => void, onResize: () =
     $<HTMLAnchorElement>('.open').hidden = !(showing && isAndroid() && !preferQr);
     if (v.uri) $<HTMLAnchorElement>('.open').href = v.uri;
     $('.show-qr').hidden = !(showing && isAndroid());
-    $('.show-qr').textContent = preferQr ? 'Cosign is on this phone' : 'Show a code instead';
-    $('.status').textContent = v.error ?? (!showing ? v.status : preferQr ? 'Scan this with Cosign on your phone.' : (v.note ?? 'Tap Open Cosign, then Connect.'));
+    $('.show-qr').textContent = preferQr ? 'Marble is on this phone' : 'Show a code instead';
+    $('.status').textContent = v.error ?? (!showing ? v.status : preferQr ? 'Scan this with Marble on your phone.' : (v.note ?? 'Tap Open Marble, then Connect.'));
     $('.status').classList.toggle('error', !!v.error);
     $('.confirm').hidden = !v.confirm;
     if (v.confirm) $('.who').textContent = `Sign in as ${v.confirm}?`;
@@ -85,7 +85,7 @@ export function mountSignIn(el: HTMLElement, onResize: () => void = () => {}) {
   el.innerHTML = `
     <div class="choose">
       <button class="btn primary create" style="width:100%">Create account</button>
-      <button class="btn phone" style="width:100%;margin-top:8px">Sign in with your phone</button>
+      <button class="btn phone" style="width:100%;margin-top:8px">Sign in with Marble</button>
     </div>
     <form class="new" hidden>
       <input class="name" maxlength="40" autocomplete="name" placeholder="Your name" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--fg)">
