@@ -74,6 +74,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import cc.aaro.cosign.Nip05
 import cc.aaro.cosign.LookAlikes
 import cc.aaro.cosign.Hit
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -128,6 +132,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val social = remember(phone) { Social.of(phone) }
     val stack = remember { mutableStateListOf<Route>() }
     val feedState = rememberLazyListState()
+    val header = remember { TopCollapse() }
     val open: (Route) -> Unit = { stack.add(it) }
     val back: () -> Unit = { stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
@@ -138,7 +143,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val nav = Nav(open = open, back = back, social = social) { urls, i -> viewing = urls to i }
     when (val top = stack.lastOrNull()) {
-        null -> Home(phone, ui, social, feedState, nav)
+        null -> Home(phone, ui, social, feedState, header, nav)
         Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
         Route.Bell -> BellScreen(phone, ui, social, nav)
         Route.Search -> SearchScreen(social, nav)
@@ -181,7 +186,7 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: S
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, nav: Nav) {
+private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top: TopCollapse, nav: Nav) {
     val feed by social.feed.collectAsState()
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
@@ -209,20 +214,20 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, nav
     if (mixed.isNotEmpty()) LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("first cards painted", once = false); social.painted.complete(Unit) }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // The name: back to the top of the feed; already there, refresh it (as pulling down does).
-            val scope = rememberCoroutineScope()
-            Text(appName, style = MaterialTheme.typography.titleLarge, color = Vault.Text, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start)
-                .clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Back to the top") {
-                    if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0) { social.loadFeed(force = true); social.loadNotices(force = true) }
-                    else scope.launch {
-                        // From far down, jump most of the way first, so the smooth part is short.
-                        if (state.firstVisibleItemIndex > 6) state.scrollToItem(6)
-                        state.animateScrollToItem(0)
-                    }
-                }.padding(horizontal = 4.dp, vertical = 2.dp))
-            val waiting = ui.asks.size + ui.batchAsks.size
-            val fresh = notices.list.count { it.event.createdAt > seen }
+        // The name: back to the top of the feed (opening the header up again); already there, refresh it (as pulling down does).
+        val scope = rememberCoroutineScope()
+        val toTop: () -> Unit = {
+            if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0 && top.px == 0f) { social.loadFeed(force = true); social.loadNotices(force = true) }
+            else scope.launch {
+                launch { androidx.compose.animation.core.animate(top.px, 0f) { v, _ -> top.px = v } }
+                // From far down, jump most of the way first, so the smooth part is short.
+                if (state.firstVisibleItemIndex > 6) state.scrollToItem(6)
+                state.animateScrollToItem(0)
+            }
+        }
+        val waiting = ui.asks.size + ui.batchAsks.size
+        val fresh = notices.list.count { it.event.createdAt > seen }
+        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }) {
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -233,19 +238,10 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, nav
             Spacer(Modifier.width(4.dp))
             Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
         }
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth().height(52.dp)
-                .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
-                .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(horizontal = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Search, null, tint = Vault.Muted)
-            Spacer(Modifier.width(12.dp))
-            Text("Search people, posts, #tags", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
-        }
 
         PullToRefreshBox(feed.loading && feed.notes.isNotEmpty(), { social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+            // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
+            LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
                 ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) } }
                 if (feed.notes.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
@@ -272,6 +268,73 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, nav
                     feed.source?.let { Text("Discover from ${it.removePrefix("wss://").substringBefore('/')}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
                 }
             }
+        }
+    }
+}
+
+/** How far the home header has folded away, in pixels (0: open, [range]: today's slim bar). */
+private class TopCollapse {
+    var px by androidx.compose.runtime.mutableFloatStateOf(0f)
+    var range = 1f
+    val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+        // Scrolling down the feed: fold the header first.
+        override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+            if (available.y >= 0) return androidx.compose.ui.geometry.Offset.Zero
+            val before = px
+            px = (px - available.y).coerceAtMost(range)
+            return androidx.compose.ui.geometry.Offset(0f, before - px)
+        }
+        // Back at the top of the feed and still pulling: open it again.
+        override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+            if (available.y <= 0) return androidx.compose.ui.geometry.Offset.Zero
+            val before = px
+            px = (px - available.y).coerceAtLeast(0f)
+            return androidx.compose.ui.geometry.Offset(0f, before - px)
+        }
+    }
+}
+
+// The header's two shapes, in dp. Open: the marble and the name centred, the search box below,
+// like a search engine's front page. Folded: today's slim bar (the name at the left, the search box under it).
+private const val OPEN_H = 256f
+private const val SLIM_H = 132f
+
+/**
+ * The top of the home screen. Everything moves and scales with how far it's folded; nothing fades
+ * or changes colour. [actions]: the bell and your picture, top right in both shapes.
+ */
+@Composable
+private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    val d = androidx.compose.ui.platform.LocalDensity.current
+    top.range = with(d) { (OPEN_H - SLIM_H).dp.toPx() }
+    val f = (top.px / top.range).coerceIn(0f, 1f)
+    fun mix(a: Float, b: Float) = a + (b - a) * f
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(mix(OPEN_H, SLIM_H).dp)) {
+        val w = maxWidth.value
+        // The marble: 72dp, centred under the bell; shrinking to nothing just left of the name.
+        val m = mix(72f, 0f)
+        val mx = mix(w / 2, 24f); val my = mix(92f, 32f)
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_foreground), null,
+            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).size((m * 1.8f).dp).clickable(enabled = m > 8f, onClick = onName))
+        // The name: 32sp centred under the marble, scaling to the bar's 22sp at the left.
+        var nameW by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        val scale = mix(1f, 22f / 32f)
+        val nameWdp = with(d) { nameW.toDp().value }
+        Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1,
+            modifier = Modifier.offset(mix((w - nameWdp) / 2, 24f).dp, mix(132f, 18f).dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
+                .onSizeChanged { nameW = it.width }.clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Back to the top", onClick = onName))
+        Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+        // The search box: under the name, rising to just under the bar.
+        Row(
+            Modifier.offset(y = mix(192f, 68f).dp).padding(horizontal = 16.dp).fillMaxWidth().height(52.dp)
+                .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
+                .clickable(onClick = onSearch).padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Search, null, tint = Vault.Muted)
+            Spacer(Modifier.width(12.dp))
+            Text("Search people, posts, #tags", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
