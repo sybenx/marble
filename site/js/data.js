@@ -15,7 +15,8 @@ export function keep(e) {
     // parseProfile (Astral's) keeps what search needs; a profile page also shows the banner and website.
     if (p) try { const c = JSON.parse(e.content); p.banner = c.banner || ""; p.website = c.website || ""; p.bot = c.bot === true; } catch {}
     const old = profiles.get(e.pubkey);
-    if (p && (!old || old.created_at < p.created_at)) {
+    // (a copy from search has no banner: the full one replaces it even when it's the same version)
+    if (p && (!old || old.created_at < p.created_at || (old.banner === undefined && old.created_at <= p.created_at))) {
       profiles.set(e.pubkey, p);
       for (const fn of listeners) fn(e.pubkey, p);
     }

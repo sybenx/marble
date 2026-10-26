@@ -102,7 +102,8 @@ export async function stories(q) {
   const seen = new Set();
   return items.filter((i) => re.test(i.title) || re.test(i.summary || ""))
     .sort((a, b) => (re.test(b.title) - re.test(a.title)) || b.published_at - a.published_at)
-    .filter((i) => !seen.has(i.url) && seen.add(i.url));
+    .filter((i) => !seen.has(i.url) && seen.add(i.url))
+    .map((i) => ({ ...i, inTitle: re.test(i.title) }));
 }
 
 // ── Your things ──────────────────────────────────────────────────────────────────────────────────────

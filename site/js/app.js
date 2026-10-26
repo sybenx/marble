@@ -173,7 +173,11 @@ function articleTeaser(e) {
 function paint(pk) {
   const p = profiles.get(pk);
   for (const el of document.querySelectorAll(`[data-name="${pk}"]`)) el.textContent = (el.classList.contains("mention") ? "@" : "") + name(pk);
-  for (const el of document.querySelectorAll(`[data-av="${pk}"]`)) el.outerHTML = avatar(pk, parseInt(el.style.getPropertyValue("--s")) || 40);
+  for (const el of document.querySelectorAll(`[data-av="${pk}"]`)) {
+    const img = el.querySelector("img");
+    if (img && img.getAttribute("src") === p?.picture) continue; // the same picture: leave it be (no reload, no flicker)
+    el.outerHTML = avatar(pk, parseInt(el.style.getPropertyValue("--s")) || 40);
+  }
   for (const el of document.querySelectorAll(`[data-nip05="${pk}"]`)) el.innerHTML = nip05Label(pk, p);
 }
 const paintAll = () => new Set([...document.querySelectorAll("[data-name],[data-av]")].map((el) => el.dataset.name || el.dataset.av)).forEach((pk) => profiles.has(pk) && paint(pk));
@@ -414,53 +418,96 @@ async function showProfile(d, signal) {
 
 // ── Search ───────────────────────────────────────────────────────────────────────────────────────────
 
+// A search: people, posts, #tag posts, stories, your things and the web, each only when it has results.
+// Phones get the search mock's single column (the top three of each, then "See all"); desktops the
+// desktop mock: posts and stories in one ranked list, your things after the third, people on the right.
 async function showSearch(q, signal) {
   page("search", q);
   const parsed = parseInput(q);
   const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(q) ? q : null;
-  // Desktop shows more of each section; a phone the mock's top three, with "See all".
-  const wide = matchMedia("(min-width: 1000px)").matches;
-  const few = wide ? { people: 8, posts: 8, tag: 4, stories: 5, yours: 5 } : { people: 3, posts: 3, tag: 3, stories: 3, yours: 3 };
   const root = pageEl;
+  const got = { people: [], extra: {}, peopleDone: !!tagOnly, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const opened = new Set(); // lists "See all" has opened, kept across redraws
+  const wideQuery = matchMedia("(min-width: 1000px)");
   root.innerHTML = `<div class="results">
-    <aside class="side" aria-label="People">
-      ${parsed.kind === "nip05" ? `<section><div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div></section>` : ""}
-      ${tagOnly ? "" : `<section id="s-people"><h2>People</h2><div class="list people"><p class="muted loading-text">Searching…</p></div></section>`}
-    </aside>
-    <div class="main">
-      <p class="muted loading-text" id="s-wait">Searching…</p>
-      <section id="s-posts" hidden><h2>${tagOnly ? esc(q) : "Posts"}</h2><div class="list"></div></section>
-      <section id="s-tag" hidden><h2>#${esc(oneWord || "")}</h2><div class="list"></div></section>
-      <section id="s-stories" hidden><h2>Stories</h2><div class="list stories"></div></section>
-      <section id="s-yours" hidden><h2>Your things</h2><div class="list"></div></section>
-      <a class="web" href="https://duckduckgo.com/?q=${encodeURIComponent(q)}" target="_blank" rel="noopener noreferrer">
-        <span class="web-icon" aria-hidden="true">↗</span>
-        <span><span class="web-title">Search the web for “${esc(q)}”</span><span class="web-sub">with DuckDuckGo</span></span>
-      </a>
-    </div>
+    <aside class="side" aria-label="People">${parsed.kind === "nip05" ? `<div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div>` : ""}<div id="side"></div></aside>
+    <div class="main" id="main"></div>
   </div>`;
-  const sec = (id) => $(`#s-${id}`, root);
+  const side = $("#side", root), main = $("#main", root);
+  const timers = {};
+  const soon = (fn) => { if (!timers[fn.name]) timers[fn.name] = setTimeout(() => { timers[fn.name] = null; if (!signal.aborted && root.isConnected) fn(); }, 30); };
+  const redraw = () => { soon(drawSide); soon(drawMain); };
+  wideQuery.addEventListener("change", redraw);
+  signal.addEventListener("abort", () => wideQuery.removeEventListener("change", redraw));
+  root.onclick = (ev) => {
+    const open = ev.target.closest("[data-open]");
+    if (open) { opened.add(open.dataset.open); redraw(); }
+  };
 
-  // One section: its first few, "See all N" for the rest; hidden while it has nothing.
-  function fill(id, items, draw, { shown = few[id] } = {}) {
-    const el = sec(id);
-    if (!el || signal.aborted) return;
-    el.hidden = !items.length;
-    if (!items.length) return;
-    let all = false;
-    const list = el.querySelector(".list");
-    const render = () => {
-      list.innerHTML = (all ? items : items.slice(0, shown)).map(draw).join("")
-        + (!all && items.length > shown ? `<button type="button" class="more">See all ${items.length}</button>` : "");
-      fillLater(list);
-    };
-    list.onclick = (ev) => { if (ev.target.closest("button.more")) { all = true; render(); } };
-    render();
-  }
+  // One section of the phone layout: its first three, "See all N" for the rest.
+  const section = (id, title, items, draw) => !items?.length ? "" : `<section><h2>${title}</h2><div class="list">
+    ${(opened.has(id) ? items : items.slice(0, 3)).map(draw).join("")}
+    ${!opened.has(id) && items.length > 3 ? `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>` : ""}</div></section>`;
+  const personFor = (p) => personRow(p, { verified: got.extra.verified?.get(p.pubkey), followers: got.extra.followers?.get(p.pubkey), follow: got.follows.has(p.pubkey) });
   const postItem = (x) => card(x.e, { why: x.why, clamp: true });
-  const pending = new Set(["posts"]);
-  const settled = (id) => { pending.delete(id); if (!pending.size) $("#s-wait", root)?.remove(); };
+  const web = `<a class="web" href="https://duckduckgo.com/?q=${encodeURIComponent(q)}" target="_blank" rel="noopener noreferrer">
+    <span class="web-icon" aria-hidden="true">↗</span>
+    <span><span class="web-title">Search the web for “${esc(q)}”</span><span class="web-sub">with DuckDuckGo</span></span></a>`;
+  const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
+
+  function drawSide() {
+    const people = got.people;
+    if (!people.length) { side.innerHTML = got.peopleDone ? "" : `<section><h2>People</h2><p class="muted loading-text">Searching…</p></section>`; return; }
+    if (!wideQuery.matches) { side.innerHTML = section("people", "People", people, personFor); fillLater(side); return; }
+    const [top, ...rest] = people;
+    const more = opened.has("people") ? rest : rest.slice(0, 7);
+    side.innerHTML = `<section><h2>People</h2>${topPerson(top, got)}</section>
+      ${more.length ? `<section class="more-people"><h2>More people</h2>${more.map((p) => personLine(p, got)).join("")}
+      ${!opened.has("people") && rest.length > more.length ? `<button type="button" class="see-all" data-open="people">See all ${people.length} people</button>` : ""}</section>` : ""}`;
+  }
+
+  function drawMain() {
+    const posts = got.posts || [], tagged = got.tagged || [], stories = got.stories || [], yours = got.yours || [];
+    if (!wideQuery.matches) {
+      const shown = new Set(posts.slice(0, 3).map((x) => x.e.id));
+      main.innerHTML = waiting()
+        + section("posts", tagOnly ? esc(q) : "Posts", posts, postItem)
+        + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
+        + section("stories", "Stories", stories, storyRow)
+        + section("yours", "Your things", yours, postItem)
+        + (got.posts === null ? "" : web);
+      fillLater(main);
+      return;
+    }
+    // Posts and stories in one list by relevance: a post's score against the best post's, a story's title
+    // match (a summary-only match counts for less) times freshness; never more than two of a kind in a row.
+    const pool = new Map();
+    for (const x of [...posts, ...tagged]) if (![...pool.values()].some((y) => y.e.pubkey === x.e.pubkey)) pool.set(x.e.id, x);
+    const best = Math.max(...[...pool.values()].map((x) => x.score), 1e-9);
+    const left = [...[...pool.values()].map((x) => ({ type: "post", x, rel: x.score / best })),
+      ...stories.map((i) => ({ type: "story", i, rel: (i.inTitle ? 0.95 : 0.5) * Math.pow(0.5, (Date.now() / 1000 - i.published_at) / 86400 / 30) }))]
+      .sort((a, b) => b.rel - a.rel);
+    const limit = opened.has("main") ? 40 : 12, list = [];
+    while (left.length && list.length < limit) {
+      const run = list.length >= 2 && list.at(-1).type === list.at(-2).type ? list.at(-1).type : null;
+      const i = run ? left.findIndex((r) => r.type !== run) : 0;
+      list.push(left.splice(i < 0 ? 0 : i, 1)[0]);
+    }
+    const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    const parts = [n(pool.size, "post", "posts"), stories.length && n(stories.length, "story", "stories"), got.people.length && n(got.people.length, "person", "people")].filter(Boolean);
+    const found = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+    const count = got.posts === null || !list.length ? "" : `<p class="count">${found} for “${esc(q)}”. Showing the best ${list.length}.</p>`;
+    const mine = yours.length ? `<div class="yours-box"><h3>From your things</h3>${yours.slice(0, 3).map(yourLine).join("")}</div>` : "";
+    main.innerHTML = count + waiting()
+      + list.map((r, i) => (i === 3 ? mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
+      + (list.length <= 3 ? mine : "")
+      + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
+      + (got.posts === null ? "" : web);
+    fillLater(main);
+  }
+  redraw();
+  signal.addEventListener("abort", onProfile((pk) => { if (pk === got.people[0]?.pubkey) soon(drawSide); }));
 
   if (parsed.kind === "nip05") resolveNip05(parsed.address).then(async (r) => {
     const box = $("#addr", root);
@@ -488,42 +535,94 @@ async function showSearch(q, signal) {
   const me = currentMe();
   // Your follows (read once a visit, usually in by now): at most a short wait before people are ranked.
   const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
+  followsSoon.then((f) => { got.follows = f; });
 
   if (!tagOnly) followsSoon.then((follows) => {
     if (signal.aborted) return;
-    const people = sec("people");
-    let last = [], extra = {};
-    const drawPeople = () => {
-      if (!people.isConnected) return;
-      if (!last.length) {
-        if (extra.ranked) people.hidden = true;
-        else people.querySelector(".list").innerHTML = `<p class="muted loading-text">Searching…</p>`;
-        return;
-      }
-      fill("people", last, (p) => personRow(p, { verified: extra.verified?.get(p.pubkey), followers: extra.followers?.get(p.pubkey), follow: follows.has(p.pubkey) }));
-    };
     searchPeople(q, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
       for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
-      last = list; extra = x;
-      drawPeople();
+      got.people = list; got.extra = x;
+      soon(drawSide); soon(drawMain);
       if (list.length && !document.documentElement.dataset.people) mark("people");
-    } }).then(() => { if (!signal.aborted) { extra.ranked = true; drawPeople(); } });
+    } }).then(() => { if (!signal.aborted) { got.peopleDone = true; got.extra.ranked = true; soon(drawSide); } });
   });
 
   goodPosts(q, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
-    fill("posts", list, postItem);
+    got.posts = list;
+    soon(drawMain);
     if (list.length) mark("posts", goodPosts.last);
-    settled("posts");
-    if (oneWord) goodPosts(q, { follows: followsSoon, me, tag: oneWord, signal }).then((tagged) => {
-      const shown = new Set(list.slice(0, few.posts).map((x) => x.e.id));
-      fill("tag", tagged.filter((x) => !shown.has(x.e.id)), postItem);
-    });
   });
+  if (oneWord) goodPosts(q, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => { got.tagged = list; soon(drawMain); });
   if (!tagOnly) stories(q).then((list) => {
-    fill("stories", list, storyRow);
+    got.stories = list;
+    soon(drawMain);
     if (list.length) mark("stories");
   });
-  if (me) yours(q, me, { signal }).then((list) => fill("yours", list, postItem));
+  if (me) yours(q, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
+}
+
+const agoLong = (ts) => {
+  const h = (Date.now() / 1000 - ts) / 3600;
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : h < 48 ? `${Math.round(h)} h ago` : h < 24 * 60 ? `${Math.round(h / 24)} days ago` : `${Math.round(h / 24 / 30)} months ago`;
+};
+
+// Desktop results, as the desktop mock lays them out: plain, no cards.
+function postResult(x) {
+  const e = x.e;
+  wantProfile(e.pubkey);
+  const title = e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : "";
+  return `<article class="res" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
+    <p class="res-why"><b>Post</b>${x.why ? ` · ${esc(x.why)}` : ""}</p>
+    <div class="res-who">${avatar(e.pubkey, 28)}<a href="${personPath(e.pubkey)}" data-name="${e.pubkey}">${esc(name(e.pubkey))}</a><span>${agoLong(e.created_at)}</span></div>
+    ${title ? `<p class="res-title">${esc(title)}</p>` : ""}
+    <div class="text clamp4">${e.kind === 30023 ? esc((e.tags.find((t) => t[0] === "summary") || [])[1] || "") : content(e, { quotes: false })}</div>
+  </article>`;
+}
+
+function storyResult(i) {
+  const img = /^https:\/\//.test(i.image || "") ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  const src = i.source?.name || "";
+  return `<div class="res story-res"><div class="res-body">
+    <p class="res-why"><b>Story</b> · ${esc(i.topic)}</p>
+    <div class="res-src"><span class="dot" aria-hidden="true">${esc(src.replace(/^r\//, "").slice(0, 1).toUpperCase())}</span><span>${esc(src)}<small>${agoLong(i.published_at)}</small></span></div>
+    <a class="res-title" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a>
+    ${i.summary ? `<p class="snip">${esc(i.summary)}</p>` : ""}
+  </div>${img}</div>`;
+}
+
+function yourLine(x) {
+  const e = x.e;
+  const text = (e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : e.content || "").replace(/nostr:\S+|https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  return `<a class="it" href="${postPath(e)}"><span class="k">${esc(x.why)} · ${agoLong(e.created_at)}${x.why !== "You wrote" ? ` · <span data-name="${e.pubkey}">${esc(name(e.pubkey))}</span>` : ""}</span><span class="t">${esc(text.slice(0, 200))}</span></a>`;
+}
+
+function whyPerson(p, got) {
+  if (got.follows.has(p.pubkey)) return "You follow them";
+  const n = got.extra.followers?.get(p.pubkey);
+  return n ? `${n >= 10000 ? Math.round(n / 1000) + "k" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : n} followers` : "";
+}
+
+function topPerson(p, got) {
+  wantProfile(p.pubkey);
+  const full = profiles.get(p.pubkey) || p;
+  const banner = /^https:\/\//.test(full.banner || "") ? `<img src="${esc(full.banner)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  const ok = got.extra.verified?.get(p.pubkey);
+  const addr = (p.nip05 || "").replace(/^_@/, "");
+  const why = whyPerson(p, got);
+  return `<a class="pcard" href="${personPath(p.pubkey)}">
+    <span class="pcard-banner">${banner}</span>
+    <span class="pcard-in">${avatar(p.pubkey, 72)}
+      <span class="pcard-name" data-name="${p.pubkey}">${esc(name(p.pubkey))}</span>
+      ${addr && ok !== false ? `<span class="addr${ok ? " ok" : ""}">${esc(addr)}</span>` : ""}
+      ${why ? `<span class="pcard-why">${esc(why)}</span>` : ""}
+      ${p.about ? `<span class="pcard-about">${esc(p.about.replace(/\s+/g, " ").slice(0, 220))}</span>` : ""}
+    </span></a>`;
+}
+
+function personLine(p, got) {
+  const ok = got.extra.verified?.get(p.pubkey);
+  const sub = whyPerson(p, got) || (ok ? (p.nip05 || "").replace(/^_@/, "") : "") || (p.about || "").replace(/\s+/g, " ").slice(0, 80);
+  return `<a class="pline" href="${personPath(p.pubkey)}">${avatar(p.pubkey, 38)}<span><b data-name="${p.pubkey}">${esc(name(p.pubkey))}</b><small>${esc(sub)}</small></span></a>`;
 }
 
 function storyRow(i) {
@@ -628,7 +727,7 @@ document.addEventListener("click", (ev) => {
     if (url.pathname === "/" && !url.search) input.value = "";
     return go(url.pathname + url.search);
   }
-  const c = ev.target.closest("article.card[data-href]");
+  const c = ev.target.closest("article[data-href]");
   if (c && !ev.target.closest("button, video, details summary, .who") && !getSelection().toString()) go(c.dataset.href);
 });
 
