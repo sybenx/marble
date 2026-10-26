@@ -539,7 +539,7 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
         Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
-        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { openInBrowser(context, it) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
@@ -2066,7 +2066,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val save = { if (t.isNotEmpty()) { if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) } } }
     // A search: what you typed (or the suggestion you tapped) is kept as a note, then searched (opening a result
     // makes it a visit instead). "Go to a site", a pasted link and @name aren't notes.
-    fun searchFor(x: String) { val j = social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; social.interests.noticed(x); nav.results(x) }
+    fun searchFor(x: String) { val j = social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; FeedLog.ev("search", "note" to j?.let { "l:" + it.first.id }, "new" to j?.second); social.interests.noticed(x); nav.results(x) }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
@@ -2200,7 +2200,7 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
         val words = cc.aaro.cosign.Entities.of(q)
         laterItems.filter { it.deleted == null && it.id != saved?.id && words.isNotEmpty() && cc.aaro.cosign.Entities.of(it.text).any { w -> w in words } }.take(3)
     }
-    for (n in yours) Row(Modifier.fillMaxWidth().clickable { n.url?.let { openInBrowser(context, it) } ?: nav.results(n.text) }.padding(horizontal = 20.dp, vertical = 8.dp),
+    for (n in yours) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + n.id, "yours"); n.url?.let { openInBrowser(context, it, "l:" + n.id) } ?: nav.results(n.text) }.padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text("YOURS", color = Vault.Text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(56.dp))
         Text(n.text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = if (n.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
@@ -2284,7 +2284,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
         if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
             item { Text("VISITED · NOT NOTES", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
             items(if (show == "pages") pg else pg.take(5), key = { "p" + it.url }) { p ->
-                Row(Modifier.fillMaxWidth().clickable { openInBrowser(context, p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable { FeedLog.open("u:" + p.url, "page"); openInBrowser(context, p.url, "u:" + p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val host = android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: ""
                     Box(Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
                         Text(host.take(1).uppercase(), color = Vault.Accent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
@@ -2329,7 +2329,7 @@ private fun SiteIcon(url: String, size: Int) {
 private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<cc.aaro.cosign.Page>, social: Social, nav: Nav) {
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { item.url?.let { openInBrowser(context, it) } ?: nav.results(item.text) }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
         .padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
         IconButton({ social.later.done(item, item.done == null) }) {
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)

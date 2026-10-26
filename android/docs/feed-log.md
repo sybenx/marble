@@ -30,7 +30,16 @@ Each line is one JSON object, with no nulls:
 - a post: its 64-hex event id;
 - a story: `t:` and its topic-feeds id.
 
-These are the same keys the Discover lists use.
+These are the same keys the Discover lists use. Outside the feed (0.12.19 and later):
+- a Later note: `l:` and its id;
+- a visited page in Later: `u:` and its address.
+
+**Screens:**
+- `discover`: the old pushed Discover screen.
+- `following/all`, `following/people`, `following/news`, `following/topics`: the Following pane's chips (0.12.19 and later).
+- `stories`: Today's stories.
+
+An `imp`'s `rank` is the place in the list shown. So in `following/people`, the post's place among the People posts, not in the `feed` line's list. A list is logged only while its pane is the one on screen.
 
 ## Events
 | `ev` | When | Fields |
@@ -39,7 +48,10 @@ These are the same keys the Discover lists use.
 | `session` | a new session | `why` (launch / back / on), `hour`, `dow` (1 = Monday), `tz` (minutes from UTC), `app` (version), `rv` |
 | `away` | Marble left the screen | (none) |
 | `back` | back within 5 minutes | `gap` (seconds) |
-| `view` | Discover or Today's stories shown or left | `screen` (discover / stories), `on`, and on leaving: `ms`, `deep` (the furthest rank reached) |
+| `view` | a list shown or left | `screen`, `on`, and on leaving: `ms`, `deep` (the furthest rank reached) |
+| `pane` | settled on a pane (0.12.19 and later) | `to` (following / search) |
+| `chip` | a chip in Following tapped | `screen` (following), `chip` (all / people / news / topics) |
+| `search` | Enter in the search box | `note` (the Later note it kept, `l:` and its id), `new` (whether this Enter made it). Never the words |
 | `feed` | a list put in order | `screen`, `why` (discover: load / pull / back / cache), `rv`, `prof`, `list` |
 | `item` | the first time an item appears in a list each day | see below |
 | `imp` | an item stopped being on screen | `id`, `screen`, `rank`, `ms` (how long at least half of it was on screen), `most` (the largest share of it on screen, 0.5–1) |
@@ -56,7 +68,8 @@ These are the same keys the Discover lists use.
 - `thread`: a post tapped;
 - `replyBox`;
 - `image`;
-- `profile`: carries `author` and no `id`.
+- `profile`: carries `author` and no `id`;
+- outside the feed: `kept` (a note on the Search pane), `yours` (a note under search results), `note` (in Later), `page` (a visited page in Later), `visit` (a web result opened from a search; its `id` is the page's address).
 
 **What `tab` reports (`e`):**
 - `shown`;
@@ -74,14 +87,16 @@ These are the same keys the Discover lists use.
 
 ## `feed`
 - **`rv`:** the ranking that put the list in order (`FeedLog.RANKER`). Change it whenever Calm's ranking changes.
+  - `learn1`: 0.12.18-log1.
+  - `panes1`: 0.12.19 panes builds; News sorts by `Calm.stories` over all days.
 - **`prof`:** what the ranking knew of you at that moment.
   - `i`: topic → interest, from 0 to 1 (`Interests.of`);
   - `fol`: the topics you follow.
 - **`list`:** the items in the order shown, top first.
-  - **Discover:** `{id, lift, sp}`.
+  - **Discover** (`discover`; `following/all` and `following/people` read the same list): `{id, lift, sp}`.
     - `lift`: how many seconds earlier your interests moved the post;
     - `sp`: true for a Special Follow post.
-  - **Stories:** `{id, sc, shown}`.
+  - **Stories** (`stories`, `following/news`, `following/topics`): `{id, sc, shown}`.
     - `sc`: `Calm.storyScore`;
     - `shown`: how many earlier fresh opens showed it.
 
