@@ -739,6 +739,74 @@ class Social private constructor(private val phone: Phone, context: Context) {
         Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
     }
 
+    // --- Tomorrow's marble: the pipeline's owner sees it a day early, and can veto it -----------
+    // On hold, unused: the preview comes as a direct message instead, which any app can read and answer.
+    //
+    // The pipeline's bot sends its owner tomorrow's marble as app data (kind 30078, d=marble/preview/<date>,
+    // p=owner, NIP-44 from the bot), the picture AES-GCM encrypted at an address that says nothing. Only the
+    // owner can read one, so nobody else ever sees the card. A veto is the owner's own kind 30078 back.
+
+    data class Tomorrow(val date: String, val name: String, val picture: java.io.File, val vetoed: Boolean)
+    val tomorrow = MutableStateFlow<Tomorrow?>(null)
+    private val PREVIEW_RELAYS = listOf("wss://syb.lol", "wss://relay.primal.net", "wss://relay.damus.io", "wss://relay.snort.social")
+
+    fun refreshTomorrow() { scope.launch { loadTomorrow() } }
+
+    private suspend fun loadTomorrow() {
+        val me = me ?: return
+        val bot = cc.aaro.cosign.ui.Daily.previewBot ?: return
+        if (Sources.viewAs != null) return
+        val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+        val got = Fetch.query(PREVIEW_RELAYS, mapOf("kinds" to listOf(30078), "authors" to listOf(bot), "#p" to listOf(me), "limit" to 20), 6000)
+            .filter { it.pubkey == bot && it.verify() }
+        // The newest per day; only days still to come, and not far off (a stray test can linger on a relay).
+        val days = got.groupBy { e -> e.tags.firstOrNull { it.size > 1 && it[0] == "d" }?.get(1) ?: "" }
+            .filterKeys { it.startsWith("marble/preview/") }.mapValues { (_, l) -> l.maxBy { it.createdAt } }
+            .mapNotNull { (d, e) -> runCatching { java.time.LocalDate.parse(d.removePrefix("marble/preview/")) }.getOrNull()?.let { it to e } }
+            .filter { (date, _) -> date > today && date <= today.plusDays(3) }.sortedBy { it.first }
+        for ((date, e) in days) {
+            val text = fromBot(bot, e.content) ?: continue
+            val o = try { org.json.JSONObject(text) } catch (_: Exception) { continue }
+            val url = o.optString("url").takeIf { it.startsWith("https://") } ?: continue
+            val key = o.optString("key").takeIf { it.isNotEmpty() } ?: continue
+            val sha = o.optString("sha256").lowercase().takeIf { it.length == 64 } ?: continue
+            if (o.optString("date") != date.toString()) continue
+            val file = java.io.File(CosignApp.instance.cacheDir, "tomorrow-$date.png")
+            if (!file.exists() || sha256(file.readBytes()) != sha) {
+                val blob = cc.aaro.cosign.ui.Daily.get(url) ?: continue
+                val png = try { openPicture(blob, java.util.Base64.getDecoder().decode(key)) } catch (_: Exception) { continue }
+                if (sha256(png) != sha) continue
+                file.writeBytes(png)
+            }
+            tomorrow.value = Tomorrow(date.toString(), o.optString("name").trim().take(40).ifEmpty { "Tomorrow's marble" }, file, o.optString("status") == "vetoed")
+            return
+        }
+        tomorrow.value = null
+    }
+
+    /** Say no to tomorrow's marble: it never goes live, and the collection's stands in that day. */
+    fun veto(t: Tomorrow) {
+        val me = me ?: return
+        val bot = cc.aaro.cosign.ui.Daily.previewBot ?: return
+        tomorrow.value = t.copy(vetoed = true)
+        scope.launch {
+            val tags = listOf(listOf("d", "marble/veto/${t.date}"), listOf("p", bot))
+            val ok = actEvent(Event(me, Clock.now(), 30078, tags, "").withId(), relays = PREVIEW_RELAYS) != null
+            if (!ok) tomorrow.value = t
+        }
+    }
+
+    /** The picture: nonce (12 bytes), then the ciphertext and its tag (AES-256-GCM). */
+    private fun openPicture(blob: ByteArray, key: ByteArray): ByteArray {
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, javax.crypto.spec.SecretKeySpec(key, "AES"), javax.crypto.spec.GCMParameterSpec(128, blob, 0, 12))
+        return c.doFinal(blob, 12, blob.size - 12)
+    }
+    private fun sha256(b: ByteArray) = java.security.MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
+
+    /** NIP-44 from the bot to this account. Waits on Cosign: Marble's own way in decrypts to itself only, by design. */
+    private fun fromBot(bot: String, text: String): String? = null
+
     /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
     private suspend fun pullSeen(again: Boolean = false) {
         val me = me ?: return
