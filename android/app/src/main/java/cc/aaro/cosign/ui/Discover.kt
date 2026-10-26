@@ -174,7 +174,10 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     if (stack.isNotEmpty()) BackHandler(onBack = back)
     // Read on open and when you come back to it; nothing in between.
     val context = LocalContext.current
-    LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices(); Daily.refresh(context) }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        social.loadFeed(); social.loadNotices()
+        Daily.refresh(context).invokeOnCompletion { social.refreshTomorrow() }
+    }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
@@ -247,6 +250,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
     val previews by social.previews.collectAsState()
     val notices by social.notices.collectAsState()
     val seen by social.seenAt.collectAsState()
+    val tomorrow by social.tomorrow.collectAsState()
     val me = ui.member!!.group.groupX
     LaunchedEffect(me) { People.want(listOf(me)) }
     val muted by social.muted.collectAsState()
@@ -302,6 +306,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
+                tomorrow?.let { t -> item(key = "tomorrow") { TomorrowCard(t, social) } }
                 // Tap it away (it also goes by itself after a while).
                 ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) } }
                 if (feed.failed) item(key = "failed") {
@@ -564,6 +569,36 @@ private fun MarbleArt(marble: Marble, description: String?, modifier: Modifier) 
         }
         androidx.compose.foundation.Image(bitmap, description, Modifier.fillMaxSize(0.556f))
     }
+}
+
+/** The pipeline's owner only: tomorrow's marble, a day early, with a veto. */
+@Composable
+private fun TomorrowCard(t: Social.Tomorrow, social: Social) {
+    var asking by remember { mutableStateOf(false) }
+    val picture = remember(t.picture) { android.graphics.BitmapFactory.decodeFile(t.picture.path)?.asImageBitmap() }
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().background(Vault.Surface, RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+        .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        picture?.let { androidx.compose.foundation.Image(it, null, Modifier.size(56.dp)) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Tomorrow's marble · only you see this", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Amber)) { append("✦ ") }; append(t.name)
+            }, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
+            Text("Goes live at 00:00 UTC", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+        }
+        if (t.vetoed) Text("Vetoed", color = Vault.Muted, style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.background(Vault.Edge, RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 5.dp))
+        else OutlinedButton({ asking = true }, border = BorderStroke(1.dp, Vault.Line)) { Text("Veto", color = Vault.Danger) }
+    }
+    if (asking) AlertDialog(
+        onDismissRequest = { asking = false },
+        title = { Text("Veto ${t.name}?") },
+        text = { Text("It won't go live. Tomorrow shows a marble from the collection instead.") },
+        confirmButton = { TextButton({ asking = false; social.veto(t) }) { Text("Veto", color = Vault.Danger) } },
+        dismissButton = { TextButton({ asking = false }) { Text("Keep it") } },
+        containerColor = Vault.Surface,
+    )
 }
 
 /** Marble of the day: one from the collection ([MARBLES]), by the UTC date: it changes at 00:00 UTC, as the nightly pipeline makes them, and is the same everywhere. */

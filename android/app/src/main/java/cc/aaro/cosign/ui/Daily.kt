@@ -29,6 +29,8 @@ object Daily {
     val today = MutableStateFlow<Marble?>(null)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val http by lazy { Fetch.http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build() }
+    /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
+    @Volatile var previewBot: String? = null
     @Volatile private var asked = 0L
     @Volatile private var askedFor = ""
 
@@ -39,11 +41,14 @@ object Daily {
         val date = utcDate()
         val dir = File(context.filesDir, "marbles").apply { mkdirs() }
         val png = File(dir, "$date.png"); val name = File(dir, "$date.name")
-        if (png.exists() && name.exists()) { today.value = Marble(name.readText(), 0, 384, png); return@launch }
-        today.value = null
+        val have = png.exists() && name.exists()
+        today.value = if (have) Marble(name.readText(), 0, 384, png) else null
         if (askedFor == date && System.currentTimeMillis() - asked < AGAIN) return@launch
         asked = System.currentTimeMillis(); askedFor = date
-        val days = (Json.parse(get(manifest)?.decodeToString() ?: return@launch) as? Map<*, *>)?.get("days") as? List<*> ?: return@launch
+        val m = Json.parse(get(manifest)?.decodeToString() ?: return@launch) as? Map<*, *> ?: return@launch
+        (m["preview_bot"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { previewBot = it }
+        if (have) return@launch
+        val days = m["days"] as? List<*> ?: return@launch
         val e = days.mapNotNull { it as? Map<*, *> }.lastOrNull { it["date"] == date } ?: return@launch
         if (e["status"] != "ok") return@launch
         val url = (e["image"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT } ?: return@launch
@@ -57,7 +62,7 @@ object Daily {
         if (utcDate() == date) today.value = Marble(name.readText(), 0, ((e["size"] as? Long)?.toInt() ?: 768) / 2, png)
     }
 
-    private fun get(url: String): ByteArray? = try {
+    fun get(url: String): ByteArray? = try {
         http.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
     } catch (_: Exception) { null }
 }
