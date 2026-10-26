@@ -185,6 +185,11 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
+    val askedScreen by DebugOpen.screen.collectAsState()
+    LaunchedEffect(askedScreen) {
+        when (askedScreen) { "marble" -> { delay(1500); marbleFrom = androidx.compose.ui.geometry.Offset.Zero }; "stories" -> stack.add(Route.Stories) }
+        DebugOpen.screen.value = null
+    }
     val asked by DebugOpen.profile.collectAsState()
     LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
     val top = stack.lastOrNull()
@@ -1136,7 +1141,11 @@ private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationIn
 /** A search asked for from outside (a launcher's search: marble://search?q=…): Discover opens search with it. */
 object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
-object DebugOpen { val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+object DebugOpen {
+    val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A screen to open (--es open marble|stories), for tests that can't tap reliably. */
+    val screen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+}
 
 /** Debug builds: how long after opening a profile its name is on screen. */
 @Composable

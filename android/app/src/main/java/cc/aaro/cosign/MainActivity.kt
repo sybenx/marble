@@ -135,6 +135,8 @@ class MainActivity : ComponentActivity() {
         if (intent?.getStringExtra("places") == "fake") Places.fake = true
         // Open someone's profile (--es profile <hex key>), for timing how fast one opens.
         intent?.getStringExtra("profile")?.let { cc.aaro.cosign.ui.DebugOpen.profile.value = it }
+        // A screen, opened for a test (--es open marble|stories).
+        intent?.getStringExtra("open")?.let { cc.aaro.cosign.ui.DebugOpen.screen.value = it }
         // Your own events to the test relay alone (--ez local_only true).
         if (intent?.getBooleanExtra("local_only", false) == true) cc.aaro.cosign.Sources.localOnly = true
     }
