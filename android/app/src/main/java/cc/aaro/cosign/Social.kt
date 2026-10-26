@@ -834,6 +834,62 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
     @Volatile private var claiming = false
+
+    // --- A marble on your profile: one at a time, only when you say ------------------------------
+    //
+    // NIP-58: your profile_badges (kind 30008) lists the awards other apps show on your profile, as a/e pairs.
+    // A marble's award goes in only when you tap "Show on profile" for that marble; nothing is added by itself.
+
+    /** The award ids on your profile_badges, as last read. */
+    val onProfile = MutableStateFlow<Set<String>>(emptySet())
+
+    private suspend fun profileBadges(pk: String): Event? =
+        Fetch.query((writeRelays() + readRelays() + Sources.PROFILES.take(2)).distinct().take(8),
+            mapOf("kinds" to listOf(30008), "authors" to listOf(pk), "#d" to listOf("profile_badges"), "limit" to 4), 6000)
+            .filter { it.pubkey == pk && it.verify() }.maxByOrNull { it.createdAt }
+
+    fun readOnProfile() = scope.launch {
+        val me = me ?: return@launch
+        onProfile.value = profileBadges(me)?.tags?.filter { it.size > 1 && it[0] == "e" }?.map { it[1] }?.toSet() ?: emptySet()
+    }
+
+    /** Show this marble's award on your profile, or stop: your profile_badges, read fresh, with its pair added or taken out. */
+    fun showOnProfile(awardJson: String, on: Boolean) {
+        val me = me ?: return
+        val award = Event.fromMap(Json.parse(awardJson)) ?: return
+        val a = award.tags.firstOrNull { it.size > 1 && it[0] == "a" }?.get(1) ?: return
+        onProfile.update { if (on) it + award.id else it - award.id }
+        scope.launch {
+            val cur = profileBadges(me)
+            val tags = (cur?.tags ?: listOf(listOf("d", "profile_badges"))).toMutableList()
+            // Pairs: an "a" then its "e". Take this award's pair out; put it back at the end if showing.
+            val out = ArrayList<List<String>>()
+            var i = 0
+            while (i < tags.size) {
+                val t = tags[i]; val next = tags.getOrNull(i + 1)
+                if (t.size > 1 && t[0] == "a" && next != null && next.size > 1 && next[0] == "e" && next[1] == award.id) { i += 2; continue }
+                out += t; i++
+            }
+            if (on) { out += listOf("a", a); out += listOf("e", award.id) }
+            if (actEvent(Event(me, Clock.now(), 30008, out, cur?.content ?: "").withId()) == null) onProfile.update { if (on) it - award.id else it + award.id }
+        }
+    }
+
+    /** The marbles someone shows on their profile: their profile_badges' awards from Marble's issuer, as (name, picture). */
+    suspend fun marblesShownBy(pk: String): List<Pair<String, String?>> {
+        val list = profileBadges(pk) ?: return emptyList()
+        val issuer = cc.aaro.cosign.ui.Daily.issuerKey ?: kept.all.value.values.firstNotNullOfOrNull { k ->
+            k.award?.let { Event.fromMap(Json.parse(it)) }?.tags?.firstOrNull { it.size > 1 && it[0] == "a" }?.get(1)?.split(':')?.getOrNull(1)
+        } ?: return emptyList()
+        val ds = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30009:$issuer:") }.map { it[1].substringAfter("30009:$issuer:") }
+        if (ds.isEmpty()) return emptyList()
+        val defs = Fetch.query((Sources.PROFILES.take(3) + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30009), "authors" to listOf(issuer), "#d" to ds), 6000)
+            .filter { it.pubkey == issuer && it.verify() }.associateBy { e -> e.tags.firstOrNull { it.size > 1 && it[0] == "d" }?.get(1) ?: "" }
+        return ds.mapNotNull { d -> defs[d]?.let { e ->
+            val tag = { k: String -> e.tags.firstOrNull { it.size > 1 && it[0] == k }?.get(1) }
+            (tag("name") ?: "Marble") to (tag("thumb") ?: tag("image"))
+        } }
+    }
     private val claimHttp by lazy { Fetch.http.newBuilder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build() }
 
     private suspend fun pullKept(sending: Boolean = false) {

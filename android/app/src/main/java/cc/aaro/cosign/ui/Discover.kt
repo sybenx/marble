@@ -630,6 +630,18 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         val count = social.kept.all.collectAsState().value.size
         NameChip(marble.name, big.date ?: java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still, count = count.takeIf { it > 0 },
             onClick = onShelf, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
+        // On your profile: this one marble, only if you say (other apps show it too). Off unless you tap it.
+        val day = (big.date ?: java.time.LocalDate.now(java.time.ZoneOffset.UTC)).toString()
+        val award = social.kept.all.collectAsState().value["marble-$day"]?.award
+        val shownOn by social.onProfile.collectAsState()
+        LaunchedEffect(Unit) { social.readOnProfile() }
+        award?.let { a ->
+            val id = remember(a) { org.json.JSONObject(a).optString("id") }
+            val on = id in shownOn
+            Text(if (on) "On your profile · Remove" else "Show on profile", color = if (on) Vault.Muted else Vault.Accent, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp).graphicsLayer { alpha = shown.value }
+                    .clip(RoundedCornerShape(12.dp)).clickable { social.showOnProfile(a, !on) }.padding(horizontal = 12.dp, vertical = 6.dp))
+        }
     }
 }
 
@@ -1550,6 +1562,12 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                     social.message.value = "Copied their account ID"
                 })
                 p?.about?.let { Spacer(Modifier.height(10.dp)); Text(it, color = Vault.Text, style = MaterialTheme.typography.bodyMedium) }
+                // The marbles they chose to show (their profile badges from Marble's issuer): a slim row, if any.
+                val shownMarbles by produceState(emptyList<Pair<String, String?>>(), pk) { value = social.marblesShownBy(pk) }
+                if (shownMarbles.isNotEmpty()) Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    shownMarbles.take(8).forEach { (name, img) -> NetImage(img, Modifier.size(30.dp), 96, androidx.compose.ui.layout.ContentScale.Fit, name) }
+                    if (shownMarbles.size > 8) Text("+${shownMarbles.size - 8}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 4.dp))
+                }
                 if (p == null && missing) {
                     Spacer(Modifier.height(10.dp))
                     Text("Couldn't find this profile", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
