@@ -108,6 +108,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.core.graphics.drawable.toBitmap
 import cc.aaro.cosign.CosignApp
 import cc.aaro.cosign.Notice
@@ -565,8 +575,9 @@ private data class BigMarble(val from: androidx.compose.ui.geometry.Offset, val 
 
 /**
  * The marble, full screen and still: large on the app's ground (the light or dark render), grown from the
- * header where it was tapped, leaning a little as the phone tilts. A tap or back closes it. With
- * animations off on the phone (Remove animations), it simply appears, and doesn't move.
+ * header where it was tapped, leaning a little as the phone tilts. Pinch or double-tap to look closer (as far
+ * as the render has detail), drag to look round; double-tap or pinch out to go back. A tap or back closes it.
+ * With animations off on the phone (Remove animations), it simply appears, and doesn't move.
  */
 @Composable
 private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onClose: () -> Unit) {
@@ -600,29 +611,68 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         onDispose { sm?.unregisterListener(listener) }
     }
     var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    BoxWithConstraints(
-        Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Vault.Ground)
-            .onGloballyPositioned { centre = it.boundsInRoot().center }
-            .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = close),
-        contentAlignment = Alignment.Center,
-    ) {
+    // Looking closer: how much (1: not), and where to (from the centre, in pixels). The tilt rests meanwhile.
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val leaning by androidx.compose.animation.core.animateFloatAsState(if (zoom > 1.01f) 0f else 1f, label = "lean")
+    val d = androidx.compose.ui.platform.LocalDensity.current
+    val today = Marbles.current()
+    val marble = big.marble ?: today
+    BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Vault.Ground)
+        .onGloballyPositioned { centre = it.boundsInRoot().center }, contentAlignment = Alignment.Center) {
         // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
-        val d = androidx.compose.ui.platform.LocalDensity.current
-        val today = Marbles.current()
-        val marble = big.marble ?: today
         // As big as the screen allows, but no bigger than the render has detail for (the marble is 0.556 of the
         // picture; shown up to 1.3 times its size in the render, no more).
         val size = minOf(minOf(maxWidth, maxHeight) * 1.45f, with(d) { (marble.detail * 2 * 1.3f / 0.556f).toDp() })
         val sizePx = with(d) { size.toPx() }
         val start = with(d) { (72f * 1.8f).dp.toPx() } / sizePx       // the header's marble, the same picture
         val leanPx = with(d) { 8.dp.toPx() }
+        // Closer, up to twice the render's own size (past that it's only blur), and never so far it slips out of view.
+        val mid = with(d) { androidx.compose.ui.geometry.Offset(maxWidth.toPx() / 2f, maxHeight.toPx() / 2f) }
+        val most = ((marble.detail * 2 * 2f / 0.556f) / sizePx).coerceAtLeast(1f)
+        fun held(p: androidx.compose.ui.geometry.Offset, z: Float): androidx.compose.ui.geometry.Offset {
+            val r = 0.278f * sizePx * (z - 1f)
+            return androidx.compose.ui.geometry.Offset(p.x.coerceIn(-r, r), p.y.coerceIn(-r, r))
+        }
+        fun glide(z: Float, to: androidx.compose.ui.geometry.Offset) = scope.launch {
+            val z0 = zoom; val p0 = pan
+            androidx.compose.animation.core.animate(0f, 1f, animationSpec = androidx.compose.animation.core.tween(if (still) 0 else 260)) { t, _ ->
+                zoom = z0 + (z - z0) * t; pan = p0 + (to - p0) * t
+            }
+        }
+        Box(Modifier.fillMaxSize()
+            // A tap closes; a double tap goes closer, to where it was tapped, or back.
+            .pointerInput(most) {
+                detectTapGestures(onTap = { close() }, onDoubleTap = { at ->
+                    if (zoom > 1.01f || most <= 1.01f) glide(1f, androidx.compose.ui.geometry.Offset.Zero)
+                    else glide(most, held((mid - at) * (most - 1f), most))
+                })
+            }
+            // Two fingers: closer or further, about the point between them; one finger, while closer: look round.
+            .pointerInput(most) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val ev = awaitPointerEvent()
+                        val fingers = ev.changes.count { it.pressed }
+                        if (fingers >= 2 || zoom > 1f) {
+                            val z = (zoom * ev.calculateZoom()).coerceIn(1f, most)
+                            val c = ev.calculateCentroid(useCurrent = true).let { if (it.isSpecified) it - mid else androidx.compose.ui.geometry.Offset.Zero }
+                            pan = held(c - (c - pan) * (z / zoom) + ev.calculatePan(), z)
+                            zoom = z
+                            ev.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    } while (ev.changes.any { it.pressed })
+                    if (zoom < 1.03f) { zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero }
+                }
+            })
         MarbleArt(marble, marble.name,
             Modifier.requiredSize(size).graphicsLayer {
                 val p = shown.value
-                val sc = start + (1f - start) * p
+                val sc = (start + (1f - start) * p) * zoom
                 scaleX = sc; scaleY = sc
-                translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p
-                translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p
+                translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p * leaning + pan.x
+                translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p * leaning + pan.y
             })
         // Its name, in a small chip under it. The first look of the (UTC) day collects it: the chip springs in and a
         // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
