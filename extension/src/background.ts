@@ -578,7 +578,8 @@ async function answer(id: string, yes: boolean) {
 // One pairing code at a time, shared by every card and the toolbar popup showing it.
 
 /** `busy`: you said Sign in and it's under way; the code is spent and isn't shown again. */
-interface PairView { uri?: string; status: string; confirm?: string; error?: string; done?: boolean; busy?: boolean; note?: string }
+// What the sign-in screen shows: the popup's own definition, so the two can't drift apart.
+type PairView = import('./ui/pair.ts').PairView
 /**
  * `byLink`: the code went to Cosign on this same phone by the Open Cosign button, not
  * shown for a camera. Then there's no "Sign in as …?" here: the code was never on a

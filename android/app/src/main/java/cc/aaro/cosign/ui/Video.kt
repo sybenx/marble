@@ -190,7 +190,7 @@ private fun Controls(p: ExoPlayer, modifier: Modifier, onFull: () -> Unit, fullL
         Text(clock(at), color = Color.White, style = MaterialTheme.typography.labelSmall)
         Slider(dragging ?: if (length > 0) at.toFloat() / length else 0f, { dragging = it }, Modifier.weight(1f).padding(horizontal = 8.dp),
             onValueChangeFinished = { dragging?.let { p.seekTo((it * length).toLong()) }; dragging = null },
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Vault.Teal, inactiveTrackColor = Color(0x66FFFFFF)))
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Vault.Accent, inactiveTrackColor = Color(0x66FFFFFF)))
         Text(clock(length), color = Color.White, style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.width(4.dp))
         Text(fullLabel, color = Color.White, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.clip(CircleShape).clickable(onClick = onFull).padding(horizontal = 8.dp))

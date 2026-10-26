@@ -87,7 +87,7 @@ fun App(phone: Phone, ui: Ui) {
                         TextButton({
                             val t = pasted(context).trim()
                             if (t.isEmpty()) phone.showError("Copy the site's code first, then tap Paste a code.") else { scanning = false; phone.scanned(t) }
-                        }) { Text("Paste a code", color = Vault.Teal) }
+                        }) { Text("Paste a code", color = Vault.Accent) }
                         Spacer(Modifier.width(16.dp))
                         TextButton({ scanning = false }) { Text("Cancel", color = Vault.Text) }
                     }
@@ -141,15 +141,15 @@ private fun TakeOutEntry(phone: Phone, onScan: () -> Unit) {
         if (ask == null) phone.showError("Set a screen lock on this phone first.") else { then = action; lock.launch(ask) }
     }
     Column(Modifier.padding(top = 10.dp)) {
-        TextButton({ open = !open }, contentPadding = PaddingValues(0.dp)) { Text("Take my account out of $appName", color = Vault.Teal) }
+        TextButton({ open = !open }, contentPadding = PaddingValues(0.dp)) { Text("Take my account out of $appName", color = Vault.Accent) }
         if (open) {
             Muted("This puts your secret key (nsec) back together on this phone and shows it, so you can use it elsewhere. Every one of your devices is told.")
             Spacer(Modifier.height(8.dp))
             TextButton({ locked("Take my account out") { phone.askTakeOutPaper(true); onScan() } }, contentPadding = PaddingValues(0.dp)) {
-                Text("Now, with my paper backup", color = Vault.Teal)
+                Text("Now, with my paper backup", color = Vault.Accent)
             }
             TextButton({ locked("Take my account out") { phone.takeOutViaServers() } }, contentPadding = PaddingValues(0.dp)) {
-                Text("Without it: after a 3-day wait your other devices can stop", color = Vault.Teal)
+                Text("Without it: after a 3-day wait your other devices can stop", color = Vault.Accent)
             }
             Spacer(Modifier.height(6.dp))
             Muted("Afterwards you can also remove your servers' pieces: they stop at once, and delete them after 3 days unless one of your devices stops it.")
@@ -210,7 +210,7 @@ internal fun TakeOutSheet(t: cc.aaro.cosign.TakeOut, onClose: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                 Text(if (t.stage == cc.aaro.cosign.TakeOut.Stage.WAITING) "Close (it keeps going)" else "Done")
             }
         }
@@ -276,15 +276,15 @@ private fun Welcome(error: String?, onCreate: () -> Unit, onJoin: () -> Unit, on
     )
     error?.let { Spacer(Modifier.height(16.dp)); Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodyMedium) }
     Spacer(Modifier.weight(1f))
-    Button(onCreate, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+    Button(onCreate, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
         Text("Create your account", style = MaterialTheme.typography.labelLarge)
     }
     Spacer(Modifier.height(8.dp))
     Text("Made with Cosign servers; no one, this phone included, ever holds all of it.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted,
         modifier = Modifier.align(Alignment.CenterHorizontally))
     Spacer(Modifier.height(8.dp))
-    TextButton(onJoin, Modifier.align(Alignment.CenterHorizontally)) { Text("Sign in with another device", color = Vault.Teal) }
-    TextButton(onHave, Modifier.align(Alignment.CenterHorizontally)) { Text("I already have an account", color = Vault.Teal) }
+    TextButton(onJoin, Modifier.align(Alignment.CenterHorizontally)) { Text("Sign in with another device", color = Vault.Accent) }
+    TextButton(onHave, Modifier.align(Alignment.CenterHorizontally)) { Text("I already have an account", color = Vault.Accent) }
     TextButton(onScan, Modifier.align(Alignment.CenterHorizontally)) { Text("Restore from your backup", color = Vault.Muted) }
     TextButton({ onPaste(pasted(context)) }, Modifier.align(Alignment.CenterHorizontally)) { Text("Paste your backup code instead", color = Vault.Muted) }
     TextButton(onScan, Modifier.align(Alignment.CenterHorizontally)) { Text("Set up with a server's code", color = Vault.Muted) }
@@ -335,7 +335,7 @@ private fun ImportSheet(onClose: () -> Unit, onKey: (CharArray) -> Unit) {
                 }
             }, Modifier.fillMaxWidth())
             Spacer(Modifier.height(20.dp))
-            Button({ take() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Bring it into $appName") }
+            Button({ take() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Bring it into $appName") }
             TextButton(onClose, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Vault.Muted) }
         }
     }
@@ -344,7 +344,7 @@ private fun ImportSheet(onClose: () -> Unit, onKey: (CharArray) -> Unit) {
 @Composable
 private fun Joining(text: String, onCancel: () -> Unit) = Page {
     Spacer(Modifier.weight(1f))
-    CircularProgressIndicator(color = Vault.Teal, modifier = Modifier.align(Alignment.CenterHorizontally))
+    CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))
     Spacer(Modifier.height(20.dp))
     Text(text, color = Vault.Text, modifier = Modifier.align(Alignment.CenterHorizontally))
     Spacer(Modifier.weight(1f))
@@ -364,7 +364,7 @@ private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) =
     Text("Almost everything happens without asking. Anything destructive — unfollowing most people, wiping your profile, deleting a pile of posts — waits for you here.",
         color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.weight(1f))
-    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Use it on this phone", style = MaterialTheme.typography.labelLarge) }
+    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Use it on this phone", style = MaterialTheme.typography.labelLarge) }
     Spacer(Modifier.height(8.dp))
     TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
 }
@@ -383,7 +383,7 @@ private fun MakeKeyPrompt(onJoin: () -> Unit, onCancel: () -> Unit) = Page {
     Text("Almost everything happens without asking. Anything destructive — unfollowing most people, wiping your profile, deleting a pile of posts — waits for you here.",
         color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.weight(1f))
-    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Create my account", style = MaterialTheme.typography.labelLarge) }
+    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Create my account", style = MaterialTheme.typography.labelLarge) }
     Spacer(Modifier.height(8.dp))
     TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
 }
@@ -398,12 +398,12 @@ private fun MoveInSheet(m: MoveIn, onKeep: () -> Unit, onClose: () -> Unit) {
                 .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
             val digits: @Composable (String) -> Unit = { code ->
-                Text(code.chunked(1).joinToString(" "), fontFamily = PlexMono, style = MaterialTheme.typography.displaySmall, color = Vault.Teal,
+                Text(code.chunked(1).joinToString(" "), fontFamily = PlexMono, style = MaterialTheme.typography.displaySmall, color = Vault.Accent,
                     modifier = Modifier.align(Alignment.CenterHorizontally))
             }
             when (m.stage) {
                 MoveIn.Stage.WAITING -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(22.dp), color = Vault.Teal, strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(22.dp), color = Vault.Accent, strokeWidth = 2.dp)
                     Spacer(Modifier.width(14.dp))
                     Text(m.text ?: "Working…", color = Vault.Text)
                 }
@@ -425,11 +425,11 @@ private fun MoveInSheet(m: MoveIn, onKeep: () -> Unit, onClose: () -> Unit) {
                     Spacer(Modifier.height(20.dp))
                     OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Discard", color = Vault.Text) }
                     Spacer(Modifier.height(10.dp))
-                    Button(onKeep, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Keep it") }
+                    Button(onKeep, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Keep it") }
                 }
                 MoveIn.Stage.DONE, MoveIn.Stage.FAILED -> {
                     Text(if (m.stage == MoveIn.Stage.DONE) "All set" else "Not done", style = MaterialTheme.typography.titleLarge,
-                        color = if (m.stage == MoveIn.Stage.DONE) Vault.Teal else Vault.Danger)
+                        color = if (m.stage == MoveIn.Stage.DONE) Vault.Accent else Vault.Danger)
                     Spacer(Modifier.height(8.dp))
                     Text(m.text ?: "", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(18.dp))
@@ -452,7 +452,7 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onCl
             when (c.stage) {
                 Connect.Stage.CONFIRM -> {
                     Text("Use your account on ${c.origin}?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
-                    which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Teal, style = MaterialTheme.typography.bodyMedium) }
+                    which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Accent, style = MaterialTheme.typography.bodyMedium) }
                     Spacer(Modifier.height(10.dp))
                     Text("It can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
                         style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
@@ -463,13 +463,13 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onCl
                     // Declining is never the weaker control; the affirmative one names the site.
                     OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't connect", color = Vault.Text) }
                     Spacer(Modifier.height(10.dp))
-                    Button(onConnect, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+                    Button(onConnect, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                         Text("Use it on ${c.origin}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Connect.Stage.WORKING -> Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(22.dp), color = Vault.Teal, strokeWidth = 2.dp)
+                        CircularProgressIndicator(Modifier.size(22.dp), color = Vault.Accent, strokeWidth = 2.dp)
                         Spacer(Modifier.width(14.dp))
                         Text(c.message ?: "Connecting…", color = Vault.Text)
                     }
@@ -478,7 +478,7 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onCl
                 }
                 Connect.Stage.DONE, Connect.Stage.FAILED -> {
                     Text(if (c.stage == Connect.Stage.DONE) "Connected" else "Not connected", style = MaterialTheme.typography.titleLarge,
-                        color = if (c.stage == Connect.Stage.DONE) Vault.Teal else Vault.Danger)
+                        color = if (c.stage == Connect.Stage.DONE) Vault.Accent else Vault.Danger)
                     Spacer(Modifier.height(8.dp))
                     Text(c.message ?: "", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(18.dp))
@@ -529,7 +529,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                         Text(short(m.group.npub), fontFamily = PlexMono, style = MaterialTheme.typography.labelSmall, color = Vault.Muted)
                     }
                 }
-                TextButton({ switching = true }) { Text("Switch ▾", color = Vault.Teal) }
+                TextButton({ switching = true }) { Text("Switch ▾", color = Vault.Accent) }
             }
             if (switching) KeysSheet(phone) { switching = false }
             // Another account of yours with something waiting: say so here too, not only in notifications.
@@ -550,17 +550,17 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         item { Heading("Your devices") }
         items(m.group.members.filter { it.role != "server" && it.role != "backup" }, key = { "member:" + it.idx }) { d ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(if (d.idx == m.idx || ui.online[d.idx] == true) Vault.Teal else Vault.Field, CircleShape))
+                Box(Modifier.size(8.dp).background(if (d.idx == m.idx || ui.online[d.idx] == true) Vault.Accent else Vault.Field, CircleShape))
                 Spacer(Modifier.width(10.dp))
                 Text(if (d.idx == m.idx) "${d.name} (this one)" else d.name, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 if (d.idx != m.idx) TextButton({ phone.askReportLost(d) }) { Text("Report lost", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
         }
-        item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Teal) } }
+        item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
 
         item { Heading("Apps and sites you're signed in to") }
         item {
-            Button(onScan, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+            Button(onScan, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                 Text("Sign in to a site", style = MaterialTheme.typography.labelLarge)
             }
         }
@@ -619,7 +619,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 }
                 if (ui.relaysUp == 0) Text("No relay connection. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
-            if (m.group.threshold >= 4) item { TextButton({ phone.chooseServer() }, contentPadding = PaddingValues(0.dp)) { Text("Add a server", color = Vault.Teal) } }
+            if (m.group.threshold >= 4) item { TextButton({ phone.chooseServer() }, contentPadding = PaddingValues(0.dp)) { Text("Add a server", color = Vault.Accent) } }
             item { TranslateSetting() }
             item { TakeOutEntry(phone, onScan) }
             item { Heading("On this phone") }
@@ -666,7 +666,7 @@ private fun TranslateSetting() {
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = Vault.Text))
         Row {
             TextButton({ cc.aaro.cosign.Translate.setKey(typedKey); cc.aaro.cosign.Translate.setUrl(typed); scope.launch { cc.aaro.cosign.Translate.check() } }, contentPadding = PaddingValues(0.dp)) {
-                Text(if (typed.isBlank()) "Turn off" else "Save", color = Vault.Teal)
+                Text(if (typed.isBlank()) "Turn off" else "Save", color = Vault.Accent)
             }
         }
         status?.let { Muted(it) }
@@ -743,7 +743,7 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
             "${g.via ?: if (g.parent == null) "Connected by code" else "Connected"} · used ${ago(g.lastUsed)}",
             color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
         )
-        TextButton({ onUndo(g) }) { Text("Undo all", color = Vault.Teal) }
+        TextButton({ onUndo(g) }) { Text("Undo all", color = Vault.Accent) }
         TextButton({ onRemove(g) }) { Text("Remove", color = Vault.AmberText) }
     }
 }
@@ -756,7 +756,7 @@ internal fun DeletingCard(d: Deleting, now: Long, onUndo: () -> Unit) = Card(Vau
             Text("Deleting ${d.count} post${if (d.count == 1) "" else "s"} for ${d.by.removePrefix("https://")}", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
             Text("in ${left}s · a copy is kept here", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
         }
-        Button(onUndo, colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Undo") }
+        Button(onUndo, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Undo") }
     }
 }
 
@@ -779,7 +779,7 @@ private fun DeletedRow(d: Deleted, onRepost: () -> Unit) = Row(verticalAlignment
         Text(d.text.ifBlank { "(no text)" }, style = MaterialTheme.typography.bodyMedium, color = Vault.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${d.kind} · ${ago(d.at)}", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     }
-    TextButton(onRepost) { Text("Post again", color = Vault.Teal) }
+    TextButton(onRepost) { Text("Post again", color = Vault.Accent) }
 }
 
 /** Before undoing a site: what it did, and what undoing it will do. */
@@ -814,13 +814,13 @@ fun UndoSiteSheet(sum: SiteSummary, onUndo: () -> Unit, onClose: () -> Unit) {
 
 @Composable
 private fun ChangeRow(c: Change, onUndo: () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
-    Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Teal, CircleShape))
+    Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Accent, CircleShape))
     Spacer(Modifier.width(10.dp))
     Column(Modifier.weight(1f)) {
         Text(c.text, style = MaterialTheme.typography.bodyMedium, color = if (c.undone) Vault.Muted else Vault.Text)
         Text("${c.by.removePrefix("https://")} · ${ago(c.at)}${if (c.undone) " · undone" else ""}", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     }
-    if (!c.undone) TextButton(onUndo) { Text("Undo", color = Vault.Teal) }
+    if (!c.undone) TextButton(onUndo) { Text("Undo", color = Vault.Accent) }
 }
 
 @Composable
@@ -828,7 +828,7 @@ private fun Chip(label: String, on: Boolean, modifier: Modifier) = Row(
     modifier.border(1.dp, Vault.Edge, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    Box(Modifier.size(8.dp).background(if (on) Vault.Teal else Vault.Field, CircleShape))
+    Box(Modifier.size(8.dp).background(if (on) Vault.Accent else Vault.Field, CircleShape))
     Spacer(Modifier.width(8.dp))
     Text(label, style = MaterialTheme.typography.bodySmall, color = if (on) Vault.Text else Vault.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
@@ -839,7 +839,7 @@ private fun Card(edge: Color, ground: Color = Vault.Surface, content: @Composabl
 
 @Composable
 private fun LogLine(line: Line) = Row {
-    val color = when (line.kind) { "approved" -> Vault.Amber; "denied" -> Vault.Danger; "auto" -> Vault.Teal; else -> Vault.Muted }
+    val color = when (line.kind) { "approved" -> Vault.Amber; "denied" -> Vault.Danger; "auto" -> Vault.Accent; else -> Vault.Muted }
     Box(Modifier.padding(top = 7.dp).size(6.dp).background(color, CircleShape))
     Spacer(Modifier.width(10.dp))
     Column {
@@ -888,13 +888,13 @@ private fun KeysSheet(current: Phone, onClose: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             for (p in accounts.all.filter { it.isMember || it === current }) {
                 TextButton({ accounts.show(p.slot); onClose() }, Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) {
-                    Text((if (p === current) "● " else "○ ") + accountName(p), color = if (p === current) Vault.Teal else Vault.Text, modifier = Modifier.fillMaxWidth())
+                    Text((if (p === current) "● " else "○ ") + accountName(p), color = if (p === current) Vault.Accent else Vault.Text, modifier = Modifier.fillMaxWidth())
                 }
             }
             Spacer(Modifier.height(8.dp))
             Text("Each account has its own devices, sites and history; adding one doesn't touch the others.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(12.dp))
-            Button({ accounts.add(); onClose() }, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Add another account") }
+            Button({ accounts.add(); onClose() }, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Add another account") }
         }
     }
 }
@@ -936,12 +936,12 @@ private fun ServerChoiceSheet(choice: List<cc.aaro.cosign.net.Servers.Server>, s
                 }
                 if (code == null) {
                     Spacer(Modifier.width(10.dp))
-                    Button({ add(s) }, colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Add") }
+                    Button({ add(s) }, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Add") }
                 }
             }
             if (code != null && choice.size == 1) {
                 Spacer(Modifier.height(14.dp))
-                Button({ add(choice[0]) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) {
+                Button({ add(choice[0]) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                     Text("Add this server", style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -991,8 +991,8 @@ private fun PaperButton(phone: Phone, text: String, filled: Boolean = false, aft
         val ask = lockIntent(context, "Make a paper backup", "Confirm it's you to make a backup of your account")
         if (ask == null) phone.lockMissing() else lock.launch(ask)
     }
-    if (filled) Button(go, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text(text) }
-    else TextButton(go, contentPadding = PaddingValues(0.dp)) { Text(text, color = Vault.Teal) }
+    if (filled) Button(go, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(text) }
+    else TextButton(go, contentPadding = PaddingValues(0.dp)) { Text(text, color = Vault.Accent) }
 }
 
 /** The paper backup: whether there is one, and making one (after this phone's lock). */
@@ -1009,7 +1009,7 @@ private fun PaperRow(made: Boolean, status: String?, phone: Phone) {
         else TextButton({
             val ask = lockIntent(context, "Make a paper backup", "Confirm it's you to make a backup of your account")
             if (ask == null) phone.lockMissing() else lock.launch(ask)
-        }, contentPadding = PaddingValues(0.dp)) { Text(if (made) "Make a new one" else "Make a paper backup", color = Vault.Teal) }
+        }, contentPadding = PaddingValues(0.dp)) { Text(if (made) "Make a new one" else "Make a paper backup", color = Vault.Accent) }
     }
 }
 
@@ -1040,7 +1040,7 @@ internal fun PaperSheet(code: String, onClose: () -> Unit) {
             }
             Text("Keep it in a password manager, not in notes or photos.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
             Spacer(Modifier.height(10.dp))
-            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("I've kept it safe") }
+            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("I've kept it safe") }
         }
     }
 }
@@ -1062,7 +1062,7 @@ private fun RestoringScreen(r: cc.aaro.cosign.Restoring, onCancel: () -> Unit) =
     Spacer(Modifier.height(24.dp))
     Text("Restoring your account", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
     Spacer(Modifier.height(16.dp))
-    if (!r.failed && r.until == null) CircularProgressIndicator(color = Vault.Teal)
+    if (!r.failed && r.until == null) CircularProgressIndicator(color = Vault.Accent)
     Text(r.text, color = if (r.failed) Vault.Danger else Vault.Text, style = MaterialTheme.typography.bodyLarge)
     r.until?.let {
         Spacer(Modifier.height(10.dp))
@@ -1181,7 +1181,7 @@ private fun AddDeviceSheet(a: cc.aaro.cosign.AddingDevice, phone: Phone) {
                 @Suppress("DEPRECATION") // BiometricPrompt needs a FragmentActivity; this asks for the same lock
                 val ask = if (kg.isDeviceSecure) kg.createConfirmDeviceCredentialIntent("Add ${a.name}", "Confirm it's you to add a device to your account") else null
                 if (ask == null) phone.lockMissing() else lock.launch(ask)
-            }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Teal, Vault.Ground)) { Text("Unlock and add") }
+            }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Unlock and add") }
         }
     }
 }

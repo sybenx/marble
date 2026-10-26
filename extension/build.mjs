@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 // Builds the extension for each browser into dist/<target>: chrome (also Edge, Brave,
 // Opera), firefox (desktop and Android) and safari (Mac, iPhone, iPad; wrapped by the
 // Xcode project in safari/).
@@ -48,6 +49,10 @@ const manifests = {
   },
   safari: { ...base, background: { scripts: ['background.js'], persistent: false } },
 };
+
+// Types first: a build with a type error doesn't happen (esbuild alone would bundle it anyway).
+try { execFileSync(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', '.'], { stdio: 'inherit' }) }
+catch { console.error('type check failed: nothing built'); process.exit(1) }
 
 for (const t of targets) {
   const out = `dist/${t}`;

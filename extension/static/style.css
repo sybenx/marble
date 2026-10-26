@@ -1,10 +1,10 @@
 :root {
   --bg: #ffffff; --fg: #17151f; --muted: #6b6878; --line: #e7e5ee; --soft: #f5f4f8;
-  --accent: #6b4eff; --accent-fg: #ffffff; --danger: #c4314b;
+  --accent: #2E4CB8; --accent-fg: #ffffff; --danger: #c4314b;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1c1a24; --fg: #f1effa; --muted: #a29fb2; --line: #34313f; --soft: #262331; --accent: #8a74ff; --danger: #ff6b81; }
+  :root { --bg: #1c1a24; --fg: #f1effa; --muted: #a29fb2; --line: #34313f; --soft: #262331; --accent: #8DA2F0; --accent-fg: #10172E; --danger: #ff6b81; }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-text-size-adjust: 100%; }

@@ -87,7 +87,7 @@ class Nip55Activity : ComponentActivity() {
                         no = "Don't", yes = "Yes", amber = true,
                     ) { request.approve() }
                     is Stage.Working -> {
-                        CircularProgressIndicator(color = Vault.Teal, modifier = Modifier.align(Alignment.CenterHorizontally))
+                        CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))
                         Spacer(Modifier.height(14.dp))
                         Text(s.text, color = Vault.Muted, modifier = Modifier.align(Alignment.CenterHorizontally))
                     }
@@ -113,7 +113,7 @@ class Nip55Activity : ComponentActivity() {
         // Declining is never the weaker control; the affirmative one says what it does.
         OutlinedButton({ reject() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text(no, color = Vault.Text) }
         Spacer(Modifier.height(10.dp))
-        Button(onYes, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(if (amber) Vault.Amber else Vault.Teal, Vault.Ground)) {
+        Button(onYes, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(if (amber) Vault.Amber else Vault.Accent, Vault.Ground)) {
             Text(yes, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }

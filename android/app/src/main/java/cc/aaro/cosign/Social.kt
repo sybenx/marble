@@ -494,7 +494,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val p = x as? Map<*, *> ?: return@mapNotNull null
                     val e = Event.fromMap(p["event"]) ?: return@mapNotNull null
                     if ((!Sources.resumed && !unseen(e.id)) || !forDiscover(e) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
-                    Pick(e, p["topic"] as? String ?: return@mapNotNull null, 0.0, p["reason"] as? String ?: "", (p["likes"] as? Long)?.toInt() ?: 0, (p["more"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList())
+                    val reason = p["reason"] as? String ?: ""
+                    // A fresh start checks last time's page against today's rules (a newsletter, a heavy post from a stranger).
+                    if (!Sources.resumed && !reason.contains("someone you follow") && (Curate.digest(e.content) || Curate.heavy(Calm.text(e)))) return@mapNotNull null
+                    Pick(e, p["topic"] as? String ?: return@mapNotNull null, 0.0, reason, (p["likes"] as? Long)?.toInt() ?: 0, (p["more"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList())
                 } ?: emptyList()
                 val stories = (m["stories"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) }?.filter { Sources.resumed || unseen("t:" + it.id) } ?: emptyList()
                 if (stories.isEmpty()) launch { refillStories() }
