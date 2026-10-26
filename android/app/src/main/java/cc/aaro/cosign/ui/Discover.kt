@@ -416,9 +416,11 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
             val loose = c.copy(minWidth = 0, minHeight = 0)
             val (top, box, kept) = parts.map { it.measure(loose) }
             // The box's middle a little above the screen's middle (moved down by half the pull, as the marble grows above it).
-            val boxY = (c.maxHeight * HOME_BOX_AT).toInt() - box.height / 2 + (grow * density / 2).toInt()
+            // On a short screen (a phone on its side) the marble keeps clear of the top: the box moves down for it.
+            val gap = 20.dp.roundToPx()
+            val boxY = maxOf((c.maxHeight * HOME_BOX_AT).toInt() - box.height / 2, top.height + gap) + (grow * density / 2).toInt()
             layout(c.maxWidth, c.maxHeight) {
-                top.place((c.maxWidth - top.width) / 2, boxY - 20.dp.roundToPx() - top.height)
+                top.place((c.maxWidth - top.width) / 2, boxY - gap - top.height)
                 box.place((c.maxWidth - box.width) / 2, boxY)
                 kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
             }
