@@ -4,7 +4,9 @@
 import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05 } from "./data.js";
-import { searchPeople, searchPosts, followerCounts, SEARCH_RELAYS } from "./search.js";
+import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
+import { goodPosts, stories, yours, loadStories, prepareMine } from "./find.js";
+import { current as currentMe, onMe, canSignIn, signIn, signOut, myFollows } from "./me.js";
 import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -135,13 +137,14 @@ function nip05Label(pk, p) {
 }
 
 /** A post in a list: who, when, what; tapping it opens it. */
-function card(e, { compact = false, context = true } = {}) {
+function card(e, { compact = false, context = true, why = "", clamp = false } = {}) {
   keep(e);
   if (e.kind === 6) return repostCard(e);
   const parent = context ? replyTo(e) : null;
   const cw = warning(e);
-  const body = e.kind === 30023 ? articleTeaser(e) : `<div class="text">${content(e)}</div>`;
+  const body = e.kind === 30023 ? articleTeaser(e) : `<div class="text${clamp ? " clamp" : ""}">${content(e)}</div>`;
   return `<article class="card${compact ? " compact" : ""}" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
+    ${why ? `<p class="why">${esc(why)}</p>` : ""}
     ${who(e.pubkey, e)}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
@@ -414,15 +417,53 @@ async function showProfile(d, signal) {
 async function showSearch(q, signal) {
   page("search", q);
   const parsed = parseInput(q);
-  const tag = /^#[\p{L}\p{N}_-]+$/u.test(q);
-  pageEl.innerHTML = `<div class="results">
-    ${parsed.kind === "nip05" ? `<section><div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div></section>` : ""}
-    ${tag ? "" : `<section aria-label="People"><h2>People</h2><div class="list people" id="people"><p class="muted loading-text">Searching…</p></div></section>`}
-    <section aria-label="Posts"><h2>${tag ? esc(q) : "Posts"}</h2><div class="list" id="found-posts"><p class="muted loading-text">Searching…</p></div></section>
+  const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
+  const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(q) ? q : null;
+  // Desktop shows more of each section; a phone the mock's top three, with "See all".
+  const wide = matchMedia("(min-width: 1000px)").matches;
+  const few = wide ? { people: 8, posts: 8, tag: 4, stories: 5, yours: 5 } : { people: 3, posts: 3, tag: 3, stories: 3, yours: 3 };
+  const root = pageEl;
+  root.innerHTML = `<div class="results">
+    <aside class="side" aria-label="People">
+      ${parsed.kind === "nip05" ? `<section><div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div></section>` : ""}
+      ${tagOnly ? "" : `<section id="s-people"><h2>People</h2><div class="list people"><p class="muted loading-text">Searching…</p></div></section>`}
+    </aside>
+    <div class="main">
+      <p class="muted loading-text" id="s-wait">Searching…</p>
+      <section id="s-posts" hidden><h2>${tagOnly ? esc(q) : "Posts"}</h2><div class="list"></div></section>
+      <section id="s-tag" hidden><h2>#${esc(oneWord || "")}</h2><div class="list"></div></section>
+      <section id="s-stories" hidden><h2>Stories</h2><div class="list stories"></div></section>
+      <section id="s-yours" hidden><h2>Your things</h2><div class="list"></div></section>
+      <a class="web" href="https://duckduckgo.com/?q=${encodeURIComponent(q)}" target="_blank" rel="noopener noreferrer">
+        <span class="web-icon" aria-hidden="true">↗</span>
+        <span><span class="web-title">Search the web for “${esc(q)}”</span><span class="web-sub">with DuckDuckGo</span></span>
+      </a>
+    </div>
   </div>`;
+  const sec = (id) => $(`#s-${id}`, root);
+
+  // One section: its first few, "See all N" for the rest; hidden while it has nothing.
+  function fill(id, items, draw, { shown = few[id] } = {}) {
+    const el = sec(id);
+    if (!el || signal.aborted) return;
+    el.hidden = !items.length;
+    if (!items.length) return;
+    let all = false;
+    const list = el.querySelector(".list");
+    const render = () => {
+      list.innerHTML = (all ? items : items.slice(0, shown)).map(draw).join("")
+        + (!all && items.length > shown ? `<button type="button" class="more">See all ${items.length}</button>` : "");
+      fillLater(list);
+    };
+    list.onclick = (ev) => { if (ev.target.closest("button.more")) { all = true; render(); } };
+    render();
+  }
+  const postItem = (x) => card(x.e, { why: x.why, clamp: true });
+  const pending = new Set(["posts"]);
+  const settled = (id) => { pending.delete(id); if (!pending.size) $("#s-wait", root)?.remove(); };
 
   if (parsed.kind === "nip05") resolveNip05(parsed.address).then(async (r) => {
-    const box = $("#addr");
+    const box = $("#addr", root);
     if (signal.aborted || !box) return;
     if (r) {
       wantProfile(r.pubkey, r.relays);
@@ -444,46 +485,59 @@ async function showSearch(q, signal) {
       : `<p class="muted">Nobody found at ${esc(parsed.address)}.</p>`;
   });
 
-  if (!tag) {
-    const people = $("#people");
-    let shownAll = false, last = [], extra = {};
+  const me = currentMe();
+  // Your follows (read once a visit, usually in by now): at most a short wait before people are ranked.
+  const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
+
+  if (!tagOnly) followsSoon.then((follows) => {
+    if (signal.aborted) return;
+    const people = sec("people");
+    let last = [], extra = {};
     const drawPeople = () => {
       if (!people.isConnected) return;
-      if (!last.length) { people.innerHTML = `<p class="muted">${extra.ranked ? "Nobody by that name." : "Searching…"}</p>`; return; }
-      const list = shownAll ? last : last.slice(0, 5);
-      people.innerHTML = list.map((p) => personRow(p, { verified: extra.verified?.get(p.pubkey), followers: extra.followers?.get(p.pubkey) })).join("")
-        + (!shownAll && last.length > 5 ? `<button type="button" class="more" data-all-people>Show all ${last.length}</button>` : "");
+      if (!last.length) {
+        if (extra.ranked) people.hidden = true;
+        else people.querySelector(".list").innerHTML = `<p class="muted loading-text">Searching…</p>`;
+        return;
+      }
+      fill("people", last, (p) => personRow(p, { verified: extra.verified?.get(p.pubkey), followers: extra.followers?.get(p.pubkey), follow: follows.has(p.pubkey) }));
     };
-    people.onclick = (ev) => { if (ev.target.closest("[data-all-people]")) { shownAll = true; drawPeople(); } };
-    searchPeople(q, { limit: 10, signal, onResults: (list, x) => {
+    searchPeople(q, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
       for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
       last = list; extra = x;
       drawPeople();
       if (list.length && !document.documentElement.dataset.people) mark("people");
     } }).then(() => { if (!signal.aborted) { extra.ranked = true; drawPeople(); } });
-  }
+  });
 
-  const posts = $("#found-posts");
-  const found = await searchPosts(q, { limit: 40, signal });
-  if (signal.aborted || !posts.isConnected) return;
-  const good = found.filter((e) => (e.content || "").trim().length > 1 && !warning(e));
-  const seen = new Set();
-  const one = good.filter((e) => !seen.has(e.pubkey) && seen.add(e.pubkey)); // one per person, newest
-  let open = false;
-  const drawPosts = () => {
-    posts.innerHTML = one.length
-      ? (open ? one : one.slice(0, 8)).map((e) => card(e)).join("") + (!open && one.length > 8 ? `<button type="button" class="more" data-all-posts>More posts</button>` : "")
-      : `<p class="muted">No posts found.</p>`;
-    fillLater(posts);
-  };
-  posts.onclick = (ev) => { if (ev.target.closest("[data-all-posts]")) { open = true; drawPosts(); } };
-  drawPosts();
+  goodPosts(q, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
+    fill("posts", list, postItem);
+    if (list.length) mark("posts", goodPosts.last);
+    settled("posts");
+    if (oneWord) goodPosts(q, { follows: followsSoon, me, tag: oneWord, signal }).then((tagged) => {
+      const shown = new Set(list.slice(0, few.posts).map((x) => x.e.id));
+      fill("tag", tagged.filter((x) => !shown.has(x.e.id)), postItem);
+    });
+  });
+  if (!tagOnly) stories(q).then((list) => {
+    fill("stories", list, storyRow);
+    if (list.length) mark("stories");
+  });
+  if (me) yours(q, me, { signal }).then((list) => fill("yours", list, postItem));
 }
 
-function personRow(p, { verified, followers } = {}) {
+function storyRow(i) {
+  const img = /^https:\/\//.test(i.image || "") ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  return `<a class="story" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">
+    <span class="story-text"><span class="story-src"><b>${esc(i.topic)}</b> · ${esc(i.source?.name || "")} · ${ago(i.published_at)}</span>
+    <span class="story-title">${esc(i.title)}</span></span>${img}
+  </a>`;
+}
+
+function personRow(p, { verified, followers, follow = false } = {}) {
   const pk = p.pubkey;
   const addr = (p.nip05 || "").replace(/^_@/, "");
-  const count = followers ? `${followers >= 10000 ? Math.round(followers / 1000) + "k" : followers >= 1000 ? (followers / 1000).toFixed(1) + "k" : followers} followers` : "";
+  const count = follow ? "You follow them" : followers ? `${followers >= 10000 ? Math.round(followers / 1000) + "k" : followers >= 1000 ? (followers / 1000).toFixed(1) + "k" : followers} followers` : "";
   return `<a class="person-row" href="${personPath(pk)}">
     ${avatar(pk, 44)}
     <span class="pr-text">
@@ -498,7 +552,7 @@ function personRow(p, { verified, followers } = {}) {
 
 let typing = null;
 let warmed = false;
-const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
+const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); loadStories(); myFollows(); } };
 for (const ev of ["focus", "pointerdown", "keydown"]) input.addEventListener(ev, warmUp, { passive: true });
 
 input.addEventListener("paste", () => { navStart = performance.now(); });
@@ -584,6 +638,33 @@ function zoom(src) {
   dialog.showModal();
 }
 dialog.addEventListener("click", () => dialog.close());
+
+// ── Signed in ────────────────────────────────────────────────────────────────────────────────────────
+
+const account = $("#account");
+function drawAccount() {
+  const me = currentMe();
+  if (me) {
+    wantProfile(me);
+    account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false">${avatar(me, 36)}</button>
+      <div class="menu" hidden><a href="${personPath(me)}">Your profile</a><button type="button" data-sign-out>Sign out</button></div>`;
+  } else account.innerHTML = canSignIn() ? `<button type="button" class="sign-in">Sign in</button>` : "";
+}
+account.addEventListener("click", async (ev) => {
+  const menu = $(".menu", account);
+  if (ev.target.closest(".sign-in")) {
+    try { await signIn(); } catch { return; }
+  } else if (ev.target.closest(".me")) {
+    menu.hidden = !menu.hidden;
+    $(".me", account).setAttribute("aria-expanded", !menu.hidden);
+  } else if (ev.target.closest("[data-sign-out]")) signOut();
+  else if (ev.target.closest("a") && menu) menu.hidden = true;
+});
+document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
+onMe((me) => { drawAccount(); prepareMine(me); });
+drawAccount();
+prepareMine(currentMe());
+setTimeout(() => { if (!currentMe()) drawAccount(); }, 800); // extensions can arrive a moment after the page
 
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
 
