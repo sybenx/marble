@@ -684,6 +684,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     // --- Tomorrow's marble: the pipeline's owner sees it a day early, and can veto it -----------
+    // On hold, unused: the preview comes as a direct message instead, which any app can read and answer.
     //
     // The pipeline's bot sends its owner tomorrow's marble as app data (kind 30078, d=marble/preview/<date>,
     // p=owner, NIP-44 from the bot), the picture AES-GCM encrypted at an address that says nothing. Only the

@@ -176,7 +176,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         social.loadFeed(); social.loadNotices()
-        Daily.refresh(context).invokeOnCompletion { social.refreshTomorrow() }
+        Daily.refresh(context)
     }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
