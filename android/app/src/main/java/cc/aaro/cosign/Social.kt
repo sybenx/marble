@@ -743,11 +743,19 @@ class Social private constructor(private val phone: Phone, context: Context) {
         laterSending = scope.launch { delay(30_000); sendLater() }
     }
 
-    /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
     /** A page opened from search: its title for Later, from the page itself, in the background. */
     fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it) } }
 
+    @Volatile private var laterPulledAt = 0L
+    /** What you saved on your other devices: coming back to Marble or opening Later, at most once a minute. */
+    fun refreshLater() {
+        if (System.currentTimeMillis() - laterPulledAt < 60_000L) return
+        scope.launch { pullLater() }
+    }
+
+    /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
     private suspend fun pullLater(sending: Boolean = false) {
+        laterPulledAt = System.currentTimeMillis()
         val me = me ?: return
         if (Sources.viewAs != null) return
         val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)

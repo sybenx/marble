@@ -210,6 +210,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         awaySince = 0
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.loadNotices()
+        social.refreshLater()
         Daily.refresh(context)
     }
     // And every 30 minutes while it's open: new things come in below what you're reading.
@@ -1740,6 +1741,7 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
 /** Later: what you saved (your words), what you've done, and the pages you opened from here; with its own filter. */
 @Composable
 private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    LaunchedEffect(Unit) { social.refreshLater() }
     val items by social.later.items.collectAsState()
     val pages by social.later.pages.collectAsState()
     var filter by remember { mutableStateOf("") }
