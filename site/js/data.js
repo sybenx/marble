@@ -186,8 +186,8 @@ export async function engagement(e, { hints = [], onEvent = null, signal = null 
   const id = e.id;
   const addr = e.kind >= 30000 && e.kind < 40000 ? `${e.kind}:${e.pubkey}:${(e.tags.find((t) => t[0] === "d") || [])[1] || ""}` : null;
   const filters = addr
-    ? [{ kinds: [1, 1111, 6, 16, 7], "#a": [addr], limit: 1000 }, { kinds: [1111], "#A": [addr], limit: 300 }]
-    : [{ kinds: [1, 1111, 6, 16, 7], "#e": [id], limit: 1000 }, { kinds: [1111], "#E": [id], limit: 300 }, { kinds: [1], "#q": [id], limit: 300 }];
+    ? [{ kinds: [1, 1111, 6, 16, 7, 9735], "#a": [addr], limit: 1000 }, { kinds: [1111], "#A": [addr], limit: 300 }]
+    : [{ kinds: [1, 1111, 6, 16, 7, 9735], "#e": [id], limit: 1000 }, { kinds: [1111], "#E": [id], limit: 300 }, { kinds: [1], "#q": [id], limit: 300 }];
   const found = new Map(), asked = new Set();
   const each = (r) => {
     if (found.has(r.id) || r.id === id) return;

@@ -275,9 +275,10 @@ async function showEvent(d, signal, { hex = false } = {}) {
     list.innerHTML = tree(e.id, 0);
     fillLater(list);
   };
-  const tally = { reposts: 0, likes: 0 };
+  const tally = { reposts: 0, likes: 0, zaps: 0 };
   engagement(e, { hints: found, signal, onEvent: (r) => {
     if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 9735) { tally.zaps++; return; }
     if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
     if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
     all.set(r.id, r);
@@ -286,7 +287,7 @@ async function showEvent(d, signal, { hex = false } = {}) {
     if (signal.aborted) return;
     if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
     else draw();
-    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
+    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
     mark("replies", { n: all.size, counts });
   });
 }
@@ -360,11 +361,12 @@ function kindOf(r, e) {
   return "mention";
 }
 
-// "N replies · N reposts · N likes", the same line as the app's (quotes have their own section)
-const totals = ({ replies, reposts, likes }) => [
+// "N replies · N reposts · N likes", the same line as the app's (quotes have their own section; zaps only when there are some)
+const totals = ({ replies, reposts, likes, zaps }) => [
   replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
   reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
   likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
+  zaps && `${zaps} ${zaps === 1 ? "zap" : "zaps"}`,
 ].filter(Boolean).join(" · ");
 
 // ── A pasted post or person: it at the top, then what points at it ───────────────────────────────────
@@ -388,7 +390,7 @@ async function showFound(parsed, signal) {
   mark("post", { relay: found[0] || "kept" });
   fillLater(top);
 
-  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, likes: 0 };
+  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, likes: 0, zaps: 0 };
   const opened = new Set();
   let timer = null;
   const section = (id, title, items, n, draw, more) => !items.length ? "" : `<section><h2>${title}</h2><div class="list">
@@ -412,6 +414,7 @@ async function showFound(parsed, signal) {
   rest.onclick = (ev) => { const o = ev.target.closest("[data-open]"); if (o) { opened.add(o.dataset.open); draw(); } };
   const { counts = {} } = await engagement(e, { hints: found, signal, onEvent: (r) => {
     if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 9735) { tally.zaps++; return; }
     if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
     if (!(r.content || "").trim() || warning(r)) return;
     got[kindOf(r, e)].set(r.id, r);
@@ -421,7 +424,7 @@ async function showFound(parsed, signal) {
   clearTimeout(timer);
   draw();
   if (!rest.innerHTML.trim()) rest.innerHTML = `<p class="muted loading-text">Nothing points at this post yet.</p>`;
-  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
+  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
   mark("engagement", { replies: got.reply.size, quotes: got.quote.size, mentions: got.mention.size, ...tally, counts });
 }
 
