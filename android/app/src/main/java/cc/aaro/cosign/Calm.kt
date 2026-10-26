@@ -128,17 +128,36 @@ object Calm {
     }
 
     /** How well a story fits you: your interest in its topic (followed first), and how new it is (half as much every 18 hours). */
-    fun storyScore(c: TopicCard, interests: Interests, now: Long) =
-        interests.of(c.topic) * interests.sourcePenalty(c.sourceId) * 0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18)
+    fun storyScore(c: TopicCard, interests: Interests, now: Long, shown: Int = 0) =
+        interests.of(c.topic) * interests.sourcePenalty(c.sourceId) * 0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18) *
+            (if (shown >= ROTATE) 0.25 else 1.0)
+
+    /** Shown on this many fresh opens without being tapped: a story makes way for newer ones (it isn't hidden). */
+    const val ROTATE = 3
 
     /** The box at the top: the [max] stories that fit you best, one per topic, from the last two days. */
-    fun todays(all: List<TopicCard>, interests: Interests, now: Long, max: Int = 4): List<TopicCard> {
+    fun todays(all: List<TopicCard>, interests: Interests, now: Long, max: Int = 4, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> {
         val byTopic = HashSet<String>()
-        return stories(all, interests, now).filter { byTopic.add(it.topic) }.take(max)
+        return stories(all, interests, now, shown, window).filter { byTopic.add(it.topic) }.take(max)
+    }
+
+    /** The box from last time's page: kept only when coming back (Android recreated Marble); a fresh start makes a new one. */
+    fun restoredBox(saved: List<TopicCard>, resumed: Boolean) = if (resumed) saved else emptyList()
+
+    /**
+     * The box on a fresh start: never empty while there are stories at all. The best of today's not opened
+     * (or dismissed); if you've opened them all, the best of today's anyway; if there are none from the last
+     * two days, the best older ones.
+     */
+    fun box(all: List<TopicCard>, interests: Interests, now: Long, opened: (TopicCard) -> Boolean, dismissed: (TopicCard) -> Boolean, shown: (String) -> Int = { 0 }): List<TopicCard> {
+        val ok = all.filter { !dismissed(it) }
+        return todays(ok.filter { !opened(it) }, interests, now, shown = shown)
+            .ifEmpty { todays(ok, interests, now, shown = shown) }
+            .ifEmpty { todays(ok, interests, now, shown = shown, window = Long.MAX_VALUE) }
     }
 
     /** All of today's stories, for "More stories": the topics you follow first, then the best fit. */
-    fun stories(all: List<TopicCard>, interests: Interests, now: Long): List<TopicCard> =
-        all.filter { now - it.publishedAt < WINDOW && !interests.hidden("hiddenSources", it.sourceId) }
-            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now) })
+    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> =
+        all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
+            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now, shown(it.id)) })
 }

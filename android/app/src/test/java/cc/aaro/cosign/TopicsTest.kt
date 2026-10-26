@@ -238,6 +238,34 @@ class TopicsTest {
         val c = TopicCard("c", "https://example.com/a", "T", "", null, "s", "S", 1L, "ai", d)
         assertEquals(c, TopicCard.fromMap(c.toMap()))
     }
+
+    @Test fun theBoxIsNeverEmptyAndScrollingPastDoesntHideStories() {
+        val i = Interests(FakePrefs())
+        val today = (1..8).map { card(it, listOf("ai", "games", "food", "art", "news", "photos", "bitcoin", "privacy")[it - 1], at = now - it * 600L) }
+        // Scrolled past every story on three opens: all still there; nothing opened, nothing hidden.
+        val shown = today.associate { it.id to Calm.ROTATE }
+        val box = Calm.box(today, i, now, opened = { false }, dismissed = { false }, shown = { shown[it] ?: 0 })
+        assertEquals(4, box.size)
+        // Shown often, they make way for ones not shown yet.
+        val fresh = card(20, "games", at = now - 7200)
+        val box2 = Calm.box(today + fresh, i, now, opened = { false }, dismissed = { false }, shown = { shown[it] ?: 0 })
+        assertTrue(box2.any { it.id == "c20" })
+        // Every story opened: the box still shows the best of them, not nothing.
+        assertEquals(4, Calm.box(today, i, now, opened = { true }, dismissed = { false }).size)
+        // Nothing from the last two days: the best older ones.
+        val old = today.map { it.copy(publishedAt = now - 5 * 86_400) }
+        assertEquals(4, Calm.box(old, i, now, opened = { false }, dismissed = { false }).size)
+        // Dismissed stays dismissed.
+        assertTrue(Calm.box(today, i, now, opened = { false }, dismissed = { it.id == "c1" }).none { it.id == "c1" })
+    }
+
+    @Test fun aFreshStartMakesANewBoxComingBackKeepsTheOldOne() {
+        val saved = listOf(card(1, "ai"), card(2, "food"))
+        assertEquals(saved, Calm.restoredBox(saved, resumed = true))
+        assertTrue(Calm.restoredBox(saved, resumed = false).isEmpty())
+        // Opened stories travel to your other phones; stories only scrolled past ("t") don't count for anything there.
+        assertEquals("o0123456789abcdef", SeenSync.short("o:0123456789abcdef"))
+    }
 }
 
 /** SharedPreferences in memory, for what Interests keeps. */

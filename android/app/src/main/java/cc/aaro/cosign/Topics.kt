@@ -67,6 +67,9 @@ object TopicFeeds {
         "privacy" to "Privacy and security", "gadgets" to "Phones and gadgets", "selfhosting" to "Self-hosting", "food" to "Food",
         "art" to "Art and design", "photos" to "Photos and places", "news" to "General news")
 
+    /** The phone's copy was fetched in the last 30 minutes. */
+    fun fresh(context: Context) = File(context.cacheDir, "topic-feeds.json").let { it.exists() && System.currentTimeMillis() - it.lastModified() < 30 * 60_000L }
+
     /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site. */
     suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = withContext(Dispatchers.IO) {
         val file = File(context.cacheDir, "topic-feeds.json")
@@ -336,7 +339,12 @@ object SeenSync {
     /** How long relays keep the account's copy after the last write (NIP-40 expiration). */
     const val EXPIRES = 14 * 86_400L
 
-    fun short(key: String) = if (key.startsWith("t:")) "t" + key.drop(2).take(16) else if (key.length > 17 && key.first() != 't') key.take(16) else key
+    fun short(key: String) = when {
+        key.startsWith("t:") -> "t" + key.drop(2).take(16)     // a story shown (older versions; ignored for stories now)
+        key.startsWith("o:") -> "o" + key.drop(2).take(16)     // a story opened
+        key.length > 17 && key.first() != 't' && key.first() != 'o' -> key.take(16)
+        else -> key
+    }
 
     /** The account's copy: {"v":1,"at":…,"days":{"<day number>":"key key …"}}, the newest [CAP] within [WINDOW] of [now]. */
     fun encode(keys: List<Pair<String, Long>>, now: Long): String {
