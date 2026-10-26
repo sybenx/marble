@@ -52,7 +52,7 @@ An `imp`'s `rank` is the place in the list shown. So in `following/people`, the 
 | `pane` | settled on a pane (0.12.19 and later) | `to` (following / search) |
 | `chip` | a chip in Following tapped | `screen` (following), `chip` (all / people / news / topics) |
 | `search` | Enter in the search box | `note` (the Later note it kept, `l:` and its id), `new` (whether this Enter made it). Never the words |
-| `feed` | a list put in order | `screen`, `why` (discover: load / pull / back / cache), `rv`, `prof`, `list` |
+| `feed` | a list put in order | `screen`, `why` (discover: load / pull / back / cache / on, the list on screen when the log was switched on), `rv`, `prof`, `list` |
 | `item` | the first time an item appears in a list each day | see below |
 | `imp` | an item stopped being on screen | `id`, `screen`, `rank`, `ms` (how long at least half of it was on screen), `most` (the largest share of it on screen, 0.5–1) |
 | `scroll` | once a second while scrolling, and where it stopped | `screen`, `top` (the rank at the top), `deep`, `speed` (items a second; negative is up), `stop` |
@@ -76,6 +76,8 @@ An `imp`'s `rank` is the place in the list shown. So in `following/people`, the 
 - `hidden`, with `ms`, `scrolls` (scroll gestures) and `pages` (pages loaded, the first one included);
 - `read`, with `pct` (the furthest scrolled, in steps of 10; Chrome only);
 - `end`, with `touched` (whether you interacted) and `ms`.
+
+`tab` lines come only when the default browser offers Custom Tabs. A link handler in between (URLCheck, say) means no `tab` lines. Time on the page is then the `away` right after the `open`, up to the next `back` (its `gap`) or the next `session`.
 
 **The actions in `act` (`a`):**
 - like; react (`emoji`), with `first` (true the first time);

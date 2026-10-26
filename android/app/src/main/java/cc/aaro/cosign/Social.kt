@@ -629,6 +629,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
+        // The feed log switched on with a feed already on screen: that list, at once (otherwise only the next load would say what's in it).
+        scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
             restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater()
@@ -674,7 +676,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     // --- The feed log (when it's on): each list in the order shown, with what its ranking went on --------
 
-    /** Discover's posts, in the order shown. [why]: "load", "pull", "back" (after a while away) or "cache" (last time's). */
+    /** Discover's posts, in the order shown. [why]: "load", "pull", "back" (after a while away), "cache" (last time's) or "on" (the log just switched on). */
     private fun logPosts(why: String, posts: List<Pick>) {
         if (!FeedLog.on.value || posts.isEmpty()) return
         scope.launch {
