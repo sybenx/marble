@@ -327,11 +327,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * does, and today's stories for the box. Last time's shows at once; this never holds it up.
      * [force] (you pulled down): only things you haven't seen, not even what's on screen now.
      */
-    fun loadFeed(force: Boolean = false) {
+    fun loadFeed(force: Boolean = false, top: Boolean = false) {
         val f = feed.value
         // Coming back to Marble (from the browser, say) changes nothing on screen: not the box, not the posts,
         // not their order. Only a refresh you ask for (pulling down) starts over.
-        if (f.loading || (!force && f.posts.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
+        if (f.loading || (!force && !top && f.posts.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
             // No box at all (all of last time's had been seen): fill it; that changes nothing you're looking at.
             if (!f.loading && f.stories.isEmpty()) scope.launch { refillStories() }
             return
@@ -361,12 +361,26 @@ class Social private constructor(private val phone: Phone, context: Context) {
             feed.update { cur ->
                 val keep = if (force) (if (cur.posts.none { p -> posts.any { it.e.id == p.e.id } }) emptyList() else cur.posts.take(lookedAt + 3)) else cur.posts
                 val fresh = posts.filter { p -> keep.none { it.e.id == p.e.id } }
-                cur.copy(posts = keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
+                // Back after a while: the new ones first, unless you've already started down the list (then below, as ever).
+                val first = top && lookedAt <= 1
+                cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             saveFeed()
             loadPreviews(posts.map { it.e })
         }
+    }
+
+    /**
+     * Back after a while (5 minutes or more: on the main page again, at the top). What you've seen goes, at once;
+     * what's new since you last looked comes first (fetched if the feed is [fetchAfter] old or more, ten minutes in
+     * use). A short hop never comes here, so coming back from an article changes nothing.
+     */
+    fun returned(fetchAfter: Long = 10 * 60_000L) {
+        if (feed.value.loading) return
+        lookedAt = 0
+        feed.update { it.copy(posts = it.posts.filter { p -> unseen(p.e.id) }) }
+        if (System.currentTimeMillis() - feed.value.at >= fetchAfter) loadFeed(top = true) else loadFeed()
     }
 
     /** The box again, from the stories already on the phone (no waiting on the site). */
@@ -1281,6 +1295,24 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * Reply to [parent] (NIP-10: the thread's first post as root, the post you answer as reply,
      * everyone in the conversation tagged), sent to your relays and the author's. The reply, once sent; null if it wasn't.
      */
+    /**
+     * A post of your own: [text], and [link] under it (a story, say). A link to a post or article here is quoted
+     * as one (nostr: and a q tag), so apps show the post itself rather than a web page.
+     */
+    suspend fun post(text: String, link: String = ""): Event? {
+        val me = me ?: return null
+        val quoted = Ref.parse(link.substringAfterLast('/').substringBefore('?')) as? Ref.Note
+        val tail = when {
+            quoted != null -> "nostr:" + cc.aaro.cosign.core.Bech32.encode("note", quoted.id.hexToBytes())
+            else -> link.trim()
+        }
+        val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
+        val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else emptyList()
+        val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId()) ?: return null
+        remember(listOf(signed))
+        return signed
+    }
+
     suspend fun reply(parent: Event, text: String): Event? {
         val me = me ?: return null
         val body = text.trim().ifEmpty { return null }

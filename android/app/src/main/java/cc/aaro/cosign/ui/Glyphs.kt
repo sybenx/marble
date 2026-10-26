@@ -26,6 +26,8 @@ object Glyphs {
     val out = line("out", "M7 17 17 7M8 7h9v9")
     /** A site: the globe. */
     val site = line("site", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9M12 3c-2.5 2.5-3.8 5.5-3.8 9s1.3 6.5 3.8 9")
+    /** Write: a new post. */
+    val pencil = line("pencil", "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4")
     private const val SAVE = "M6 4h12v16l-6-4-6 4z"
     val save = line("save", SAVE)
     val saveOn = line("saveOn", SAVE, fill = true)

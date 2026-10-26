@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -141,17 +142,20 @@ private sealed class Route {
     data object Stories : Route()
     data class Thread(val id: String, val reply: Boolean = false) : Route()
     data class Profile(val pubkey: String) : Route()
+    /** A new post; [link]: a story to post with a comment. */
+    data class Compose(val link: String = "") : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"
     }
     companion object {
         fun of(s: String): Route? = when {
             s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories
             s.startsWith("thread:") -> s.split(':').let { Thread(it[1], it.getOrNull(2) == "true") }
             s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
+            s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             else -> null
         }
     }
@@ -173,21 +177,39 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val open: (Route) -> Unit = { stack.add(it) }
     val back: () -> Unit = { kept.removeState(keyOf(stack.lastIndex)); stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
+    // A note's pictures, full screen, over everything else.
+    var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    // The marble, full screen, grown from where it was tapped.
+    var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    // Away a while ([Away.after]): back on the main page, at the top, its search box showing (no keyboard), the
+    // feed as it was. Away a moment (copying a link, answering a text): just where you were. Kept through Android
+    // recreating Marble, as the screens are.
+    var awaySince by androidx.compose.runtime.saveable.rememberSaveable { mutableLongStateOf(0L) }
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime() }
     // Read on open and when you come back to it; nothing in between.
+    // Home: the main page, at the top, its search box showing, the feed as it was (the swirl in any screen's bar, or back after a while).
+    val home: () -> Unit = {
+        stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
+        viewing = null; marbleFrom = null
+        header.px = 0f
+        scope.launch { feedState.scrollToItem(0) }
+    }
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        social.loadFeed(); social.loadNotices()
+        val gone = if (awaySince > 0) android.os.SystemClock.elapsedRealtime() - awaySince else 0L
+        if (debugBuild && awaySince > 0) android.util.Log.i("CosignAway", "back after ${gone / 1000} s (home from ${Away.after / 1000} s)")
+        val away = awaySince > 0 && gone >= Away.after
+        awaySince = 0
+        if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
+        social.loadNotices()
         Daily.refresh(context)
     }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
 
-    // A note's pictures, full screen, over everything else.
-    var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
-    // The marble, full screen, grown from where it was tapped.
-    var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it })
+    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
@@ -196,6 +218,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         when (askedScreen) {
             "marble" -> { delay(1500); marbleFrom = androidx.compose.ui.geometry.Offset.Zero }
             "stories" -> stack.add(Route.Stories)
+            "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
             "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
         }
         DebugOpen.screen.value = null
@@ -212,6 +235,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Stories -> StoriesScreen(social, nav)
             is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
             is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
+            is Route.Compose -> ComposeScreen(top.link, social, nav)
         }
     }
 
@@ -240,11 +264,13 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
 }
 
 private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
-                  val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}) {
+                  val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}, val home: () -> Unit = {}) {
     fun thread(id: String) = open(Route.Thread(id))
     /** Open the post with the reply box ready. */
     fun reply(id: String) = open(Route.Thread(id, reply = true))
     fun profile(pk: String) = open(Route.Profile(pk))
+    /** Write a post; [link]: with this link under it. */
+    fun compose(link: String = "") = open(Route.Compose(link))
     fun search(q: String) { social.search(q); open(Route.Search) }
 }
 
@@ -295,6 +321,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
         val waiting = ui.asks.size + ui.batchAsks.size
         val fresh = notices.list.count { it.event.createdAt > seen }
         HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, onMarble = nav.marble) {
+            IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -326,7 +353,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                     }
                 }
                 // Today's stories, kept together at the top; never between the posts.
-                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved) { nav.open(Route.Stories) } }
+                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved, nav) { nav.open(Route.Stories) } }
                 if (posts.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
                 }
@@ -373,14 +400,14 @@ private fun SeenWatcher(state: LazyListState, social: Social, keys: (String) -> 
 
 /** Today's stories: a few headlines at the top, each with its topic, site and age. "More stories" for the rest. */
 @Composable
-private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, onMore: () -> Unit) = Column(
+private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, nav: Nav, onMore: () -> Unit) = Column(
     Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 18.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
         .background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp)).padding(vertical = 4.dp),
 ) {
     Text("Today's stories", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp))
     stories.forEachIndexed { i, s ->
         if (i > 0) HorizontalDivider(color = Vault.Edge)
-        StoryRow(s, social, s.url in saved)
+        StoryRow(s, social, s.url in saved, nav)
     }
     HorizontalDivider(color = Vault.Edge)
     Text("More stories ›", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
@@ -388,10 +415,13 @@ private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String
 }
 
 /** One story: topic · site · age, the headline, its picture; tap to read it on the site. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
+private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
+    // A long press: its menu, as the ⋯ opens it.
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
         Column(Modifier.weight(1f)) {
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(TopicFeeds.name(c.topic)) }
@@ -401,7 +431,7 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
             Discussions(c.discussions)
         }
         c.image?.let { NetImage(it, Modifier.padding(start = 12.dp).size(64.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Edge), 256) }
-        StoryMenu(c, social, saved)
+        StoryMenu(c, social, saved, menu, { menu = it }) { nav.compose(c.url) }
     }
 }
 
@@ -432,17 +462,18 @@ private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
 
 /** "⋯" on a story: follow its topic, more or less like this, hide the site, save it. */
 @Composable
-private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean) = Box {
-    var open by remember { mutableStateOf(false) }
+private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean, open: Boolean, setOpen: (Boolean) -> Unit, onPost: () -> Unit) = Box {
     val followed = c.topic in social.followedTopics.collectAsState().value
     val name = TopicFeeds.name(c.topic)
-    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
-    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
-        DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { open = false; social.followTopic(c.topic, !followed) })
-        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(c.topic) })
-        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(c.topic, "t:" + c.id) })
-        DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hideSource(c) })
-        DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { open = false; social.save(c.url, isLink = true) })
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { setOpen(true) }.padding(5.dp))
+    if (open) DropdownMenu(true, { setOpen(false) }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text("Post with a comment", color = Vault.Accent, fontWeight = FontWeight.SemiBold) }, { setOpen(false); onPost() },
+            leadingIcon = { Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(20.dp)) })
+        DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { setOpen(false); social.followTopic(c.topic, !followed) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { setOpen(false); social.moreLike(c.topic) })
+        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { setOpen(false); social.lessLike(c.topic, "t:" + c.id) })
+        DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { setOpen(false); social.hideSource(c) })
+        DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { setOpen(false); social.save(c.url, isLink = true) })
     }
 }
 
@@ -488,7 +519,7 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         items(list, key = { "t:" + it.id }) { s ->
-            StoryRow(s, social, s.url in saved)
+            StoryRow(s, social, s.url in saved, nav)
             HorizontalDivider(color = Vault.Edge)
         }
     }
@@ -766,11 +797,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
                 .clip(CircleShape).clickable(enabled = m > 8f, onClickLabel = "Look at the marble") { onMarble(centre) })
         // Folded: the flat swirl (the themed icon's glyph) in its little disc, growing in as the marble goes.
         val g = 28f * f * f
-        if (g > 1f) Box(Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp).size(g.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
-            .clickable(onClick = onName), contentAlignment = Alignment.Center) {
-            Icon(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_monochrome), null, tint = if (Vault.dark) Color(0xFFB9C5FF) else Color(0xFF34427A),
-                modifier = Modifier.requiredSize((g * 1.5f).dp))
-        }
+        if (g > 1f) Swirl(g, Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp), onName)
         // The name: 32sp centred under the marble, scaling to the bar's 22sp at the left.
         var nameW by remember { androidx.compose.runtime.mutableIntStateOf(0) }
         val scale = mix(1f, 22f / 32f)
@@ -1071,6 +1098,37 @@ private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
     }
 }
 
+/**
+ * A new post: what you write, and the story (or link) it's about under it, as it'll show. Back leaves it.
+ */
+@Composable
+private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    // Drafts would hook in here: backing out with something written keeps it, to come back to (not yet).
+    var text by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    // The story's own picture and headline; a link from elsewhere, its page's.
+    val story = remember(link) { social.allStories.value.firstOrNull { it.url == link } }
+    val preview by produceState(story?.let { Preview(it.title, it.image, it.summary, it.sourceName) } ?: social.previews.value[link], link) {
+        if (value == null && link.isNotEmpty()) value = Preview.fetch(link)
+    }
+    Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.Filled.Close, "Close", tint = Vault.Text) }
+        Text("New post", style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
+        Button({
+            sending = true
+            scope.launch { val sent = social.post(text, link); sending = false; if (sent != null) { social.message.value = "Posted."; nav.back() } }
+        }, enabled = !sending && (text.isNotBlank() || link.isNotEmpty()), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(if (sending) "Posting…" else "Post") }
+    }
+    TextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).padding(horizontal = 4.dp),
+        placeholder = { Text(if (link.isEmpty()) "What's on your mind?" else "Add a comment…", color = Vault.Muted) },
+        colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
+    preview?.let { p -> Box(Modifier.padding(horizontal = 16.dp)) { LinkCard(p) {} } }
+}
+
 /** "⋯": not interested in this note, or mute its author (on this phone and in your mute list). */
 @Composable
 private fun NoteMenu(n: Event, name: String, social: Social) = Box {
@@ -1230,17 +1288,37 @@ private fun since(t: Long): String {
 }
 
 @Composable
-private fun TopBar(title: String, nav: Nav) = Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-    IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-    Text(title, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
+    // The bar the main page's header folds into, on every screen: back, the swirl and the name (home, like a
+    // site's logo), and search.
+    Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(8.dp)) { Swirl(28f) }
+        Spacer(Modifier.weight(1f))
+        IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
+        IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
+        IconButton({ nav.open(Route.Bell) }) { Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text) }
+        nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account") }
+    }
+    // What this screen is, when the screen itself doesn't say.
+    title?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp)) }
 }
+
+/** The flat swirl (the themed icon's glyph) in its little disc: [size] dp across. */
+@Composable
+private fun Swirl(size: Float, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) =
+    Box(modifier.size(size.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier), contentAlignment = Alignment.Center) {
+        Icon(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_monochrome), null, tint = if (Vault.dark) Color(0xFFB9C5FF) else Color(0xFF34427A),
+            modifier = Modifier.requiredSize((size * 1.5f).dp))
+    }
 
 // --- A thread ------------------------------------------------------------------------------
 
 @Composable
 // safeDrawingPadding includes the keyboard: the reply box sits right on top of it.
 private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boolean = false) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-    TopBar("Thread", nav)
+    TopBar(null, nav)
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
     // At once, from what's here already (the note you tapped, the thread if you've opened it before);
@@ -1335,7 +1413,7 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
     var tries by remember(pk) { mutableStateOf(0) }
     var missing by remember(pk) { mutableStateOf(false) }
     LaunchedEffect(pk, tries) { missing = false; missing = !social.findProfile(pk) }
-    TopBar(p?.shown ?: "Profile", nav)
+    TopBar(null, nav)
     // Their posts, a page at a time: more as you reach the end.
     // Each relay's posts come in as it answers, newest first; "none" only once every relay has.
     // Back from a post: the posts as they were, at once, so the list is where you left it (nothing loads again or moves).
@@ -1426,9 +1504,16 @@ private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationIn
 /** A search asked for from outside (a launcher's search: marble://search?q=…): Discover opens search with it. */
 object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
+/** How long away before Marble opens on the main page again, rather than where you were. */
+object Away {
+    const val AFTER = 5 * 60_000L
+    /** [AFTER], or shorter in a debug build's test (--el away_ms 20000). */
+    var after = AFTER
+}
+
 object DebugOpen {
     val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
-    /** A screen to open (--es open marble|stories|account|rename), for tests that can't tap reliably; rename: your account, renaming this device. */
+    /** A screen to open (--es open marble|stories|account|rename|compose), for tests that can't tap reliably; rename: your account, renaming this device. */
     val screen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     @Volatile var renameThis = false
 }
@@ -1484,6 +1569,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        // Home, as in every screen's bar.
+        Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(6.dp)) { Swirl(28f) }
+        Spacer(Modifier.width(6.dp))
         TextField(
             q, { q = it }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
             placeholder = { Text("People, posts, #tags…", color = Vault.Muted) },
