@@ -514,6 +514,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
     val names by social.deviceNames.collectAsState()
     var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
+    LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
 
     LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
