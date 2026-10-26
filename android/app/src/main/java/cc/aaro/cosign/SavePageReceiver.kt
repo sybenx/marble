@@ -25,8 +25,8 @@ class SavePageReceiver : BroadcastReceiver() {
                 val had = social?.later?.items?.value?.any { it.url == url && it.deleted == null } == true
                 val saved = had || social?.savePage(url) != null
                 if (saved) Tabs.markSaved(context)
-                android.widget.Toast.makeText(context.applicationContext, when { had -> "Already a note"; saved -> "Kept as a note"; else -> "Couldn't keep this page" },
-                    android.widget.Toast.LENGTH_SHORT).show()
+                // The filled bookmark says it; only a failure needs words.
+                if (!saved) android.widget.Toast.makeText(context.applicationContext, "Couldn't keep this page", android.widget.Toast.LENGTH_SHORT).show()
             } finally { done.finish() }
         }
     }

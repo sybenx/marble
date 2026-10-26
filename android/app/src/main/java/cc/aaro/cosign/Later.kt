@@ -177,12 +177,24 @@ enum class Engine(val label: String, val home: String) {
     fun results(q: String, dark: Boolean): String {
         val e = Uri.encode(q)
         return when (this) {
-            DuckDuckGo -> "https://duckduckgo.com/?q=$e&kae=${if (dark) "d" else "-1"}"
+            DuckDuckGo -> "https://duckduckgo.com/?q=$e&kae=${if (dark) "d" else "-1"}&ko=-2"
             Google -> "https://www.google.com/search?q=$e"
             Bing -> "https://www.bing.com/search?q=$e"
             Brave -> "https://search.brave.com/search?q=$e"
             Ecosia -> "https://www.ecosia.org/search?q=$e"
         }
+    }
+
+    /** The search a page of the engine is for (they all take it as q), so Marble's box can follow a change made in the page. */
+    fun query(uri: Uri): String? = if (owns(uri)) try { uri.getQueryParameter("q")?.trim()?.takeIf { it.isNotEmpty() } } catch (_: Exception) { null } else null
+
+    /** The engine's own search box and header on its results page: hidden, so there's one box, Marble's. */
+    val ownBox: String get() = when (this) {
+        DuckDuckGo -> "#header_wrapper, .header-wrap, #header, header"
+        Google -> "#searchform, form[role=search], #tsf, header"
+        Bing -> "#b_header, header"
+        Brave -> "header, #searchform, form[role=search]"
+        Ecosia -> "header, .search-form, form[role=search]"
     }
 
     /** Pages of the engine itself (they open inside Marble); anything else opens in your browser. */

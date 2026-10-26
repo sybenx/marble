@@ -531,8 +531,7 @@ private fun NotesLip(modifier: Modifier, onOpen: () -> Unit) {
             detectVerticalDragGestures(onDragStart = { dragged = 0f }, onDragEnd = { if (dragged < -24.dp.toPx()) onOpen() }) { c, dy -> c.consume(); dragged += dy }
         }.padding(top = 10.dp, bottom = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Vault.Line))
-        Spacer(Modifier.height(8.dp))
-        Text("swipe up · notes", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+
     }
 }
 
@@ -2158,7 +2157,6 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         )
     }
     // Honest about both: what you save stays yours; a search goes to your engine.
-    OnlyYou("Enter keeps it as a note, only yours · searches go to ${engine.label}", Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp))
     Box(Modifier.fillMaxSize()) {
         when {
             pasted != null -> LinkResults(pasted, social, nav)
@@ -2175,7 +2173,6 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
                 site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
                 items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
-                if (suggestions.isNotEmpty()) item(key = "from") { Text("Suggestions from ${engine.label} · turn off in Settings", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
                     Row(Modifier.fillMaxWidth().clickable { posts = true }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2208,7 +2205,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
 private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
     val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
     val laterItems by social.later.items.collectAsState()
-    val saved = remember(laterItems, q) { social.later.saved(q) }
+    // The search on screen: what you typed, or what you changed it to in the page (a "did you mean", a tab).
+    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(q) }
+    val saved = remember(laterItems, query) { social.later.saved(query) }
     val context = LocalContext.current
     val dark = Vault.dark
     var web by remember { mutableStateOf<android.webkit.WebView?>(null) }
@@ -2217,44 +2216,17 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(10.dp)) { Swirl(28f) }
         Row(Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(26.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
-            .clickable(onClickLabel = "Change the search") { SearchText.q.value = q; nav.open(Route.Search) }.padding(start = 16.dp),
+            .clickable(onClickLabel = "Change the search") { SearchText.q.value = query; nav.open(Route.Search) }.padding(start = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Text(q, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 12.dp))
+            Text(query, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            // Kept as a note: the bookmark, filled. Opened a result (a visit now): empty again, a tap keeps it.
+            Icon(if (saved != null) Glyphs.saveOn else Glyphs.save, if (saved != null) "Kept as a note" else "Keep as note", tint = Vault.Accent,
+                modifier = Modifier.padding(end = 6.dp).size(40.dp).clip(CircleShape).clickable { if (saved == null) social.later.save(query) }.padding(10.dp))
         }
     }
-    // What happened to what you typed: kept as a note (until you open a result), or a visit now (keep it anyway?).
-    val made by SearchText.note.collectAsState()
-    val visited = made == null && saved == null
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp))
-        .border(1.dp, Vault.Line, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (visited) "A VISIT · NOT A NOTE" else "KEPT AS A NOTE", color = if (visited) Vault.Muted else Vault.Accent, style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            if (visited) Text("Keep as note", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Accent, RoundedCornerShape(14.dp)).clickable { social.later.save(q) }.padding(horizontal = 10.dp, vertical = 4.dp))
-        }
-        Text(when {
-            visited -> "You opened a result, so it left your notes."
-            made != null -> "Leave now and it stays. Open a result and it becomes a visit instead."
-            else -> "It was a note already, and stays one."
-        }, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 2.dp))
-    }
-    // Yours: other notes about the same things.
-    val yours = remember(laterItems, q) {
-        val words = cc.aaro.cosign.Entities.of(q)
-        laterItems.filter { it.deleted == null && it.id != saved?.id && words.isNotEmpty() && cc.aaro.cosign.Entities.of(it.text).any { w -> w in words } }.take(3)
-    }
-    for (n in yours) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + n.id, "yours"); n.url?.let { openInBrowser(context, it, "l:" + n.id) } ?: nav.results(n.text) }.padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Text("YOURS", color = Vault.Text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(56.dp))
-        Text(n.text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = if (n.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-    Text("From the web · ${engine.label} · links open in your browser", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
     if (loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
     else Spacer(Modifier.height(2.dp))
     androidx.compose.ui.viewinterop.AndroidView({ c ->
@@ -2274,14 +2246,27 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
                 }
                 try { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, real).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
             }
+            // The search changed in the page: Marble's box follows, and it's a new search by the same rules (a note).
+            fun followed(u: android.net.Uri) {
+                val nq = engine.query(u) ?: return
+                if (cc.aaro.cosign.Later.same(nq, query)) return
+                query = nq; SearchText.q.value = nq
+                val j = social.later.jot(nq); SearchText.note.value = j?.takeIf { it.second }?.first?.id
+            }
+            // The engine's own box, hidden: one box, Marble's.
+            fun hideOwnBox(v: android.webkit.WebView) = v.evaluateJavascript(
+                "(function(){if(document.getElementById('marble-one-box'))return;var s=document.createElement('style');s.id='marble-one-box';" +
+                "s.textContent='${engine.ownBox}{display:none!important}';(document.head||document.documentElement).appendChild(s);})()", null)
             webViewClient = object : android.webkit.WebViewClient() {
+                override fun doUpdateVisitedHistory(view: android.webkit.WebView, url: String, isReload: Boolean) { followed(android.net.Uri.parse(url)) }
+                override fun onPageCommitVisible(view: android.webkit.WebView, url: String) { hideOwnBox(view) }
                 override fun shouldOverrideUrlLoading(view: android.webkit.WebView, request: android.webkit.WebResourceRequest): Boolean {
                     val u = request.url
                     if (engine.owns(u)) return false
                     outside(u); return true
                 }
                 override fun onPageStarted(view: android.webkit.WebView, url: String, favicon: android.graphics.Bitmap?) { loading = true }
-                override fun onPageFinished(view: android.webkit.WebView, url: String) { loading = false }
+                override fun onPageFinished(view: android.webkit.WebView, url: String) { loading = false; hideOwnBox(view) }
             }
             loadUrl(engine.results(q, dark))
             web = this
@@ -2325,11 +2310,11 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
         val list = if (show == "done") done else open
         if (show != "pages") {
             items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, pages.filter { it.from.equals(item.text, true) }.take(1), social, nav) }
-            if (list.isEmpty()) item { Text(if (f.isEmpty()) (if (show == "done") "Nothing done yet." else "Nothing saved right now.") else "Nothing in Later matches “$f”.",
+            if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing in Later matches “$f”.",
                 color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         }
         if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
-            item { Text("TABS · NOT NOTES", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
+            if (show == "saved") item { HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(top = 12.dp)) }
             items(if (show == "pages") pg else pg.take(5), key = { "p" + it.url }) { p ->
                 Row(Modifier.fillMaxWidth().clickable { FeedLog.open("u:" + p.url, "page"); openInBrowser(context, p.url, "u:" + p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val host = android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: ""
@@ -2339,17 +2324,15 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.title, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("$host · ${agoWords(p.at)}" + (if (p.from.isNotEmpty()) " · opened from “${p.from}”" else ""), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("$host · ${agoWords(p.at)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     // A visit kept anyway: a note with its page.
-                    if (items.none { it.url == p.url && it.deleted == null }) Text("Keep as note", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Accent, RoundedCornerShape(14.dp))
-                            .clickable { social.later.savePage(p.url, p.title) }.padding(horizontal = 10.dp, vertical = 4.dp))
+                    val kept = items.any { it.url == p.url && it.deleted == null }
+                    Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept as a note" else "Keep as note", tint = Vault.Accent,
+                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable { if (!kept) social.later.savePage(p.url, p.title) }.padding(10.dp))
                 }
             }
         }
-        item { Text("Pages open in your browser. Marble keeps the ones you opened from here, so you never need to leave a tab open “just in case”. Nothing here ever pings you.",
-            color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp)) }
     }
 }
 
@@ -2394,11 +2377,8 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
-            val what = item.url?.let { (android.net.Uri.parse(it).host?.removePrefix("www.") ?: it) + " · page" }
-                ?: item.from?.let { "kept from $it" } ?: "you typed this"
-            Text("$what · " + if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
-            page.firstOrNull()?.let { p -> Text("${p.title} — ${android.net.Uri.parse(p.url).host?.removePrefix("www.")}", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).clickable { openInBrowser(context, p.url) }) }
+            val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
+            Text(listOfNotNull(site, if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)).joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
             DropdownMenuItem({ Text("Remove from Later", color = Vault.Danger) }, { menu = false; social.later.remove(item) })
