@@ -228,7 +228,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
             "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
             "later" -> stack.add(Route.Later)
-            else -> askedScreen?.let { v ->
+            else -> askedScreen?.let { android.net.Uri.decode(it) }?.let { v ->
                 when {
                     v.startsWith("search:") -> { SearchText.q.value = v.removePrefix("search:"); stack.add(Route.Search) }
                     v.startsWith("results:") -> nav.results(v.removePrefix("results:"))
