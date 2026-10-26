@@ -1577,7 +1577,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     LaunchedEffect(q) { SearchText.q.value = q }
     // A search that came from outside (the launcher) while this was open: the box shows it too.
     val running = found?.query
-    LaunchedEffect(running) { if (running != null && running != q.trim() && "@$running" != q.trim()) q = running }
+    // (Only a search that arrives after the screen opened: what was searched before isn't put back over the box.)
+    val runningAtOpen = remember { running }
+    LaunchedEffect(running) { if (running != null && running != runningAtOpen && running != q.trim() && "@$running" != q.trim()) q = running }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val scope = rememberCoroutineScope()
