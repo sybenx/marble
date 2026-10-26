@@ -205,6 +205,12 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val open: (Route) -> Unit = { stack.add(it) }
     val back: () -> Unit = { kept.removeState(keyOf(stack.lastIndex)); stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
+    // A search submitted: its results take the typing screen's place (and an earlier results page's), as the Google
+    // app does, so Back from them goes where you were before searching, with the box empty again.
+    val searched: (Route) -> Unit = { r ->
+        while (stack.lastOrNull().let { it == Route.Search || it is Route.Results }) back()
+        stack.add(r)
+    }
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     // A marble, full screen, grown from where it was tapped: today's, or one you kept.
@@ -239,7 +245,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
 
-    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
+    val nav = Nav(open = open, back = back, searched = searched, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
@@ -310,7 +316,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     }
 }
 
-private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
+private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched: (Route) -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
                   val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}, val home: () -> Unit = {}) {
     fun thread(id: String) = open(Route.Thread(id))
     /** Open the post with the reply box ready. */
@@ -319,11 +325,14 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: S
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
     /** Search the web for [q] with your engine (its results open inside Marble). */
-    fun results(q: String) { SearchText.q.value = q; open(Route.Results(q)) }
+    fun results(q: String) { SearchText.q.value = q; searched(Route.Results(q)) }
     fun search(q: String) { social.search(q); open(Route.Search) }
 }
 
 // --- Home ------------------------------------------------------------------------------
+
+/** Where home's search box sits, as a share of the screen's height between the bars: a little above the middle, as a search page's does. */
+private const val HOME_BOX_AT = 0.41f
 
 /**
  * Home, calm: the search box at the very middle of the screen, the marble and the name above it, what you kept lately
@@ -392,8 +401,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
             val (top, box, kept) = parts.map { it.measure(loose) }
-            // The box's middle at the screen's middle (moved down by half the pull, as the marble grows above it).
-            val boxY = (c.maxHeight - box.height) / 2 + (grow * density / 2).toInt()
+            // The box's middle a little above the screen's middle (moved down by half the pull, as the marble grows above it).
+            val boxY = (c.maxHeight * HOME_BOX_AT).toInt() - box.height / 2 + (grow * density / 2).toInt()
             layout(c.maxWidth, c.maxHeight) {
                 top.place((c.maxWidth - top.width) / 2, boxY - 20.dp.roundToPx() - top.height)
                 box.place((c.maxWidth - box.width) / 2, boxY)
@@ -449,7 +458,13 @@ private fun DiscoverLip(posts: Int, special: Int, modifier: Modifier, onOpen: ()
 @Composable
 private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav, max: Int = 2) {
     val open = items.filter { it.deleted == null && it.done == null }
-    if (open.isEmpty()) return
+    val pages by social.later.pages.collectAsState()
+    // Nothing saved right now: Later is still a tap away, for the pages you opened.
+    if (open.isEmpty()) {
+        if (pages.isNotEmpty() || items.any { it.deleted == null }) Text("Later ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp).clickable { nav.open(Route.Later) }.padding(vertical = 6.dp))
+        return
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
         Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
         for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { nav.open(Route.Later) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
@@ -1979,7 +1994,7 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(10.dp)) { Swirl(28f) }
         Row(Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(26.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
-            .clickable(onClickLabel = "Change the search") { SearchText.q.value = q; nav.back() }.padding(start = 16.dp),
+            .clickable(onClickLabel = "Change the search") { SearchText.q.value = q; nav.open(Route.Search) }.padding(start = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
@@ -2056,7 +2071,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
         val list = if (show == "done") done else open
         if (show != "pages") {
             items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, pages.filter { it.from.equals(item.text, true) }.take(1), social, nav) }
-            if (list.isEmpty()) item { Text(if (f.isEmpty()) (if (show == "done") "Nothing done yet." else "Nothing saved yet. Type in the search box and tap Save.") else "Nothing in Later matches “$f”.",
+            if (list.isEmpty()) item { Text(if (f.isEmpty()) (if (show == "done") "Nothing done yet." else "Nothing saved right now.") else "Nothing in Later matches “$f”.",
                 color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         }
         if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
