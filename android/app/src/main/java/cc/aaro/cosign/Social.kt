@@ -154,6 +154,8 @@ object People {
 
 /** A Nostr identifier typed or pasted into search. */
 sealed class Ref {
+    /** Relays the link said to look on (nprofile, nevent): not part of what it is. */
+    var relays: List<String> = emptyList()
     data class Profile(val pubkey: String) : Ref()
     data class Note(val id: String) : Ref()
 
@@ -167,13 +169,25 @@ sealed class Ref {
             return when (hrp) {
                 "npub" -> if (data.size == 32) Profile(data.toHex()) else null
                 "note" -> if (data.size == 32) Note(data.toHex()) else null
-                "nprofile" -> tlv(data)?.let { Profile(it) }
-                "nevent" -> tlv(data)?.let { Note(it) }
+                "nprofile" -> tlv(data)?.let { Profile(it).apply { relays = hints(data) } }
+                "nevent" -> tlv(data)?.let { Note(it).apply { relays = hints(data) } }
                 else -> null
             }
         }
 
         private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1)[02-9ac-hj-np-z]+")
+
+        /** The relays under type 1 of a NIP-19 TLV (wss:// ones, at most four). */
+        private fun hints(b: ByteArray): List<String> {
+            val out = ArrayList<String>(); var i = 0
+            while (i + 2 <= b.size) {
+                val t = b[i].toInt() and 0xff; val l = b[i + 1].toInt() and 0xff
+                if (i + 2 + l > b.size) break
+                if (t == 1) String(b, i + 2, l).trim().takeIf { it.startsWith("wss://") }?.let { out += it.trimEnd('/') }
+                i += 2 + l
+            }
+            return out.take(4)
+        }
 
         /** The 32 bytes under type 0 of a NIP-19 TLV. */
         private fun tlv(b: ByteArray): String? {
@@ -968,6 +982,20 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun profilePosts(pk: String): ProfilePosts? = synchronized(profiles) { profiles[pk] }
     fun keepProfilePosts(pk: String, p: ProfilePosts) = synchronized(profiles) { profiles[pk] = p }
 
+    /**
+     * Someone's profile from anywhere it may be: the fast relays, the usual profile relays, where they say they
+     * post, and any relay a mention or a link pointed to (people brought over from other networks are often
+     * only there). True if it's known now.
+     */
+    suspend fun findProfile(pk: String): Boolean = kotlinx.coroutines.coroutineScope {
+        val filter = mapOf("kinds" to listOf(0), "authors" to listOf(pk), "limit" to 1)
+        val usual = (SearchRelays.FAST + Sources.PROFILES + hintsOf(pk)).distinct()
+        val first = async { Fetch.query(usual, filter, 6000) }
+        val theirs = async { outboxOf(pk).filter { it !in usual }.let { if (it.isEmpty()) emptyList() else Fetch.query(it, filter, 6000) } }
+        People.add(first.await() + theirs.await())
+        People.known.value[pk] != null
+    }
+
     fun profileNow(pk: String) {
         for (url in SearchRelays.FAST) scope.launch { People.add(Conn.of(url).req(listOf(mapOf("kinds" to listOf(0), "authors" to listOf(pk), "limit" to 1)), 4000)) }
         People.want(listOf(pk))
@@ -1298,7 +1326,18 @@ class Social private constructor(private val phone: Phone, context: Context) {
         private val notes = object : LinkedHashMap<String, Event>(256, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Event>?) = size > 1500
         }
-        private fun remember(es: List<Event>) = synchronized(notes) { for (e in es) notes[e.id] = e }
+        private fun remember(es: List<Event>) {
+            synchronized(notes) { for (e in es) notes[e.id] = e }
+            for (e in es) for (t in e.tags) if (t.size > 2 && t[0] == "p") hint(t[1], listOf(t[2]))
+        }
+
+        /** Where people were said to be found (a mention's relay, a link's): asked too when looking for their profile. */
+        private val hints = ConcurrentHashMap<String, List<String>>()
+        fun hint(pk: String, relays: List<String>) {
+            val l = relays.map { it.trim().trimEnd('/') }.filter { it.startsWith("wss://") }
+            if (l.isNotEmpty()) hints.merge(pk, l) { a, b -> (a + b).distinct().take(4) }
+        }
+        fun hintsOf(pk: String) = hints[pk] ?: emptyList()
         private fun noteOf(id: String) = synchronized(notes) { notes[id] }
 
         private val all = HashMap<String, Social>()

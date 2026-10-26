@@ -889,7 +889,7 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
                     url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f)
                     url != null -> parts += Part.Link(url)
                     ref != null -> when (val r = Ref.parse(ref)) {
-                        is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey }
+                        is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }
                         is Ref.Note -> parts += Part.Quote(r.id)
                         null -> parts += Part.Plain(m.value)
                     }
@@ -1050,6 +1050,10 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
     val busy by social.busy.collectAsState()
     val p = people[pk]
     LaunchedEffect(pk) { social.profileNow(pk) }
+    // Not found anywhere after a proper look: say so, with another try, rather than an empty profile.
+    var tries by remember(pk) { mutableStateOf(0) }
+    var missing by remember(pk) { mutableStateOf(false) }
+    LaunchedEffect(pk, tries) { missing = false; missing = !social.findProfile(pk) }
     TopBar(p?.shown ?: "Profile", nav)
     // Their posts, a page at a time: more as you reach the end.
     // Each relay's posts come in as it answers, newest first; "none" only once every relay has.
@@ -1098,6 +1102,12 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                     social.message.value = "Copied their account ID"
                 })
                 p?.about?.let { Spacer(Modifier.height(10.dp)); Text(it, color = Vault.Text, style = MaterialTheme.typography.bodyMedium) }
+                if (p == null && missing) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Couldn't find this profile", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text("It may be someone from another network whose profile hasn't come across, or the places that have it aren't answering.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    TextButton({ tries++ }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Accent) }
+                }
                 Spacer(Modifier.height(14.dp))
                 when {
                     pk == social.me -> Text("This is you", color = Vault.Muted)
