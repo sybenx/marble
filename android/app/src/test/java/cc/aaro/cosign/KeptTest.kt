@@ -46,23 +46,36 @@ class KeptTest {
         val k = Kept(Prefs())
         k.takeIn(setOf("marble-2026-10-26", "not-a-marble"))
         assertEquals(setOf("marble-2026-10-26"), k.all.value.keys)
-        assertEquals(java.time.LocalDate.parse("2026-10-26").toEpochDay() * 86_400, k.all.value["marble-2026-10-26"])
+        assertEquals(java.time.LocalDate.parse("2026-10-26").toEpochDay() * 86_400, k.all.value["marble-2026-10-26"]!!.at)
     }
 
     @Test fun mergedByYearKeepingTheFirst() {
         val k = Kept(Prefs())
         k.keep("2026-10-27")
-        val mineAt = k.all.value["marble-2026-10-27"]!!
+        val mineAt = k.all.value["marble-2026-10-27"]!!.at
         // The account's 2026 has an older keeping of the same day and one this phone hasn't.
         val ahead = k.merge("""{"v":1,"at":1,"kept":[{"id":"marble-2026-10-27","at":${mineAt - 100}},{"id":"marble-2026-10-20","at":5}]}""", "2026")
         assertFalse(ahead)
-        assertEquals(mineAt - 100, k.all.value["marble-2026-10-27"])
+        assertEquals(mineAt - 100, k.all.value["marble-2026-10-27"]!!.at)
         assertEquals(2, k.all.value.size)
         // One of 2026 the copy lacks: this phone is ahead for that year.
         k.keep("2026-10-28")
         assertTrue(k.merge("""{"v":1,"kept":[{"id":"marble-2026-10-20","at":5}]}""", "2026"))
         val o = org.json.JSONObject(k.json("2026"))
         assertEquals(3, o.getJSONArray("kept").length())
+    }
+
+    @Test fun theAwardIsKeptAndSynced() {
+        val k = Kept(Prefs())
+        k.keep("2026-10-26")
+        k.awarded("marble-2026-10-26", """{"kind":8,"id":"ab"}""")
+        val o = org.json.JSONObject(k.json("2026")).getJSONArray("kept").getJSONObject(0)
+        assertEquals(8, o.getJSONObject("award").getInt("kind"))
+        // The account's copy without it: this phone is ahead; with it from elsewhere, it's taken in.
+        assertTrue(k.merge("""{"v":1,"kept":[{"id":"marble-2026-10-26","at":1}]}""", "2026"))
+        val other = Kept(Prefs())
+        other.merge(k.json("2026"), "2026")
+        assertEquals("ab", org.json.JSONObject(other.all.value["marble-2026-10-26"]!!.award!!).getString("id"))
     }
 
     @Test fun aLaterVersionIsLeftAlone() {

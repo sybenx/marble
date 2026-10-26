@@ -32,6 +32,8 @@ object Daily {
     @Volatile private var nightsRead = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val http by lazy { Fetch.http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build() }
+    /** Where today's marble is claimed (the manifest's issuer): its award, a badge, for the one who kept it. */
+    @Volatile var issuer: String? = null
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
     @Volatile var previewBot: String? = null
     @Volatile private var asked = 0L
@@ -64,6 +66,7 @@ object Daily {
         val text = get(manifest)?.decodeToString() ?: return debug(context, "no list from $manifest")
         val m = Json.parse(text) as? Map<*, *> ?: return debug(context, "list unreadable")
         (m["preview_bot"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { previewBot = it }
+        (m["issuer"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT }?.let { issuer = it.trimEnd('/') }
         if (have) return
         val days = m["days"] as? List<*> ?: return
         rememberNights(context, days)

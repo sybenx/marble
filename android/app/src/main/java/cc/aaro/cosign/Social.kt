@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import okhttp3.MediaType.Companion.toMediaType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -798,6 +799,42 @@ class Social private constructor(private val phone: Phone, context: Context) {
         keptSending?.cancel()
         keptSending = scope.launch { delay(30_000); sendKept() }
     }
+
+    /**
+     * Today's marble, kept: its award from the issuer (POST /collect, NIP-98 signed by you), kept with it. Quietly;
+     * tried again on later opens the same UTC day if the issuer isn't there or says no.
+     */
+    fun claimToday() {
+        val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
+        val id = "marble-$today"
+        if (kept.all.value[id]?.let { it.award == null } != true || claiming) return
+        val issuer = cc.aaro.cosign.ui.Daily.issuer ?: return
+        claiming = true
+        scope.launch {
+            try {
+                val me = me ?: return@launch
+                val url = "$issuer/collect"
+                val body = org.json.JSONObject().put("id", id).toString()
+                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
+                val auth = phone.signOwn(Event(me, Clock.now(), 27235, listOf(listOf("u", url), listOf("method", "POST"), listOf("payload", hash)), "").withId())
+                val req = okhttp3.Request.Builder().url(url).header("Authorization", "Nostr " + java.util.Base64.getEncoder().encodeToString(auth.toJson().toByteArray()))
+                    .post(okhttp3.RequestBody.create("application/json".toMediaType(), body)).build()
+                val award = claimHttp.newCall(req).execute().use { r ->
+                    val text = r.body?.string() ?: ""
+                    if (debuggable) android.util.Log.i("CosignMarble", "collect: ${r.code}")
+                    if (r.isSuccessful) org.json.JSONObject(text).optJSONObject("award") else null
+                } ?: return@launch
+                // Only an award for this day, to you, of kind 8.
+                val ev = Event.fromMap(Json.parse(award.toString())) ?: return@launch
+                if (ev.kind != 8 || ev.tags.none { it.size > 1 && it[0] == "p" && it[1] == me } || !ev.verify()) return@launch
+                kept.awarded(id, award.toString())
+            } catch (e: Exception) {
+                if (debuggable) android.util.Log.i("CosignMarble", "collect failed: ${e.javaClass.simpleName}")
+            } finally { claiming = false }
+        }
+    }
+    @Volatile private var claiming = false
+    private val claimHttp by lazy { Fetch.http.newBuilder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build() }
 
     private suspend fun pullKept(sending: Boolean = false) {
         val me = me ?: return

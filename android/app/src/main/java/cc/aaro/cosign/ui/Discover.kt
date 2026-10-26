@@ -214,7 +214,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.loadNotices()
         social.refreshLater()
-        Daily.refresh(context)
+        // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
+        Daily.refresh(context).invokeOnCompletion { social.claimToday() }
     }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -624,6 +625,8 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
         // Only today's is kept, and only by looking at it big (no button, no word); one you kept opens just to look at.
         val first = remember { big.marble == null && Marbles.shift == 0L && social.kept.keep(Daily.utcDate()) }
+        // Kept today (now or before): its award, quietly.
+        LaunchedEffect(Unit) { if (big.marble == null) social.claimToday() }
         val count = social.kept.all.collectAsState().value.size
         NameChip(marble.name, big.date ?: java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still, count = count.takeIf { it > 0 },
             onClick = onShelf, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
