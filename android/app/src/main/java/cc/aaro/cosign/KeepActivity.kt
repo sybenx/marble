@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -125,7 +127,11 @@ private fun KeepSheet(shared: Shared, from: String?, onDone: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(Marbles.today().res), null, Modifier.size(30.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Keep in Marble", color = Vault.Text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Keep in Marble", color = Vault.Text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                // Yours alone: kept in Later, never posted.
+                androidx.compose.material3.Icon(Icons.Filled.Lock, null, tint = Vault.Muted, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Only you", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
             }
             Label("IN YOUR WORDS")
             TextField(words, { words = it }, Modifier.fillMaxWidth().heightIn(min = 64.dp).focusRequester(focus),
