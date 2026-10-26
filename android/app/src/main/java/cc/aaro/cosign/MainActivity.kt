@@ -135,6 +135,8 @@ class MainActivity : ComponentActivity() {
         if (intent?.getStringExtra("places") == "fake") Places.fake = true
         // Open someone's profile (--es profile <hex key>), for timing how fast one opens.
         intent?.getStringExtra("profile")?.let { cc.aaro.cosign.ui.DebugOpen.profile.value = it }
+        // A screen, opened for a test (--es open marble|stories).
+        intent?.getStringExtra("open")?.let { cc.aaro.cosign.ui.DebugOpen.screen.value = it }
         // Marble of the day for another day (--ei marble_day n), to look at the collection.
         // The nightly marble from a test list instead of the site's (--es daily http://10.0.2.2:8765/manifest.json).
         intent?.getStringExtra("daily")?.let { cc.aaro.cosign.ui.Daily.manifest = it }
