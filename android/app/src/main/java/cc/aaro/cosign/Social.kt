@@ -743,9 +743,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun sendLater() {
         val me = me ?: return
         pullLater(sending = true)
-        val text = toSelf(later.json(), encrypt = true) ?: return
-        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", Later.TAG)), text).withId()) } catch (_: Exception) { return }
-        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
+        val text = toSelf(later.json(), encrypt = true) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "later not sent: couldn't encrypt") }
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", Later.TAG)), text).withId()) } catch (e: Exception) {
+            if (debuggable) android.util.Log.i("CosignSync", "later not sent: ${e.javaClass.simpleName}"); return
+        }
+        val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
+        val n = Fetch.publish(to, signed)
+        if (debuggable) android.util.Log.i("CosignSync", "later sent: ${later.items.value.size} items to $n of ${to.size} relays")
     }
 
     // --- What you call your devices ------------------------------------------------------------

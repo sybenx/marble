@@ -592,7 +592,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             val posts by cc.aaro.cosign.SearchPrefs.posts.collectAsState()
             Column {
                 Text("Search with", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (e in cc.aaro.cosign.Engine.entries) {
                         val on = e == engine
                         Text(e.label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
