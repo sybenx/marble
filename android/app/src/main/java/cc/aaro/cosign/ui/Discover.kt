@@ -376,7 +376,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         detectVerticalDragGestures(
             onDragStart = { lift = 0f },
             onDragEnd = {
-                if (lift < -48.dp.toPx()) nav.open(Route.Later)
+                if (lift < -48.dp.toPx()) { LaterTab.value = "saved"; nav.open(Route.Later) }
                 scope.launch { androidx.compose.animation.core.animate(pull, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> pull = v } }
             },
             onDragCancel = { pull = 0f },
@@ -411,7 +411,14 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 // Enter: kept as a note, and searched (the box opens for typing; the chip says what Enter does).
                 GoChip(null)
             }
-            Box(Modifier.widthIn(max = 600.dp).fillMaxWidth())
+            // Your notes, and the pages you opened (tabs), just under the box.
+            Row(Modifier.widthIn(max = 600.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                val notes = laterItems.count { it.deleted == null && it.done == null }
+                val tabs by social.later.pages.collectAsState()
+                HomePill(Glyphs.save, if (notes > 0) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
+                Spacer(Modifier.width(10.dp))
+                HomePill(Glyphs.site, if (tabs.isNotEmpty()) "Tabs · ${tabs.size}" else "Tabs") { LaterTab.value = "pages"; nav.open(Route.Later) }
+            }
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
             val (top, box, kept) = parts.map { it.measure(loose) }
@@ -436,7 +443,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
         // Your notes, below: swipe up, or tap.
-        NotesLip(Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Later) }
+        NotesLip(Modifier.align(Alignment.BottomCenter)) { LaterTab.value = "saved"; nav.open(Route.Later) }
     }
 }
 
@@ -444,6 +451,21 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
 private class FollowingPlace {
     val chip = mutableStateOf("all")
     var known: Set<String>? = null
+}
+
+/** Which list Notes opens on: "saved" (your notes) or "pages" (tabs: the pages you opened). */
+private val LaterTab = kotlinx.coroutines.flow.MutableStateFlow("saved")
+
+/** A button under home's box: Notes, or Tabs. */
+@Composable
+private fun HomePill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) = Row(
+    Modifier.clip(RoundedCornerShape(18.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp))
+        .clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Icon(icon, null, tint = Vault.Muted, modifier = Modifier.size(16.dp))
+    Spacer(Modifier.width(7.dp))
+    Text(label, color = Vault.Text, style = MaterialTheme.typography.labelLarge)
 }
 
 /** Which pane is which. */
@@ -2274,7 +2296,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     val items by social.later.items.collectAsState()
     val pages by social.later.pages.collectAsState()
     var filter by remember { mutableStateOf("") }
-    var show by remember { mutableStateOf("saved") }
+    var show by remember { mutableStateOf(LaterTab.value) }
     val context = LocalContext.current
     val f = filter.trim()
     fun hit(t: String) = f.isEmpty() || t.contains(f, ignoreCase = true)
@@ -2292,7 +2314,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
         colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "pages" to "Visited · ${pg.size}", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "pages" to "Tabs · ${pg.size}", "done" to "Done")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
@@ -2307,7 +2329,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
                 color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         }
         if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
-            item { Text("VISITED · NOT NOTES", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
+            item { Text("TABS · NOT NOTES", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
             items(if (show == "pages") pg else pg.take(5), key = { "p" + it.url }) { p ->
                 Row(Modifier.fillMaxWidth().clickable { FeedLog.open("u:" + p.url, "page"); openInBrowser(context, p.url, "u:" + p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val host = android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: ""
