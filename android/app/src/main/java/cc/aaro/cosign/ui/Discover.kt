@@ -485,7 +485,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
             }
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
-            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true) else Home(phone, ui, social, nav)
+            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING) else Home(phone, ui, social, nav)
         }
     }
 }
@@ -557,7 +557,7 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
  * with your Special Follow people (★) woven in near the top. Where it comes from is said at the end.
  */
 @Composable
-private fun FeedScreen(social: Social, nav: Nav, pane: Boolean) = Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().then(
+private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean = true) = Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().then(
     if (pane) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
         androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)) else Modifier.safeDrawingPadding())) {
     val feed by social.feed.collectAsState()
@@ -588,8 +588,11 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean) = Box(Modifier.f
             .filter { chip == "news" || it.topic in followedTopics }.take(60)
     }
     val savedLinks by social.saved.collectAsState()
-    // The feed log (when on): each list by its pane and chip, so they can be told apart.
-    LogWatcher(state, if (pane) "following/$chip" else "discover", if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else shown.map { it.e.id })
+    // The feed log (when on): each list by its pane and chip, so they can be told apart, and only while this pane is
+    // the one on screen (the pager keeps it composed beside Search).
+    val logIds = remember(chip, shown, stories) { if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else shown.map { it.e.id } }
+    if (current) androidx.compose.runtime.key(chip) { LogWatcher(state, if (pane) "following/$chip" else "discover", logIds) }
+    LaunchedEffect(chip, stories, current) { if (current && stories.isNotEmpty()) social.logStoryList("following/$chip", stories) }
     if (pane) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((k, label) in listOf("all" to "All", "people" to "People", "news" to "News", "topics" to "Topics")) {
             val on = chip == k

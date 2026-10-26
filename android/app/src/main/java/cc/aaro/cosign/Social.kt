@@ -690,6 +690,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** Today's stories for More stories, in the order shown, each with its score. */
+    /** The feed log (when on): a list of stories as a screen showed it (Following's News and Topics). */
+    fun logStoryList(screen: String, list: List<TopicCard>) = logStories(screen, list)
     private fun logStories(screen: String, list: List<TopicCard>) {
         if (!FeedLog.on.value || list.isEmpty()) return
         val now = Clock.now()
