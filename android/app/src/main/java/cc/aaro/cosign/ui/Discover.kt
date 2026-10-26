@@ -207,6 +207,11 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
+    val askedScreen by DebugOpen.screen.collectAsState()
+    LaunchedEffect(askedScreen) {
+        if (askedScreen == "compose") { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
+        DebugOpen.screen.value = null
+    }
     val asked by DebugOpen.profile.collectAsState()
     LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
     val top = stack.lastOrNull()
@@ -1219,7 +1224,11 @@ object Away {
     var after = AFTER
 }
 
-object DebugOpen { val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+object DebugOpen {
+    val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A screen to open (--es open compose), for tests that can't tap reliably: the composer with the box's first story. */
+    val screen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+}
 
 /** Debug builds: how long after opening a profile its name is on screen. */
 @Composable
