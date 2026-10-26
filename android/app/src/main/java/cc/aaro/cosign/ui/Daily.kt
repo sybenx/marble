@@ -32,6 +32,9 @@ object Daily {
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
     @Volatile var previewBot: String? = null
     @Volatile private var asked = 0L
+
+    /** Debug builds: the nights from a test list instead, asked at once (it can come after the first ask). */
+    fun test(context: Context, url: String) { manifest = url; askedFor = ""; refresh(context) }
     @Volatile private var askedFor = ""
 
     fun utcDate(): String = LocalDate.now(ZoneOffset.UTC).toString()
