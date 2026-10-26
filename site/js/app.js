@@ -6,7 +6,8 @@ import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
 import { goodPosts, stories, yours, loadStories, prepareMine } from "./find.js";
-import { current as currentMe, onMe, canSignIn, signIn, signOut, myFollows } from "./me.js";
+import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
+import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -148,6 +149,7 @@ function card(e, { compact = false, context = true, why = "", clamp = false } = 
     ${who(e.pubkey, e)}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    ${compact ? "" : `<div class="actions">${heart(e)}</div>`}
   </article>`;
 }
 
@@ -189,6 +191,7 @@ onProfile((pk) => {
 
 // Quoted posts and "Replying to" names, filled in after the page is up.
 function fillLater(root = pageEl) {
+  markReactions(root);
   for (const slot of root.querySelectorAll(".quote-slot:not([data-filled])")) {
     slot.dataset.filled = "1";
     const d = decode(slot.dataset.quote);
@@ -235,6 +238,7 @@ async function showEvent(d, signal, { hex = false } = {}) {
     ${root && root[1] !== parent?.[1] ? `<div class="up" data-up="${root[1]}" data-hint="${esc(root[2] || "")}"></div><a class="gap" href="/e/${note(root[1])}">…</a>` : ""}
     ${parent ? `<div class="up" data-up="${parent[1]}" data-hint="${esc(parent[2] || "")}"></div>` : ""}
     ${mainPost(e)}
+    ${replyBox(e)}
     <section class="replies" aria-label="Replies"><h2>Replies</h2><div class="list" id="replies"><p class="muted loading-text">Looking for replies…</p></div></section>
   </div>`;
   mark("post", { relay: found[0] || "kept", id: e.id.slice(0, 8), connect: connectTimes() });
@@ -286,6 +290,65 @@ async function showEvent(d, signal, { hex = false } = {}) {
     mark("replies", { n: all.size, counts });
   });
 }
+
+// ── Replying ──────────────────────────────────────────────────────────────────────────────────────────
+
+function replyBox(e) {
+  if (!currentMe()) return `<div class="reply-box signed-out"><button type="button" class="link" data-sign-in>Sign in to reply</button></div>`;
+  return `<form class="reply-box" data-reply="${e.id}">
+    <label for="reply-text" class="visually-hidden">Your reply</label>
+    <textarea id="reply-text" rows="2" placeholder="Write a reply…" maxlength="8000"></textarea>
+    <div class="reply-row"><span class="reply-note" role="status"></span><button type="submit" class="button small">Reply</button></div>
+  </form>`;
+}
+
+/** NIP-10: a reply names the thread's root and the post it answers, and everyone in the conversation. */
+function replyTags(e) {
+  const hint = foundOn(e.id)[0] || "";
+  const root = rootOf(e);
+  const tags = root && root[1] !== e.id
+    ? [["e", root[1], root[2] || "", "root", root[4] || ""], ["e", e.id, hint, "reply", e.pubkey]]
+    : [["e", e.id, hint, "root", e.pubkey]];
+  const people = [e.pubkey, ...e.tags.filter((t) => t[0] === "p" && isHex64(t[1])).map((t) => t[1])];
+  for (const pk of new Set(people)) if (pk !== currentMe()) tags.push(["p", pk]);
+  return tags;
+}
+
+document.addEventListener("click", (ev) => { if (ev.target.closest("[data-sign-in]")) openSignIn(); });
+document.addEventListener("submit", async (ev) => {
+  const form = ev.target.closest("form.reply-box");
+  if (!form) return;
+  ev.preventDefault();
+  const e = events.get(form.dataset.reply);
+  const area = $("textarea", form), note = $(".reply-note", form), button = $("button", form);
+  const text = area.value.trim();
+  if (!e || !text || !canAct()) return;
+  // Shown at once, under the post; taken back if it can't be sent.
+  const list = $("#replies");
+  const draft = { id: "0".repeat(64), pubkey: currentMe(), created_at: Math.floor(Date.now() / 1000), kind: 1, tags: replyTags(e), content: text };
+  const shown = document.createElement("div");
+  shown.className = "reply sending";
+  shown.innerHTML = card(draft, { context: false });
+  events.delete(draft.id);
+  $("article", shown).removeAttribute("data-href");
+  $(".actions", shown)?.remove();
+  $(".loading-text, p.muted", list)?.remove();
+  list.prepend(shown);
+  area.value = "";
+  button.disabled = true;
+  note.textContent = "Sending…";
+  try {
+    const { ev: sent, places } = await sendReply(e, text, draft.tags);
+    shown.className = "reply";
+    shown.innerHTML = card(sent, { context: false });
+    fillLater(shown);
+    note.textContent = `Sent to ${places} ${places === 1 ? "place" : "places"}.`;
+  } catch (err) {
+    shown.remove();
+    area.value = text;
+    note.textContent = err.message;
+  } finally { button.disabled = false; }
+});
 
 /** How a post points at another: "reply" (in its thread), "quote" (embeds it) or "mention". */
 function kindOf(r, e) {
@@ -410,7 +473,7 @@ function mainPost(e) {
     ${who(e.pubkey, null, { big: true })}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     <p class="totals"></p>
-    <div class="meta"><time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time>
+    <div class="meta"><span class="meta-left">${heart(e)}<time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time></span>
     <button type="button" class="link" data-copy="${esc(location.origin + postPath(e, foundOn(e.id).slice(0, 2)))}">Copy link</button></div>
   </article>`;
 }
@@ -872,23 +935,29 @@ function drawAccount() {
     wantProfile(me);
     account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false">${avatar(me, 36)}</button>
       <div class="menu" hidden><a href="${personPath(me)}">Your profile</a><button type="button" data-sign-out>Sign out</button></div>`;
-  } else account.innerHTML = canSignIn() ? `<button type="button" class="sign-in">Sign in</button>` : "";
+  } else account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`;
 }
 account.addEventListener("click", async (ev) => {
   const menu = $(".menu", account);
-  if (ev.target.closest(".sign-in")) {
-    try { await signIn(); } catch { return; }
-  } else if (ev.target.closest(".me")) {
+  if (ev.target.closest(".sign-in")) openSignIn();
+  else if (ev.target.closest(".me")) {
     menu.hidden = !menu.hidden;
     $(".me", account).setAttribute("aria-expanded", !menu.hidden);
   } else if (ev.target.closest("[data-sign-out]")) signOut();
   else if (ev.target.closest("a") && menu) menu.hidden = true;
 });
 document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
-onMe((me) => { drawAccount(); prepareMine(me); });
+onMe((me) => {
+  drawAccount();
+  prepareMine(me);
+  // the reply box follows who's signed in
+  for (const f of document.querySelectorAll(".reply-box")) {
+    const id = f.dataset.reply || f.closest(".thread")?.querySelector(".card.main")?.dataset.id;
+    if (id && events.has(id)) f.outerHTML = replyBox(events.get(id));
+  }
+});
 drawAccount();
 prepareMine(currentMe());
-setTimeout(() => { if (!currentMe()) drawAccount(); }, 800); // extensions can arrive a moment after the page
 
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
 

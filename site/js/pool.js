@@ -27,12 +27,22 @@ export function verify(e) {
   return ok;
 }
 
+/**
+ * Testing on localhost: with sessionStorage "marble.local" set to a local relay (ws://localhost:10547, nak serve),
+ * everything this page sends goes there and nowhere else, so nothing a test signs reaches the public servers.
+ */
+export function testRelay() {
+  if (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return null;
+  try { return sessionStorage.getItem("marble.local"); } catch { return null; }
+}
+
 export function normalize(url) {
   try {
     let u = (url || "").trim();
     if (!/^wss?:\/\//i.test(u)) return null;
     const p = new URL(u);
-    if (p.hostname === "localhost" || /^(127\.|10\.|192\.168\.)/.test(p.hostname) || p.hostname.endsWith(".onion")) return null;
+    const local = p.hostname === "localhost" || /^(127\.|10\.|192\.168\.)/.test(p.hostname);
+    if ((local && !testRelay()) || p.hostname.endsWith(".onion")) return null;
     return `${p.protocol}//${p.host.toLowerCase()}${p.pathname.replace(/\/+$/, "")}`;
   } catch { return null; }
 }
@@ -55,6 +65,7 @@ class Relay {
   constructor(url) {
     this.url = url;
     this.subs = new Map();
+    this.oks = new Map(); // event id → (accepted, message) for what this page published
     this.queue = [];
     this.open = false;
     this.dead = false;
@@ -86,6 +97,8 @@ class Relay {
     try { this.ws?.close(); } catch {}
     for (const sub of this.subs.values()) sub.done(this.url);
     this.subs.clear();
+    for (const ok of this.oks.values()) ok(false, "no connection");
+    this.oks.clear();
   }
   send(msg) {
     const m = JSON.stringify(msg);
@@ -96,11 +109,12 @@ class Relay {
     let m;
     try { m = JSON.parse(data); } catch { return; }
     if (!Array.isArray(m)) return;
+    if (m[0] === "OK") { const ok = this.oks.get(m[1]); this.oks.delete(m[1]); ok?.(m[2] === true, m[3] || ""); return; }
     const sub = this.subs.get(m[1]);
     if (!sub) return;
     if (m[0] === "EVENT") sub.event(m[2], this.url);
     else if (m[0] === "COUNT") { this.subs.delete(m[1]); sub.count?.(m[2]?.count, this.url); sub.done(this.url); }
-    else if (m[0] === "EOSE" || m[0] === "CLOSED") { this.subs.delete(m[1]); sub.done(this.url); }
+    else if (m[0] === "CLOSED" || (m[0] === "EOSE" && !sub.live)) { this.subs.delete(m[1]); sub.done(this.url); }
   }
 }
 
@@ -197,6 +211,58 @@ export function count(urls, filter, { timeout = 2500 } = {}) {
       if (r.dead) { waiting.delete(u); continue; }
       r.subs.set(id, sub);
       r.send(["COUNT", id, filter]);
+    }
+    if (!waiting.size) finish();
+  });
+}
+
+/** Keeps a subscription open (EOSE doesn't end it) until the returned close() is called. */
+export function subscribe(urls, filters, onEvent) {
+  filters = Array.isArray(filters) ? filters : [filters];
+  const id = `s${(nextId++).toString(36)}`;
+  const seen = new Set();
+  const list = relays(urls);
+  const sub = {
+    live: true, // stays after EOSE, for what arrives later
+    event(e, url) { if (!e || seen.has(e.id) || !verify(e)) return; seen.add(e.id); onEvent(e, url); },
+    done() {},
+  };
+  for (const u of list) {
+    const r = relay(u);
+    if (r.dead) continue;
+    r.subs.set(id, sub);
+    r.send(["REQ", id, ...filters]);
+  }
+  return () => {
+    for (const u of list) {
+      const r = sockets.get(u);
+      if (r?.subs.has(id)) { r.subs.delete(id); if (r.open) r.send(["CLOSE", id]); }
+    }
+  };
+}
+
+/**
+ * Sends a signed event to the relays; resolves with {ok: [urls that took it], failed: [[url, why]]} once each
+ * has answered or after the timeout. On localhost with a test relay set, it goes only there.
+ */
+export function publish(urls, event, { timeout = 6000 } = {}) {
+  const only = testRelay();
+  const list = only ? [normalize(only)] : relays(urls);
+  return new Promise((resolve) => {
+    const ok = [], failed = [], waiting = new Set(list);
+    let finished = false;
+    const finish = () => { if (finished) return; finished = true; clearTimeout(timer); for (const u of waiting) failed.push([u, "no answer"]); resolve({ ok, failed }); };
+    const timer = setTimeout(finish, timeout);
+    if (!list.length) return finish();
+    for (const u of list) {
+      const r = relay(u);
+      if (r.dead) { waiting.delete(u); failed.push([u, "no connection"]); continue; }
+      r.oks.set(event.id, (accepted, why) => {
+        waiting.delete(u);
+        (accepted ? ok.push(u) : failed.push([u, why]));
+        if (!waiting.size) finish();
+      });
+      r.send(["EVENT", event]);
     }
     if (!waiting.size) finish();
   });
