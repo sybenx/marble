@@ -1917,8 +1917,8 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     val context = LocalContext.current
     val f = filter.trim()
     fun hit(t: String) = f.isEmpty() || t.contains(f, ignoreCase = true)
-    val open = items.filter { it.deleted == null && it.done == null && hit(it.text) }
-    val done = items.filter { it.deleted == null && it.done != null && hit(it.text) }
+    val open = items.filter { it.deleted == null && it.done == null && (hit(it.text) || it.quote?.let(::hit) == true) }
+    val done = items.filter { it.deleted == null && it.done != null && (hit(it.text) || it.quote?.let(::hit) == true) }
     val pg = pages.filter { hit(it.title) || hit(it.url) || hit(it.from) }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
@@ -1985,7 +1985,9 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 }
             }, color = if (item.done != null) Vault.Muted else Vault.Text, style = MaterialTheme.typography.bodyLarge,
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
-            val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") }?.let { "$it · " } ?: ""
+            // Kept alongside: what was shared (two lines of it), and where from; a page's site.
+            item.quote?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
+            val site = (item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") } ?: item.from?.let { "from $it" })?.let { "$it · " } ?: ""
             Text(site + if (item.done != null) "Done · ${agoWords(item.done)}" else "Saved ${agoWords(item.created)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
             page.firstOrNull()?.let { p -> Text("${p.title} — ${android.net.Uri.parse(p.url).host?.removePrefix("www.")}", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).clickable { openInBrowser(context, p.url) }) }

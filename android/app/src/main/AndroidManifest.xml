@@ -121,6 +121,21 @@
                 android:value="Holds one share of a threshold signing key and answers co-signing requests from the user's own servers." />
         </service>
 
+        <!-- Keep in Marble, in other apps' share sheet: your words and what was shared, in Later. -->
+        <activity
+            android:name=".KeepActivity"
+            android:exported="true"
+            android:label="@string/keep_label"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Cosign.Sheet">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
         <!-- Save, in a page Marble opened: the browser sends the page's address here. -->
         <receiver android:name=".SavePageReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:process=":signer" android:exported="false" />

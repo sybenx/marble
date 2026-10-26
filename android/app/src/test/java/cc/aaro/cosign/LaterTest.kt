@@ -128,4 +128,30 @@ class LaterTest {
         l.retitle(a.id, "example.com", "Something else")
         assertEquals("A good read", l.shown().first { it.id == a.id }.text)
     }
+
+    @Test fun keptFromAShareWithItsQuote() {
+        val l = Later(Prefs())
+        val a = l.keep("ask tom which edition", quote = "the paperback with the green cover, not the anniversary one", from = "Signal")!!
+        val back = Later.fromJson(l.json()).first { it.id == a.id }
+        assertEquals("the paperback with the green cover, not the anniversary one", back.quote)
+        assertEquals("Signal", back.from)
+        // Known now, so not carried twice as an unknown field.
+        assertTrue(back.extra.isEmpty())
+        // A shared link kept again comes back, with the new words.
+        val b = l.keep("for the trip", url = "https://example.com/x")!!
+        assertEquals(b.id, l.keep("for the trip, really", url = "https://example.com/x")!!.id)
+        assertEquals("for the trip, really", l.shown().first { it.id == b.id }.text)
+    }
+
+    @Test fun sharedSorted() {
+        val link = Shared.of("The city that fought Flock https://www.theverge.com/x/flock.", null)!!
+        assertEquals("https://www.theverge.com/x/flock", link.url)
+        assertEquals("The city that fought Flock", link.title)
+        assertEquals("", link.words)
+        assertEquals("Its subject", Shared.of("https://a.example/b", "Its subject")!!.title)
+        assertEquals("call the plumber", Shared.of("  call the plumber ", null)!!.words)
+        val long = Shared.of("x".repeat(300), null)!!
+        assertEquals("", long.words); assertEquals(300, long.quote!!.length)
+        assertNull(Shared.of("  ", null))
+    }
 }

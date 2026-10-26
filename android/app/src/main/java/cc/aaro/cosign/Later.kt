@@ -13,9 +13,12 @@ import java.util.concurrent.TimeUnit
 // The search box is for typing in: Enter searches the web with your engine, Save keeps what you typed in Later.
 // Finding old things happens in Later, with its own filter. (~/igloo/marble-browser-research.md, mocks A1–A3, S1–S4.)
 
-/** One thing you saved: your words, when, and whether it's done. Removed ones stay a month as [deleted], so other devices learn it. */
+/**
+ * One thing you saved: your words, when, and whether it's done. Removed ones stay a month as [deleted], so other devices
+ * learn it. Kept alongside: a page ([url]), or text shared from another app ([quote], and the app it came [from]).
+ */
 data class LaterItem(val id: String, val text: String, val created: Long, val updated: Long, val done: Long? = null, val deleted: Long? = null,
-                     val url: String? = null, val extra: Map<String, Any?> = emptyMap())
+                     val url: String? = null, val extra: Map<String, Any?> = emptyMap(), val quote: String? = null, val from: String? = null)
 
 /** A page you opened from Marble (on this phone only, 30 days): to find it again without keeping a tab. */
 data class Page(val url: String, val title: String, val at: Long, val from: String)
@@ -41,6 +44,16 @@ class Later(private val prefs: android.content.SharedPreferences) {
         val now = Clock.now()
         val have = items.value.firstOrNull { it.text.equals(t, ignoreCase = true) && it.deleted == null }
         val item = have?.copy(done = null, updated = next(have)) ?: LaterItem(newId(), t, now, now, url = url)
+        put(item)
+        return item
+    }
+    /** Kept from another app's share sheet: your words, and what was shared alongside. A link kept again comes back rather than doubling. */
+    fun keep(text: String, url: String? = null, quote: String? = null, from: String? = null): LaterItem? {
+        val t = text.trim().take(500).ifEmpty { return null }
+        val now = Clock.now()
+        val have = url?.let { u -> items.value.firstOrNull { it.url == u && it.deleted == null } }
+        val item = have?.copy(text = t, done = null, updated = next(have))
+            ?: LaterItem(newId(), t, now, now, url = url, quote = quote?.trim()?.take(2000)?.ifEmpty { null }, from = from?.trim()?.take(80)?.ifEmpty { null })
         put(item)
         return item
     }
@@ -99,7 +112,7 @@ class Later(private val prefs: android.content.SharedPreferences) {
         return merged.toSet() != theirs.toSet()
     }
 
-    /** {"v":1,"at":…,"items":[{"id","text","created","updated","done","deleted"(,"url")}]} plus fields kept from the account's copy. */
+    /** {"v":1,"at":…,"items":[{"id","text","created","updated","done","deleted"(,"url")(,"quote","from")}]} plus fields kept from the account's copy. */
     fun json(): String {
         val o = org.json.JSONObject()
         unknown.forEach { (k, v) -> o.put(k, v) }
@@ -118,8 +131,10 @@ class Later(private val prefs: android.content.SharedPreferences) {
             put("id", id); put("text", text); put("created", created); put("updated", updated)
             put("done", done ?: org.json.JSONObject.NULL); put("deleted", deleted ?: org.json.JSONObject.NULL)
             url?.let { put("url", it) }
+            quote?.let { put("quote", it) }
+            from?.let { put("from", it) }
         }
-        private val KNOWN = setOf("id", "text", "created", "updated", "done", "deleted", "url")
+        private val KNOWN = setOf("id", "text", "created", "updated", "done", "deleted", "url", "quote", "from")
         private fun itemsOf(a: org.json.JSONArray?): List<LaterItem> = (0 until (a?.length() ?: 0)).mapNotNull { i ->
             val x = a!!.optJSONObject(i) ?: return@mapNotNull null
             val id = x.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
@@ -127,7 +142,8 @@ class Later(private val prefs: android.content.SharedPreferences) {
             // A removed one may have no text left (only a marker); anything else needs some.
             val text = x.optString("text").trim().takeIf { it.isNotEmpty() || long("deleted") != null } ?: return@mapNotNull null
             LaterItem(id, text, x.optLong("created"), x.optLong("updated", x.optLong("created")), long("done"), long("deleted"),
-                x.optString("url").takeIf { it.isNotEmpty() }, x.keys().asSequence().filter { it !in KNOWN }.associateWith { x.opt(it) })
+                x.optString("url").takeIf { it.isNotEmpty() }, x.keys().asSequence().filter { it !in KNOWN }.associateWith { x.opt(it) },
+                x.optString("quote").takeIf { it.isNotEmpty() }, x.optString("from").takeIf { it.isNotEmpty() })
         }
         fun fromJson(json: String?): List<LaterItem> = try { itemsOf(org.json.JSONObject(json ?: "{}").optJSONArray("items")).sortedByDescending { it.created } } catch (_: Exception) { emptyList() }
         private fun pagesFrom(json: String?): List<Page> = try {

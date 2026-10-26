@@ -26,14 +26,16 @@ class SavePageReceiver : BroadcastReceiver() {
         }
     }
 
-    /** The account, once the signer has said who it is (Marble may have been started just for this). */
-    private suspend fun account(slot: String?): Phone? = withTimeoutOrNull(8_000) {
-        val accounts = CosignApp.instance.accounts
-        var p: Phone? = null
-        while (p?.isMember != true) {
-            delay(100)
-            p = slot?.let { accounts.phone(it) } ?: accounts.active.takeIf { slot == null }
+    companion object {
+        /** The account, once the signer has said who it is (Marble may have been started just for this). */
+        suspend fun account(slot: String?): Phone? = withTimeoutOrNull(8_000) {
+            val accounts = CosignApp.instance.accounts
+            var p: Phone? = null
+            while (p?.isMember != true) {
+                delay(100)
+                p = slot?.let { accounts.phone(it) } ?: accounts.active.takeIf { slot == null }
+            }
+            p
         }
-        p
     }
 }
