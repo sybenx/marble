@@ -74,6 +74,16 @@ export async function sign(template) {
   return signed;
 }
 
+/**
+ * NIP-44 to yourself (a note only you can read, like discover.syb.lol's interest profile): through the
+ * extension. Signed in with your phone it throws "unsupported": your servers don't encrypt for sites, on
+ * purpose (every site that signs in by code shares one signer key; cosign server/core/group.ts).
+ */
+export async function nip44Self(text, encrypt = true) {
+  if (state?.method !== "extension" || !window.nostr?.nip44) throw new Error("unsupported");
+  return encrypt ? window.nostr.nip44.encrypt(state.pubkey, text) : window.nostr.nip44.decrypt(state.pubkey, text);
+}
+
 /** Where your posts go: your own write relays (NIP-65), or the fast ones if you have none listed. */
 export async function myWriteRelays() {
   const o = await Promise.race([outbox(state.pubkey), new Promise((r) => setTimeout(() => r({ write: [] }), 2000))]);

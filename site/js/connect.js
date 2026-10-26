@@ -114,16 +114,17 @@ function signWith(sk, t, { schnorr, sha256 }) {
 
 /**
  * Starts a phone sign-in: onCode(uri) gets the code to show; resolves with {pubkey, remote, saved} once your
- * phone has connected and said which account it is. Rejects on signal abort.
+ * phone has connected and said which account it is. Rejects on signal abort. perms: what the site will ask
+ * to sign (NIP-46), shown for what it is; Marble and your servers don't refuse other kinds because of it.
  */
-export async function phoneSignIn({ onCode, signal }) {
+export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_event:7,get_public_key" }) {
   const { schnorr, encodeQR } = await load();
   const sk = schnorr.utils.randomSecretKey();
   const pk = toHex(schnorr.getPublicKey(sk));
   const secret = toHex(crypto.getRandomValues(new Uint8Array(8)));
   const relays = connectRelays();
   const uri = `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=Marble&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent("sign_event:1,sign_event:7,get_public_key")}`;
+    + `&name=Marble&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}`;
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
   const signer = await new Promise((resolve, reject) => {
