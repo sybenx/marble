@@ -226,6 +226,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             "marble" -> { delay(1500); marbleFrom = androidx.compose.ui.geometry.Offset.Zero }
             "stories" -> stack.add(Route.Stories)
             "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
+            "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
             "later" -> stack.add(Route.Later)
             else -> askedScreen?.let { v ->
                 when {
@@ -234,7 +235,6 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
                     v.startsWith("save:") -> v.removePrefix("save:").split('|').forEach { social.later.save(it) }
                 }
             }
-            "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
         }
         DebugOpen.screen.value = null
     }
