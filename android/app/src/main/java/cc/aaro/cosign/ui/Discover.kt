@@ -768,6 +768,9 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (liked) Glyphs.heartOn else Glyphs.heart, if (liked) "Liked" else "Like", tint = if (liked) Vault.Amber else Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onLike).padding(10.dp))
+                // How many liked it, once counted (in a thread, on a pasted post).
+                val counts by nav.social.engagement.collectAsState()
+                counts[n.id]?.likeTotal?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
                 // Save: into your bookmarks.
@@ -776,6 +779,85 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                     Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Accent else Vault.Muted,
                         modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = onSave).padding(10.dp))
                 }
+            }
+        }
+    }
+}
+
+/** Under a post: "12 replies · 3 reposts · 68 likes" (what the relays counted, or found, whichever is more). */
+@Composable
+private fun Totals(e: Social.Engagement) {
+    fun n(v: Long, one: String, many: String) = "$v ${if (v == 1L) one else many}"
+    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") }, n(e.likeTotal, "like", "likes"),
+        e.zaps.takeIf { it > 0 }?.let { n(it.toLong(), "zap", "zaps") })
+    Text(parts.joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp))
+}
+
+/**
+ * A pasted link to a post: the post itself, big, then what points at it ("Quoted by", "Replies" with See all,
+ * "Mentioned in"). To a person: their card, then "Posts mentioning them". The same sections as marble.syb.lol.
+ */
+@Composable
+private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    val eng by social.engagement.collectAsState()
+    when (ref) {
+        is Ref.Note -> {
+            var post by remember(ref) { mutableStateOf(social.note(ref.id)) }
+            var found by remember(ref) { mutableStateOf<Social.Lookup?>(null) }
+            LaunchedEffect(ref) {
+                if (post == null) post = social.fetchNote(ref.id)
+                social.lookupNote(ref.id, ref.relays) { found = it }
+            }
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                item(key = "post") {
+                    val p = post
+                    if (p == null) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+                    else { NoteCard(p, people, p.id in liked, nav, onLike = { social.like(p) }); eng[p.id]?.let { Totals(it) } }
+                    HorizontalDivider(color = Vault.Edge)
+                }
+                val f = found
+                if (f == null) item(key = "looking") { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent) }
+                else {
+                    if (f.quotedBy.isNotEmpty()) { item(key = "qh") { Heading("Quoted by") }; items(f.quotedBy.take(10), key = { "q" + it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 8); HorizontalDivider(color = Vault.Edge) } }
+                    if (f.replies.isNotEmpty()) {
+                        item(key = "rh") { Heading("Replies") }
+                        items(f.replies.take(3), key = { "r" + it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 8); HorizontalDivider(color = Vault.Edge) }
+                        if (f.replies.size > 3 || (eng[ref.id]?.replyTotal ?: 0) > 3) item(key = "all") {
+                            TextButton({ nav.thread(ref.id) }, Modifier.padding(start = 8.dp)) { Text("See all ${maxOf(f.replies.size.toLong(), eng[ref.id]?.replyTotal ?: 0)}", color = Vault.Accent) }
+                        }
+                    }
+                    if (f.mentionedIn.isNotEmpty()) { item(key = "mh") { Heading("Mentioned in") }; items(f.mentionedIn.take(10), key = { "m" + it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 8); HorizontalDivider(color = Vault.Edge) } }
+                    if (f.quotedBy.isEmpty() && f.replies.isEmpty() && f.mentionedIn.isEmpty()) item(key = "none") { Text("No replies, quotes or mentions found yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                }
+            }
+        }
+        is Ref.Profile -> {
+            var posts by remember(ref) { mutableStateOf<List<Event>?>(null) }
+            LaunchedEffect(ref) { People.want(listOf(ref.pubkey)); social.profileNow(ref.pubkey); posts = social.mentionsOf(ref.pubkey, ref.relays) }
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                item(key = "who") {
+                    val p = people[ref.pubkey]
+                    Column(Modifier.fillMaxWidth().clickable { nav.profile(ref.pubkey) }.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Avatar(p, ref.pubkey, 64)
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(p?.shown ?: shortNpub(ref.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                p?.nip05?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            }
+                        }
+                        p?.about?.takeIf { it.isNotBlank() }?.let { Text(it, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp)) }
+                        Text("Open profile ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp))
+                    }
+                    HorizontalDivider(color = Vault.Edge)
+                }
+                item(key = "mh") { Heading("Posts mentioning them") }
+                val l = posts
+                if (l == null) item(key = "looking") { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
+                else if (l.isEmpty()) item(key = "none") { Text("No posts mentioning them found.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                else items(l, key = { it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 8); HorizontalDivider(color = Vault.Edge) }
             }
         }
     }
@@ -971,10 +1053,11 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     var thread by remember(id) { mutableStateOf(social.threadNow(id)) }
     var loading by remember(id) { mutableStateOf(true) }
     LaunchedEffect(id) {
-        val full = social.thread(id)
+        val full = social.thread(id) { some -> if (some.isNotEmpty()) thread = some }
         if (full.isNotEmpty() || thread == null) thread = full
         loading = false
     }
+    val eng by social.engagement.collectAsState()
     // Who you're answering: the post you opened, or any other you tap Reply on.
     var target by remember(id) { mutableStateOf(id) }
     val focus = remember { FocusRequester() }
@@ -988,7 +1071,10 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
                 items(shown, key = { it.first.id }) { (e, depth) ->
                     NoteCard(e, people, e.id in liked, nav, onLike = { social.like(e) }, indent = minOf(depth, 4), lit = e.id == id && shown.size > 1 && depth > 0,
                         onReply = { target = e.id; focusNow = true })
-                    if (depth == 0) HorizontalDivider(color = Vault.Edge)
+                    if (depth == 0) {
+                        eng[e.id]?.let { Totals(it) }
+                        HorizontalDivider(color = Vault.Edge)
+                    }
                 }
                 if (loading) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
@@ -1173,20 +1259,20 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (found == null) focus.requestFocus() }
     val scope = rememberCoroutineScope()
-    // A pasted link to someone or a post opens it; name@domain opens whoever it names.
-    val open: (Ref) -> Unit = { r -> when (r) { is Ref.Profile -> nav.profile(r.pubkey); is Ref.Note -> nav.thread(r.id) } }
+    // A pasted link to someone or a post: their page of results, here (see LinkResults); name@domain opens whoever it names.
+    val pasted = remember(q) { Ref.parse(q.trim()) }
     val go = {
         val t = q.trim()
-        Ref.parse(t)?.let(open) ?: run {
+        if (pasted == null) run {
             social.search(t)
             if (Nip05.isAddress(t)) scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } }
         }
     }
-    // As you type: a pasted link at once, words once you pause.
+    // As you type: words once you pause (a pasted link shows its results at once).
     LaunchedEffect(q) {
         val t = q.trim()
         if (t.isEmpty()) { social.clearSearch(); return@LaunchedEffect }
-        Ref.parse(t)?.let { open(it); return@LaunchedEffect }
+        if (pasted != null) { social.clearSearch(); return@LaunchedEffect }
         if (t.length < 2) return@LaunchedEffect
         // Back from a result: these are its results already; searching again would reload them and lose your place.
         if (social.found.value?.query == t) return@LaunchedEffect
@@ -1205,7 +1291,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
         )
     }
-    val f = found ?: return@Column Text("Search names, words or #hashtags. Paste a link to someone or a post to open it.",
+    pasted?.let { return@Column LinkResults(it, social, nav) }
+    val f = found ?: return@Column Text("Search names, words or #hashtags. Paste a link to someone or a post to see who replied, quoted or mentioned it.",
         color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(20.dp))
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         // Still looking: a spinner while there's nothing yet, a thin bar once results are showing.
