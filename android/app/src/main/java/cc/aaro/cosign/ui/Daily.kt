@@ -36,6 +36,19 @@ object Daily {
 
     fun utcDate(): String = LocalDate.now(ZoneOffset.UTC).toString()
 
+    /**
+     * Today's marble, looked at big: collected, on this phone for now (the days, as marble-YYYY-MM-DD ids, for the
+     * shelf to come). True the first time on [date].
+     */
+    fun collect(context: Context, date: String): Boolean {
+        val prefs = context.getSharedPreferences("marbles", Context.MODE_PRIVATE)
+        val have = prefs.getStringSet("collected", emptySet())!!
+        val id = "marble-$date"
+        if (id in have) return false
+        prefs.edit().putStringSet("collected", have + id).apply()
+        return true
+    }
+
     /** Today's from the phone at once; from the site if it isn't here yet (at most once an hour). */
     fun refresh(context: Context) = scope.launch {
         val date = utcDate()

@@ -80,6 +80,7 @@ import cc.aaro.cosign.Hit
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.sp
@@ -543,9 +544,69 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
                 translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p
                 translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p
             })
-        // Its name, quietly, under it.
-        Text("Today: ${marble.name}", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
+        // Its name, in a small chip under it. The first look of the (UTC) day collects it: the chip springs in and a
+        // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
+        val first = remember { Daily.collect(context, Daily.utcDate()) }
+        NameChip(marble.name, java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still,
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
+    }
+}
+
+/** "✦ Ruby Rift 27 Oct": the day's marble's name. [flourish]: it springs in, and a few gold flecks fly off the star. */
+@Composable
+private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean, modifier: Modifier) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val pop = remember { androidx.compose.animation.core.Animatable(if (flourish) 0f else 1f) }
+    val flecks = remember { androidx.compose.animation.core.Animatable(if (flourish) 0f else 1f) }
+    val glint = remember { androidx.compose.animation.core.Animatable(if (flourish) 0f else 1f) }
+    if (flourish) LaunchedEffect(Unit) {
+        delay(250)   // once the marble has grown in
+        launch { pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 420f)) }
+        delay(230)   // landing
+        view.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        launch { flecks.animateTo(1f, androidx.compose.animation.core.tween(480, easing = androidx.compose.animation.core.LinearOutSlowInEasing)) }
+        delay(80)
+        glint.animateTo(1f, androidx.compose.animation.core.tween(600))
+    }
+    val amber = Vault.Amber
+    Box(modifier) {
+        Row(Modifier.graphicsLayer { val p = pop.value; scaleX = 0.5f + 0.5f * p; scaleY = 0.5f + 0.5f * p; alpha = p.coerceIn(0f, 1f) }
+            .clip(RoundedCornerShape(18.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp))
+            .drawWithContent {
+                drawContent()
+                // The glint: a soft light running across once.
+                val g = glint.value
+                if (g in 0.001f..0.999f) {
+                    val x = -0.6f * size.width + 2.0f * size.width * g
+                    drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.45f), Color.Transparent), x, x + 0.4f * size.width))
+                }
+            }
+            .padding(horizontal = 14.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("✦", color = amber, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(6.dp))
+            Text(name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(6.dp))
+            Text(date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM")), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+        }
+        // The flecks, from the star (outside the chip, so they aren't clipped).
+        if (flourish) androidx.compose.foundation.Canvas(Modifier.align(Alignment.CenterStart).offset(x = 20.dp).size(1.dp)) {
+            val f = flecks.value
+            if (f <= 0f || f >= 1f) return@Canvas
+            for (i in 0 until 7) {
+                val a = Math.toRadians((-150 + i * 50).toDouble())
+                val r = (6f + (22f + (i % 3) * 7f - 6f) * f) * density
+                val c = androidx.compose.ui.geometry.Offset(center.x + (kotlin.math.sin(a) * r).toFloat(), center.y - (kotlin.math.cos(a) * r).toFloat())
+                val alpha = (if (f < 0.3f) f / 0.3f else (1f - f) / 0.7f).coerceIn(0f, 1f)
+                val s = (if (i % 2 == 0) 3.2f else 1.8f) * density * (0.6f + 0.4f * f)
+                if (i % 2 == 0) {
+                    // A tiny four-pointed star.
+                    val p = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(c.x, c.y - s); quadraticTo(c.x, c.y, c.x + s, c.y); quadraticTo(c.x, c.y, c.x, c.y + s); quadraticTo(c.x, c.y, c.x - s, c.y); quadraticTo(c.x, c.y, c.x, c.y - s); close()
+                    }
+                    drawPath(p, amber.copy(alpha = alpha))
+                } else drawCircle(amber.copy(alpha = alpha), s * 0.6f, c)
+            }
+        }
     }
 }
 
