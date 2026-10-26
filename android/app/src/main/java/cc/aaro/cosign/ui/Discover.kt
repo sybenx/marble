@@ -652,7 +652,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         val m = mix(72f, 0f) + grow
         val mx = mix(w / 2, 30f); val my = mix(92f, 32f) + grow / 2
         var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-        // Marble of the day; changes at midnight (looked at again whenever Discover comes back).
+        // Marble of the day; changes at 00:00 UTC, the same moment everywhere (looked at again whenever Discover comes back).
         val marble = Marbles.current()
         MarbleArt(marble, "The marble",
             Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).requiredSize((m * 1.8f).dp)
