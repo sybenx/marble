@@ -3,8 +3,11 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05 } from "./data.js";
-import { searchPeople, searchPosts, followerCounts, SEARCH_RELAYS } from "./search.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
+import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
+import { goodPosts, stories, yours, loadStories, prepareMine } from "./find.js";
+import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
+import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -135,16 +138,18 @@ function nip05Label(pk, p) {
 }
 
 /** A post in a list: who, when, what; tapping it opens it. */
-function card(e, { compact = false, context = true } = {}) {
+function card(e, { compact = false, context = true, why = "", clamp = false } = {}) {
   keep(e);
   if (e.kind === 6) return repostCard(e);
   const parent = context ? replyTo(e) : null;
   const cw = warning(e);
-  const body = e.kind === 30023 ? articleTeaser(e) : `<div class="text">${content(e)}</div>`;
+  const body = e.kind === 30023 ? articleTeaser(e) : `<div class="text${clamp ? " clamp" : ""}">${content(e)}</div>`;
   return `<article class="card${compact ? " compact" : ""}" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
+    ${why ? `<p class="why">${esc(why)}</p>` : ""}
     ${who(e.pubkey, e)}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    ${compact ? "" : `<div class="actions">${heart(e)}</div>`}
   </article>`;
 }
 
@@ -170,7 +175,11 @@ function articleTeaser(e) {
 function paint(pk) {
   const p = profiles.get(pk);
   for (const el of document.querySelectorAll(`[data-name="${pk}"]`)) el.textContent = (el.classList.contains("mention") ? "@" : "") + name(pk);
-  for (const el of document.querySelectorAll(`[data-av="${pk}"]`)) el.outerHTML = avatar(pk, parseInt(el.style.getPropertyValue("--s")) || 40);
+  for (const el of document.querySelectorAll(`[data-av="${pk}"]`)) {
+    const img = el.querySelector("img");
+    if (img && img.getAttribute("src") === p?.picture) continue; // the same picture: leave it be (no reload, no flicker)
+    el.outerHTML = avatar(pk, parseInt(el.style.getPropertyValue("--s")) || 40);
+  }
   for (const el of document.querySelectorAll(`[data-nip05="${pk}"]`)) el.innerHTML = nip05Label(pk, p);
 }
 const paintAll = () => new Set([...document.querySelectorAll("[data-name],[data-av]")].map((el) => el.dataset.name || el.dataset.av)).forEach((pk) => profiles.has(pk) && paint(pk));
@@ -182,6 +191,7 @@ onProfile((pk) => {
 
 // Quoted posts and "Replying to" names, filled in after the page is up.
 function fillLater(root = pageEl) {
+  markReactions(root);
   for (const slot of root.querySelectorAll(".quote-slot:not([data-filled])")) {
     slot.dataset.filled = "1";
     const d = decode(slot.dataset.quote);
@@ -228,6 +238,7 @@ async function showEvent(d, signal, { hex = false } = {}) {
     ${root && root[1] !== parent?.[1] ? `<div class="up" data-up="${root[1]}" data-hint="${esc(root[2] || "")}"></div><a class="gap" href="/e/${note(root[1])}">…</a>` : ""}
     ${parent ? `<div class="up" data-up="${parent[1]}" data-hint="${esc(parent[2] || "")}"></div>` : ""}
     ${mainPost(e)}
+    ${replyBox(e)}
     <section class="replies" aria-label="Replies"><h2>Replies</h2><div class="list" id="replies"><p class="muted loading-text">Looking for replies…</p></div></section>
   </div>`;
   mark("post", { relay: found[0] || "kept", id: e.id.slice(0, 8), connect: connectTimes() });
@@ -264,15 +275,198 @@ async function showEvent(d, signal, { hex = false } = {}) {
     list.innerHTML = tree(e.id, 0);
     fillLater(list);
   };
-  replies(e, { hints: found, onEvent: (r) => {
-    if (!(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
+  const tally = { reposts: 0, likes: 0, zaps: 0 };
+  engagement(e, { hints: found, signal, onEvent: (r) => {
+    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 9735) { tally.zaps++; return; }
+    if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
+    if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
     all.set(r.id, r);
     if (!timer) timer = setTimeout(draw, all.size < 4 ? 0 : 120);
-  } }).then(() => {
+  } }).then(({ counts = {} }) => {
     if (signal.aborted) return;
     if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
     else draw();
+    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
+    mark("replies", { n: all.size, counts });
   });
+}
+
+// ── Replying ──────────────────────────────────────────────────────────────────────────────────────────
+
+function replyBox(e) {
+  if (!currentMe()) return `<div class="reply-box signed-out"><button type="button" class="link" data-sign-in>Sign in to reply</button></div>`;
+  return `<form class="reply-box" data-reply="${e.id}">
+    <label for="reply-text" class="visually-hidden">Your reply</label>
+    <textarea id="reply-text" rows="2" placeholder="Write a reply…" maxlength="8000"></textarea>
+    <div class="reply-row"><span class="reply-note" role="status"></span><button type="submit" class="button small">Reply</button></div>
+  </form>`;
+}
+
+/** NIP-10: a reply names the thread's root and the post it answers, and everyone in the conversation. */
+function replyTags(e) {
+  const hint = foundOn(e.id)[0] || "";
+  const root = rootOf(e);
+  const tags = root && root[1] !== e.id
+    ? [["e", root[1], root[2] || "", "root", root[4] || ""], ["e", e.id, hint, "reply", e.pubkey]]
+    : [["e", e.id, hint, "root", e.pubkey]];
+  const people = [e.pubkey, ...e.tags.filter((t) => t[0] === "p" && isHex64(t[1])).map((t) => t[1])];
+  for (const pk of new Set(people)) if (pk !== currentMe()) tags.push(["p", pk]);
+  return tags;
+}
+
+document.addEventListener("click", (ev) => { if (ev.target.closest("[data-sign-in]")) openSignIn(); });
+document.addEventListener("submit", async (ev) => {
+  const form = ev.target.closest("form.reply-box");
+  if (!form) return;
+  ev.preventDefault();
+  const e = events.get(form.dataset.reply);
+  const area = $("textarea", form), note = $(".reply-note", form), button = $("button", form);
+  const text = area.value.trim();
+  if (!e || !text || !canAct()) return;
+  // Shown at once, under the post; taken back if it can't be sent.
+  const list = $("#replies");
+  const draft = { id: "0".repeat(64), pubkey: currentMe(), created_at: Math.floor(Date.now() / 1000), kind: 1, tags: replyTags(e), content: text };
+  const shown = document.createElement("div");
+  shown.className = "reply sending";
+  shown.innerHTML = card(draft, { context: false });
+  events.delete(draft.id);
+  $("article", shown).removeAttribute("data-href");
+  $(".actions", shown)?.remove();
+  $(".loading-text, p.muted", list)?.remove();
+  list.prepend(shown);
+  area.value = "";
+  button.disabled = true;
+  note.textContent = "Sending…";
+  try {
+    const { ev: sent, places } = await sendReply(e, text, draft.tags);
+    shown.className = "reply";
+    shown.innerHTML = card(sent, { context: false });
+    fillLater(shown);
+    note.textContent = `Sent to ${places} ${places === 1 ? "place" : "places"}.`;
+  } catch (err) {
+    shown.remove();
+    area.value = text;
+    note.textContent = err.message;
+  } finally { button.disabled = false; }
+});
+
+/** How a post points at another: "reply" (in its thread), "quote" (embeds it) or "mention". */
+function kindOf(r, e) {
+  if (r.kind === 1111) return "reply";
+  const quotes = (r.tags || []).some((t) => t[0] === "q" && t[1] === e.id)
+    || [...(r.content || "").matchAll(/nostr:((?:note|nevent)1[02-9ac-hj-np-z]+)/gi)].some((m) => decode(m[1])?.id === e.id);
+  if (quotes) return "quote";
+  if (replyTo(r)?.[1] === e.id || rootOf(r)?.[1] === e.id) return "reply";
+  return "mention";
+}
+
+// "N replies · N reposts · N likes", the same line as the app's (quotes have their own section; zaps only when there are some)
+const totals = ({ replies, reposts, likes, zaps }) => [
+  replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
+  reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
+  likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
+  zaps && `${zaps} ${zaps === 1 ? "zap" : "zaps"}`,
+].filter(Boolean).join(" · ");
+
+// ── A pasted post or person: it at the top, then what points at it ───────────────────────────────────
+
+async function showFound(parsed, signal) {
+  const root = pageEl;
+  const d = parsed.kind === "hex" ? { type: "event", id: parsed.hex, relays: [] } : parsed.decoded;
+  root.innerHTML = `<div class="found"><div id="f-top"><div class="card main skeleton"><div class="who"><span class="av" style="--s:48px"></span><div class="who-text"><span class="bar w40"></span><span class="bar w20"></span></div></div><span class="bar"></span><span class="bar w60"></span></div></div><div id="f-rest"></div></div>`;
+  const top = $("#f-top", root), rest = $("#f-rest", root);
+  if (d.type === "profile") return foundPerson(d.pubkey, d.relays, top, rest, signal);
+
+  const asPost = findEvent(d.id, { relays: d.relays, author: d.pubkey });
+  const asPerson = parsed.kind === "hex" ? profile(d.id) : Promise.resolve(null);
+  const e = await Promise.race([asPost, asPerson.then((p) => p || asPost)]).then((x) => (x && x.kind === undefined ? null : x));
+  if (signal.aborted) return;
+  if (!e && await asPerson && !signal.aborted) return foundPerson(d.id, [], top, rest, signal);
+  if (!e) { top.innerHTML = `<div class="empty"><p>Couldn't find this post.</p><p class="muted">It may have been deleted, or the places that keep it aren't answering right now.</p></div>`; return; }
+  const found = foundOn(e.id);
+  top.innerHTML = card(e, { context: true }).replace('class="card', 'class="card lead') + `<p class="totals"></p>`;
+  document.title = `${name(e.pubkey)}: “${(e.content || "").replace(/\s+/g, " ").slice(0, 60)}” · Marble`;
+  mark("post", { relay: found[0] || "kept" });
+  fillLater(top);
+
+  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, likes: 0, zaps: 0 };
+  const opened = new Set();
+  let timer = null;
+  const section = (id, title, items, n, draw, more) => !items.length ? "" : `<section><h2>${title}</h2><div class="list">
+    ${(opened.has(id) ? items : items.slice(0, n)).map(draw).join("")}
+    ${items.length > n && !opened.has(id) ? (more || `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>`) : ""}</div></section>`;
+  const draw = () => {
+    timer = null;
+    if (signal.aborted) return;
+    const newest = (m) => [...m.values()].sort((a, b) => b.created_at - a.created_at);
+    // replies: the direct ones, those with the most answers under them first, then the oldest
+    const under = new Map();
+    for (const r of got.reply.values()) { const to = replyTo(r)?.[1]; if (to) under.set(to, (under.get(to) || 0) + 1); }
+    const direct = [...got.reply.values()].filter((r) => r.kind === 1111 || replyTo(r)?.[1] === e.id)
+      .sort((a, b) => (under.get(b.id) || 0) - (under.get(a.id) || 0) || a.created_at - b.created_at);
+    rest.innerHTML = section("quote", "Quoted by", newest(got.quote), 3, (r) => card(r, { clamp: true, context: false }))
+      + section("reply", "Replies", direct, 3, (r) => card(r, { clamp: true, context: false }),
+        `<a class="more" href="${postPath(e, found.slice(0, 2))}">See all ${got.reply.size}</a>`)
+      + section("mention", "Mentioned in", newest(got.mention), 3, (r) => card(r, { clamp: true, context: false }));
+    fillLater(rest);
+  };
+  rest.onclick = (ev) => { const o = ev.target.closest("[data-open]"); if (o) { opened.add(o.dataset.open); draw(); } };
+  const { counts = {} } = await engagement(e, { hints: found, signal, onEvent: (r) => {
+    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 9735) { tally.zaps++; return; }
+    if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
+    if (!(r.content || "").trim() || warning(r)) return;
+    got[kindOf(r, e)].set(r.id, r);
+    if (!timer) timer = setTimeout(draw, 150);
+  } });
+  if (signal.aborted) return;
+  clearTimeout(timer);
+  draw();
+  if (!rest.innerHTML.trim()) rest.innerHTML = `<p class="muted loading-text">Nothing points at this post yet.</p>`;
+  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
+  mark("engagement", { replies: got.reply.size, quotes: got.quote.size, mentions: got.mention.size, ...tally, counts });
+}
+
+async function foundPerson(pk, hints, top, rest, signal) {
+  const got = { people: [], extra: {}, follows: await Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 800))]) };
+  const drawTop = () => {
+    const p = profiles.get(pk);
+    if (p) top.innerHTML = topPerson({ ...p, pubkey: pk }, got).replace('class="pcard"', 'class="pcard lead"');
+  };
+  if (profiles.has(pk)) { drawTop(); mark("profile"); }
+  profile(pk, hints).then((p) => {
+    if (signal.aborted) return;
+    if (!p) { top.innerHTML = `<div class="empty"><p>Couldn't find this person.</p></div>`; return; }
+    drawTop();
+    document.title = `${name(pk)} · Marble`;
+    if (!document.documentElement.dataset.profile) mark("profile");
+    verifyNip05(p.nip05, pk).then((ok) => { got.extra.verified = new Map([[pk, ok]]); if (!signal.aborted) drawTop(); });
+  });
+  signal.addEventListener("abort", onProfile((who2) => { if (who2 === pk) drawTop(); }));
+
+  // posts that name them in the text (not replies to them, which only carry a tag)
+  const mentions = new Map();
+  let open = false, timer = null;
+  const names = (e) => [...(e.content || "").matchAll(/nostr:((?:npub|nprofile)1[02-9ac-hj-np-z]+)/gi)].some((m) => decode(m[1])?.pubkey === pk);
+  const draw = () => {
+    timer = null;
+    if (signal.aborted) return;
+    const list = [...mentions.values()].sort((a, b) => b.created_at - a.created_at);
+    rest.innerHTML = list.length ? `<section><h2>Posts mentioning them</h2><div class="list">${(open ? list : list.slice(0, 5)).map((r) => card(r, { clamp: true })).join("")}
+      ${!open && list.length > 5 ? `<button type="button" class="more" data-open="m">See all ${list.length}</button>` : ""}</div></section>` : "";
+    fillLater(rest);
+  };
+  rest.onclick = (ev) => { if (ev.target.closest("[data-open]")) { open = true; draw(); } };
+  await mentionsOf(pk, { signal, onEvent: (e) => {
+    if (e.pubkey === pk || !names(e) || warning(e)) return;
+    mentions.set(e.id, e);
+    if (!timer) timer = setTimeout(draw, 150);
+  } });
+  if (signal.aborted) return;
+  clearTimeout(timer);
+  draw();
+  if (!mentions.size) rest.innerHTML = `<p class="muted loading-text">No posts mention them yet.</p>`;
 }
 
 function mainPost(e) {
@@ -281,7 +475,8 @@ function mainPost(e) {
   return `<article class="card main" data-id="${e.id}">
     ${who(e.pubkey, null, { big: true })}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
-    <div class="meta"><time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time>
+    <p class="totals"></p>
+    <div class="meta"><span class="meta-left">${heart(e)}<time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time></span>
     <button type="button" class="link" data-copy="${esc(location.origin + postPath(e, foundOn(e.id).slice(0, 2)))}">Copy link</button></div>
   </article>`;
 }
@@ -411,18 +606,100 @@ async function showProfile(d, signal) {
 
 // ── Search ───────────────────────────────────────────────────────────────────────────────────────────
 
+// A search: people, posts, #tag posts, stories, your things and the web, each only when it has results.
+// Phones get the search mock's single column (the top three of each, then "See all"); desktops the
+// desktop mock: posts and stories in one ranked list, your things after the third, people on the right.
 async function showSearch(q, signal) {
   page("search", q);
   const parsed = parseInput(q);
-  const tag = /^#[\p{L}\p{N}_-]+$/u.test(q);
-  pageEl.innerHTML = `<div class="results">
-    ${parsed.kind === "nip05" ? `<section><div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div></section>` : ""}
-    ${tag ? "" : `<section aria-label="People"><h2>People</h2><div class="list people" id="people"><p class="muted loading-text">Searching…</p></div></section>`}
-    <section aria-label="Posts"><h2>${tag ? esc(q) : "Posts"}</h2><div class="list" id="found-posts"><p class="muted loading-text">Searching…</p></div></section>
+  if (parsed.kind === "hex" || (parsed.kind === "entity" && parsed.decoded.type !== "address")) return showFound(parsed, signal);
+  const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
+  const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(q) ? q : null;
+  const root = pageEl;
+  const got = { people: [], extra: {}, peopleDone: !!tagOnly, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const opened = new Set(); // lists "See all" has opened, kept across redraws
+  const wideQuery = matchMedia("(min-width: 1000px)");
+  root.innerHTML = `<div class="results">
+    <aside class="side" aria-label="People">${parsed.kind === "nip05" ? `<div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div>` : ""}<div id="side"></div></aside>
+    <div class="main" id="main"></div>
   </div>`;
+  const side = $("#side", root), main = $("#main", root);
+  const timers = {};
+  const soon = (fn) => { if (!timers[fn.name]) timers[fn.name] = setTimeout(() => { timers[fn.name] = null; if (!signal.aborted && root.isConnected) fn(); }, 30); };
+  const redraw = () => { soon(drawSide); soon(drawMain); };
+  wideQuery.addEventListener("change", redraw);
+  signal.addEventListener("abort", () => wideQuery.removeEventListener("change", redraw));
+  root.onclick = (ev) => {
+    const open = ev.target.closest("[data-open]");
+    if (open) { opened.add(open.dataset.open); redraw(); }
+  };
+
+  // One section of the phone layout: its first three, "See all N" for the rest.
+  const section = (id, title, items, draw) => !items?.length ? "" : `<section><h2>${title}</h2><div class="list">
+    ${(opened.has(id) ? items : items.slice(0, 3)).map(draw).join("")}
+    ${!opened.has(id) && items.length > 3 ? `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>` : ""}</div></section>`;
+  const personFor = (p) => personRow(p, { verified: got.extra.verified?.get(p.pubkey), followers: got.extra.followers?.get(p.pubkey), follow: got.follows.has(p.pubkey) });
+  const postItem = (x) => card(x.e, { why: x.why, clamp: true });
+  const web = `<a class="web" href="https://duckduckgo.com/?q=${encodeURIComponent(q)}" target="_blank" rel="noopener noreferrer">
+    <span class="web-icon" aria-hidden="true">↗</span>
+    <span><span class="web-title">Search the web for “${esc(q)}”</span><span class="web-sub">with DuckDuckGo</span></span></a>`;
+  const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
+
+  function drawSide() {
+    const people = got.people;
+    if (!people.length) { side.innerHTML = got.peopleDone ? "" : `<section><h2>People</h2><p class="muted loading-text">Searching…</p></section>`; return; }
+    if (!wideQuery.matches) { side.innerHTML = section("people", "People", people, personFor); fillLater(side); return; }
+    const [top, ...rest] = people;
+    const more = opened.has("people") ? rest : rest.slice(0, 7);
+    side.innerHTML = `<section><h2>People</h2>${topPerson(top, got)}</section>
+      ${more.length ? `<section class="more-people"><h2>More people</h2>${more.map((p) => personLine(p, got)).join("")}
+      ${!opened.has("people") && rest.length > more.length ? `<button type="button" class="see-all" data-open="people">See all ${people.length} people</button>` : ""}</section>` : ""}`;
+  }
+
+  function drawMain() {
+    const posts = got.posts || [], tagged = got.tagged || [], stories = got.stories || [], yours = got.yours || [];
+    if (!wideQuery.matches) {
+      const shown = new Set(posts.slice(0, 3).map((x) => x.e.id));
+      main.innerHTML = waiting()
+        + section("posts", tagOnly ? esc(q) : "Posts", posts, postItem)
+        + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
+        + section("stories", "Stories", stories, storyRow)
+        + section("yours", "Your things", yours, postItem)
+        + (got.posts === null ? "" : web);
+      fillLater(main);
+      return;
+    }
+    // Posts and stories in one list by relevance: a post's score against the best post's, a story's title
+    // match (a summary-only match counts for less) times freshness; never more than two of a kind in a row.
+    const pool = new Map();
+    for (const x of [...posts, ...tagged]) if (![...pool.values()].some((y) => y.e.pubkey === x.e.pubkey)) pool.set(x.e.id, x);
+    const best = Math.max(...[...pool.values()].map((x) => x.score), 1e-9);
+    const left = [...[...pool.values()].map((x) => ({ type: "post", x, rel: x.score / best })),
+      ...stories.map((i) => ({ type: "story", i, rel: (i.inTitle ? 0.95 : 0.5) * Math.pow(0.5, (Date.now() / 1000 - i.published_at) / 86400 / 30) }))]
+      .sort((a, b) => b.rel - a.rel);
+    const limit = opened.has("main") ? 40 : 12, list = [];
+    while (left.length && list.length < limit) {
+      const run = list.length >= 2 && list.at(-1).type === list.at(-2).type ? list.at(-1).type : null;
+      const i = run ? left.findIndex((r) => r.type !== run) : 0;
+      list.push(left.splice(i < 0 ? 0 : i, 1)[0]);
+    }
+    const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    const parts = [n(pool.size, "post", "posts"), stories.length && n(stories.length, "story", "stories"), got.people.length && n(got.people.length, "person", "people")].filter(Boolean);
+    const found = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+    const count = got.posts === null || !list.length ? "" : `<p class="count">${found} for “${esc(q)}”. Showing the best ${list.length}.</p>`;
+    const mine = yours.length ? `<div class="yours-box"><h3>From your things</h3>${yours.slice(0, 3).map(yourLine).join("")}</div>` : "";
+    main.innerHTML = count + waiting()
+      + list.map((r, i) => (i === 3 ? mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
+      + (list.length <= 3 ? mine : "")
+      + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
+      + (got.posts === null ? "" : web);
+    fillLater(main);
+  }
+  redraw();
+  signal.addEventListener("abort", onProfile((pk) => { if (pk === got.people[0]?.pubkey) soon(drawSide); }));
 
   if (parsed.kind === "nip05") resolveNip05(parsed.address).then(async (r) => {
-    const box = $("#addr");
+    const box = $("#addr", root);
     if (signal.aborted || !box) return;
     if (r) {
       wantProfile(r.pubkey, r.relays);
@@ -444,46 +721,111 @@ async function showSearch(q, signal) {
       : `<p class="muted">Nobody found at ${esc(parsed.address)}.</p>`;
   });
 
-  if (!tag) {
-    const people = $("#people");
-    let shownAll = false, last = [], extra = {};
-    const drawPeople = () => {
-      if (!people.isConnected) return;
-      if (!last.length) { people.innerHTML = `<p class="muted">${extra.ranked ? "Nobody by that name." : "Searching…"}</p>`; return; }
-      const list = shownAll ? last : last.slice(0, 5);
-      people.innerHTML = list.map((p) => personRow(p, { verified: extra.verified?.get(p.pubkey), followers: extra.followers?.get(p.pubkey) })).join("")
-        + (!shownAll && last.length > 5 ? `<button type="button" class="more" data-all-people>Show all ${last.length}</button>` : "");
-    };
-    people.onclick = (ev) => { if (ev.target.closest("[data-all-people]")) { shownAll = true; drawPeople(); } };
-    searchPeople(q, { limit: 10, signal, onResults: (list, x) => {
-      for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
-      last = list; extra = x;
-      drawPeople();
-      if (list.length && !document.documentElement.dataset.people) mark("people");
-    } }).then(() => { if (!signal.aborted) { extra.ranked = true; drawPeople(); } });
-  }
+  const me = currentMe();
+  // Your follows (read once a visit, usually in by now): at most a short wait before people are ranked.
+  const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
+  followsSoon.then((f) => { got.follows = f; });
 
-  const posts = $("#found-posts");
-  const found = await searchPosts(q, { limit: 40, signal });
-  if (signal.aborted || !posts.isConnected) return;
-  const good = found.filter((e) => (e.content || "").trim().length > 1 && !warning(e));
-  const seen = new Set();
-  const one = good.filter((e) => !seen.has(e.pubkey) && seen.add(e.pubkey)); // one per person, newest
-  let open = false;
-  const drawPosts = () => {
-    posts.innerHTML = one.length
-      ? (open ? one : one.slice(0, 8)).map((e) => card(e)).join("") + (!open && one.length > 8 ? `<button type="button" class="more" data-all-posts>More posts</button>` : "")
-      : `<p class="muted">No posts found.</p>`;
-    fillLater(posts);
-  };
-  posts.onclick = (ev) => { if (ev.target.closest("[data-all-posts]")) { open = true; drawPosts(); } };
-  drawPosts();
+  if (!tagOnly) followsSoon.then((follows) => {
+    if (signal.aborted) return;
+    searchPeople(q, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
+      for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
+      got.people = list; got.extra = x;
+      soon(drawSide); soon(drawMain);
+      if (list.length && !document.documentElement.dataset.people) mark("people");
+    } }).then(() => { if (!signal.aborted) { got.peopleDone = true; got.extra.ranked = true; soon(drawSide); } });
+  });
+
+  goodPosts(q, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
+    got.posts = list;
+    soon(drawMain);
+    if (list.length) mark("posts", goodPosts.last);
+  });
+  if (oneWord) goodPosts(q, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => { got.tagged = list; soon(drawMain); });
+  if (!tagOnly) stories(q).then((list) => {
+    got.stories = list;
+    soon(drawMain);
+    if (list.length) mark("stories");
+  });
+  if (me) yours(q, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
 }
 
-function personRow(p, { verified, followers } = {}) {
+const agoLong = (ts) => {
+  const h = (Date.now() / 1000 - ts) / 3600;
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : h < 48 ? `${Math.round(h)} h ago` : h < 24 * 60 ? `${Math.round(h / 24)} days ago` : `${Math.round(h / 24 / 30)} months ago`;
+};
+
+// Desktop results, as the desktop mock lays them out: plain, no cards.
+function postResult(x) {
+  const e = x.e;
+  wantProfile(e.pubkey);
+  const title = e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : "";
+  return `<article class="res" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
+    <p class="res-why"><b>Post</b>${x.why ? ` · ${esc(x.why)}` : ""}</p>
+    <div class="res-who">${avatar(e.pubkey, 28)}<a href="${personPath(e.pubkey)}" data-name="${e.pubkey}">${esc(name(e.pubkey))}</a><span>${agoLong(e.created_at)}</span></div>
+    ${title ? `<p class="res-title">${esc(title)}</p>` : ""}
+    <div class="text clamp4">${e.kind === 30023 ? esc((e.tags.find((t) => t[0] === "summary") || [])[1] || "") : content(e, { quotes: false })}</div>
+  </article>`;
+}
+
+function storyResult(i) {
+  const img = /^https:\/\//.test(i.image || "") ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  const src = i.source?.name || "";
+  return `<div class="res story-res"><div class="res-body">
+    <p class="res-why"><b>Story</b> · ${esc(i.topic)}</p>
+    <div class="res-src"><span class="dot" aria-hidden="true">${esc(src.replace(/^r\//, "").slice(0, 1).toUpperCase())}</span><span>${esc(src)}<small>${agoLong(i.published_at)}</small></span></div>
+    <a class="res-title" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a>
+    ${i.summary ? `<p class="snip">${esc(i.summary)}</p>` : ""}
+  </div>${img}</div>`;
+}
+
+function yourLine(x) {
+  const e = x.e;
+  const text = (e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : e.content || "").replace(/nostr:\S+|https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  return `<a class="it" href="${postPath(e)}"><span class="k">${esc(x.why)} · ${agoLong(e.created_at)}${x.why !== "You wrote" ? ` · <span data-name="${e.pubkey}">${esc(name(e.pubkey))}</span>` : ""}</span><span class="t">${esc(text.slice(0, 200))}</span></a>`;
+}
+
+function whyPerson(p, got) {
+  if (got.follows.has(p.pubkey)) return "You follow them";
+  const n = got.extra.followers?.get(p.pubkey);
+  return n ? `${n >= 10000 ? Math.round(n / 1000) + "k" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : n} followers` : "";
+}
+
+function topPerson(p, got) {
+  wantProfile(p.pubkey);
+  const full = profiles.get(p.pubkey) || p;
+  const banner = /^https:\/\//.test(full.banner || "") ? `<img src="${esc(full.banner)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  const ok = got.extra.verified?.get(p.pubkey);
+  const addr = (p.nip05 || "").replace(/^_@/, "");
+  const why = whyPerson(p, got);
+  return `<a class="pcard" href="${personPath(p.pubkey)}">
+    <span class="pcard-banner">${banner}</span>
+    <span class="pcard-in">${avatar(p.pubkey, 72)}
+      <span class="pcard-name" data-name="${p.pubkey}">${esc(name(p.pubkey))}</span>
+      ${addr && ok !== false ? `<span class="addr${ok ? " ok" : ""}">${esc(addr)}</span>` : ""}
+      ${why ? `<span class="pcard-why">${esc(why)}</span>` : ""}
+      ${p.about ? `<span class="pcard-about">${esc(p.about.replace(/\s+/g, " ").slice(0, 220))}</span>` : ""}
+    </span></a>`;
+}
+
+function personLine(p, got) {
+  const ok = got.extra.verified?.get(p.pubkey);
+  const sub = whyPerson(p, got) || (ok ? (p.nip05 || "").replace(/^_@/, "") : "") || (p.about || "").replace(/\s+/g, " ").slice(0, 80);
+  return `<a class="pline" href="${personPath(p.pubkey)}">${avatar(p.pubkey, 38)}<span><b data-name="${p.pubkey}">${esc(name(p.pubkey))}</b><small>${esc(sub)}</small></span></a>`;
+}
+
+function storyRow(i) {
+  const img = /^https:\/\//.test(i.image || "") ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  return `<a class="story" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">
+    <span class="story-text"><span class="story-src"><b>${esc(i.topic)}</b> · ${esc(i.source?.name || "")} · ${ago(i.published_at)}</span>
+    <span class="story-title">${esc(i.title)}</span></span>${img}
+  </a>`;
+}
+
+function personRow(p, { verified, followers, follow = false } = {}) {
   const pk = p.pubkey;
   const addr = (p.nip05 || "").replace(/^_@/, "");
-  const count = followers ? `${followers >= 10000 ? Math.round(followers / 1000) + "k" : followers >= 1000 ? (followers / 1000).toFixed(1) + "k" : followers} followers` : "";
+  const count = follow ? "You follow them" : followers ? `${followers >= 10000 ? Math.round(followers / 1000) + "k" : followers >= 1000 ? (followers / 1000).toFixed(1) + "k" : followers} followers` : "";
   return `<a class="person-row" href="${personPath(pk)}">
     ${avatar(pk, 44)}
     <span class="pr-text">
@@ -498,7 +840,7 @@ function personRow(p, { verified, followers } = {}) {
 
 let typing = null;
 let warmed = false;
-const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
+const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); loadStories(); myFollows(); } };
 for (const ev of ["focus", "pointerdown", "keydown"]) input.addEventListener(ev, warmUp, { passive: true });
 
 input.addEventListener("paste", () => { navStart = performance.now(); });
@@ -507,15 +849,17 @@ input.addEventListener("input", () => {
   const parsed = parseInput(text);
   clearTimeout(typing);
   // An address opens what it names at once, without waiting for Enter.
-  if (parsed.kind === "entity") {
+  // A pasted post or person shows at once, as the top of a results page (what quotes, answers or mentions
+  // it); an article opens directly.
+  if (parsed.kind === "entity" || parsed.kind === "hex") {
     const t0 = navStart && performance.now() - navStart < 50 ? navStart : performance.now();
-    input.value = "";
+    const key = parsed.kind === "hex" ? parsed.hex : parsed.entity;
+    input.value = key;
     input.blur();
-    go(pathFor(parsed.entity, parsed.decoded));
+    go(parsed.kind === "entity" && parsed.decoded.type === "address" ? pathFor(parsed.entity, parsed.decoded) : `/?q=${key}`, { replace: document.body.dataset.page === "search" });
     navStart = t0;
     return;
   }
-  if (parsed.kind === "hex") { input.blur(); return go(`/e/${parsed.hex}`); }
   if (!text.trim()) {
     if (document.body.dataset.page === "search") go("/", { replace: true });
     return;
@@ -574,7 +918,7 @@ document.addEventListener("click", (ev) => {
     if (url.pathname === "/" && !url.search) input.value = "";
     return go(url.pathname + url.search);
   }
-  const c = ev.target.closest("article.card[data-href]");
+  const c = ev.target.closest("article[data-href]");
   if (c && !ev.target.closest("button, video, details summary, .who") && !getSelection().toString()) go(c.dataset.href);
 });
 
@@ -584,6 +928,39 @@ function zoom(src) {
   dialog.showModal();
 }
 dialog.addEventListener("click", () => dialog.close());
+
+// ── Signed in ────────────────────────────────────────────────────────────────────────────────────────
+
+const account = $("#account");
+function drawAccount() {
+  const me = currentMe();
+  if (me) {
+    wantProfile(me);
+    account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false">${avatar(me, 36)}</button>
+      <div class="menu" hidden><a href="${personPath(me)}">Your profile</a><button type="button" data-sign-out>Sign out</button></div>`;
+  } else account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`;
+}
+account.addEventListener("click", async (ev) => {
+  const menu = $(".menu", account);
+  if (ev.target.closest(".sign-in")) openSignIn();
+  else if (ev.target.closest(".me")) {
+    menu.hidden = !menu.hidden;
+    $(".me", account).setAttribute("aria-expanded", !menu.hidden);
+  } else if (ev.target.closest("[data-sign-out]")) signOut();
+  else if (ev.target.closest("a") && menu) menu.hidden = true;
+});
+document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
+onMe((me) => {
+  drawAccount();
+  prepareMine(me);
+  // the reply box follows who's signed in
+  for (const f of document.querySelectorAll(".reply-box")) {
+    const id = f.dataset.reply || f.closest(".thread")?.querySelector(".card.main")?.dataset.id;
+    if (id && events.has(id)) f.outerHTML = replyBox(events.get(id));
+  }
+});
+drawAccount();
+prepareMine(currentMe());
 
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
 
