@@ -58,19 +58,21 @@ object Calm {
             e.kind == 1 && (text.length < 60 || (link(e) == null && videos(e) == 0)) -> "no link or video, or too short"
             !readable -> "not in a language you read"
             !standing.follow && Curate.heavy(text) -> "personal or grief post from a stranger"
-            // A link roundup counts too: five links or more.
-            !standing.follow && (Curate.digest(e.content) || urls(e).count { !IMG.containsMatchIn(it) } >= 5) -> "newsletter or digest from a stranger"
             !standing.follow && standing.trustedBy < 3 && standing.followers < 300 -> "nobody you know follows them"
             else -> null
         }
     }
 
+    /** A newsletter or digest: "In this week's issue", an issue number, a roundup, subscribe or sponsored blocks, or five links or more. */
+    fun digest(e: Event) = Curate.digest(e.content) || urls(e).count { !IMG.containsMatchIn(it) } >= 5
+
     /**
-     * How well [e] fits, and why: topic match × freshness × trust × people. [weights]: your topics, 0..1
-     * (only these count); [fans]: who liked or shared it; [follows]: who you follow; [engaged]: people
-     * whose posts you've liked before.
+     * How well [e] fits, and why: topic match × freshness × trust × people. A stranger's newsletter or digest
+     * counts for [digests] of that (it's there, lower down, unless you've shown you like them). [weights]: your
+     * topics, 0..1 (only these count); [fans]: who liked or shared it; [follows]: who you follow;
+     * [engaged]: people whose posts you've liked before.
      */
-    fun score(e: Event, weights: Map<String, Double>, standing: Standing, fans: Set<String>, follows: Set<String>, engaged: Boolean, now: Long): Pick? {
+    fun score(e: Event, weights: Map<String, Double>, standing: Standing, fans: Set<String>, follows: Set<String>, engaged: Boolean, now: Long, digests: Double = 1.0): Pick? {
         val hits = TopicGuess.hits(e, strict = true).filter { (weights[it.topic] ?: 0.0) > 0 }
             .sortedWith(compareByDescending<TopicGuess.Hit> { it.strength }.thenByDescending { weights[it.topic] ?: 0.0 })
         if (hits.isEmpty()) return null
@@ -87,7 +89,8 @@ object Calm {
         val ageH = (now - e.createdAt).coerceAtLeast(0) / 3600.0
         val fresh = 0.5.pow(ageH / 18)
         val people = 0.6 + 0.35 * log2(1.0 + fans.size) + 0.15 * min(friendFans, 6) + (if (engaged) 0.3 else 0.0)
-        return Pick(e, top.topic, match * fresh * trust * people, "${TopicFeeds.name(top.topic)} · $why", fans.size)
+        val demote = if (!standing.follow && digest(e)) digests else 1.0
+        return Pick(e, top.topic, match * fresh * trust * people * demote, "${TopicFeeds.name(top.topic)} · $why", fans.size)
     }
 
     /** One post per person; at most 2 per topic in the first ten, 3 after; [max] in all. Then it ends. */
@@ -125,17 +128,36 @@ object Calm {
     }
 
     /** How well a story fits you: your interest in its topic (followed first), and how new it is (half as much every 18 hours). */
-    fun storyScore(c: TopicCard, interests: Interests, now: Long) =
-        interests.of(c.topic) * interests.sourcePenalty(c.sourceId) * 0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18)
+    fun storyScore(c: TopicCard, interests: Interests, now: Long, shown: Int = 0) =
+        interests.of(c.topic) * interests.sourcePenalty(c.sourceId) * 0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18) *
+            (if (shown >= ROTATE) 0.25 else 1.0)
+
+    /** Shown on this many fresh opens without being tapped: a story makes way for newer ones (it isn't hidden). */
+    const val ROTATE = 3
 
     /** The box at the top: the [max] stories that fit you best, one per topic, from the last two days. */
-    fun todays(all: List<TopicCard>, interests: Interests, now: Long, max: Int = 4): List<TopicCard> {
+    fun todays(all: List<TopicCard>, interests: Interests, now: Long, max: Int = 4, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> {
         val byTopic = HashSet<String>()
-        return stories(all, interests, now).filter { byTopic.add(it.topic) }.take(max)
+        return stories(all, interests, now, shown, window).filter { byTopic.add(it.topic) }.take(max)
+    }
+
+    /** The box from last time's page: kept only when coming back (Android recreated Marble); a fresh start makes a new one. */
+    fun restoredBox(saved: List<TopicCard>, resumed: Boolean) = if (resumed) saved else emptyList()
+
+    /**
+     * The box on a fresh start: never empty while there are stories at all. The best of today's not opened
+     * (or dismissed); if you've opened them all, the best of today's anyway; if there are none from the last
+     * two days, the best older ones.
+     */
+    fun box(all: List<TopicCard>, interests: Interests, now: Long, opened: (TopicCard) -> Boolean, dismissed: (TopicCard) -> Boolean, shown: (String) -> Int = { 0 }): List<TopicCard> {
+        val ok = all.filter { !dismissed(it) }
+        return todays(ok.filter { !opened(it) }, interests, now, shown = shown)
+            .ifEmpty { todays(ok, interests, now, shown = shown) }
+            .ifEmpty { todays(ok, interests, now, shown = shown, window = Long.MAX_VALUE) }
     }
 
     /** All of today's stories, for "More stories": the topics you follow first, then the best fit. */
-    fun stories(all: List<TopicCard>, interests: Interests, now: Long): List<TopicCard> =
-        all.filter { now - it.publishedAt < WINDOW && !interests.hidden("hiddenSources", it.sourceId) }
-            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now) })
+    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> =
+        all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
+            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now, shown(it.id)) })
 }

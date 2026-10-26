@@ -261,8 +261,30 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** The topics you follow, for the screen. */
     val followedTopics = MutableStateFlow(interests.followed.toSet())
     /** It's been on screen properly: never again. */
-    fun saw(key: String) { if (seen.add(key)) seenChanged() }
+    /**
+     * On screen properly. A post: never again (and on your other phones too). A story ("t:" and its id): only
+     * counted as shown; it goes when you open it ([opened]) or dismiss it, and makes way for newer ones after
+     * being shown on a few opens.
+     */
+    fun saw(key: String) { if (key.startsWith("t:")) shown(key.drop(2)) else if (seen.add(key)) seenChanged() }
     private fun unseen(key: String) = key !in seen && key !in dismissed.value
+    /** A story you opened, or dismissed: not in the box or More stories again (unless there's nothing else). */
+    private fun storyGone(c: TopicCard) = storyOpened(c) || storyDismissed(c)
+    private fun storyOpened(c: TopicCard) = "o:" + c.id in seen
+    private fun storyDismissed(c: TopicCard) = "t:" + c.id in dismissed.value
+
+    // How many fresh opens each story was shown on (on this phone only): counted once a start.
+    private val shownCounts: MutableMap<String, Int> = java.util.concurrent.ConcurrentHashMap<String, Int>().apply {
+        prefs.getString("storiesShown", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
+    }
+    private val shownThisOpen = java.util.Collections.synchronizedSet(HashSet<String>())
+    private fun shown(id: String) {
+        if (!shownThisOpen.add(id)) return
+        shownCounts[id] = (shownCounts[id] ?: 0) + 1
+        val keep = shownCounts.entries.toList().takeLast(1000).associate { it.key to it.value }
+        prefs.edit().putString("storiesShown", org.json.JSONObject(keep).toString()).apply()
+    }
+    private fun shownCount(id: String) = shownCounts[id] ?: 0
     /** Today's stories, all of them, for "More stories" (seen ones are left out there). */
     val allStories = MutableStateFlow<List<TopicCard>>(emptyList())
     /** These stories again, in this order (More stories coming back from one), from the phone's copy if need be. */
@@ -275,7 +297,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     suspend fun unseenStories(): List<TopicCard> {
         // Opened from last time's feed, the full list may not be read yet: the phone's copy, or the site's.
         if (allStories.value.isEmpty()) allStories.value = TopicFeeds.load(CosignApp.instance, cachedOnly = true).ifEmpty { try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { emptyList() } }
-        return Calm.stories(allStories.value.filter { unseen("t:" + it.id) }, interests, Clock.now())
+        return Calm.stories(allStories.value.filter { !storyGone(it) }, interests, Clock.now(), ::shownCount)
     }
     /** Link previews (title, picture, summary from the page's own tags), by link. */
     val previews = MutableStateFlow<Map<String, Preview>>(emptyMap())
@@ -307,7 +329,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch {
             if (restored.await()) afterPaint()
             // The box changes only when you ask (or when there's none yet); otherwise just the full list for More stories.
-            launch { if (force || feed.value.stories.isEmpty()) loadStories(onScreen) else allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value } }
+            // The box changes when you pull, when there's none, or (once, while opening) when it was put together
+            // from stories hours old; otherwise only the full list for More stories is brought up to date.
+            launch {
+                if (force || feed.value.stories.isEmpty() || (!Sources.resumed && !boxSettled && !TopicFeeds.fresh(CosignApp.instance))) loadStories(onScreen)
+                else allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
+            }
             // Nothing to show yet (a new phone, say): a few good posts from quick asks first, in a second or two.
             if (f.posts.isEmpty() || force) launch {
                 val quick = try { quickPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
@@ -332,15 +359,21 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun refillStories() {
         val all = allStories.value.ifEmpty { TopicFeeds.load(CosignApp.instance, cachedOnly = true).also { allStories.value = it } }
         // Only into an empty box: a box on screen is never swapped for another.
-        val box = Calm.todays(all.filter { unseen("t:" + it.id) }, interests, Clock.now())
+        val box = Calm.box(all, interests, Clock.now(), ::storyOpened, ::storyDismissed, ::shownCount)
         feed.update { if (it.stories.isNotEmpty()) it else it.copy(stories = box) }
     }
 
     /** The box: today's stories that fit you best, one per topic. */
+    /** The box was put together from the site's latest stories since Marble started. */
+    @Volatile private var boxSettled = false
+
     private suspend fun loadStories(skip: Set<String>) {
+        boxSettled = true
         val all = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { TopicFeeds.load(CosignApp.instance, cachedOnly = true) }
         allStories.value = all
-        val box = Calm.todays(all.filter { unseen("t:" + it.id) && "t:" + it.id !in skip }, interests, Clock.now())
+        // Pulled: not the ones that were just on screen, unless there's nothing else.
+        val box = Calm.box(all.filter { "t:" + it.id !in skip }, interests, Clock.now(), ::storyOpened, ::storyDismissed, ::shownCount)
+            .ifEmpty { Calm.box(all, interests, Clock.now(), ::storyOpened, ::storyDismissed, ::shownCount) }
         feed.update { it.copy(stories = box) }
         if (box.isNotEmpty()) Startup.mark("feed stories ${box.size}")
         saveFeed()
@@ -386,7 +419,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val followers = ConcurrentHashMap<String, Long>()
         if (strangers.isNotEmpty()) kotlinx.coroutines.withTimeoutOrNull(1000) { Fetch.counts(SearchRelays.COUNTS[0], strangers.associateWith { mapOf("kinds" to listOf(3), "#p" to listOf(it)) }, 1000, inFlight = 12) { pk, c -> followers[pk] = c } }
         step("counts ${followers.size}")
-        val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now) }
+        val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now, interests.digestWeight()) }
         if (debuggable) Startup.mark("feed quick asked ${got.size}, passed ${passes.size}, follows ${follows.size}, counted ${followers.size}, picked ${picks.size}")
         Calm.diversify(picks, max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
     }
@@ -446,7 +479,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         fun rank(fans: Map<String, Set<String>>) = passes.mapNotNull { e ->
             val s = standing[e.pubkey] ?: return@mapNotNull null
             if (Calm.drop(e, me, liked, perAuthor[e.pubkey] ?: 0, names[e.pubkey]?.name, true, s) != null) return@mapNotNull null
-            Calm.score(e, weights, s, fans[e.id] ?: emptySet(), follows, false, now)
+            Calm.score(e, weights, s, fans[e.id] ?: emptySet(), follows, false, now, interests.digestWeight())
         }.sortedByDescending { it.score }
         val first = rank(emptyMap()).take(200)
         Startup.mark("feed first pass ${first.size}")
@@ -496,10 +529,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     if ((!Sources.resumed && !unseen(e.id)) || !forDiscover(e) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
                     val reason = p["reason"] as? String ?: ""
                     // A fresh start checks last time's page against today's rules (a newsletter, a heavy post from a stranger).
-                    if (!Sources.resumed && !reason.contains("someone you follow") && (Curate.digest(e.content) || Curate.heavy(Calm.text(e)))) return@mapNotNull null
+                    if (!Sources.resumed && !reason.contains("someone you follow") && Curate.heavy(Calm.text(e))) return@mapNotNull null
                     Pick(e, p["topic"] as? String ?: return@mapNotNull null, 0.0, reason, (p["likes"] as? Long)?.toInt() ?: 0, (p["more"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList())
                 } ?: emptyList()
-                val stories = (m["stories"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) }?.filter { Sources.resumed || unseen("t:" + it.id) } ?: emptyList()
+                // The box as it was only when coming back (Android recreated Marble); a fresh start puts a new one together.
+                val stories = Calm.restoredBox((m["stories"] as? List<*>)?.mapNotNull { TopicCard.fromMap(it) } ?: emptyList(), Sources.resumed)
                 if (stories.isEmpty()) launch { refillStories() }
                 if (posts.isEmpty() && stories.isEmpty()) return@launch
                 remember(posts.map { it.e })
@@ -579,7 +613,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val ranked = i.pool.mapNotNull { e ->
             val st = i.standing[e.pubkey] ?: return@mapNotNull null
             if (!unseen(e.id) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
-            Calm.score(e, weights, st, i.fans[e.id] ?: emptySet(), i.follows, false, now)
+            Calm.score(e, weights, st, i.fans[e.id] ?: emptySet(), i.follows, false, now, interests.digestWeight())
         }
         val picks = Calm.collapse(Calm.diversify(ranked), ::nameOf)
         feed.update { cur ->
@@ -640,7 +674,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         pullSeen(again = true)
         val now = Clock.now()
-        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW), now), encrypt = true) ?: return
+        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW).filter { !it.first.startsWith("t") }, now), encrypt = true) ?: return
         // NIP-40: relays may drop it two weeks after the last write, so it doesn't outlive your use of Marble (each write moves it on).
         val tags = listOf(listOf("d", SeenSync.TAG), listOf("expiration", (now + SeenSync.EXPIRES).toString()))
         val signed = try { phone.signOwn(Event(me, now, 30078, tags, text).withId()) } catch (_: Exception) { return }
@@ -698,12 +732,22 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
-    /** "More like this": a little more of its topic. */
-    fun moreLike(topic: String) { interests.learn(listOf(topic), 1.0); message.value = "More like this from now on." }
+    /** "More like this": a little more of its topic (and, for a newsletter, of newsletters). */
+    fun moreLike(topic: String, post: Event? = null) { interests.learn(listOf(topic), 1.0); post?.let { newsletterTaste(it, 1) }; message.value = "More like this from now on." }
+
+    /** You opened a post's link. */
+    fun openedLink(post: Event) = newsletterTaste(post, 1)
+
+    /** A stranger's newsletter you liked (or didn't): more of them, or fewer. */
+    private fun newsletterTaste(e: Event, by: Int) {
+        if (e.pubkey in (follows.value ?: emptySet()) || !Calm.digest(e)) return
+        interests.newsletters(by)
+    }
 
     /** "Less like this": this one goes, and a little less of its topic. [key]: the post's id, or "t:" and the story's. */
-    fun lessLike(topic: String, key: String) {
+    fun lessLike(topic: String, key: String, post: Event? = null) {
         interests.learn(listOf(topic), -1.5)
+        post?.let { newsletterTaste(it, -1) }
         hide(key)
         message.value = "Less like this from now on."
     }
@@ -721,7 +765,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** You opened a story: a little more of its topic. */
-    fun opened(c: TopicCard) = interests.learn(listOf(c.topic), 1.0)
+    fun opened(c: TopicCard) { interests.learn(listOf(c.topic), 1.0); if (seen.add("o:" + c.id)) seenChanged() }
 
     private fun hide(key: String) {
         dismissed.update { it + key }
@@ -1082,6 +1126,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (note.id in liked.value) return
         mark(note.id, true)
         interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
+        newsletterTaste(reposted(note) ?: note, 1)
         scope.launch {
             val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
             if (!act(Event(me, Clock.now(), 7, tags, "+").withId())) mark(note.id, false)
@@ -1173,6 +1218,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Not this note, and less like it: the same author is left out of Discover for three days. */
     fun notInterested(e: Event) {
         interests.learn(TopicGuess.of(e), -1.0)
+        newsletterTaste(e, -1)
         dismissed.update { it + e.id }
         snoozed.update { it + (e.pubkey to System.currentTimeMillis() + 3 * 86_400_000L) }
         prefs.edit().putStringSet("dismissed", dismissed.value.toList().takeLast(2000).toSet())

@@ -153,20 +153,36 @@ class TopicsTest {
         assertEquals("news feed or bot account", Calm.drop(linkPost(11, ok), "me", emptySet(), 26, "Ann", true, friend))
     }
 
-    @Test fun newslettersStayOutFromStrangers() {
+    @Test fun strangersNewslettersAreLowerDownUntilYouLikeThem() {
         val stranger = Standing(false, 5, 0)
-        for (t in listOf("📰 **In this week's issue:** Bitcoin Core just changed the rules for AI-discoverable bugs https://nostrmag.com/x",
-                "Issue #42 of the AI weekly is out, with the best agent tools of the week https://example.com/issue-42",
-                "Our weekly roundup of local LLM news, models and tools you missed https://example.com/roundup",
-                "New models everywhere. This edition is sponsored by Acme AI, subscribe now https://example.com/a",
-                "Five good reads this week about LLM agents and the tools around them: https://a.com/1 https://b.com/2 https://c.com/3 https://d.com/4 https://e.com/5"))
-            assertEquals(t, "newsletter or digest from a stranger", Calm.drop(linkPost(t.length, t), "me", emptySet(), 1, "Ann", true, stranger))
-        // From someone you follow it can stay; and ordinary words near these don't trip it.
-        val issue = "In this week's issue: the local LLM I run on my laptop and what it costs https://example.com/n"
-        assertEquals(null, Calm.drop(linkPost(1, issue), "me", emptySet(), 1, "Ann", true, friend))
-        for (t in listOf("Fixed the issue with my local LLM setup, here's what worked for me https://example.com/fix",
-                "This week I finally ran an LLM agent on my own laptop, notes here https://example.com/week"))
-            assertEquals(t, null, Calm.drop(linkPost(t.length + 7, t), "me", emptySet(), 1, "Ann", true, stranger))
+        val w = mapOf("bitcoin" to 1.0, "ai" to 1.0)
+        val digests = listOf("📰 **In this week's issue:** Bitcoin Core just changed its rules, sats and lightning fees, what bitcoin holders should know https://nostrmag.com/x",
+            "Issue #42 of the AI weekly is out, with the best LLM agent tools of the week https://example.com/issue-42",
+            "Our weekly roundup of local LLM and AI news you missed this week, with notes on each https://example.com/roundup",
+            "Five good reads this week about LLM and AI tools, the ones I keep coming back to: https://a.com/1 https://b.com/2 https://c.com/3 https://d.com/4 https://e.com/5")
+        val plain = linkPost(900, "Wrote up how I run a local LLM with ollama on an old laptop, and what it costs https://example.com/llm-laptop")
+        val prefs = Interests(FakePrefs())
+        for (t in digests) {
+            val e = linkPost(t.length, t)
+            assertEquals(t, null, Calm.drop(e, "me", emptySet(), 1, "Ann", true, stranger))                // there, not left out
+            assertTrue(t, Calm.digest(e))
+            val low = Calm.score(e, w, stranger, emptySet(), emptySet(), false, now, prefs.digestWeight())!!.score
+            val full = Calm.score(e, w, stranger, emptySet(), emptySet(), false, now, 1.0)!!.score
+            assertEquals(t, full * 0.2, low, 1e-9)                                                    // lower down
+        }
+        assertFalse(Calm.digest(plain))
+        // You like one: no longer lower down. Not interested: further down than before.
+        prefs.newsletters(1)
+        assertEquals(1.0, prefs.digestWeight(), 0.0)
+        assertEquals(1.0, Interests(FakePrefs()).apply { adopt(prefs.toJson()) }.digestWeight(), 0.0)   // and on your other phones
+        prefs.newsletters(-1); prefs.newsletters(-1)
+        assertEquals(0.05, prefs.digestWeight(), 0.0)
+        // Someone you follow: never lower down.
+        val e = linkPost(1, digests[0])
+        assertEquals(Calm.score(e, w, friend, emptySet(), emptySet(), false, now, 1.0)!!.score, Calm.score(e, w, friend, emptySet(), emptySet(), false, now, 0.05)!!.score, 1e-12)
+        // Despair from a stranger stays a hard no.
+        val heavy = linkPost(2, "honestly i don't want to be here anymore, everything feels empty and I can't see it changing https://example.com/x")
+        assertEquals("personal or grief post from a stranger", Calm.drop(heavy, "me", emptySet(), 1, "Ann", true, stranger))
     }
 
     @Test fun reasonsSayWhy() {
@@ -221,6 +237,34 @@ class TopicsTest {
         // Kept when saved and read back.
         val c = TopicCard("c", "https://example.com/a", "T", "", null, "s", "S", 1L, "ai", d)
         assertEquals(c, TopicCard.fromMap(c.toMap()))
+    }
+
+    @Test fun theBoxIsNeverEmptyAndScrollingPastDoesntHideStories() {
+        val i = Interests(FakePrefs())
+        val today = (1..8).map { card(it, listOf("ai", "games", "food", "art", "news", "photos", "bitcoin", "privacy")[it - 1], at = now - it * 600L) }
+        // Scrolled past every story on three opens: all still there; nothing opened, nothing hidden.
+        val shown = today.associate { it.id to Calm.ROTATE }
+        val box = Calm.box(today, i, now, opened = { false }, dismissed = { false }, shown = { shown[it] ?: 0 })
+        assertEquals(4, box.size)
+        // Shown often, they make way for ones not shown yet.
+        val fresh = card(20, "games", at = now - 7200)
+        val box2 = Calm.box(today + fresh, i, now, opened = { false }, dismissed = { false }, shown = { shown[it] ?: 0 })
+        assertTrue(box2.any { it.id == "c20" })
+        // Every story opened: the box still shows the best of them, not nothing.
+        assertEquals(4, Calm.box(today, i, now, opened = { true }, dismissed = { false }).size)
+        // Nothing from the last two days: the best older ones.
+        val old = today.map { it.copy(publishedAt = now - 5 * 86_400) }
+        assertEquals(4, Calm.box(old, i, now, opened = { false }, dismissed = { false }).size)
+        // Dismissed stays dismissed.
+        assertTrue(Calm.box(today, i, now, opened = { false }, dismissed = { it.id == "c1" }).none { it.id == "c1" })
+    }
+
+    @Test fun aFreshStartMakesANewBoxComingBackKeepsTheOldOne() {
+        val saved = listOf(card(1, "ai"), card(2, "food"))
+        assertEquals(saved, Calm.restoredBox(saved, resumed = true))
+        assertTrue(Calm.restoredBox(saved, resumed = false).isEmpty())
+        // Opened stories travel to your other phones; stories only scrolled past ("t") don't count for anything there.
+        assertEquals("o0123456789abcdef", SeenSync.short("o:0123456789abcdef"))
     }
 }
 
