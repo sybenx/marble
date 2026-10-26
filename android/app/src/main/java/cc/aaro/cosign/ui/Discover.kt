@@ -115,6 +115,7 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -410,9 +411,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
             }
         }
-        // Your picture, the bell and the pencil, top right.
+        // Your picture and the bell, top right. Home is yours: nothing here posts (the pencil is in Discover).
         Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -507,6 +507,8 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
         Text("Discover", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f).clickable(onClickLabel = "Reload") { social.loadFeed(force = true) })
         IconButton({ social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
+        // Discover is the world: writing a public post starts here.
+        IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New public post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
     }
     // Pull down to refresh (home has nothing to refresh now; this is where it went).
     var pulled by remember { mutableStateOf(false) }
@@ -1416,13 +1418,18 @@ private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modif
     val preview by produceState(story?.let { Preview(it.title, it.image, it.summary, it.sourceName) } ?: social.previews.value[link], link) {
         if (value == null && link.isNotEmpty()) value = Preview.fetch(link)
     }
-    Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Public, and plainly so: your picture, "Public · everyone can see this", and Post publicly.
+    Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.Filled.Close, "Close", tint = Vault.Text) }
-        Text("New post", style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
+        social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32); Spacer(Modifier.width(10.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text("Public", style = MaterialTheme.typography.titleMedium, color = Vault.Text, fontWeight = FontWeight.SemiBold)
+            Text("Everyone can see this", style = MaterialTheme.typography.labelMedium, color = Vault.Muted)
+        }
         Button({
             sending = true
             scope.launch { val sent = social.post(text, link); sending = false; if (sent != null) { social.message.value = "Posted."; nav.back() } }
-        }, enabled = !sending && (text.isNotBlank() || link.isNotEmpty()), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(if (sending) "Posting…" else "Post") }
+        }, enabled = !sending && (text.isNotBlank() || link.isNotEmpty()), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(if (sending) "Posting…" else "Post publicly") }
     }
     TextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).padding(horizontal = 4.dp),
         placeholder = { Text(if (link.isEmpty()) "What's on your mind?" else "Add a comment…", color = Vault.Muted) },
@@ -1928,6 +1935,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
         )
     }
+    // Honest about both: what you save stays yours; a search goes to your engine.
+    OnlyYou("What you save is only yours · searches go to ${engine.label}", Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp))
     Box(Modifier.fillMaxSize()) {
         when {
             pasted != null -> LinkResults(pasted, social, nav)
@@ -2044,7 +2053,8 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     val pg = pages.filter { hit(it.title) || hit(it.url) || hit(it.from) }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-        Text("Later", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold)
+        Text("Later", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        OnlyYou()
     }
     TextField(filter, { filter = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), singleLine = true,
         placeholder = { Text("Filter Later", color = Vault.Muted) }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Vault.Muted) },
@@ -2139,6 +2149,14 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
         }
     }
     HorizontalDivider(color = Vault.Edge)
+}
+
+/** On what's yours alone (Later, a thought you keep): a small lock and [text]. */
+@Composable
+private fun OnlyYou(text: String = "Only you", modifier: Modifier = Modifier) = Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+    Icon(Icons.Filled.Lock, null, tint = Vault.Muted, modifier = Modifier.size(13.dp))
+    Spacer(Modifier.width(4.dp))
+    Text(text, color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
 }
 
 /** "just now", "5 days ago", "3 weeks ago", "2 months ago": [sec] in plain words. */
