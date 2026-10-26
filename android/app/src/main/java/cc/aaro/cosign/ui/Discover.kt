@@ -139,6 +139,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.lifecycle.repeatOnLifecycle
 import cc.aaro.cosign.Ref
 import cc.aaro.cosign.Social
+import cc.aaro.cosign.FeedLog
 import cc.aaro.cosign.Startup
 import cc.aaro.cosign.Translate
 import cc.aaro.cosign.Ui
@@ -222,7 +223,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // recreating Marble, as the screens are.
     var awaySince by androidx.compose.runtime.saveable.rememberSaveable { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime() }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime(); FeedLog.ev("away") }
     // Read on open and when you come back to it; nothing in between.
     // Home: the main page, at the top, its search box showing, the feed as it was (the swirl in any screen's bar, or back after a while).
     val home: () -> Unit = {
@@ -236,6 +237,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         val gone = if (awaySince > 0) android.os.SystemClock.elapsedRealtime() - awaySince else 0L
         if (debugBuild && awaySince > 0) android.util.Log.i("CosignAway", "back after ${gone / 1000} s (home from ${Away.after / 1000} s)")
         val away = awaySince > 0 && gone >= Away.after
+        if (away) FeedLog.start("back") else if (awaySince > 0) FeedLog.ev("back", "gap" to gone / 1000)
         awaySince = 0
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.loadNotices()
@@ -320,10 +322,10 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
 
 private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched: (Route) -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
                   val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}, val home: () -> Unit = {}) {
-    fun thread(id: String) = open(Route.Thread(id))
+    fun thread(id: String) { FeedLog.open(id, "thread"); open(Route.Thread(id)) }
     /** Open the post with the reply box ready. */
-    fun reply(id: String) = open(Route.Thread(id, reply = true))
-    fun profile(pk: String) = open(Route.Profile(pk))
+    fun reply(id: String) { FeedLog.open(id, "replyBox"); open(Route.Thread(id, reply = true)) }
+    fun profile(pk: String) { FeedLog.ev("open", "what" to "profile", "author" to pk); open(Route.Profile(pk)) }
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
     /** Search the web for [q] with your engine (its results open inside Marble). */
@@ -501,6 +503,7 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
     val state = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(Unit) { social.loadFeed() }
     SeenWatcher(state, social) { listOf(it) }
+    LogWatcher(state, "discover", posts.map { it.e.id })
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.Filled.KeyboardArrowDown, "Back home", tint = Vault.Text) }
         // The name: refresh, as pulling down did.
@@ -579,6 +582,64 @@ private fun SeenWatcher(state: LazyListState, social: Social, keys: (String) -> 
     }
 }
 
+/**
+ * The feed log (when it's on): each post or story that was half on screen or more, for how long and at what place
+ * in [ids] (the list's order), and how you scrolled: where the top was, how fast, how far down you've been. Only
+ * while Marble is in front.
+ */
+@Composable
+private fun LogWatcher(state: LazyListState, screen: String, ids: List<String>) {
+    if (!FeedLog.on.collectAsState().value) return
+    val ranks by androidx.compose.runtime.rememberUpdatedState(remember(ids) { ids.withIndex().associate { it.value to it.index } })
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state, lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+        class Showing(val since: Long, var most: Float, val rank: Int)
+        val showing = HashMap<String, Showing>()
+        val began = android.os.SystemClock.uptimeMillis()
+        var deepest = -1; var lastPos = -1f; var lastAt = 0L; var moving = false
+        fun close(k: String, now: Long) = showing.remove(k)?.let { s ->
+            if (now - s.since >= 300) FeedLog.ev("imp", "id" to k, "screen" to screen, "rank" to s.rank, "ms" to now - s.since, "most" to s.most)
+        }
+        FeedLog.ev("view", "screen" to screen, "on" to true)
+        try {
+            while (true) {
+                delay(250)
+                val info = state.layoutInfo
+                val top = info.viewportStartOffset; val bottom = info.viewportEndOffset
+                val now = android.os.SystemClock.uptimeMillis()
+                val r = ranks
+                val visible = HashMap<String, Float>()
+                for (v in info.visibleItemsInfo) {
+                    val k = v.key as? String ?: continue
+                    if (k !in r || v.size <= 0) continue
+                    // Half of it, or (a post taller than the screen) half the screen.
+                    val f = (minOf(v.offset + v.size, bottom) - maxOf(v.offset, top)).toFloat() / minOf(v.size, bottom - top)
+                    if (f >= 0.5f) visible[k] = f.coerceAtMost(1f)
+                }
+                for (k in showing.keys.toList()) if (k !in visible) close(k, now)
+                for ((k, f) in visible) { val s = showing.getOrPut(k) { Showing(now, f, r[k]!!) }; if (f > s.most) s.most = f }
+                // Scrolling: once a second while it moves, and where it stopped.
+                val first = visible.keys.minOfOrNull { r[it]!! } ?: continue
+                val item = info.visibleItemsInfo.firstOrNull()
+                val pos = state.firstVisibleItemIndex + (item?.let { state.firstVisibleItemScrollOffset.toFloat() / it.size.coerceAtLeast(1) } ?: 0f)
+                deepest = maxOf(deepest, visible.keys.maxOf { r[it]!! })
+                if (lastPos < 0) { lastPos = pos; lastAt = now }
+                if (state.isScrollInProgress && now - lastAt >= 1000) {
+                    FeedLog.ev("scroll", "screen" to screen, "top" to first, "deep" to deepest, "speed" to (pos - lastPos) * 1000f / (now - lastAt))
+                    lastPos = pos; lastAt = now; moving = true
+                } else if (!state.isScrollInProgress && (moving || kotlin.math.abs(pos - lastPos) > 0.5f)) {
+                    FeedLog.ev("scroll", "screen" to screen, "top" to first, "deep" to deepest, "speed" to (pos - lastPos) * 1000f / (now - lastAt).coerceAtLeast(1), "stop" to true)
+                    lastPos = pos; lastAt = now; moving = false
+                }
+            }
+        } finally {
+            val now = android.os.SystemClock.uptimeMillis()
+            for (k in showing.keys.toList()) close(k, now)
+            FeedLog.ev("view", "screen" to screen, "on" to false, "ms" to now - began, "deep" to deepest)
+        }
+    } }
+}
+
 /** Today's stories: a few headlines at the top, each with its topic, site and age. "More stories" for the rest. */
 @Composable
 private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, nav: Nav, onMore: () -> Unit) = Column(
@@ -602,14 +663,14 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
     val context = LocalContext.current
     // A long press: its menu, as the ⋯ opens it.
     var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
         Column(Modifier.weight(1f)) {
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(TopicFeeds.name(c.topic)) }
                 append(" · " + c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "")
             }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
-            Discussions(c.discussions) { social.openedComments(c) }
+            Discussions(c.discussions, "t:" + c.id) { site -> social.openedComments(c, site) }
         }
         c.image?.let { NetImage(it, Modifier.padding(start = 12.dp).size(64.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Edge), 256) }
         StoryMenu(c, social, saved, menu, { menu = it }) { nav.compose(c.url) }
@@ -621,14 +682,14 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
  * or, when it's in several places, "Discussed on Hacker News · Stacker News".
  */
 @Composable
-private fun Discussions(list: List<cc.aaro.cosign.Discussion>, onOpen: () -> Unit = {}) {
+private fun Discussions(list: List<cc.aaro.cosign.Discussion>, item: String? = null, onOpen: (String) -> Unit = {}) {
     if (list.isEmpty()) return
     val context = LocalContext.current
     val style = MaterialTheme.typography.labelMedium
     if (list.size == 1) {
         val d = list[0]
         Text("💬 " + (d.comments?.let { "$it comment${if (it == 1L) "" else "s"} on " } ?: "Comments on ") + d.site, color = Vault.Muted, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpen(); openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpen(d.site); openInBrowser(context, d.url, item) }.padding(vertical = 2.dp))
         return
     }
     Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -636,7 +697,7 @@ private fun Discussions(list: List<cc.aaro.cosign.Discussion>, onOpen: () -> Uni
         list.forEachIndexed { i, d ->
             if (i > 0) Text(" · ", color = Vault.Muted, style = style)
             Text(d.site + (d.comments?.let { " ($it)" } ?: ""), color = Vault.Accent, style = style, maxLines = 1,
-                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onOpen(); openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onOpen(d.site); openInBrowser(context, d.url, item) }.padding(vertical = 2.dp))
         }
     }
 }
@@ -651,7 +712,7 @@ private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean, open: Boolea
         DropdownMenuItem({ Text("Post with a comment", color = Vault.Accent, fontWeight = FontWeight.SemiBold) }, { setOpen(false); onPost() },
             leadingIcon = { Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(20.dp)) })
         DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { setOpen(false); social.followTopic(c.topic, !followed) })
-        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { setOpen(false); social.moreLike(c.topic) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { setOpen(false); social.moreLike(c.topic, key = "t:" + c.id) })
         DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { setOpen(false); social.lessLike(c.topic, "t:" + c.id) })
         DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { setOpen(false); social.hideSource(c) })
         DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { setOpen(false); social.save(c.url, isLink = true) })
@@ -671,8 +732,8 @@ private fun PostMenu(p: Pick, name: String, social: Social) = Box {
         DropdownMenuItem({ Text(if (followed) "Stop following “$topic”" else "Follow “$topic”", color = Vault.Text) }, { open = false; social.followTopic(p.topic, !followed) })
         DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic, p.e) })
         DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id, p.e) })
-        DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey) })
-        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; copy(context, social, webLink(social, p.e), "Link copied") })
+        DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey, p.e.id) })
+        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; FeedLog.act(p.e.id, "copyLink"); copy(context, social, webLink(social, p.e), "Link copied") })
         DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
     }
     if (reporting) ReportDialog(name, onClose = { reporting = false }) { reason -> reporting = false; social.report(p.e, reason) }
@@ -696,6 +757,7 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     val list = remember(all, dismissed) { all?.filter { "t:" + it.id !in dismissed } ?: emptyList() }
     val state = rememberLazyListState()
     SeenWatcher(state, social) { listOf(it) }
+    LogWatcher(state, "stories", list.map { "t:" + it.id })
     if (all == null) Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
     else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
     val stale by TopicFeeds.stale.collectAsState()
@@ -1134,9 +1196,9 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
 }
 
 /** Open a page in a Custom Tab, in Marble's colours, with Save (filled when the page is already in Later): see [cc.aaro.cosign.Tabs]. */
-private fun openInBrowser(context: android.content.Context, url: String) {
+private fun openInBrowser(context: android.content.Context, url: String, item: String? = null) {
     val saved = Social.of(CosignApp.instance.phone).later.items.value.any { it.url == url && it.deleted == null }
-    cc.aaro.cosign.Tabs.open(context, url, saved, Vault.dark, Vault.Ground.toArgb())
+    cc.aaro.cosign.Tabs.open(context, url, saved, Vault.dark, Vault.Ground.toArgb(), item)
 }
 
 /** At most one card: the thing that needs you most. The rest are behind the bell. */
@@ -1265,18 +1327,18 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else { nav.social.openedLink(n); openInBrowser(context, link) } } }
+            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
             if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
                     is Body.Img -> NetImage(m.url, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(if (full) 0.6f else 1f, 2.2f)).clip(RoundedCornerShape(12.dp))
-                        .clickable { nav.pictures(urls, urls.indexOf(m.url).coerceAtLeast(0)) }, 1080, description = "Picture")
+                        .clickable { FeedLog.open(n.id, "image"); nav.pictures(urls, urls.indexOf(m.url).coerceAtLeast(0)) }, 1080, description = "Picture")
                     is Body.Vid -> VideoCard(m.v)
                 }
             }
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (card == null && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, 1) else nav.thread(n.id) })
+                modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
             // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
                 // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
@@ -1451,7 +1513,7 @@ private fun NoteMenu(n: Event, name: String, social: Social) = Box {
         DropdownMenuItem({ Text("Mute $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, {
             open = false; social.mute(n.pubkey); social.message.value = "You won't see $name any more."
         })
-        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; copy(context, social, webLink(social, n), "Link copied") })
+        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; FeedLog.act(n.id, "copyLink"); copy(context, social, webLink(social, n), "Link copied") })
         DropdownMenuItem({ Text("Report…", color = Vault.Danger) }, { open = false; reporting = true })
     }
     if (reporting) ReportDialog(name, onClose = { reporting = false }) { reason -> reporting = false; social.report(n, reason) }

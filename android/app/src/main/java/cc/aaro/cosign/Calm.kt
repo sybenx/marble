@@ -55,6 +55,8 @@ object Calm {
     fun urls(e: Event) = URL.findAll(e.content).map { it.value }.toList()
     /** The first link in a post that isn't a picture or a video: what a preview card shows. */
     fun link(e: Event) = urls(e).firstOrNull { !IMG.containsMatchIn(it) && !VID.containsMatchIn(it) }
+    /** How many pictures and videos a post carries (for the feed log). */
+    fun media(e: Event) = urls(e).count { IMG.containsMatchIn(it) } to videos(e)
     private fun videos(e: Event) = urls(e).count { VID.containsMatchIn(it) } + e.tags.count { it.firstOrNull() == "imeta" && it.any { p -> p.startsWith("m video/") } }
     private fun isReply(e: Event) = e.kind == 1 && e.tags.any { it.size > 1 && it[0] == "e" && it.getOrNull(3) != "mention" }
     /** What a person reads: no links, mentions or hashtags. */

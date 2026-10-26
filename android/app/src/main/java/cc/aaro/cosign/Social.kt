@@ -327,6 +327,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val out = Calm.stories(left, interests, Clock.now(), ::shownCount).takeIf { it.size >= 12 }
             ?: Calm.stories(left, interests, Clock.now(), ::shownCount, window = 7 * 86_400L)
         if (debuggable) storyCounts("more stories", out.size)
+        logStories("stories", out)
         return out
     }
 
@@ -365,6 +366,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             return
         }
         feed.update { it.copy(loading = true, failed = false) }
+        if (force) FeedLog.ev("pull", "screen" to "discover")
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         if (force) lookedAt = 0
@@ -395,6 +397,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
+            logPosts(if (force) "pull" else if (top) "back" else "load", feed.value.posts)
             saveFeed()
             loadPreviews(posts.map { it.e })
         }
@@ -568,14 +571,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val theirs = async { specialPosts(now) }
         val hidden = muted.value
         fun ok(e: Event) = e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600
-        // What you like, lightly: up to a couple of hours earlier for your strongest topics, a little later for your weakest.
-        fun lift(e: Event) = (((TopicGuess.of(e).maxOfOrNull { interests.of(it) } ?: 0.4) - 0.4) * 4 * 3600).toLong()
         val woven = Calm.weave(pop.await().filter { ok(it) && !snoozedNow(it.pubkey) }, theirs.await().filter(::ok), ::lift)
         if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
         woven.map { (e, special) -> Pick(e, "", 0.0, if (special) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
     }
+
+    /** What you like, lightly, in Discover's popular posts: up to a couple of hours earlier for your strongest topics, a little later for your weakest. */
+    private fun lift(e: Event) = (((TopicGuess.of(e).maxOfOrNull { interests.of(it) } ?: 0.4) - 0.4) * 4 * 3600).toLong()
 
     /** Your Special Follow list (kind 10010, the one Jumble keeps), and how many: public names, and private ones if it has any (NIP-44 to yourself). */
     val special = MutableStateFlow<Set<String>>(prefs.getStringSet("special", emptySet())!!.toSet())
@@ -651,6 +655,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 remember(posts.map { it.e })
                 feed.update { if (it.posts.isNotEmpty()) it else it.copy(posts = posts, stories = stories.ifEmpty { it.stories }, at = m["at"] as? Long ?: 0) }
                 restored.complete(true)
+                logPosts("cache", feed.value.posts)
                 People.want(posts.map { it.e.pubkey })
                 Startup.mark("feed from cache ${posts.size}")
             } finally { restored.complete(false) }
@@ -663,6 +668,39 @@ class Social private constructor(private val phone: Phone, context: Context) {
             "posts" to f.posts.map { mapOf("event" to it.e.toMap(), "topic" to it.topic, "reason" to it.reason, "likes" to it.likes.toLong(), "more" to it.more) },
             "stories" to f.stories.map { it.toMap() }))) } catch (_: Exception) {}
     }
+
+    // --- The feed log (when it's on): each list in the order shown, with what its ranking went on --------
+
+    /** Discover's posts, in the order shown. [why]: "load", "pull", "back" (after a while away) or "cache" (last time's). */
+    private fun logPosts(why: String, posts: List<Pick>) {
+        if (!FeedLog.on.value || posts.isEmpty()) return
+        scope.launch {
+            val follows = follows.value ?: emptySet()
+            for (p in posts) {
+                val inner = p.e.takeIf { it.kind == 6 }?.let(::reposted) ?: p.e
+                val (pics, vids) = Calm.media(inner)
+                FeedLog.item(p.e.id, "kind" to "post", "ek" to p.e.kind, "src" to inner.pubkey, "at" to inner.createdAt, "from" to if (p.reason.startsWith("★")) "special" else "pyramid",
+                    "why" to p.reason.takeIf { it.isNotEmpty() }, "topics" to TopicGuess.hits(inner).take(3).associate { it.topic to it.strength },
+                    "words" to Entities.of(Calm.text(inner)).take(8), "len" to Calm.text(inner).length, "link" to (Calm.link(inner) != null), "pics" to pics, "vids" to vids,
+                    "digest" to Calm.digest(inner), "reply" to (parentOf(inner) != null), "repost" to (p.e.kind == 6), "follow" to (inner.pubkey in follows), "likes" to p.likes.takeIf { it > 0 })
+            }
+            FeedLog.ev("feed", "screen" to "discover", "why" to why, "rv" to FeedLog.RANKER, "prof" to logProfile(),
+                "list" to posts.map { p -> mapOf("id" to p.e.id, "lift" to lift(p.e.takeIf { it.kind == 6 }?.let(::reposted) ?: p.e), "sp" to p.reason.startsWith("★").takeIf { it }) })
+        }
+    }
+
+    /** Today's stories for More stories, in the order shown, each with its score. */
+    private fun logStories(screen: String, list: List<TopicCard>) {
+        if (!FeedLog.on.value || list.isEmpty()) return
+        val now = Clock.now()
+        for (c in list) FeedLog.item("t:" + c.id, "kind" to "story", "src" to c.sourceId, "srcName" to c.sourceName, "topic" to c.topic, "at" to c.publishedAt,
+            "words" to Entities.of(c.title).take(8), "img" to (c.image != null), "disc" to c.discussions.map { mapOf("site" to it.site, "n" to it.comments) })
+        FeedLog.ev("feed", "screen" to screen, "rv" to FeedLog.RANKER, "prof" to logProfile(),
+            "list" to list.map { c -> mapOf("id" to "t:" + c.id, "sc" to Calm.storyScore(c, interests, now, shownCount(c.id)), "shown" to shownCount(c.id).takeIf { it > 0 }) })
+    }
+
+    /** What the ranking knew of you just then: each topic's interest (0 to 1), and the topics you follow. */
+    private fun logProfile() = mapOf("i" to TopicGuess.topics.associateWith { interests.of(it) }, "fol" to synchronized(interests) { interests.followed.toList() })
 
     // --- What you like: topics, learned on this phone ------------------------------------
 
@@ -1141,6 +1179,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * interests list (kind 10015), which other apps read too.
      */
     fun followTopic(topic: String, on: Boolean) {
+        FeedLog.act(null, if (on) "followTopic" else "unfollowTopic", "topic" to topic)
         interests.follow(topic, on)
         followedTopics.value = interests.followed.toSet()
         if (on) message.value = "You'll see more about ${TopicFeeds.name(topic).lowercase()}."
@@ -1157,10 +1196,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** "More like this": a little more of its topic (and, for a newsletter, of newsletters). */
-    fun moreLike(topic: String, post: Event? = null) { interests.learn(listOf(topic), 1.0); post?.let { newsletterTaste(it, 1) }; message.value = "More like this from now on." }
+    fun moreLike(topic: String, post: Event? = null, key: String? = post?.id) { FeedLog.act(key, "more", "topic" to topic); interests.learn(listOf(topic), 1.0); post?.let { newsletterTaste(it, 1) }; message.value = "More like this from now on." }
 
     /** You opened a post's link. */
-    fun openedLink(post: Event) = newsletterTaste(post, 1)
+    fun openedLink(post: Event) { FeedLog.open(post.id, "link"); newsletterTaste(post, 1) }
 
     /** A stranger's newsletter you liked (or didn't): more of them, or fewer. */
     private fun newsletterTaste(e: Event, by: Int) {
@@ -1170,6 +1209,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** "Less like this": this one goes, and a little less of its topic. [key]: the post's id, or "t:" and the story's. */
     fun lessLike(topic: String, key: String, post: Event? = null) {
+        FeedLog.act(key, "less", "topic" to topic)
         interests.learn(listOf(topic), -0.25)
         post?.let { newsletterTaste(it, -1) }
         hide(key)
@@ -1177,21 +1217,24 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** "Hide": nothing more from this person, or from this site. */
-    fun hidePerson(pk: String) {
+    fun hidePerson(pk: String, from: String? = null) {
+        FeedLog.act(from, "hideAuthor", "author" to pk)
         interests.hide("hiddenPeople", pk)
         feed.update { f -> f.copy(posts = f.posts.filter { it.e.pubkey != pk }) }
         message.value = "You won't see posts from ${nameOf(pk)} here."
     }
     fun hideSource(c: TopicCard) {
+        FeedLog.act("t:" + c.id, "hideSource", "src" to c.sourceId)
         interests.hide("hiddenSources", c.sourceId)
         feed.update { f -> f.copy(stories = f.stories.filter { it.sourceId != c.sourceId }) }
         message.value = "You won't see stories from ${c.sourceName}."
     }
 
     /** You opened a story: a little more of its topic (never of its site, from an open alone), and of what it's about. */
-    fun opened(c: TopicCard) { interests.learn(listOf(c.topic), 0.5); interests.noticed(c.title); if (seen.add("o:" + c.id)) seenChanged() }
-    /** You opened what people say about a story: as much as opening it. */
-    fun openedComments(c: TopicCard) = opened(c)
+    fun opened(c: TopicCard) { FeedLog.open("t:" + c.id, "story"); learnOpened(c) }
+    /** You opened what people say about a story ([site]: where): as much as opening it. */
+    fun openedComments(c: TopicCard, site: String? = null) { FeedLog.open("t:" + c.id, "comments", "site" to site); learnOpened(c) }
+    private fun learnOpened(c: TopicCard) { interests.learn(listOf(c.topic), 0.5); interests.noticed(c.title); if (seen.add("o:" + c.id)) seenChanged() }
 
     private fun hide(key: String) {
         dismissed.update { it + key }
@@ -1208,6 +1251,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun save(id: String, isLink: Boolean) {
         val me = me ?: return
         val on = id !in saved.value
+        FeedLog.act(if (isLink) allStories.value.firstOrNull { it.url == id }?.let { "t:" + it.id } ?: id else id, if (on) "save" else "unsave")
         saved.update { if (on) it + id else it - id }
         scope.launch {
             val list = newest(10003, null, fetch = true)
@@ -1597,6 +1641,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
         val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else emptyList()
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId()) ?: return null
+        if (link.isNotBlank()) FeedLog.act(quoted?.id ?: allStories.value.firstOrNull { it.url == link.trim() }?.let { "t:" + it.id } ?: link.trim(), if (quoted != null) "quote" else "post")
         remember(listOf(signed))
         return signed
     }
@@ -1612,6 +1657,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 .forEach { add(listOf("p", it)) }
         }
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
+        FeedLog.act(parent.id, "reply", "root" to root.takeIf { it != parent.id })
         remember(listOf(signed))
         // In the thread it was written in, under the post it answers, at once.
         synchronized(threads) {
@@ -1629,6 +1675,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** NIP-56: report a post and its author (spam, nudity, illegal, impersonation, other), and stop showing it. */
     fun report(n: Event, reason: String) {
         val me = me ?: return
+        FeedLog.act(n.id, "report", "why" to reason)
         // Gone from Discover, the author for a while; what you like isn't changed by a report.
         notInterested(n, learn = false)
         scope.launch {
@@ -1687,6 +1734,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         val first = note.id !in liked.value
         val before = reactions.value[note.id]
+        FeedLog.act(note.id, if (emoji == "+") "like" else "react", "emoji" to emoji.takeIf { it != "+" }, "first" to first)
         mark(note.id, true)
         setReaction(note.id, emoji.takeIf { it != "+" })
         if (emoji != "+") { emojiUse[emoji] = (emojiUse[emoji] ?: 0) + 1; prefs.edit().putString("emojiUse", org.json.JSONObject(emojiUse.entries.sortedByDescending { it.value }.take(40).associate { it.key to it.value }).toString()).apply() }
@@ -1795,6 +1843,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Not this note, and a little less like it: the same author is left out of Discover for three days. */
     fun notInterested(e: Event, learn: Boolean = true) {
+        if (learn) FeedLog.act(e.id, "notint", "author" to e.pubkey)
         if (learn) { interests.learn(TopicGuess.of(e), -0.25); newsletterTaste(e, -1) }
         dismissed.update { it + e.id }
         snoozed.update { it + (e.pubkey to System.currentTimeMillis() + 3 * 86_400_000L) }
@@ -1808,6 +1857,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun mute(pk: String) {
         val me = me ?: return
         if (pk == me) return
+        FeedLog.act(null, "mute", "author" to pk)
         muted.update { it + pk }
         prefs.edit().putStringSet("muted", muted.value).apply()
         scope.launch {

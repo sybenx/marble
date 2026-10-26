@@ -21,6 +21,8 @@ class CosignApp : Application() {
         })
         // After the app's first screen is drawn. Signing never waits on this (it connects by itself); boot and push start it directly.
         if (Proc.isSigner && signers.all.any { it.isMember }) android.os.Handler(mainLooper).postDelayed({ CosignService.start(this) }, 1500)
+        // The feed log (off unless you turned it on): the app's process only.
+        if (!Proc.isSigner) FeedLog.load(this)
         Startup.mark("app done")
     }
 
