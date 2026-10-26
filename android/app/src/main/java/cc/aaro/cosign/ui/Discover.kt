@@ -1933,7 +1933,11 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v -> sel = v.selection; q = v.text },
             Modifier.weight(1f).focusRequester(focus), singleLine = true,
             placeholder = { Text("Search, or save for later", color = Vault.Muted) },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { go() }),
+            // A web address box, as a browser's: what you type stays exactly as typed (no corrections, no capitals, no space
+            // after a full stop), so sites work; the keyboard's suggestions are still there to tap.
+            keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
+                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { go() }),
             trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) SaveChip(saved != null) { if (saved == null) save() else { social.later.remove(saved) } } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
