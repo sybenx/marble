@@ -1876,11 +1876,14 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val laterItems by social.later.items.collectAsState()
     var q by remember { mutableStateOf(SearchText.q.value.ifEmpty { found?.query ?: "" }) }
     LaunchedEffect(q) { SearchText.q.value = q }
+    // Over a results page, with its search in the box: all of it selected, as a browser's address bar does, so typing
+    // replaces it and a tap places the cursor to change it.
+    var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0, q.length)) }
     // A search that came from outside (the launcher) while this was open: the box shows it too.
     val running = found?.query
     // (Only a search that arrives after the screen opened: what was searched before isn't put back over the box.)
     val runningAtOpen = remember { running }
-    LaunchedEffect(running) { if (running != null && running != runningAtOpen && running != q.trim() && "@$running" != q.trim()) q = running }
+    LaunchedEffect(running) { if (running != null && running != runningAtOpen && running != q.trim() && "@$running" != q.trim()) { q = running; sel = androidx.compose.ui.text.TextRange(running.length) } }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val scope = rememberCoroutineScope()
@@ -1927,7 +1930,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(6.dp)) { Swirl(28f) }
         Spacer(Modifier.width(6.dp))
         TextField(
-            q, { q = it }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
+            androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v -> sel = v.selection; q = v.text },
+            Modifier.weight(1f).focusRequester(focus), singleLine = true,
             placeholder = { Text("Search, or save for later", color = Vault.Muted) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { go() }),
             trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) SaveChip(saved != null) { if (saved == null) save() else { social.later.remove(saved) } } },
@@ -1951,7 +1955,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
                 site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
                 site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { nav.results(t) } } }
-                items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug " }) { nav.results(sug) } }
+                items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { nav.results(sug) } }
                 if (suggestions.isNotEmpty()) item(key = "from") { Text("Suggestions from ${engine.label} · turn off in Settings", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
