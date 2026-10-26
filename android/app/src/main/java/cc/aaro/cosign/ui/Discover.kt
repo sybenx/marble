@@ -194,7 +194,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         scope.launch { feedState.scrollToItem(0) }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        val away = awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after
+        val gone = if (awaySince > 0) android.os.SystemClock.elapsedRealtime() - awaySince else 0L
+        if (debugBuild && awaySince > 0) android.util.Log.i("CosignAway", "back after ${gone / 1000} s (home from ${Away.after / 1000} s)")
+        val away = awaySince > 0 && gone >= Away.after
         awaySince = 0
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.loadNotices()
