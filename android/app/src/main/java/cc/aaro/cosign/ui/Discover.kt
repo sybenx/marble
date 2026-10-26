@@ -72,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
@@ -721,13 +722,15 @@ object Marbles {
 private class TopCollapse {
     var px by androidx.compose.runtime.mutableFloatStateOf(0f)
     var range = 1f
-    /** Pulled down past the top, in pixels: the header stretches (the marble grows) by this much. */
+    /** Pulled down past the top, in pixels: the header stretches (the marble grows) by this much, never past [stretchMax]. */
     var stretch by androidx.compose.runtime.mutableFloatStateOf(0f)
-    /** How far the stretch goes before it gets stiff (the marble at a third of the screen), and where letting go refreshes. */
+    /** The most the stretch can be (the marble at a third of the screen, and never wider than it), and where letting go refreshes. */
     var stretchMax = 1f
     var refreshAt = 1f
     /** Let go past [refreshAt]. */
     var onRefresh: () -> Unit = {}
+    private fun band(pull: Float) = Stretch.band(pull, refreshAt, stretchMax)
+    private fun unband(s: Float) = Stretch.unband(s, refreshAt, stretchMax)
     val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
         // Scrolling down the feed: give back the stretch first, then fold the header.
         override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
@@ -741,16 +744,14 @@ private class TopCollapse {
             px = (px - available.y).coerceAtMost(range)
             return androidx.compose.ui.geometry.Offset(0f, before - px)
         }
-        // Back at the top of the feed and still pulling: open it again, then stretch it (stiffer the further it goes).
+        // Back at the top of the feed and still pulling: open it again, then stretch it, stiffer near the most it goes.
         override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
             if (available.y <= 0) return androidx.compose.ui.geometry.Offset.Zero
             val before = px
             px = (px - available.y).coerceAtLeast(0f)
             val left = available.y - (before - px)
-            if (left > 0f && px == 0f && source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) {
-                val give = if (stretch < stretchMax) 0.6f else 0.6f * stretchMax / (stretchMax + 4 * (stretch - stretchMax))
-                stretch += left * give
-            }
+            if (left > 0f && px == 0f && source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput)
+                stretch = band(unband(stretch) + left * Stretch.GIVE)
             return available
         }
         // Let go: springs back; past the line, a refresh.
@@ -760,6 +761,31 @@ private class TopCollapse {
             androidx.compose.animation.core.animate(stretch, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> stretch = v }
             return available
         }
+    }
+}
+
+/**
+ * The pull's rubber band. The finger's travel times [GIVE] is the pull; the stretch follows it one to one
+ * up to a knee (past the refresh line, so a refresh takes the same pull as ever), then eases towards [max]
+ * and never reaches it, however far you pull.
+ */
+internal object Stretch {
+    const val GIVE = 0.6f
+    private fun knee(refreshAt: Float, max: Float) = maxOf(refreshAt * 1.2f, max * 0.5f).coerceAtMost(max * 0.9f)
+    fun band(pull: Float, refreshAt: Float, max: Float): Float {
+        if (pull <= 0f) return 0f
+        val k = knee(refreshAt, max)
+        if (pull <= k) return pull
+        val room = max - k
+        return k + room * (1f - kotlin.math.exp(-(pull - k) / room))
+    }
+    /** The pull that stretches this far (the inverse of [band]). */
+    fun unband(s: Float, refreshAt: Float, max: Float): Float {
+        if (s <= 0f) return 0f
+        val k = knee(refreshAt, max)
+        if (s <= k) return s
+        val room = max - k
+        return k - room * kotlin.math.ln((1f - (s - k) / room).coerceAtLeast(1e-6f))
     }
 }
 
@@ -782,10 +808,11 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
     // Pulled down past the top: everything moves down by as much as the marble grows (to a third of the screen's height).
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.toFloat()
     val grow = with(d) { top.stretch.toDp().value }
-    top.stretchMax = with(d) { (screenH / 3f - 72f).coerceAtLeast(0f).dp.toPx() }
     top.refreshAt = with(d) { 90.dp.toPx() }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height((mix(OPEN_H, SLIM_H) + grow).dp)) {
         val w = maxWidth.value
+        // The most it grows: the marble a third of the screen's height, and 24dp clear of each side.
+        top.stretchMax = with(d) { (minOf(screenH / 3f, w - 48f) - 72f).coerceAtLeast(130f).dp.toPx() }
         // The marble of the day: 72dp, centred under the bell; shrinking to nothing just left of the name; growing with a pull.
         val m = mix(72f, 0f) + grow
         val mx = mix(w / 2, 30f); val my = mix(92f, 32f) + grow / 2
@@ -793,7 +820,8 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         // Marble of the day; changes at 00:00 UTC, the same moment everywhere (looked at again whenever Discover comes back).
         val marble = Marbles.current()
         MarbleArt(marble, "The marble",
-            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).requiredSize((m * 1.8f).dp)
+            // Unbounded, so a marble wider than the header is still placed by its own centre, not pushed aside.
+            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).wrapContentSize(Alignment.TopStart, unbounded = true).requiredSize((m * 1.8f).dp)
                 .onGloballyPositioned { centre = it.boundsInRoot().center }
                 // Tap: the marble, full screen.
                 .clip(CircleShape).clickable(enabled = m > 8f, onClickLabel = "Look at the marble") { onMarble(centre) })
