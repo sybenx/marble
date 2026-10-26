@@ -1,6 +1,6 @@
 // What the pages read: posts by id, people's profiles (asked for in batches), where each person posts
 // (their NIP-65 list), replies. Everything found is kept for the visit, so going back is instant.
-import { req, relays, FAST, INDEXERS, MORE } from "./pool.js";
+import { req, count, relays, FAST, INDEXERS, MORE } from "./pool.js";
 import { parseProfile, verifyNip05 } from "./search-rank.js";
 
 export const events = new Map(); // id → event
@@ -13,9 +13,10 @@ export function keep(e) {
   if (e.kind === 0) {
     const p = parseProfile(e);
     // parseProfile (Astral's) keeps what search needs; a profile page also shows the banner and website.
-    if (p) try { const c = JSON.parse(e.content); p.banner = c.banner || ""; p.website = c.website || ""; } catch {}
+    if (p) try { const c = JSON.parse(e.content); p.banner = c.banner || ""; p.website = c.website || ""; p.bot = c.bot === true; } catch {}
     const old = profiles.get(e.pubkey);
-    if (p && (!old || old.created_at < p.created_at)) {
+    // (a copy from search has no banner: the full one replaces it even when it's the same version)
+    if (p && (!old || old.created_at < p.created_at || (old.banner === undefined && old.created_at <= p.created_at))) {
       profiles.set(e.pubkey, p);
       for (const fn of listeners) fn(e.pubkey, p);
     }
@@ -59,19 +60,30 @@ export function profile(pk, hints = []) {
   });
 }
 
+/** Where many people post, in one request: fills outbox()'s cache for all of them. */
+export async function outboxMany(pks) {
+  const need = pks.filter((pk) => !outboxes.has(pk));
+  if (need.length) {
+    const lists = req(relays(INDEXERS, FAST), { kinds: [10002], authors: need }, { timeout: 2500, settle: 600 });
+    for (const pk of need) outboxes.set(pk, lists.then((all) => readList(all.filter((e) => e.pubkey === pk))));
+  }
+  return Promise.all(pks.map((pk) => outboxes.get(pk)));
+}
+function readList(list) {
+  const newest = list.sort((a, b) => b.created_at - a.created_at)[0];
+  const write = [], read = [];
+  for (const t of newest?.tags || []) {
+    if (t[0] !== "r" || !t[1]) continue;
+    if (t[2] !== "read") write.push(t[1]);
+    if (t[2] !== "write") read.push(t[1]);
+  }
+  return { write: relays(write).slice(0, 4), read: relays(read).slice(0, 4) };
+}
+
 /** Where someone posts (write) and reads (read), from their kind 10002 list. */
 export function outbox(pk) {
   if (!outboxes.has(pk)) {
-    outboxes.set(pk, req(relays(INDEXERS, FAST), { kinds: [10002], authors: [pk] }, { timeout: 2500, settle: 600 }).then((list) => {
-      const newest = list.sort((a, b) => b.created_at - a.created_at)[0];
-      const write = [], read = [];
-      for (const t of newest?.tags || []) {
-        if (t[0] !== "r" || !t[1]) continue;
-        if (t[2] !== "read") write.push(t[1]);
-        if (t[2] !== "write") read.push(t[1]);
-      }
-      return { write: relays(write).slice(0, 4), read: relays(read).slice(0, 4) };
-    }));
+    outboxes.set(pk, req(relays(INDEXERS, FAST), { kinds: [10002], authors: [pk] }, { timeout: 2500, settle: 600 }).then(readList));
   }
   return outboxes.get(pk);
 }
@@ -157,3 +169,57 @@ export async function resolveNip05(address) {
 }
 
 export { verifyNip05 };
+
+// ── Everything that points at a post ─────────────────────────────────────────────────────────────────
+// As Wisp does it (ThreadViewModel: the author's inbox for replies and reactions), and wider: the places
+// named in the link, the fast and search servers and the author's inbox all at once; then a second pass on
+// the servers where the people who replied post. Streamed and de-duplicated; the totals also ask the
+// servers to count (NIP-45), since they hold more than they'll send.
+
+const SEARCH = ["wss://relay.ditto.pub", "wss://syb.lol"];
+
+/**
+ * Replies, quotes, mentions, reposts and likes of a post. onEvent(event) gets each one once, as it arrives.
+ * Resolves with {events, counts: {replies, reposts, likes}} (counts null where no server counted).
+ */
+export async function engagement(e, { hints = [], onEvent = null, signal = null } = {}) {
+  const id = e.id;
+  const addr = e.kind >= 30000 && e.kind < 40000 ? `${e.kind}:${e.pubkey}:${(e.tags.find((t) => t[0] === "d") || [])[1] || ""}` : null;
+  const filters = addr
+    ? [{ kinds: [1, 1111, 6, 16, 7, 9735], "#a": [addr], limit: 1000 }, { kinds: [1111], "#A": [addr], limit: 300 }]
+    : [{ kinds: [1, 1111, 6, 16, 7, 9735], "#e": [id], limit: 1000 }, { kinds: [1111], "#E": [id], limit: 300 }, { kinds: [1], "#q": [id], limit: 300 }];
+  const found = new Map(), asked = new Set();
+  const each = (r) => {
+    if (found.has(r.id) || r.id === id) return;
+    found.set(r.id, r);
+    if (r.kind === 1 || r.kind === 1111) keep(r);
+    onEvent?.(r);
+  };
+  const ask = (urls, wait = 6000) => {
+    const fresh = relays(urls).filter((u) => !asked.has(u));
+    fresh.forEach((u) => asked.add(u));
+    return fresh.length ? req(fresh, filters, { timeout: wait, settle: 1500, onEvent: each, signal }) : Promise.resolve([]);
+  };
+  const inbox = Promise.race([outbox(e.pubkey).then((o) => o.read), new Promise((r) => setTimeout(() => r([]), 1500))]);
+  const counted = inbox.then((read) => {
+    const where = relays(SEARCH, FAST, read);
+    const of = (kinds) => count(where, addr ? { kinds, "#a": [addr] } : { kinds, "#e": [id] });
+    return Promise.all([of([1, 1111]), of([6, 16]), of([7])]);
+  });
+  await Promise.all([ask([...hints, ...FAST, ...SEARCH]), inbox.then((read) => ask(read))]);
+  if (signal?.aborted) return { events: [...found.values()], counts: {} };
+  // second pass: where the people who answered post (their replies to replies are often only there)
+  const repliers = [...new Set([...found.values()].filter((r) => r.kind === 1 || r.kind === 1111).map((r) => r.pubkey))].slice(0, 40);
+  if (repliers.length) {
+    const lists = await Promise.race([outboxMany(repliers), new Promise((r) => setTimeout(() => r([]), 2000))]);
+    await ask(lists.flatMap((o) => (o?.write || []).slice(0, 2)).slice(0, 16), 4000);
+  }
+  const [replies, reposts, likes] = await counted;
+  return { events: [...found.values()], counts: { replies, reposts, likes }, asked: asked.size };
+}
+
+/** Posts that mention someone (a nostr:npub or nprofile in the text naming them), newest first, streamed. */
+export async function mentionsOf(pk, { onEvent = null, signal = null } = {}) {
+  const inbox = await Promise.race([outbox(pk).then((o) => o.read), new Promise((r) => setTimeout(() => r([]), 1200))]);
+  return req(relays(FAST, SEARCH, inbox), { kinds: [1], "#p": [pk], limit: 300 }, { timeout: 5000, settle: 1200, signal, onEvent: (e) => { keep(e); onEvent?.(e); } });
+}

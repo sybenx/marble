@@ -32,6 +32,9 @@ object Daily {
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
     @Volatile var previewBot: String? = null
     @Volatile private var asked = 0L
+
+    /** Debug builds: the nights from a test list instead, asked at once (it can come after the first ask). */
+    fun test(context: Context, url: String) { manifest = url; askedFor = ""; refresh(context) }
     @Volatile private var askedFor = ""
 
     fun utcDate(): String = LocalDate.now(ZoneOffset.UTC).toString()
@@ -51,24 +54,34 @@ object Daily {
 
     /** Today's from the phone at once; from the site if it isn't here yet (at most once an hour). */
     fun refresh(context: Context) = scope.launch {
+        // Nothing here may take Marble down: at worst the collection's marble stands in.
+        try { fetch(context) } catch (e: Exception) { debug(context, "failed: ${e.javaClass.simpleName} ${e.message}") }
+    }
+
+    private fun debug(context: Context, what: String) {
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) android.util.Log.i("CosignDaily", what)
+    }
+
+    private fun fetch(context: Context) {
         val date = utcDate()
         val dir = File(context.filesDir, "marbles").apply { mkdirs() }
         val png = File(dir, "$date.png"); val name = File(dir, "$date.name")
         val have = png.exists() && name.exists()
         today.value = if (have) Marble(name.readText(), 0, 384, png) else null
-        if (askedFor == date && System.currentTimeMillis() - asked < AGAIN) return@launch
+        if (askedFor == date && System.currentTimeMillis() - asked < AGAIN) return
         asked = System.currentTimeMillis(); askedFor = date
-        val m = Json.parse(get(manifest)?.decodeToString() ?: return@launch) as? Map<*, *> ?: return@launch
+        val text = get(manifest)?.decodeToString() ?: return debug(context, "no list from $manifest")
+        val m = Json.parse(text) as? Map<*, *> ?: return debug(context, "list unreadable")
         (m["preview_bot"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { previewBot = it }
-        if (have) return@launch
-        val days = m["days"] as? List<*> ?: return@launch
-        val e = days.mapNotNull { it as? Map<*, *> }.lastOrNull { it["date"] == date } ?: return@launch
-        if (e["status"] != "ok") return@launch
-        val url = (e["image"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT } ?: return@launch
-        val bytes = get(url) ?: return@launch
+        if (have) return
+        val days = m["days"] as? List<*> ?: return
+        val e = days.mapNotNull { it as? Map<*, *> }.lastOrNull { it["date"] == date } ?: return debug(context, "none for $date in the list")
+        if (e["status"] != "ok") return
+        val url = (e["image"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT } ?: return
+        val bytes = get(url) ?: return
         // Exactly what the pipeline made, or nothing.
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        if (sha != (e["sha256"] as? String)?.lowercase()) return@launch
+        if (sha != (e["sha256"] as? String)?.lowercase()) return debug(context, "picture doesn't match its hash")
         png.writeBytes(bytes); name.writeText((e["name"] as? String)?.trim()?.take(40)?.ifEmpty { null } ?: "Today's marble")
         // A week of them on the phone, no more.
         dir.listFiles()?.filter { it.name.take(10) < LocalDate.now(ZoneOffset.UTC).minusDays(7).toString() }?.forEach { it.delete() }
