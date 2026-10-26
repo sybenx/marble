@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Browsers that open Custom Tabs: Marble connects to one so a page's Save button can show it was saved. -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".CosignApp"
         android:allowBackup="false"

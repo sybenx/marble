@@ -190,6 +190,7 @@ private sealed class Route {
 @Composable
 fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val social = remember(phone) { Social.of(phone) }
+    LaunchedEffect(Unit) { cc.aaro.cosign.Tabs.warm(CosignApp.instance) }
     val appContext = LocalContext.current
     remember { cc.aaro.cosign.SearchPrefs.load(appContext) }
     // Which screens are open, kept when Android recreates Marble (after the browser, say), so you come back to the same one.
@@ -459,6 +460,7 @@ private fun DiscoverLip(posts: Int, special: Int, modifier: Modifier, onOpen: ()
 private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav, max: Int = 2) {
     val open = items.filter { it.deleted == null && it.done == null }
     val pages by social.later.pages.collectAsState()
+    val context = LocalContext.current
     // Nothing saved right now: Later is still a tap away, for the pages you opened.
     if (open.isEmpty()) {
         if (pages.isNotEmpty() || items.any { it.deleted == null }) Text("Later ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
@@ -467,10 +469,11 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
         Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
-        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { nav.open(Route.Later) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { openInBrowser(context, it) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
+            item.url?.let { SiteIcon(it, 16); Spacer(Modifier.width(8.dp)) }
             Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
@@ -1128,29 +1131,10 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
     }
 }
 
-/**
- * Open a page in a Custom Tab, inside this app, when the browser has them, in Marble's colours, with one
- * button: Save, which puts the page on screen in Later ([cc.aaro.cosign.SavePageReceiver]). These extras are
- * what androidx.browser's CustomTabsIntent sets; any other browser just opens the page.
- */
+/** Open a page in a Custom Tab, in Marble's colours, with Save (filled when the page is already in Later): see [cc.aaro.cosign.Tabs]. */
 private fun openInBrowser(context: android.content.Context, url: String) {
-    val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-    i.putExtras(android.os.Bundle().apply { putBinder("android.support.customtabs.extra.SESSION", null) })
-    i.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", Vault.Ground.toArgb())
-    i.putExtra("androidx.browser.customtabs.extra.COLOR_SCHEME", if (Vault.dark) 2 else 1)
-    // Mutable: the browser fills in the address of the page on screen when Save is tapped.
-    val save = android.app.PendingIntent.getBroadcast(context, 0,
-        android.content.Intent(context, cc.aaro.cosign.SavePageReceiver::class.java).putExtra("slot", CosignApp.instance.phone.slot),
-        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE)
-    context.getDrawable(cc.aaro.cosign.R.drawable.ic_save_page)?.let { icon ->
-        i.putExtra("android.support.customtabs.extra.ACTION_BUTTON_BUNDLE", android.os.Bundle().apply {
-            putParcelable("android.support.customtabs.customaction.ICON", icon.toBitmap())
-            putString("android.support.customtabs.customaction.DESCRIPTION", "Save to Later")
-            putParcelable("android.support.customtabs.customaction.PENDING_INTENT", save)
-        })
-        i.putExtra("android.support.customtabs.extra.TINT_ACTION_BUTTON", true)
-    }
-    try { context.startActivity(i) } catch (_: android.content.ActivityNotFoundException) {}
+    val saved = Social.of(CosignApp.instance.phone).later.items.value.any { it.url == url && it.deleted == null }
+    cc.aaro.cosign.Tabs.open(context, url, saved, Vault.dark, Vault.Ground.toArgb())
 }
 
 /** At most one card: the thing that needs you most. The rest are behind the bell. */
@@ -2103,7 +2087,24 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     }
 }
 
-/** One saved thing: a circle to tick it done, your words (tap: search them again; a saved page opens), when, and a page you opened for it. Hold to remove. */
+/** A page's own little icon (its favicon, asked of the site itself, kept with the pictures), or its first letter until then. */
+@Composable
+private fun SiteIcon(url: String, size: Int) {
+    val host = android.net.Uri.parse(url).host?.removePrefix("www.") ?: ""
+    val scheme = android.net.Uri.parse(url).scheme ?: "https"
+    NetImage("$scheme://${android.net.Uri.parse(url).host}/favicon.ico", Modifier.size(size.dp).clip(RoundedCornerShape(5.dp)), px = size * 3,
+        scale = androidx.compose.ui.layout.ContentScale.Fit, ground = Vault.AccentGround) {
+        Box(Modifier.size(size.dp), contentAlignment = Alignment.Center) {
+            Text(host.take(1).uppercase(), color = Vault.Accent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/**
+ * One saved thing: a circle to tick it done, then what it is, so the two kinds never look alike. Your own words in a
+ * typewriter face ("you typed this"; tap: search them again); a page with its site's icon, its title in the usual face
+ * and "site · page" under it (tap: open it). Hold to remove.
+ */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<cc.aaro.cosign.Page>, social: Social, nav: Nav) {
@@ -2115,18 +2116,21 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)
             else Box(Modifier.size(24.dp).border(1.5.dp, Vault.Line, CircleShape))
         }
+        if (item.url != null) Box(Modifier.padding(top = 12.dp, end = 10.dp)) { SiteIcon(item.url, 20) }
         Column(Modifier.weight(1f).padding(top = 10.dp)) {
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 val i = if (filter.isEmpty()) -1 else item.text.indexOf(filter, ignoreCase = true)
                 if (i < 0) append(item.text) else {
                     append(item.text.take(i)); withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold)) { append(item.text.substring(i, i + filter.length)) }; append(item.text.drop(i + filter.length))
                 }
-            }, color = if (item.done != null) Vault.Muted else Vault.Text, style = MaterialTheme.typography.bodyLarge,
+            }, color = if (item.done != null) Vault.Muted else Vault.Text,
+                style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
-            val site = (item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") } ?: item.from?.let { "from $it" })?.let { "$it · " } ?: ""
-            Text(site + if (item.done != null) "Done · ${agoWords(item.done)}" else "Saved ${agoWords(item.created)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            val what = item.url?.let { (android.net.Uri.parse(it).host?.removePrefix("www.") ?: it) + " · page" }
+                ?: item.from?.let { "kept from $it" } ?: "you typed this"
+            Text("$what · " + if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
             page.firstOrNull()?.let { p -> Text("${p.title} — ${android.net.Uri.parse(p.url).host?.removePrefix("www.")}", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).clickable { openInBrowser(context, p.url) }) }
         }

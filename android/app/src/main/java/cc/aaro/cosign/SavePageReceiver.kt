@@ -20,8 +20,13 @@ class SavePageReceiver : BroadcastReceiver() {
         val done = goAsync()
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val saved = account(slot)?.let { Social.of(it).savePage(url) } != null
-                android.widget.Toast.makeText(context.applicationContext, if (saved) "Saved to Later" else "Couldn't save this page", android.widget.Toast.LENGTH_SHORT).show()
+                val social = account(slot)?.let { Social.of(it) }
+                // Saved already: nothing changes (taking it out of Later is done in Later).
+                val had = social?.later?.items?.value?.any { it.url == url && it.deleted == null } == true
+                val saved = had || social?.savePage(url) != null
+                if (saved) Tabs.markSaved(context)
+                android.widget.Toast.makeText(context.applicationContext, when { had -> "Already in Later"; saved -> "Saved to Later"; else -> "Couldn't save this page" },
+                    android.widget.Toast.LENGTH_SHORT).show()
             } finally { done.finish() }
         }
     }
