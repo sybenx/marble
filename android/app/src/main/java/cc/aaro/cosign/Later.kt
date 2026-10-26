@@ -36,13 +36,18 @@ class Later(private val prefs: android.content.SharedPreferences) {
     var changed: () -> Unit = {}
 
     fun shown() = items.value.filter { it.deleted == null }
-    fun find(text: String) = shown().firstOrNull { it.text.equals(text.trim(), ignoreCase = true) }
+    fun find(text: String) = shown().firstOrNull { it.url == null && same(it.text, text) }
+    /**
+     * What the Save chip shows, as Marble desktop does: these words, typed and kept (a page with the same title isn't
+     * them), and not ticked done. Capitals and runs of spaces don't count.
+     */
+    fun saved(text: String) = shown().firstOrNull { it.url == null && it.done == null && same(it.text, text) }
 
     /** Save [text] (or bring it back if it was done). */
     fun save(text: String, url: String? = null): LaterItem? {
         val t = text.trim().take(500).ifEmpty { return null }
         val now = Clock.now()
-        val have = items.value.firstOrNull { it.text.equals(t, ignoreCase = true) && it.deleted == null }
+        val have = items.value.firstOrNull { it.url == null && it.deleted == null && same(it.text, t) }
         val item = have?.copy(done = null, updated = next(have)) ?: LaterItem(newId(), t, now, now, url = url)
         put(item)
         return item
@@ -125,6 +130,8 @@ class Later(private val prefs: android.content.SharedPreferences) {
 
     companion object {
         const val TAG = "marble/later"
+        private fun words(s: String) = s.trim().replace(Regex("\\s+"), " ")
+        fun same(a: String, b: String) = words(a).equals(words(b), ignoreCase = true)
         private fun newId() = java.security.SecureRandom().let { r -> ByteArray(8).also(r::nextBytes) }.joinToString("") { "%02x".format(it) }
         private fun LaterItem.toJson() = org.json.JSONObject().apply {
             extra.forEach { (k, v) -> put(k, v) }

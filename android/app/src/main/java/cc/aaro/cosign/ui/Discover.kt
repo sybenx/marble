@@ -1882,7 +1882,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     var posts by remember { mutableStateOf(false) }
     LaunchedEffect(t) { if (!atPeople) posts = false }
     val showPostsRow = when (postsPref) { "always" -> true; "never" -> false; else -> !follows.isNullOrEmpty() }
-    val saved = laterItems.firstOrNull { it.deleted == null && it.text.equals(t, ignoreCase = true) }
+    val saved = remember(laterItems, t) { social.later.saved(t) }
     var undo by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
     LaunchedEffect(undo) { if (undo != null) { delay(4000); undo = null } }
     val save = { if (t.isNotEmpty()) { if (saved == null) undo = social.later.save(t) } }
@@ -1922,7 +1922,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
                 capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { go() }),
-            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) SaveChip(saved != null) { if (saved == null) save() else { social.later.remove(saved) } } },
+            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) SaveChip(saved != null) { if (saved == null) save() else social.message.value = "Already in Later" } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
@@ -1977,7 +1977,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
 private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
     val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
     val laterItems by social.later.items.collectAsState()
-    val saved = laterItems.firstOrNull { it.deleted == null && it.text.equals(q.trim(), ignoreCase = true) }
+    val saved = remember(laterItems, q) { social.later.saved(q) }
     val context = LocalContext.current
     val dark = Vault.dark
     var web by remember { mutableStateOf<android.webkit.WebView?>(null) }
@@ -1991,7 +1991,7 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
             Icon(Icons.Filled.Search, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
             Text(q, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            SaveChip(saved != null) { if (saved == null) social.later.save(q) else social.later.remove(saved) }
+            SaveChip(saved != null) { if (saved == null) social.later.save(q) else social.message.value = "Already in Later" }
         }
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2159,7 +2159,7 @@ private fun agoWords(sec: Long): String {
 /** "Save" at the end of the box; "✓ Saved" once it's in Later (a tap takes it out again). */
 @Composable
 private fun SaveChip(saved: Boolean, onClick: () -> Unit) = Row(
-    Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(if (saved) Vault.Accent else Vault.AccentGround).clickable(onClickLabel = if (saved) "Remove from Later" else "Save to Later", onClick = onClick)
+    Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(if (saved) Vault.Accent else Vault.AccentGround).clickable(onClickLabel = if (saved) "In Later" else "Save to Later", onClick = onClick)
         .padding(horizontal = 12.dp, vertical = 7.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {

@@ -154,4 +154,21 @@ class LaterTest {
         assertEquals("", long.words); assertEquals(300, long.quote!!.length)
         assertNull(Shared.of("  ", null))
     }
+
+    @Test fun theChipCountsYourWordsOnlyAsMarbleDesktopDoes() {
+        val l = Later(Prefs())
+        l.savePage("https://syb.lol/", "syb.lol")
+        // A page with the same title isn't your words.
+        assertNull(l.saved("syb.lol"))
+        val a = l.save("syb.lol")!!
+        assertEquals(a.id, l.saved("  SYB.lol ")!!.id)
+        val b = l.save("the overstory")!!
+        assertEquals(b.id, l.saved("the   Overstory")!!.id)
+        // Done: not "Saved"; saving again un-ticks it, no second copy.
+        l.done(l.saved("syb.lol")!!, true)
+        assertNull(l.saved("syb.lol"))
+        assertEquals(a.id, l.save("syb.lol")!!.id)
+        assertNull(l.shown().first { it.id == a.id }.done)
+        assertEquals(1, l.shown().count { it.url == null && Later.same(it.text, "syb.lol") })
+    }
 }
