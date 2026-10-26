@@ -568,7 +568,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val theirs = async { specialPosts(now) }
         val hidden = muted.value
         fun ok(e: Event) = e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600
-        val woven = Calm.weave(pop.await().filter(::ok), theirs.await().filter(::ok))
+        // What you like, lightly: up to a couple of hours earlier for your strongest topics, a little later for your weakest.
+        fun lift(e: Event) = (((TopicGuess.of(e).maxOfOrNull { interests.of(it) } ?: 0.4) - 0.4) * 4 * 3600).toLong()
+        val woven = Calm.weave(pop.await().filter { ok(it) && !snoozedNow(it.pubkey) }, theirs.await().filter(::ok), ::lift)
         if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
         woven.map { (e, special) -> Pick(e, "", 0.0, if (special) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
@@ -819,6 +821,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val known = (later.pages.value.firstOrNull { it.url == url }?.title ?: allStories.value.firstOrNull { it.url == url }?.title)
             ?.takeIf { it.isNotBlank() && it != host && it != url }
         val item = later.savePage(url, known ?: host) ?: return null
+        interests.noticed(known ?: host)
         if (item.text == host) scope.launch { Preview.fetch(url)?.title?.let { later.retitle(item.id, host, it) } }
         return item
     }
@@ -1167,7 +1170,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** "Less like this": this one goes, and a little less of its topic. [key]: the post's id, or "t:" and the story's. */
     fun lessLike(topic: String, key: String, post: Event? = null) {
-        interests.learn(listOf(topic), -1.5)
+        interests.learn(listOf(topic), -0.25)
         post?.let { newsletterTaste(it, -1) }
         hide(key)
         message.value = "Less like this from now on."
@@ -1185,8 +1188,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         message.value = "You won't see stories from ${c.sourceName}."
     }
 
-    /** You opened a story: a little more of its topic. */
-    fun opened(c: TopicCard) { interests.learn(listOf(c.topic), 1.0); if (seen.add("o:" + c.id)) seenChanged() }
+    /** You opened a story: a little more of its topic (never of its site, from an open alone), and of what it's about. */
+    fun opened(c: TopicCard) { interests.learn(listOf(c.topic), 0.5); interests.noticed(c.title); if (seen.add("o:" + c.id)) seenChanged() }
+    /** You opened what people say about a story: as much as opening it. */
+    fun openedComments(c: TopicCard) = opened(c)
 
     private fun hide(key: String) {
         dismissed.update { it + key }
@@ -1624,7 +1629,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** NIP-56: report a post and its author (spam, nudity, illegal, impersonation, other), and stop showing it. */
     fun report(n: Event, reason: String) {
         val me = me ?: return
-        notInterested(n)
+        // Gone from Discover, the author for a while; what you like isn't changed by a report.
+        notInterested(n, learn = false)
         scope.launch {
             val tags = listOf(listOf("e", n.id, reason), listOf("p", n.pubkey, reason))
             if (act(Event(me, Clock.now(), 1984, tags, "").withId())) message.value = "Reported. Thanks for telling us."
@@ -1787,10 +1793,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val snoozed = MutableStateFlow(prefs.getStringSet("snoozed", emptySet())!!.mapNotNull { s ->
         s.substringAfter(':').toLongOrNull()?.takeIf { it > System.currentTimeMillis() }?.let { s.substringBefore(':') to it } }.toMap())
 
-    /** Not this note, and less like it: the same author is left out of Discover for three days. */
-    fun notInterested(e: Event) {
-        interests.learn(TopicGuess.of(e), -1.0)
-        newsletterTaste(e, -1)
+    /** Not this note, and a little less like it: the same author is left out of Discover for three days. */
+    fun notInterested(e: Event, learn: Boolean = true) {
+        if (learn) { interests.learn(TopicGuess.of(e), -0.25); newsletterTaste(e, -1) }
         dismissed.update { it + e.id }
         snoozed.update { it + (e.pubkey to System.currentTimeMillis() + 3 * 86_400_000L) }
         prefs.edit().putStringSet("dismissed", dismissed.value.toList().takeLast(2000).toSet())

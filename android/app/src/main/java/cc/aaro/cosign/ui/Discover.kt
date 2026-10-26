@@ -326,7 +326,7 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
     /** Search the web for [q] with your engine (its results open inside Marble). */
-    fun results(q: String) { SearchText.q.value = q; searched(Route.Results(q)) }
+    fun results(q: String) { SearchText.q.value = q; social.interests.noticed(q); searched(Route.Results(q)) }
     fun search(q: String) { social.search(q); open(Route.Search) }
 }
 
@@ -607,7 +607,7 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
                 append(" · " + c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "")
             }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
-            Discussions(c.discussions)
+            Discussions(c.discussions) { social.openedComments(c) }
         }
         c.image?.let { NetImage(it, Modifier.padding(start = 12.dp).size(64.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Edge), 256) }
         StoryMenu(c, social, saved, menu, { menu = it }) { nav.compose(c.url) }
@@ -619,14 +619,14 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
  * or, when it's in several places, "Discussed on Hacker News · Stacker News".
  */
 @Composable
-private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
+private fun Discussions(list: List<cc.aaro.cosign.Discussion>, onOpen: () -> Unit = {}) {
     if (list.isEmpty()) return
     val context = LocalContext.current
     val style = MaterialTheme.typography.labelMedium
     if (list.size == 1) {
         val d = list[0]
         Text("💬 " + (d.comments?.let { "$it comment${if (it == 1L) "" else "s"} on " } ?: "Comments on ") + d.site, color = Vault.Muted, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(6.dp)).clickable { onOpen(); openInBrowser(context, d.url) }.padding(vertical = 2.dp))
         return
     }
     Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -634,7 +634,7 @@ private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
         list.forEachIndexed { i, d ->
             if (i > 0) Text(" · ", color = Vault.Muted, style = style)
             Text(d.site + (d.comments?.let { " ($it)" } ?: ""), color = Vault.Accent, style = style, maxLines = 1,
-                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { openInBrowser(context, d.url) }.padding(vertical = 2.dp))
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onOpen(); openInBrowser(context, d.url) }.padding(vertical = 2.dp))
         }
     }
 }
@@ -1885,7 +1885,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val saved = laterItems.firstOrNull { it.deleted == null && it.text.equals(t, ignoreCase = true) }
     var undo by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
     LaunchedEffect(undo) { if (undo != null) { delay(4000); undo = null } }
-    val save = { if (t.isNotEmpty()) { if (saved == null) undo = social.later.save(t) } }
+    val save = { if (t.isNotEmpty()) { if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) } } }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
