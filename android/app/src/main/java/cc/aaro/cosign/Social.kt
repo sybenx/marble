@@ -801,7 +801,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * Today's marble, kept: its award from the issuer (POST /collect, NIP-98 signed by you), kept with it. Quietly;
+     * Today's marble, kept: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it. Quietly;
      * tried again on later opens the same UTC day if the issuer isn't there or says no.
      */
     fun claimToday() {
@@ -814,7 +814,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             try {
                 val me = me ?: return@launch
                 val url = "$issuer/collect"
-                val body = org.json.JSONObject().put("id", id).toString()
+                val body = org.json.JSONObject().put("id", id).put("date", today).toString()
                 val hash = java.security.MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
                 val auth = phone.signOwn(Event(me, Clock.now(), 27235, listOf(listOf("u", url), listOf("method", "POST"), listOf("payload", hash)), "").withId())
                 val req = okhttp3.Request.Builder().url(url).header("Authorization", "Nostr " + java.util.Base64.getEncoder().encodeToString(auth.toJson().toByteArray()))
@@ -878,7 +878,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** The marbles someone shows on their profile: their profile_badges' awards from Marble's issuer, as (name, picture). */
     suspend fun marblesShownBy(pk: String): List<Pair<String, String?>> {
         val list = profileBadges(pk) ?: return emptyList()
-        val issuer = cc.aaro.cosign.ui.Daily.issuerKey ?: kept.all.value.values.firstNotNullOfOrNull { k ->
+        val issuer = cc.aaro.cosign.ui.Daily.issuerKey() ?: kept.all.value.values.firstNotNullOfOrNull { k ->
             k.award?.let { Event.fromMap(Json.parse(it)) }?.tags?.firstOrNull { it.size > 1 && it[0] == "a" }?.get(1)?.split(':')?.getOrNull(1)
         } ?: return emptyList()
         val ds = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30009:$issuer:") }.map { it[1].substringAfter("30009:$issuer:") }

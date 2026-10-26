@@ -32,10 +32,18 @@ object Daily {
     @Volatile private var nightsRead = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val http by lazy { Fetch.http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build() }
-    /** Where today's marble is claimed (the manifest's issuer): its award, a badge, for the one who kept it. */
-    @Volatile var issuer: String? = null
-    /** The issuer's key (the manifest's issuer_pubkey): whose badges are marbles, on profiles. */
+    /** Where today's marble is claimed (the manifest can name another): its award, a badge, for the one who kept it. */
+    @Volatile var issuer: String? = "https://marble-issuer.sybenx.workers.dev"
+    /** The issuer's key (made when it was set up; its GET /today says it): whose badges are marbles, on profiles. */
     @Volatile var issuerKey: String? = null
+
+    /** The issuer's key, asked of it once (GET /today). */
+    fun issuerKey(): String? {
+        issuerKey?.let { return it }
+        val base = issuer ?: return null
+        val o = try { org.json.JSONObject(get("$base/today")?.decodeToString() ?: return null) } catch (_: Exception) { return null }
+        return o.optString("issuer").takeIf { cc.aaro.cosign.core.isHex32(it) }?.also { issuerKey = it }
+    }
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
     @Volatile var previewBot: String? = null
     @Volatile private var asked = 0L
