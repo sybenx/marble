@@ -532,7 +532,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
-        scope.launch { restored.await(); afterPaint(); pullSeen() }
+        scope.launch { restored.await(); afterPaint(); pullSeen(); pullDeviceNames() }
         scope.launch {
             try {
                 previews.value = Preview.load(CosignApp.instance)
@@ -695,6 +695,48 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
         val n = Fetch.publish(to, signed)
         if (debuggable) android.util.Log.i("CosignSync", "seen sent: ${text.length} chars to $n of ${to.size} relays")
+    }
+
+    // --- What you call your devices ------------------------------------------------------------
+    //
+    // Names you give your devices, by each one's key, on your account (NIP-78, encrypted to you) so every device
+    // shows the same ones. Cosign's own list keeps the name each device joined with (often a model number).
+
+    data class DeviceName(val name: String, val at: Long)
+    val deviceNames = MutableStateFlow(namesFrom(prefs.getString("deviceNames", null)))
+
+    /** Call a device [name] on every device; [key]: its key ([deviceKey]). */
+    fun nameDevice(key: String, name: String) {
+        val n = name.trim().take(40)
+        if (n.isEmpty() || deviceNames.value[key]?.name == n) return
+        deviceNames.update { it + (key to DeviceName(n, Clock.now())) }
+        prefs.edit().putString("deviceNames", namesJson(deviceNames.value)).apply()
+        if (Sources.viewAs == null) scope.launch { sendDeviceNames() }
+    }
+
+    private suspend fun pullDeviceNames() {
+        val me = me ?: return
+        if (Sources.viewAs != null) return
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(DEVICE_NAMES), "limit" to 4), 6000)
+            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        val theirs = got?.let { toSelf(it.content, encrypt = false) }?.let(::namesFrom) ?: emptyMap()
+        val mine = deviceNames.value
+        // Each name as it was last set, here or on another device.
+        val merged = (theirs.keys + mine.keys).associateWith { k -> listOfNotNull(theirs[k], mine[k]).maxBy { it.at } }
+        deviceNames.value = merged
+        prefs.edit().putString("deviceNames", namesJson(merged)).apply()
+        // This device's own name, as people know it, if it has none yet.
+        val own = phone.ui.value.member?.let { m -> m.group.members.firstOrNull { it.idx == m.idx } }?.let(::deviceKey)
+        if (own != null && own !in merged) nameDevice(own, readableDeviceName(CosignApp.instance))
+        else if (merged != theirs) sendDeviceNames()
+    }
+
+    private suspend fun sendDeviceNames() {
+        val me = me ?: return
+        val text = toSelf(namesJson(deviceNames.value), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", DEVICE_NAMES)), text).withId()) } catch (_: Exception) { return }
+        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
     }
 
     /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
@@ -1420,6 +1462,27 @@ class Social private constructor(private val phone: Phone, context: Context) {
         private val notes = object : LinkedHashMap<String, Event>(256, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Event>?) = size > 1500
         }
+        const val DEVICE_NAMES = "marble/devices"
+        /** What a device is known by in [deviceNames]: its key, or its place in the account if it has none. */
+        fun deviceKey(d: cc.aaro.cosign.Member) = d.pk ?: "idx:${d.idx}"
+        /** {"v":1,"names":{"<key>":{"name":"…","at":<seconds>}}} */
+        fun namesJson(m: Map<String, DeviceName>): String = org.json.JSONObject().put("v", 1)
+            .put("names", org.json.JSONObject().apply { m.forEach { (k, v) -> put(k, org.json.JSONObject().put("name", v.name).put("at", v.at)) } }).toString()
+        fun namesFrom(json: String?): Map<String, DeviceName> = try {
+            val o = org.json.JSONObject(json ?: "{}")
+            if (o.optInt("v", 1) != 1) emptyMap() else o.optJSONObject("names")?.let { n ->
+                n.keys().asSequence().mapNotNull { k -> n.optJSONObject(k)?.let { v -> v.optString("name").trim().takeIf { it.isNotEmpty() }?.let { k to DeviceName(it.take(40), v.optLong("at")) } } }.toMap()
+            } ?: emptyMap()
+        } catch (_: Exception) { emptyMap() }
+        /** This device as people call it: the name set in the system's settings, else its maker and model ("Onn 11 Tablet Pro", not "100071485"). */
+        fun readableDeviceName(context: android.content.Context): String {
+            val set = try { android.provider.Settings.Global.getString(context.contentResolver, android.provider.Settings.Global.DEVICE_NAME) } catch (_: Exception) { null }
+            if (!set.isNullOrBlank() && set != android.os.Build.MODEL) return set.trim().take(40)
+            val maker = android.os.Build.MANUFACTURER.trim().replaceFirstChar { it.uppercase() }
+            val model = android.os.Build.MODEL.trim()
+            return (if (model.startsWith(maker, ignoreCase = true)) model else "$maker $model").trim().ifEmpty { "This device" }.take(40)
+        }
+
         private fun remember(es: List<Event>) {
             synchronized(notes) { for (e in es) notes[e.id] = e }
             for (e in es) for (t in e.tags) if (t.size > 2 && t[0] == "p") hint(t[1], listOf(t[2]))
