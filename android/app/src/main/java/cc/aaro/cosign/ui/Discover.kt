@@ -58,7 +58,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -80,6 +79,8 @@ import cc.aaro.cosign.LookAlikes
 import cc.aaro.cosign.Hit
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.first
@@ -172,7 +173,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val back: () -> Unit = { kept.removeState(keyOf(stack.lastIndex)); stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
     // Read on open and when you come back to it; nothing in between.
-    LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices() }
+    val context = LocalContext.current
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices(); Daily.refresh(context) }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
@@ -278,8 +280,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
         }
         val waiting = ui.asks.size + ui.batchAsks.size
         val fresh = notices.list.count { it.event.createdAt > seen }
-        val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, pull = { pull.distanceFraction }, onMarble = nav.marble) {
+        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, onMarble = nav.marble) {
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -291,10 +292,13 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
         }
 
-        // The spinner only when you pulled: a refresh in the background (it can take a while) stays out of sight.
+        // Pulled far enough: a refresh, shown as a thin line under the header (never over the marble). A refresh
+        // in the background (it can take a while) stays out of sight.
         var pulled by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) pulled = false }
-        PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }, Modifier.fillMaxSize(), state = pull) {
+        top.onRefresh = { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }
+        if (pulled && feed.loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
+        Box(Modifier.fillMaxSize()) {
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
@@ -489,19 +493,20 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
     LaunchedEffect(Unit) { if (!still) shown.animateTo(1f, androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     val close: () -> Unit = { scope.launch { if (!still) shown.animateTo(0f, androidx.compose.animation.core.tween(220)); onClose() } }
     BackHandler(onBack = close)
-    // Tilt: how far the phone has turned since the view opened, smoothed, a few degrees at most.
+    // Tilt: how far the phone has leaned since the view opened, smoothed, a few dp at most. From gravity, which
+    // stays steady however the phone is held (angles from the rotation vector jump about when it's upright,
+    // which pushed the marble off centre).
     var lean by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     if (!still) androidx.compose.runtime.DisposableEffect(Unit) {
         val sm = context.getSystemService(android.hardware.SensorManager::class.java)
-        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR)
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
         var base: FloatArray? = null
-        val m = FloatArray(9); val o = FloatArray(3)
         val listener = object : android.hardware.SensorEventListener {
             override fun onSensorChanged(e: android.hardware.SensorEvent) {
-                android.hardware.SensorManager.getRotationMatrixFromVector(m, e.values); android.hardware.SensorManager.getOrientation(m, o)
-                val b = base ?: o.copyOf().also { base = it }
-                val tx = ((o[2] - b[2]).coerceIn(-0.35f, 0.35f)) / 0.35f      // roll: left and right
-                val ty = ((o[1] - b[1]).coerceIn(-0.35f, 0.35f)) / 0.35f      // pitch: towards and away
+                val g = e.values
+                val b = base ?: g.copyOf().also { base = it }
+                val tx = ((b[0] - g[0]) / 9.81f / 0.35f).coerceIn(-1f, 1f)      // left and right
+                val ty = ((g[2] - b[2]) / 9.81f / 0.35f).coerceIn(-1f, 1f)      // towards and away
                 lean = lean + (androidx.compose.ui.geometry.Offset(tx, ty) - lean) * 0.12f
             }
             override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
@@ -517,12 +522,15 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
         contentAlignment = Alignment.Center,
     ) {
         // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
-        val size = minOf(maxWidth, maxHeight) * 1.45f
         val d = androidx.compose.ui.platform.LocalDensity.current
+        val marble = Marbles.current()
+        // As big as the screen allows, but no bigger than the render has detail for (the marble is 0.556 of the
+        // picture; shown up to 1.3 times its size in the render, no more).
+        val size = minOf(minOf(maxWidth, maxHeight) * 1.45f, with(d) { (marble.detail * 2 * 1.3f / 0.556f).toDp() })
         val sizePx = with(d) { size.toPx() }
         val start = with(d) { (72f * 1.8f).dp.toPx() } / sizePx       // the header's marble, the same picture
-        val leanPx = with(d) { 12.dp.toPx() }
-        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), "The marble",
+        val leanPx = with(d) { 8.dp.toPx() }
+        MarbleArt(marble, marble.name,
             Modifier.requiredSize(size).graphicsLayer {
                 val p = shown.value
                 val sc = start + (1f - start) * p
@@ -530,27 +538,89 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
                 translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p
                 translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p
             })
+        // Its name, quietly, under it.
+        Text("Today: ${marble.name}", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
     }
+}
+
+/**
+ * A marble's picture. The collection's have their shadow in them; the night's own is just the glass, so the same
+ * shadow is drawn under it here, and it takes the same place (0.556 of the width, centred).
+ */
+@Composable
+private fun MarbleArt(marble: Marble, description: String?, modifier: Modifier) {
+    val file = marble.file
+    if (file == null) return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(marble.res), description, modifier)
+    val bitmap = remember(file) { android.graphics.BitmapFactory.decodeFile(file.path)?.asImageBitmap() }
+        ?: return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(Marbles.today().res), description, modifier)
+    Box(modifier, contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+            val r = size.width * 0.278f
+            val c = androidx.compose.ui.geometry.Offset(center.x, center.y + r * 1.07f)
+            withTransform({ scale(1f, 0.12f / 0.73f, c) }) {
+                drawCircle(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent), c, r * 0.9f), r * 0.9f, c)
+            }
+        }
+        androidx.compose.foundation.Image(bitmap, description, Modifier.fillMaxSize(0.556f))
+    }
+}
+
+/** Marble of the day: one from the collection ([MARBLES]), by the UTC date: it changes at 00:00 UTC, as the nightly pipeline makes them, and is the same everywhere. */
+object Marbles {
+    /** Debug builds only: days ahead (or back) to look at (--ei marble_day n). */
+    @Volatile var shift = 0L
+    /** Today's: the night's own when it's here ([Daily]), else one from the collection. */
+    @Composable
+    fun current(): Marble {
+        val live by Daily.today.collectAsState()
+        return live?.takeIf { shift == 0L } ?: today()
+    }
+    fun today(): Marble = MARBLES[Math.floorMod(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toEpochDay() + shift, MARBLES.size.toLong()).toInt()]
 }
 
 /** How far the home header has folded away, in pixels (0: open, [range]: today's slim bar). */
 private class TopCollapse {
     var px by androidx.compose.runtime.mutableFloatStateOf(0f)
     var range = 1f
+    /** Pulled down past the top, in pixels: the header stretches (the marble grows) by this much. */
+    var stretch by androidx.compose.runtime.mutableFloatStateOf(0f)
+    /** How far the stretch goes before it gets stiff (the marble at a third of the screen), and where letting go refreshes. */
+    var stretchMax = 1f
+    var refreshAt = 1f
+    /** Let go past [refreshAt]. */
+    var onRefresh: () -> Unit = {}
     val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-        // Scrolling down the feed: fold the header first.
+        // Scrolling down the feed: give back the stretch first, then fold the header.
         override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
             if (available.y >= 0) return androidx.compose.ui.geometry.Offset.Zero
+            if (stretch > 0f) {
+                val before = stretch
+                stretch = (stretch + available.y).coerceAtLeast(0f)
+                return androidx.compose.ui.geometry.Offset(0f, stretch - before)
+            }
             val before = px
             px = (px - available.y).coerceAtMost(range)
             return androidx.compose.ui.geometry.Offset(0f, before - px)
         }
-        // Back at the top of the feed and still pulling: open it again.
+        // Back at the top of the feed and still pulling: open it again, then stretch it (stiffer the further it goes).
         override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
             if (available.y <= 0) return androidx.compose.ui.geometry.Offset.Zero
             val before = px
             px = (px - available.y).coerceAtLeast(0f)
-            return androidx.compose.ui.geometry.Offset(0f, before - px)
+            val left = available.y - (before - px)
+            if (left > 0f && px == 0f && source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) {
+                val give = if (stretch < stretchMax) 0.6f else 0.6f * stretchMax / (stretchMax + 4 * (stretch - stretchMax))
+                stretch += left * give
+            }
+            return available
+        }
+        // Let go: springs back; past the line, a refresh.
+        override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+            if (stretch <= 0f) return androidx.compose.ui.unit.Velocity.Zero
+            if (stretch >= refreshAt) onRefresh()
+            androidx.compose.animation.core.animate(stretch, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> stretch = v }
+            return available
         }
     }
 }
@@ -565,23 +635,27 @@ private const val SLIM_H = 132f
  * or changes colour. [actions]: the bell and your picture, top right in both shapes.
  */
 @Composable
-private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, pull: () -> Float = { 0f }, onMarble: (androidx.compose.ui.geometry.Offset) -> Unit = {},
+private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, onMarble: (androidx.compose.ui.geometry.Offset) -> Unit = {},
                     actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     val d = androidx.compose.ui.platform.LocalDensity.current
     top.range = with(d) { (OPEN_H - SLIM_H).dp.toPx() }
     val f = (top.px / top.range).coerceIn(0f, 1f)
     fun mix(a: Float, b: Float) = a + (b - a) * f
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(mix(OPEN_H, SLIM_H).dp)) {
+    // Pulled down past the top: everything moves down by as much as the marble grows (to a third of the screen's height).
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.toFloat()
+    val grow = with(d) { top.stretch.toDp().value }
+    top.stretchMax = with(d) { (screenH / 3f - 72f).coerceAtLeast(0f).dp.toPx() }
+    top.refreshAt = with(d) { 90.dp.toPx() }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height((mix(OPEN_H, SLIM_H) + grow).dp)) {
         val w = maxWidth.value
-        // The marble (the swirl render, light or dark): 72dp, centred under the bell; shrinking to nothing just left of the name.
-        val m = mix(72f, 0f)
-        val mx = mix(w / 2, 30f); val my = mix(92f, 32f)
-        // Pulling down past the top: it grows a little with the pull (refresh comes at the same point as ever), and springs back.
-        val grow by androidx.compose.animation.core.animateFloatAsState(1f + 0.3f * pull().coerceIn(0f, 1.2f),
-            androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow), label = "marble pull")
+        // The marble of the day: 72dp, centred under the bell; shrinking to nothing just left of the name; growing with a pull.
+        val m = mix(72f, 0f) + grow
+        val mx = mix(w / 2, 30f); val my = mix(92f, 32f) + grow / 2
         var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.marble), "The marble",
-            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).size((m * 1.8f).dp).graphicsLayer { scaleX = grow; scaleY = grow }
+        // Marble of the day; changes at midnight (looked at again whenever Discover comes back).
+        val marble = Marbles.current()
+        MarbleArt(marble, "The marble",
+            Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).requiredSize((m * 1.8f).dp)
                 .onGloballyPositioned { centre = it.boundsInRoot().center }
                 // Tap: the marble, full screen.
                 .clip(CircleShape).clickable(enabled = m > 8f, onClickLabel = "Look at the marble") { onMarble(centre) })
@@ -597,13 +671,13 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         val scale = mix(1f, 22f / 32f)
         val nameWdp = with(d) { nameW.toDp().value }
         Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1,
-            modifier = Modifier.offset(mix((w - nameWdp) / 2, 52f).dp, mix(132f, 18f).dp)
+            modifier = Modifier.offset(mix((w - nameWdp) / 2, 52f).dp, (mix(132f, 18f) + grow).dp)
                 .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
                 .onSizeChanged { nameW = it.width }.clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Back to the top", onClick = onName))
         Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
         // The search box: under the name, rising to just under the bar.
         Row(
-            Modifier.offset(y = mix(192f, 68f).dp).padding(horizontal = 16.dp).fillMaxWidth().height(52.dp)
+            Modifier.offset(y = (mix(192f, 68f) + grow).dp).padding(horizontal = 16.dp).fillMaxWidth().height(52.dp)
                 .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
                 .clickable(onClick = onSearch).padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -135,6 +135,10 @@ class MainActivity : ComponentActivity() {
         if (intent?.getStringExtra("places") == "fake") Places.fake = true
         // Open someone's profile (--es profile <hex key>), for timing how fast one opens.
         intent?.getStringExtra("profile")?.let { cc.aaro.cosign.ui.DebugOpen.profile.value = it }
+        // Marble of the day for another day (--ei marble_day n), to look at the collection.
+        // The nightly marble from a test list instead of the site's (--es daily http://10.0.2.2:8765/manifest.json).
+        intent?.getStringExtra("daily")?.let { cc.aaro.cosign.ui.Daily.manifest = it }
+        if (intent?.hasExtra("marble_day") == true) cc.aaro.cosign.ui.Marbles.shift = intent.getIntExtra("marble_day", 0).toLong()
         // Your own events to the test relay alone (--ez local_only true).
         if (intent?.getBooleanExtra("local_only", false) == true) cc.aaro.cosign.Sources.localOnly = true
     }
