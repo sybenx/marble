@@ -17,7 +17,9 @@ window.addEventListener('message', e => {
   if (e.source !== window || e.data?.[TAG] !== 'req') return;
   const { id, method, params } = e.data;
   // `narrow`: a phone-sized screen, where approvals stay on the page (no windows there).
-  api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow() })
+  // `gesture`: the page was just clicked or typed in (seen from here, where the page can't fake it): a
+  // Sign in you clicked asks again even if you once said Not now.
+  api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow(), gesture: !!(navigator as any).userActivation?.isActive })
     .then((r: any) => window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Marble.' }) }, target()))
     .catch((err: Error) => window.postMessage({ [TAG]: 'res', id, error: err?.message ?? 'Marble isn’t answering. Reload the page.' }, target()));
 });
