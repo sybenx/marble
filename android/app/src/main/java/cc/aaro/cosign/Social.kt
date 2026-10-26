@@ -394,7 +394,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val fresh = posts.filter { p -> keep.none { it.e.id == p.e.id } }
                 // Back after a while: the new ones first, unless you've already started down the list (then below, as ever).
                 val first = top && lookedAt <= 1
-                cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
+                // The popular list: what's new goes above what you have (the list keeps your place; a "new" pill says so),
+                // and nothing you were reading moves or goes.
+                if (Sources.POPULAR_ONLY) cur.copy(posts = (posts.filter { p -> cur.posts.none { it.e.id == p.e.id } } + cur.posts).take(400), loading = false, at = System.currentTimeMillis())
+                else cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             logPosts(if (force) "pull" else if (top) "back" else "load", feed.value.posts)

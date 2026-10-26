@@ -202,6 +202,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val stack = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Route>, String>(
         save = { l -> l.map { it.save() } }, restore = { l -> mutableStateListOf<Route>().apply { addAll(l.mapNotNull { Route.of(it) }) } })) { mutableStateListOf() }
     val feedState = rememberLazyListState()
+    // Following's place: kept while you read a story, a post or a thread, and while you're on Search.
+    val followingPlace = remember { FollowingPlace() }
     // The panes: Following on the left, Search (home) in the middle; Messages comes on the right later.
     val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 2 }
     // How far the header had folded, kept with the list's place when Android recreates Marble.
@@ -235,7 +237,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
         viewing = null; bigMarble = null
         header.px = 0f
-        scope.launch { feedState.scrollToItem(0); pager.scrollToPage(PANE_SEARCH) }
+        // Back on Search; Following keeps its place.
+        scope.launch { pager.scrollToPage(PANE_SEARCH) }
     }
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
@@ -284,7 +287,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.note.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Panes(phone, ui, social, nav, pager)
+    if (top == null) Panes(phone, ui, social, nav, pager, feedState, followingPlace)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
@@ -436,6 +439,12 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     }
 }
 
+/** Following's place, kept above the screens: its chip, and the posts it had shown at the top (the rest are "new"). */
+private class FollowingPlace {
+    val chip = mutableStateOf("all")
+    var known: Set<String>? = null
+}
+
 /** Which pane is which. */
 private const val PANE_FOLLOWING = 0
 private const val PANE_SEARCH = 1
@@ -445,7 +454,7 @@ private const val PANE_SEARCH = 1
  * Search (home: yours). Swipe between them, or tap a tab. Each has a quiet cue of its own: Following, cobalt.
  */
 @Composable
-private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState) {
+private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace) {
     val people by People.known.collectAsState()
     val notices by social.notices.collectAsState()
     val seen by social.seenAt.collectAsState()
@@ -485,7 +494,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
             }
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
-            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING) else Home(phone, ui, social, nav)
+            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING, listState = feedState, place = place) else Home(phone, ui, social, nav)
         }
     }
 }
@@ -557,7 +566,8 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
  * with your Special Follow people (★) woven in near the top. Where it comes from is said at the end.
  */
 @Composable
-private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean = true) = Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().then(
+private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean = true, listState: LazyListState? = null,
+                       place: FollowingPlace = remember { FollowingPlace() }) = Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().then(
     if (pane) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
         androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)) else Modifier.safeDrawingPadding())) {
     val feed by social.feed.collectAsState()
@@ -570,11 +580,11 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val special by social.special.collectAsState()
     val all by social.allStories.collectAsState()
     val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
-    val state = androidx.compose.foundation.lazy.rememberLazyListState()
+    val state = listState ?: androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(Unit) { social.loadFeed() }
     SeenWatcher(state, social) { listOf(it) }
     // All, or only people (those you follow, and your Special Follow list), the news, or the topics you follow.
-    var chip by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
+    var chip by place.chip
     val follows by social.follows.collectAsState()
     val followedTopics by social.followedTopics.collectAsState()
     val shown = when (chip) {
@@ -658,7 +668,22 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             }
         }
         item(key = "room") { Spacer(Modifier.height(72.dp)) }
-    }}
+    }
+    // New posts above you: counted, never jumped to. Seen at the top, they stop being new.
+    val ids = shown.map { it.e.id }
+    if (place.known == null && ids.isNotEmpty()) place.known = ids.toSet()
+    val atTop by remember(state) { androidx.compose.runtime.derivedStateOf { state.firstVisibleItemIndex <= 1 } }
+    LaunchedEffect(atTop, ids) { if (atTop) place.known = ids.toSet() }
+    val firstShown by remember(state) { androidx.compose.runtime.derivedStateOf { state.layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String)?.let { k -> cc.aaro.cosign.core.isHex32(k) } == true }?.key as? String } }
+    val fresh = remember(ids, firstShown, atTop) {
+        val i = ids.indexOf(firstShown)
+        if (atTop || i <= 0) 0 else ids.take(i).count { it !in (place.known ?: emptySet()) }
+    }
+    val scope = rememberCoroutineScope()
+    if (fresh > 0 && (chip == "all" || chip == "people")) Text("$fresh new ↑", color = Vault.Ground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).clip(RoundedCornerShape(16.dp)).background(Vault.Accent)
+            .clickable(onClickLabel = "Go up to the new posts") { scope.launch { state.animateScrollToItem(0) } }.padding(horizontal = 14.dp, vertical = 7.dp))
+    }
     }
     // The one place to post: public, and the composer says so.
     if (pane) Text("+ Post", color = Vault.Ground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall,
