@@ -858,6 +858,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
+     * Your own name and picture, from your relays (where your profile is; the big public ones may not have it),
+     * kept with the others on this phone.
+     */
+    fun knowMe() = scope.launch {
+        val me = me ?: return@launch
+        People.add(Fetch.query((writeRelays() + readRelays() + listOf("wss://syb.lol", "wss://relay.ditto.pub") + Sources.PROFILES).distinct().take(10),
+            mapOf("kinds" to listOf(0), "authors" to listOf(me), "limit" to 3), 6000))
+    }
+
+    /**
      * The page on screen in a tab Marble opened, saved with its Save button: by the title Marble knows for it,
      * else by its site until the page itself says (fetched here, in the background).
      */

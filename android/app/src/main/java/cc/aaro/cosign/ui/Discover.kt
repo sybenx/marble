@@ -251,6 +251,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         // Marble is search and notes now (the feed lives on its branch): back after a while, home; nothing to fetch for a feed.
         if (away) home()
         social.refreshLater()
+        social.knowMe()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
         Daily.refresh(context).invokeOnCompletion { social.claimToday() }
     }
@@ -2066,6 +2067,8 @@ object SearchText {
     val q = kotlinx.coroutines.flow.MutableStateFlow("")
     /** The note the last Enter made (its id), until a result is opened (then it's a visit) or you leave the search. */
     val note = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** Where you tapped in the results bar's text (the cursor goes there); null: at the end. */
+    val cursor = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
 }
 
 /**
@@ -2087,7 +2090,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     LaunchedEffect(q) { SearchText.q.value = q }
     // Over a results page, with its search in the box: all of it selected, as a browser's address bar does, so typing
     // replaces it and a tap places the cursor to change it.
-    var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange(0, q.length)) }
+    var sel by remember { mutableStateOf(androidx.compose.ui.text.TextRange((SearchText.cursor.value ?: q.length).coerceIn(0, q.length)).also { SearchText.cursor.value = null }) }
     // A search that came from outside (the launcher) while this was open: the box shows it too.
     val running = found?.query
     // (Only a search that arrives after the screen opened: what was searched before isn't put back over the box.)
@@ -2150,7 +2153,11 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
                 capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { go() }),
-            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) GoChip { go() } },
+            trailingIcon = { if (q.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+                // Clear: the whole search, in one tap.
+                Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0) }.padding(8.dp))
+                if (t.isNotEmpty() && pasted == null && !atPeople) GoChip { go() }
+            } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
@@ -2220,8 +2227,13 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
+            // A tap on the words: the cursor goes there (past them, at the end), as a search box's does.
+            var layout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
             Text(query, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                maxLines = 1, overflow = TextOverflow.Ellipsis, onTextLayout = { layout = it },
+                modifier = Modifier.weight(1f).pointerInput(query) {
+                    detectTapGestures { at -> SearchText.cursor.value = layout?.getOffsetForPosition(at); SearchText.q.value = query; nav.open(Route.Search) }
+                })
             // Kept as a note: the bookmark, filled. Opened a result (a visit now): empty again, a tap keeps it.
             Icon(if (saved != null) Glyphs.saveOn else Glyphs.save, if (saved != null) "Kept as a note" else "Keep as note", tint = Vault.Accent,
                 modifier = Modifier.padding(end = 6.dp).size(40.dp).clip(CircleShape).clickable { if (saved == null) social.later.save(query) }.padding(10.dp))
