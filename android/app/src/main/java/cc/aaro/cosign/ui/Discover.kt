@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -139,17 +140,20 @@ private sealed class Route {
     data object Stories : Route()
     data class Thread(val id: String, val reply: Boolean = false) : Route()
     data class Profile(val pubkey: String) : Route()
+    /** A new post; [link]: a story to post with a comment. */
+    data class Compose(val link: String = "") : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"
     }
     companion object {
         fun of(s: String): Route? = when {
             s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories
             s.startsWith("thread:") -> s.split(':').let { Thread(it[1], it.getOrNull(2) == "true") }
             s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
+            s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             else -> null
         }
     }
@@ -214,6 +218,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Stories -> StoriesScreen(social, nav)
             is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
             is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
+            is Route.Compose -> ComposeScreen(top.link, social, nav)
         }
     }
 
@@ -247,6 +252,8 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: S
     /** Open the post with the reply box ready. */
     fun reply(id: String) = open(Route.Thread(id, reply = true))
     fun profile(pk: String) = open(Route.Profile(pk))
+    /** Write a post; [link]: with this link under it. */
+    fun compose(link: String = "") = open(Route.Compose(link))
     fun search(q: String) { social.search(q); open(Route.Search) }
 }
 
@@ -297,6 +304,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
         val fresh = notices.list.count { it.event.createdAt > seen }
         val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
         HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, pull = { pull.distanceFraction }, onMarble = nav.marble) {
+            IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
                     Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
@@ -324,7 +332,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
                     }
                 }
                 // Today's stories, kept together at the top; never between the posts.
-                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved) { nav.open(Route.Stories) } }
+                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved, nav) { nav.open(Route.Stories) } }
                 if (posts.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
                 }
@@ -371,14 +379,14 @@ private fun SeenWatcher(state: LazyListState, social: Social, keys: (String) -> 
 
 /** Today's stories: a few headlines at the top, each with its topic, site and age. "More stories" for the rest. */
 @Composable
-private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, onMore: () -> Unit) = Column(
+private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String>, nav: Nav, onMore: () -> Unit) = Column(
     Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 18.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
         .background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp)).padding(vertical = 4.dp),
 ) {
     Text("Today's stories", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp))
     stories.forEachIndexed { i, s ->
         if (i > 0) HorizontalDivider(color = Vault.Edge)
-        StoryRow(s, social, s.url in saved)
+        StoryRow(s, social, s.url in saved, nav)
     }
     HorizontalDivider(color = Vault.Edge)
     Text("More stories ›", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
@@ -386,10 +394,13 @@ private fun StoryBox(stories: List<TopicCard>, social: Social, saved: Set<String
 }
 
 /** One story: topic · site · age, the headline, its picture; tap to read it on the site. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
+private fun StoryRow(c: TopicCard, social: Social, saved: Boolean, nav: Nav) {
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
+    // A long press: its menu, as the ⋯ opens it.
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { social.opened(c); openInBrowser(context, c.url) }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
         Column(Modifier.weight(1f)) {
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(TopicFeeds.name(c.topic)) }
@@ -399,7 +410,7 @@ private fun StoryRow(c: TopicCard, social: Social, saved: Boolean) {
             Discussions(c.discussions)
         }
         c.image?.let { NetImage(it, Modifier.padding(start = 12.dp).size(64.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Edge), 256) }
-        StoryMenu(c, social, saved)
+        StoryMenu(c, social, saved, menu, { menu = it }) { nav.compose(c.url) }
     }
 }
 
@@ -430,17 +441,18 @@ private fun Discussions(list: List<cc.aaro.cosign.Discussion>) {
 
 /** "⋯" on a story: follow its topic, more or less like this, hide the site, save it. */
 @Composable
-private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean) = Box {
-    var open by remember { mutableStateOf(false) }
+private fun StoryMenu(c: TopicCard, social: Social, saved: Boolean, open: Boolean, setOpen: (Boolean) -> Unit, onPost: () -> Unit) = Box {
     val followed = c.topic in social.followedTopics.collectAsState().value
     val name = TopicFeeds.name(c.topic)
-    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
-    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
-        DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { open = false; social.followTopic(c.topic, !followed) })
-        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(c.topic) })
-        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(c.topic, "t:" + c.id) })
-        DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hideSource(c) })
-        DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { open = false; social.save(c.url, isLink = true) })
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { setOpen(true) }.padding(5.dp))
+    if (open) DropdownMenu(true, { setOpen(false) }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text("Post with a comment", color = Vault.Accent, fontWeight = FontWeight.SemiBold) }, { setOpen(false); onPost() },
+            leadingIcon = { Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(20.dp)) })
+        DropdownMenuItem({ Text(if (followed) "Stop following “$name”" else "Follow “$name”", color = Vault.Text) }, { setOpen(false); social.followTopic(c.topic, !followed) })
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { setOpen(false); social.moreLike(c.topic) })
+        DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { setOpen(false); social.lessLike(c.topic, "t:" + c.id) })
+        DropdownMenuItem({ Text("Hide stories from ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { setOpen(false); social.hideSource(c) })
+        DropdownMenuItem({ Text(if (saved) "Saved" else "Save", color = Vault.Text) }, { setOpen(false); social.save(c.url, isLink = true) })
     }
 }
 
@@ -486,7 +498,7 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         items(list, key = { "t:" + it.id }) { s ->
-            StoryRow(s, social, s.url in saved)
+            StoryRow(s, social, s.url in saved, nav)
             HorizontalDivider(color = Vault.Edge)
         }
     }
@@ -807,6 +819,37 @@ private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
     }
 }
 
+/**
+ * A new post: what you write, and the story (or link) it's about under it, as it'll show. Back leaves it.
+ */
+@Composable
+private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    // Drafts would hook in here: backing out with something written keeps it, to come back to (not yet).
+    var text by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    // The story's own picture and headline; a link from elsewhere, its page's.
+    val story = remember(link) { social.allStories.value.firstOrNull { it.url == link } }
+    val preview by produceState(story?.let { Preview(it.title, it.image, it.summary, it.sourceName) } ?: social.previews.value[link], link) {
+        if (value == null && link.isNotEmpty()) value = Preview.fetch(link)
+    }
+    Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.Filled.Close, "Close", tint = Vault.Text) }
+        Text("New post", style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
+        Button({
+            sending = true
+            scope.launch { val sent = social.post(text, link); sending = false; if (sent != null) { social.message.value = "Posted."; nav.back() } }
+        }, enabled = !sending && (text.isNotBlank() || link.isNotEmpty()), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(if (sending) "Posting…" else "Post") }
+    }
+    TextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).padding(horizontal = 4.dp),
+        placeholder = { Text(if (link.isEmpty()) "What's on your mind?" else "Add a comment…", color = Vault.Muted) },
+        colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
+    preview?.let { p -> Box(Modifier.padding(horizontal = 16.dp)) { LinkCard(p) {} } }
+}
+
 /** "⋯": not interested in this note, or mute its author (on this phone and in your mute list). */
 @Composable
 private fun NoteMenu(n: Event, name: String, social: Social) = Box {
@@ -971,14 +1014,12 @@ private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
     // site's logo), and search.
     Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-        Row(Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClickLabel = "Home", onClick = nav.home).padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Swirl(28f)
-            Spacer(Modifier.width(10.dp))
-            Text(appName, style = MaterialTheme.typography.titleLarge, color = Vault.Text, maxLines = 1)
-        }
+        Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(8.dp)) { Swirl(28f) }
         Spacer(Modifier.weight(1f))
         IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
+        IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
+        IconButton({ nav.open(Route.Bell) }) { Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text) }
+        nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account") }
     }
     // What this screen is, when the screen itself doesn't say.
     title?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp)) }

@@ -1049,6 +1049,24 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * Reply to [parent] (NIP-10: the thread's first post as root, the post you answer as reply,
      * everyone in the conversation tagged), sent to your relays and the author's. The reply, once sent; null if it wasn't.
      */
+    /**
+     * A post of your own: [text], and [link] under it (a story, say). A link to a post or article here is quoted
+     * as one (nostr: and a q tag), so apps show the post itself rather than a web page.
+     */
+    suspend fun post(text: String, link: String = ""): Event? {
+        val me = me ?: return null
+        val quoted = Ref.parse(link.substringAfterLast('/').substringBefore('?')) as? Ref.Note
+        val tail = when {
+            quoted != null -> "nostr:" + cc.aaro.cosign.core.Bech32.encode("note", quoted.id.hexToBytes())
+            else -> link.trim()
+        }
+        val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
+        val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else emptyList()
+        val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId()) ?: return null
+        remember(listOf(signed))
+        return signed
+    }
+
     suspend fun reply(parent: Event, text: String): Event? {
         val me = me ?: return null
         val body = text.trim().ifEmpty { return null }
