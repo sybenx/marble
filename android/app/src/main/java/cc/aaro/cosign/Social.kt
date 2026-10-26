@@ -154,6 +154,8 @@ object People {
 
 /** A Nostr identifier typed or pasted into search. */
 sealed class Ref {
+    /** Relays the link said to look on (nprofile, nevent): not part of what it is. */
+    var relays: List<String> = emptyList()
     data class Profile(val pubkey: String) : Ref()
     data class Note(val id: String) : Ref()
 
@@ -167,13 +169,25 @@ sealed class Ref {
             return when (hrp) {
                 "npub" -> if (data.size == 32) Profile(data.toHex()) else null
                 "note" -> if (data.size == 32) Note(data.toHex()) else null
-                "nprofile" -> tlv(data)?.let { Profile(it) }
-                "nevent" -> tlv(data)?.let { Note(it) }
+                "nprofile" -> tlv(data)?.let { Profile(it).apply { relays = hints(data) } }
+                "nevent" -> tlv(data)?.let { Note(it).apply { relays = hints(data) } }
                 else -> null
             }
         }
 
         private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1)[02-9ac-hj-np-z]+")
+
+        /** The relays under type 1 of a NIP-19 TLV (wss:// ones, at most four). */
+        private fun hints(b: ByteArray): List<String> {
+            val out = ArrayList<String>(); var i = 0
+            while (i + 2 <= b.size) {
+                val t = b[i].toInt() and 0xff; val l = b[i + 1].toInt() and 0xff
+                if (i + 2 + l > b.size) break
+                if (t == 1) String(b, i + 2, l).trim().takeIf { it.startsWith("wss://") }?.let { out += it.trimEnd('/') }
+                i += 2 + l
+            }
+            return out.take(4)
+        }
 
         /** The 32 bytes under type 0 of a NIP-19 TLV. */
         private fun tlv(b: ByteArray): String? {
@@ -926,6 +940,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Pair<Event, Int>>>?) = size > 30
     }
 
+    /** The relays a post's replies and reactions are looked for on, first: the big ones (with search). */
+    private val POST_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
+
     /** What can be shown of thread [id] right now, with no network: as opened before, or the note itself (under its first note, if that's here). Null if neither is. */
     fun threadNow(id: String): List<Pair<Event, Int>>? {
         synchronized(threads) { threads[id] }?.let { return it }
@@ -935,14 +952,36 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The whole thread [id] is in: its first note, then the replies, each with how deep it sits. */
-    suspend fun thread(id: String): List<Pair<Event, Int>> {
-        val relays = readRelays() + Sources.FEEDS.take(1) + Sources.SEARCH.take(1)
-        val note = note(id) ?: Fetch.query(relays, mapOf("ids" to listOf(id)), 6000).firstOrNull()?.also { remember(listOf(it)) } ?: return emptyList()
+    /**
+     * A thread, gathered where replies and reactions land (as Wisp does, and more): the link's relays, the big
+     * ones, the root author's inbox (NIP-65 read relays), yours; then each replier's own relays. [onSome]: the
+     * thread so far, each time more comes in. Its reactions are counted on the side ([engagement]).
+     */
+    suspend fun thread(id: String, hints: List<String> = emptyList(), onSome: (List<Pair<Event, Int>>) -> Unit = {}): List<Pair<Event, Int>> = kotlinx.coroutines.coroutineScope {
+        val note = note(id) ?: Fetch.query(hints + POST_RELAYS + readRelays().take(4), mapOf("ids" to listOf(id)), 6000).firstOrNull()?.also { remember(listOf(it)) } ?: return@coroutineScope emptyList()
         val rootId = rootOf(note) ?: note.id
-        val got = Fetch.query(relays, listOf(mapOf("ids" to listOf(rootId)), mapOf("kinds" to listOf(1), "#e" to listOf(rootId), "limit" to 200)), 7000)
+        val rootNote = note(rootId) ?: if (rootId == note.id) note else null
+        val relays = (hints + postRelays(rootNote?.pubkey ?: note.pubkey)).distinct()
+        val got = java.util.concurrent.ConcurrentHashMap<String, Event>()
+        fun build(): List<Pair<Event, Int>> = arrange(note, rootId, got.values.toList()).also { synchronized(threads) { threads[id] = it }; onSome(it) }
+        val first = Fetch.query(relays, listOf(mapOf("ids" to listOf(rootId)), mapOf("kinds" to listOf(1, 1111), "#e" to listOf(rootId)), mapOf("kinds" to listOf(1111), "#E" to listOf(rootId))), 7000)
+        first.forEach { got[it.id] = it }
+        build()
+        // Then where the people who replied post (their write relays), for the replies that only went there.
+        val repliers = got.values.filter { it.id != rootId }.map { it.pubkey }.distinct().take(30)
+        val second = repliers.map { pk -> async { outboxOf(pk).take(3) } }.awaitAll().flatten().distinct().filter { it !in relays }.take(25)
+        val more = if (second.isEmpty()) emptyList() else Fetch.query(second, listOf(mapOf("kinds" to listOf(1, 1111), "#e" to listOf(rootId)), mapOf("kinds" to listOf(1111), "#E" to listOf(rootId))), 5000)
+        more.forEach { got.putIfAbsent(it.id, it) }
+        val out = build()
+        launch { countReactions(out.map { it.first }, relays + second) }
+        out
+    }
+
+    /** The thread laid out: the root, then each reply under the note it answers, oldest first. */
+    private fun arrange(note: Event, rootId: String, got: List<Event>): List<Pair<Event, Int>> {
         val root = if (rootId == note.id) note else note(rootId) ?: got.firstOrNull { it.id == rootId }
         // Replies, not notes that only mention it.
-        val replies = got.filter { e -> e.kind == 1 && e.id != rootId && safe(e) && e.tags.any { it.size > 1 && it[0] == "e" && it[1] == rootId && it.getOrNull(3) != "mention" } }
+        val replies = got.filter { e -> (e.kind == 1 || e.kind == 1111) && e.id != rootId && safe(e) && e.tags.any { it.size > 1 && (it[0] == "e" || it[0] == "E") && it[1] == rootId && it.getOrNull(3) != "mention" } }
         val all = listOfNotNull(root) + replies + (if (root == null) listOf(note) else emptyList())
         remember(all)
         People.want(all.map { it.pubkey })
@@ -955,8 +994,73 @@ class Social private constructor(private val phone: Phone, context: Context) {
             byParent[e.id]?.sortedBy { it.createdAt }?.forEach { walk(it, depth + 1) }
         }
         walk(all.first(), 0)
-        synchronized(threads) { threads[id] = out }
         return out
+    }
+
+    // --- How many: replies, likes, reposts, zaps -------------------------------------------
+
+    /** What a post has drawn: what the relays handed over, and what they counted (NIP-45), whichever is more. */
+    data class Engagement(val replies: Int = 0, val likes: Int = 0, val reposts: Int = 0, val zaps: Int = 0,
+                          val emojis: List<Pair<String, Int>> = emptyList(), val countedReplies: Long? = null, val countedLikes: Long? = null) {
+        val replyTotal get() = maxOf(replies.toLong(), countedReplies ?: 0)
+        val likeTotal get() = maxOf(likes.toLong(), countedLikes ?: 0)
+    }
+    val engagement = MutableStateFlow<Map<String, Engagement>>(emptyMap())
+
+    /** The relays where a post's replies and reactions land: the big ones, its author's inbox, yours. */
+    private suspend fun postRelays(author: String) = (POST_RELAYS + inboxOf(author).take(8) + readRelays().take(4)).distinct()
+
+    /** Reactions to these posts (likes, with their emoji; reposts; zaps), counted as they come; the first one's totals asked for too. */
+    private suspend fun countReactions(posts: List<Event>, relays: List<String>) = kotlinx.coroutines.coroutineScope {
+        if (posts.isEmpty()) return@coroutineScope
+        val root = posts.first()
+        launch {
+            val counts = SearchRelays.COUNTS.map { url -> async {
+                Fetch.counts(url, mapOf("r" to mapOf("kinds" to listOf(1, 1111), "#e" to listOf(root.id)), "l" to mapOf("kinds" to listOf(7), "#e" to listOf(root.id))), 5000)
+            } }.awaitAll()
+            val r = counts.mapNotNull { it["r"] }.maxOrNull(); val l = counts.mapNotNull { it["l"] }.maxOrNull()
+            engagement.update { m -> m + (root.id to (m[root.id] ?: Engagement()).copy(countedReplies = r, countedLikes = l)) }
+        }
+        val replies = posts.drop(1).groupBy { parentOf(it) ?: root.id }.mapValues { it.value.size }
+        val got = posts.map { it.id }.chunked(100).map { ids -> async { Fetch.query(relays, mapOf("kinds" to listOf(7, 6, 16, 9735), "#e" to ids), 6000) } }.awaitAll().flatten().distinctBy { it.id }
+        val byTarget = got.groupBy { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }
+        engagement.update { m ->
+            m + posts.associate { p ->
+                val rs = byTarget[p.id] ?: emptyList()
+                val likes = rs.filter { it.kind == 7 && it.content != "-" }
+                val emojis = likes.groupingBy { it.content.ifBlank { "+" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key to it.value }
+                p.id to (m[p.id] ?: Engagement()).copy(replies = replies[p.id] ?: 0, likes = likes.size, reposts = rs.count { it.kind == 6 || it.kind == 16 }, zaps = rs.count { it.kind == 9735 }, emojis = emojis)
+            }
+        }
+    }
+
+    // --- A pasted link: the post or person, and what points at them ------------------------------
+
+    /** What a pasted post's page shows under it: quotes of it, its replies, posts that mention it. */
+    data class Lookup(val quotedBy: List<Event> = emptyList(), val replies: List<Event> = emptyList(), val mentionedIn: List<Event> = emptyList(), val done: Boolean = false)
+
+    /** Quotes, replies and mentions of a post, from where they land; each section as soon as it's in. */
+    suspend fun lookupNote(id: String, hints: List<String>, onSome: (Lookup) -> Unit) = kotlinx.coroutines.coroutineScope {
+        val note = note(id) ?: Fetch.query(hints + POST_RELAYS + readRelays().take(4), mapOf("ids" to listOf(id)), 6000).firstOrNull()?.also { remember(listOf(it)) }
+        val relays = (hints + if (note != null) postRelays(note.pubkey) else POST_RELAYS).distinct()
+        val got = Fetch.query(relays, listOf(mapOf("kinds" to listOf(1, 1111), "#e" to listOf(id), "limit" to 300), mapOf("kinds" to listOf(1111), "#E" to listOf(id)), mapOf("kinds" to listOf(1), "#q" to listOf(id), "limit" to 100)), 7000)
+            .filter { safe(it) && it.id != id }
+        val quoted = got.filter { e -> e.tags.any { it.size > 1 && it[0] == "q" && it[1] == id } }
+        val replies = got.filter { e -> e !in quoted && e.tags.any { it.size > 1 && (it[0] == "e" || it[0] == "E") && it[1] == id && it.getOrNull(3) != "mention" } }
+        val mentions = got.filter { e -> e !in quoted && e !in replies }
+        remember(got)
+        People.want(got.map { it.pubkey })
+        onSome(Lookup(quoted.sortedByDescending { it.createdAt }, replies.sortedBy { it.createdAt }, mentions.sortedByDescending { it.createdAt }, done = true))
+        if (note != null) launch { countReactions(listOf(note), relays) }
+    }
+
+    /** Posts that mention someone (not replies to them), newest first, from where they land: their inbox and the big relays. */
+    suspend fun mentionsOf(pk: String, hints: List<String>): List<Event> {
+        val relays = (hints + POST_RELAYS + inboxOf(pk).take(8)).distinct()
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(1), "#p" to listOf(pk), "limit" to 100), 7000)
+            .filter { e -> safe(e) && e.pubkey != pk && parentOf(e) == null }.sortedByDescending { it.createdAt }.take(50)
+        remember(got); People.want(got.map { it.pubkey })
+        return got
     }
 
     /** Someone's name and picture, straight from the two fast relays (over connections kept open a while), not the batched path. */
@@ -1037,11 +1141,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         try { outboxFile.writeText(Json.stringify(outboxes.entries.sortedByDescending { it.value.second }.take(500).associate { (k, v) -> k to mapOf("r" to v.first, "at" to v.second) })) } catch (_: Exception) {}
     }
 
-    /** The relays someone reads from (their inbox): where a reply or a reaction to them should go. */
+    /** Where someone reads (their NIP-65 read relays, up to eight): where replies and reactions to them land. Kept an hour. */
     private suspend fun inboxOf(pk: String): List<String> {
-        val l = Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(10002), "authors" to listOf(pk), "limit" to 1), 4000).maxByOrNull { it.createdAt }
-        return l?.tags?.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "write" && it[1].startsWith("wss://") }?.map { it[1] }?.take(3) ?: emptyList()
+        inboxes[pk]?.let { (l, at) -> if (System.currentTimeMillis() - at < 3_600_000L) return l }
+        val l = Fetch.query(Sources.PROFILES.take(4), mapOf("kinds" to listOf(10002), "authors" to listOf(pk), "limit" to 1), 4000).maxByOrNull { it.createdAt }
+        val list = l?.tags?.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "write" && it[1].startsWith("wss://") }?.map { it[1].trimEnd('/') }?.distinct()?.take(8) ?: emptyList()
+        inboxes[pk] = list to System.currentTimeMillis()
+        return list
     }
+    private val inboxes = ConcurrentHashMap<String, Pair<List<String>, Long>>()
 
     // --- Replying and reporting ----------------------------------------------------------
 
