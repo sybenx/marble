@@ -182,13 +182,15 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val scope = rememberCoroutineScope()
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime() }
     // Read on open and when you come back to it; nothing in between.
+    // Home: the main page, at the top, its search box showing, the feed as it was (the swirl in any screen's bar, or back after a while).
+    val home: () -> Unit = {
+        stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
+        viewing = null; marbleFrom = null
+        header.px = 0f
+        scope.launch { feedState.scrollToItem(0) }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        if (awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after) {
-            stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
-            viewing = null; marbleFrom = null
-            header.px = 0f
-            scope.launch { feedState.scrollToItem(0) }
-        }
+        if (awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after) home()
         awaySince = 0
         social.loadFeed(); social.loadNotices()
     }
@@ -196,7 +198,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
 
-    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it })
+    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
@@ -240,7 +242,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
 }
 
 private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: Social, val pictures: (List<String>, Int) -> Unit = { _, _ -> },
-                  val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}) {
+                  val marble: (androidx.compose.ui.geometry.Offset) -> Unit = {}, val home: () -> Unit = {}) {
     fun thread(id: String) = open(Route.Thread(id))
     /** Open the post with the reply box ready. */
     fun reply(id: String) = open(Route.Thread(id, reply = true))
@@ -602,11 +604,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
                 .clip(CircleShape).clickable(enabled = m > 8f, onClickLabel = "Look at the marble") { onMarble(centre) })
         // Folded: the flat swirl (the themed icon's glyph) in its little disc, growing in as the marble goes.
         val g = 28f * f * f
-        if (g > 1f) Box(Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp).size(g.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
-            .clickable(onClick = onName), contentAlignment = Alignment.Center) {
-            Icon(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_monochrome), null, tint = if (Vault.dark) Color(0xFFB9C5FF) else Color(0xFF34427A),
-                modifier = Modifier.requiredSize((g * 1.5f).dp))
-        }
+        if (g > 1f) Swirl(g, Modifier.offset((30f - g / 2).dp, (32f - g / 2).dp), onName)
         // The name: 32sp centred under the marble, scaling to the bar's 22sp at the left.
         var nameW by remember { androidx.compose.runtime.mutableIntStateOf(0) }
         val scale = mix(1f, 22f / 32f)
@@ -968,17 +966,39 @@ private fun since(t: Long): String {
 }
 
 @Composable
-private fun TopBar(title: String, nav: Nav) = Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-    IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-    Text(title, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
+    // The bar the main page's header folds into, on every screen: back, the swirl and the name (home, like a
+    // site's logo), and search.
+    Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        Row(Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClickLabel = "Home", onClick = nav.home).padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Swirl(28f)
+            Spacer(Modifier.width(10.dp))
+            Text(appName, style = MaterialTheme.typography.titleLarge, color = Vault.Text, maxLines = 1)
+        }
+        Spacer(Modifier.weight(1f))
+        IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
+    }
+    // What this screen is, when the screen itself doesn't say.
+    title?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp)) }
 }
+
+/** The flat swirl (the themed icon's glyph) in its little disc: [size] dp across. */
+@Composable
+private fun Swirl(size: Float, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) =
+    Box(modifier.size(size.dp).clip(CircleShape).background(if (Vault.dark) Color(0xFF2B2E3D) else Color(0xFFDCE2FA))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier), contentAlignment = Alignment.Center) {
+        Icon(androidx.compose.ui.res.painterResource(cc.aaro.cosign.R.drawable.ic_launcher_monochrome), null, tint = if (Vault.dark) Color(0xFFB9C5FF) else Color(0xFF34427A),
+            modifier = Modifier.requiredSize((size * 1.5f).dp))
+    }
 
 // --- A thread ------------------------------------------------------------------------------
 
 @Composable
 // safeDrawingPadding includes the keyboard: the reply box sits right on top of it.
 private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boolean = false) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-    TopBar("Thread", nav)
+    TopBar(null, nav)
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
     // At once, from what's here already (the note you tapped, the thread if you've opened it before);
@@ -1065,7 +1085,7 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
     val busy by social.busy.collectAsState()
     val p = people[pk]
     LaunchedEffect(pk) { social.profileNow(pk) }
-    TopBar(p?.shown ?: "Profile", nav)
+    TopBar(null, nav)
     // Their posts, a page at a time: more as you reach the end.
     // Each relay's posts come in as it answers, newest first; "none" only once every relay has.
     // Back from a post: the posts as they were, at once, so the list is where you left it (nothing loads again or moves).
@@ -1207,6 +1227,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        // Home, as in every screen's bar.
+        Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(6.dp)) { Swirl(28f) }
+        Spacer(Modifier.width(6.dp))
         TextField(
             q, { q = it }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
             placeholder = { Text("People, posts, #tags…", color = Vault.Muted) },
