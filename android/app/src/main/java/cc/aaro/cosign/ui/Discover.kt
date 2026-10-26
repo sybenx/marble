@@ -408,7 +408,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 Text("Search or jot anything…", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 // Enter: kept as a note, and searched.
                 Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text), contentAlignment = Alignment.Center) {
-                    Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 24.sp)
                 }
             }
             Box(Modifier.widthIn(max = 600.dp).fillMaxWidth())
@@ -452,6 +452,8 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
     val following = pager.currentPage == PANE_FOLLOWING
+    // The feed log (when on): which pane you settle on, for time per pane.
+    LaunchedEffect(pager.settledPage) { cc.aaro.cosign.FeedLog.ev("pane", "to" to if (pager.settledPage == PANE_FOLLOWING) "following" else "search") }
     Column(Modifier.fillMaxSize().background(if (following) Vault.AccentGround.copy(alpha = 0.35f) else Color.Transparent)
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         Box(Modifier.fillMaxWidth().height(56.dp)) {
@@ -571,7 +573,6 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean) = Box(Modifier.f
     val state = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(Unit) { social.loadFeed() }
     SeenWatcher(state, social) { listOf(it) }
-    LogWatcher(state, "discover", posts.map { it.e.id })
     // All, or only people (those you follow, and your Special Follow list), the news, or the topics you follow.
     var chip by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
     val follows by social.follows.collectAsState()
@@ -587,12 +588,14 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean) = Box(Modifier.f
             .filter { chip == "news" || it.topic in followedTopics }.take(60)
     }
     val savedLinks by social.saved.collectAsState()
+    // The feed log (when on): each list by its pane and chip, so they can be told apart.
+    LogWatcher(state, if (pane) "following/$chip" else "discover", if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else shown.map { it.e.id })
     if (pane) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((k, label) in listOf("all" to "All", "people" to "People", "news" to "News", "topics" to "Topics")) {
             val on = chip == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
-                    .clickable { chip = k }.padding(horizontal = 14.dp, vertical = 8.dp))
+                    .clickable { chip = k; cc.aaro.cosign.FeedLog.ev("chip", "screen" to "following", "chip" to k) }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
     if (!pane) Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2058,14 +2061,16 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     var undo by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
     LaunchedEffect(undo) { if (undo != null) { delay(4000); undo = null } }
     val save = { if (t.isNotEmpty()) { if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) } } }
+    // A search: what you typed (or the suggestion you tapped) is kept as a note, then searched (opening a result
+    // makes it a visit instead). "Go to a site", a pasted link and @name aren't notes.
+    fun searchFor(x: String) { val j = social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; social.interests.noticed(x); nav.results(x) }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
             atPeople -> social.search(t.drop(1))
             site?.sure == true -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
-            // Enter: what you typed is kept as a note, then searched (opening a result makes it a visit instead).
-            else -> { val j = social.later.jot(t); SearchText.note.value = j?.takeIf { it.second }?.first?.id; social.interests.noticed(t); nav.results(t) }
+            else -> searchFor(t)
         }
     }
     // People as you type after @; posts only once asked.
@@ -2096,7 +2101,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { go() }),
             trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) Box(Modifier.padding(end = 6.dp).size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text)
-                .clickable(onClickLabel = "Keep as a note and search") { go() }, contentAlignment = Alignment.Center) { Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 17.sp) } },
+                .clickable(onClickLabel = "Keep as a note and search") { go() }, contentAlignment = Alignment.Center) { Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 24.sp) } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
@@ -2118,8 +2123,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 // What Enter does, first.
                 item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
                 site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
-                site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { nav.results(t) } } }
-                items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { nav.results(sug) } }
+                site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
+                items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
                 if (suggestions.isNotEmpty()) item(key = "from") { Text("Suggestions from ${engine.label} · turn off in Settings", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
@@ -2215,6 +2220,7 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
                     social.titlePage(url)
                     // A result opened: the note this search made becomes a visit (a note you had before stays).
                     SearchText.note.value?.let { id -> social.later.items.value.firstOrNull { it.id == id && it.deleted == null }?.let(social.later::remove); SearchText.note.value = null }
+                    cc.aaro.cosign.FeedLog.open(url, "visit")
                 }
                 try { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, real).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
             }

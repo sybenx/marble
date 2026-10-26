@@ -21,7 +21,7 @@ object FeedLog {
     /** The format of a line: it changes only when a field's meaning does. */
     const val V = 1
     /** Which ranking put the lists in order, on every list logged: change it whenever Calm's ranking does. */
-    const val RANKER = "learn1"
+    const val RANKER = "panes1"
 
     val on = MutableStateFlow(false)
     /** The switch shows in Account › Advanced. */

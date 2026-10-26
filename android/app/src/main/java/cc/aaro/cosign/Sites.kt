@@ -44,7 +44,10 @@ object Sites {
     }
     private val ADDRESS = Regex("^(?:https?://)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24})(?:[/:?#]\\S*)?$", RegexOption.IGNORE_CASE)
 
-    /** A site to go to for what's typed, and whether it's a sure thing (Enter opens it) or only a likely one. */
+    /**
+     * A site to go to for what's typed, and whether it's a sure thing (Enter opens it) or only a likely one (a row to
+     * tap; Enter searches). Only an address is sure: a dot and an ending, or a scheme. A bare name ("apple") is never.
+     */
     data class Go(val address: String, val url: String, val sure: Boolean)
 
     fun match(typed: String): Go? {
@@ -58,7 +61,7 @@ object Sites {
             return Go(host.removePrefix("www."), url, sure = true)
         }
         val name = q.lowercase()
-        BY_NAME[name]?.let { return Go(it, "https://$it", sure = true) }
+        BY_NAME[name]?.let { return Go(it, "https://$it", sure = false) }
         // The start of one (at least three letters): shown, but Enter still searches.
         if (name.length >= 3 && name.all { it.isLetterOrDigit() || it == '-' }) BY_NAME.entries.firstOrNull { it.key.startsWith(name) }?.let { return Go(it.value, "https://${it.value}", sure = false) }
         return null
