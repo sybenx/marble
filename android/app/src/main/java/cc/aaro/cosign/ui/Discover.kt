@@ -248,15 +248,14 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         val away = awaySince > 0 && gone >= Away.after
         if (away) FeedLog.start("back") else if (awaySince > 0) FeedLog.ev("back", "gap" to gone / 1000)
         awaySince = 0
-        if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
-        social.loadNotices()
+        // Marble is search and notes now (the feed lives on its branch): back after a while, home; nothing to fetch for a feed.
+        if (away) home()
         social.refreshLater()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
         Daily.refresh(context).invokeOnCompletion { social.claimToday() }
     }
-    // And every 30 minutes while it's open: new things come in below what you're reading.
-    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
+    // The feed log is frozen with the feed: off, and out of sight (what it kept, and any export, stay).
+    LaunchedEffect(Unit) { if (FeedLog.on.value) FeedLog.set(context, false) }
 
     val nav = Nav(open = open, back = back, searched = searched, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
@@ -288,7 +287,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.note.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Panes(phone, ui, social, nav, pager, feedState, followingPlace)
+    if (top == null) Home(phone, ui, social, nav)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
@@ -373,8 +372,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     // The pull: the finger's travel down (times Stretch.GIVE), in pixels; up, towards opening Discover.
     var pull by remember { mutableFloatStateOf(0f) }
     var lift by remember { mutableFloatStateOf(0f) }
-    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
-        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)).pointerInput(Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().pointerInput(Unit) {
         detectVerticalDragGestures(
             onDragStart = { lift = 0f },
             onDragEnd = {
@@ -427,8 +425,12 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
             }
         }
-        // What needs you (an approval, say), and a passing error, under the bar.
-        Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
+        // Your picture, top right: your account, devices and backup.
+        Box(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp)) {
+            Avatar(People.known.collectAsState().value[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
+        }
+        // What needs you (an approval, say), and a passing error, under it.
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 58.dp).widthIn(max = 600.dp).fillMaxWidth()) {
             NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
             tomorrow?.let { TomorrowCard(it, social) }
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
@@ -2418,18 +2420,20 @@ private fun SaveChip(saved: Boolean, onClick: () -> Unit) = Row(
     Text(if (saved) "Saved" else "Save", color = if (saved) Vault.Ground else Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
 }
 
-/** The box's Enter, in the Save chip's look (0.12.18): keep what's typed as a note, and search it. */
+/**
+ * The box's Enter, in the Save chip's shape (0.12.18): a return arrow drawn as Marble's other line icons are. Keep
+ * what's typed as a note, and search it. [SOLID_ENTER]: filled cobalt instead of the pale chip.
+ */
 @Composable
-private fun GoChip(onClick: (() -> Unit)?) = Row(
-    Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround)
+private fun GoChip(onClick: (() -> Unit)?) = Box(
+    Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(if (SOLID_ENTER) Vault.Accent else Vault.AccentGround)
         .then(if (onClick != null) Modifier.clickable(onClickLabel = "Keep as a note and search", onClick = onClick) else Modifier)
-        .padding(horizontal = 12.dp, vertical = 7.dp),
-    verticalAlignment = Alignment.CenterVertically,
+        .padding(horizontal = 14.dp, vertical = 7.dp),
+    contentAlignment = Alignment.Center,
 ) {
-    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Vault.Accent, modifier = Modifier.size(16.dp))
-    Spacer(Modifier.width(6.dp))
-    Text("Go", color = Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+    Icon(Glyphs.enter, "Enter", tint = if (SOLID_ENTER) Vault.Ground else Vault.Accent, modifier = Modifier.size(20.dp))
 }
+private const val SOLID_ENTER = false
 
 /** A row of the dropdown: a search (what's typed in plain, the rest in bold), and ↖ to put it in the box. */
 @Composable

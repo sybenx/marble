@@ -621,18 +621,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
         }
 
-        // Discover's topics you follow: on this phone only.
-        item { Heading("Topics you follow") }
-        item {
-            val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
-            val followed by social.followedTopics.collectAsState()
-            if (followed.isEmpty()) Muted("None yet. Tap the topic under a story in Discover to follow it. What you like teaches Discover too, on this phone only.")
-            for (t in followed.sorted()) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(cc.aaro.cosign.TopicFeeds.name(t), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                TextButton({ social.followTopic(t, false) }) { Text("✕", color = Vault.Muted) }
-            }
-        }
-
         // Accounts from before weighted keys (threshold 2) can't have a paper: it could sign alone.
         if (m.group.threshold >= 4) {
             item { Heading("Keep your account safe") }
@@ -678,7 +666,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 Muted("${ui.relaysUp}/${m.group.relays.size} relays · " + if (ui.push != null) "ntfy wakes this phone for approvals" else "no ntfy: approvals arrive while $appName is running")
                 TextButton({ leaving = true }, contentPadding = PaddingValues(0.dp)) { Text("Remove this phone from your account", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
-            item { FeedLogSetting() }
         }
     }
 

@@ -31,5 +31,7 @@ object Glyphs {
     private const val SAVE = "M6 4h12v16l-6-4-6 4z"
     val save = line("save", SAVE)
     val saveOn = line("saveOn", SAVE, fill = true)
+    /** Enter (return): keep what's typed as a note, and search it. */
+    val enter = line("enter", "M19 5v7a3 3 0 0 1-3 3H6M10 11l-4 4 4 4")
     val warn = line("warn", "M12 3 2 20h20L12 3zM12 10v4M12 17h.01")
 }
