@@ -297,7 +297,22 @@ class Social private constructor(private val phone: Phone, context: Context) {
     suspend fun unseenStories(): List<TopicCard> {
         // Opened from last time's feed, the full list may not be read yet: the phone's copy, or the site's.
         if (allStories.value.isEmpty()) allStories.value = TopicFeeds.load(CosignApp.instance, cachedOnly = true).ifEmpty { try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { emptyList() } }
-        return Calm.stories(allStories.value.filter { !storyGone(it) }, interests, Clock.now(), ::shownCount)
+        val left = allStories.value.filter { !storyGone(it) }
+        // A slow news day, or an old copy (no connection): the last week's rather than next to none.
+        val out = Calm.stories(left, interests, Clock.now(), ::shownCount).takeIf { it.size >= 12 }
+            ?: Calm.stories(left, interests, Clock.now(), ::shownCount, window = 7 * 86_400L)
+        if (debuggable) storyCounts("more stories", out.size)
+        return out
+    }
+
+    /** Debug builds: where today's stories went (how many, how many recent, opened, dismissed, hidden, the phone's copy's age). */
+    private fun storyCounts(what: String, showing: Int) {
+        val all = allStories.value; val now = Clock.now()
+        val file = java.io.File(CosignApp.instance.cacheDir, "topic-feeds.json")
+        android.util.Log.i("CosignStories", "$what: showing $showing of ${all.size}; within 48 h ${all.count { now - it.publishedAt < Calm.WINDOW }}; " +
+            "opened ${all.count(::storyOpened)}; dismissed ${all.count(::storyDismissed)}; hidden sites ${all.count { interests.hidden("hiddenSources", it.sourceId) }}; " +
+            "newest ${all.minOfOrNull { (now - it.publishedAt) / 3600 } ?: "-"} h old; " +
+            "copy ${if (file.exists()) "${(System.currentTimeMillis() - file.lastModified()) / 60_000} min old" else "none"}")
     }
     /** Link previews (title, picture, summary from the page's own tags), by link. */
     val previews = MutableStateFlow<Map<String, Preview>>(emptyMap())
@@ -320,6 +335,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (f.loading || (!force && f.posts.isNotEmpty() && System.currentTimeMillis() - f.at < 30 * 60_000)) {
             // No box at all (all of last time's had been seen): fill it; that changes nothing you're looking at.
             if (!f.loading && f.stories.isEmpty()) scope.launch { refillStories() }
+            // The full list for More stories, kept up to date all the same (the box stays as it is).
+            if (!f.loading && !TopicFeeds.fresh(CosignApp.instance)) scope.launch { allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value } }
             return
         }
         feed.update { it.copy(loading = true, failed = false) }
@@ -375,6 +392,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val box = Calm.box(all.filter { "t:" + it.id !in skip }, interests, Clock.now(), ::storyOpened, ::storyDismissed, ::shownCount)
             .ifEmpty { Calm.box(all, interests, Clock.now(), ::storyOpened, ::storyDismissed, ::shownCount) }
         feed.update { it.copy(stories = box) }
+        if (debuggable) storyCounts("box from the site", box.size)
         if (box.isNotEmpty()) Startup.mark("feed stories ${box.size}")
         saveFeed()
     }

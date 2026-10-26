@@ -67,6 +67,8 @@ object TopicFeeds {
         "privacy" to "Privacy and security", "gadgets" to "Phones and gadgets", "selfhosting" to "Self-hosting", "food" to "Food",
         "art" to "Art and design", "photos" to "Photos and places", "news" to "General news")
 
+    /** The last try to fetch the stories failed: what's shown is the phone's older copy. */
+    @Volatile var stale = false
     /** The phone's copy was fetched in the last 30 minutes. */
     fun fresh(context: Context) = File(context.cacheDir, "topic-feeds.json").let { it.exists() && System.currentTimeMillis() - it.lastModified() < 30 * 60_000L }
 
@@ -81,17 +83,36 @@ object TopicFeeds {
             val known = NAMES.keys.plus("nostr").associateWith { id -> async { get("$BASE/topics/$id.json") } }
             val indexText = get(INDEX) ?: return@coroutineScope null
             val list = ((Json.parse(indexText) as? Map<*, *>)?.get("topics") as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
-            indexText to list.map { t -> async { known[t["id"]]?.await() ?: (t["url"] as? String)?.let { get(it) } } }.awaitAll()
-        } ?: return@withContext (if (file.exists()) parse(file.readText()) else null) ?: emptyList()
+            indexText to list.map { t -> t["id"] as? String to async { known[t["id"]]?.await() ?: (t["url"] as? String)?.let { get(it) } } }.map { (id, b) -> id to b.await() }
+        } ?: return@withContext (if (file.exists()) parse(file.readText()) else null).also { stale = true } ?: emptyList()
+        // A topic that didn't come: its stories from the phone's copy, rather than none.
+        val missing = bodies.filter { it.second == null }.mapNotNull { it.first }.toSet()
+        val old = if (missing.isEmpty() || !file.exists()) emptyMap() else oldBodies(file.readText())
+        val kept = bodies.mapNotNull { (id, b) -> b ?: old[id] }
+        stale = missing.isNotEmpty()
         // Kept as the site sent it: the index, then each topic's file.
-        val text = org.json.JSONArray(listOf(indexText) + bodies.filterNotNull()).toString()
+        val text = org.json.JSONArray(listOf(indexText) + kept).toString()
         try { file.writeText(text) } catch (_: Exception) {}
         parse(text) ?: emptyList()
     }
 
     private fun get(url: String): String? = try {
-        http.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.string() else null }
-    } catch (_: Exception) { null }
+        http.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) debug("${url.substringAfterLast('/')}: ${r.code}")
+            if (r.isSuccessful) r.body?.string() else null
+        }
+    } catch (e: Exception) { debug("${url.substringAfterLast('/')}: ${e.javaClass.simpleName} ${e.message}"); null }
+
+    private fun debug(what: String) {
+        if (CosignApp.instance.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) android.util.Log.i("CosignStories", "fetch $what")
+    }
+
+    /** Each topic's file in the phone's copy, by topic id. */
+    private fun oldBodies(text: String): Map<String, String> = try {
+        (Json.parse(text) as? List<*>)?.drop(1)?.mapNotNull { it as? String }?.mapNotNull { b ->
+            ((Json.parse(b) as? Map<*, *>)?.let { m -> (m["topic"] as? Map<*, *>)?.get("id") as? String })?.let { it to b }
+        }?.toMap() ?: emptyMap()
+    } catch (_: Exception) { emptyMap() }
 
     private fun parse(text: String): List<TopicCard>? {
         val parts = (Json.parse(text) as? List<*>)?.mapNotNull { (it as? String)?.let { b -> Json.parse(b) as? Map<*, *> } } ?: return null
