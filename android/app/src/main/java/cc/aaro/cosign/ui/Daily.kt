@@ -27,6 +27,9 @@ object Daily {
     /** Asked again at most this often while today's hasn't come. */
     private const val AGAIN = 60 * 60_000L
     val today = MutableStateFlow<Marble?>(null)
+    /** Each night's name and picture, as the list last said (status ok only), by date: for your marbles. */
+    val nights = MutableStateFlow<Map<String, Pair<String, String>>>(emptyMap())
+    @Volatile private var nightsRead = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val http by lazy { Fetch.http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build() }
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
@@ -39,18 +42,6 @@ object Daily {
 
     fun utcDate(): String = LocalDate.now(ZoneOffset.UTC).toString()
 
-    /**
-     * Today's marble, looked at big: collected, on this phone for now (the days, as marble-YYYY-MM-DD ids, for the
-     * shelf to come). True the first time on [date].
-     */
-    fun collect(context: Context, date: String): Boolean {
-        val prefs = context.getSharedPreferences("marbles", Context.MODE_PRIVATE)
-        val have = prefs.getStringSet("collected", emptySet())!!
-        val id = "marble-$date"
-        if (id in have) return false
-        prefs.edit().putStringSet("collected", have + id).apply()
-        return true
-    }
 
     /** Today's from the phone at once; from the site if it isn't here yet (at most once an hour). */
     fun refresh(context: Context) = scope.launch {
@@ -75,6 +66,7 @@ object Daily {
         (m["preview_bot"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { previewBot = it }
         if (have) return
         val days = m["days"] as? List<*> ?: return
+        rememberNights(context, days)
         val e = days.mapNotNull { it as? Map<*, *> }.lastOrNull { it["date"] == date } ?: return debug(context, "none for $date in the list")
         if (e["status"] != "ok") return
         val url = (e["image"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT } ?: return
@@ -86,6 +78,37 @@ object Daily {
         // A week of them on the phone, no more.
         dir.listFiles()?.filter { it.name.take(10) < LocalDate.now(ZoneOffset.UTC).minusDays(7).toString() }?.forEach { it.delete() }
         if (utcDate() == date) today.value = Marble(name.readText(), 0, ((e["size"] as? Long)?.toInt() ?: 768) / 2, png)
+    }
+
+    private fun rememberNights(context: Context, days: List<*>) {
+        val n = days.mapNotNull { it as? Map<*, *> }.filter { it["status"] == "ok" }.mapNotNull { e ->
+            val d = e["date"] as? String ?: return@mapNotNull null
+            val img = (e["image"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT } ?: return@mapNotNull null
+            d to ((e["name"] as? String)?.trim()?.take(40)?.ifEmpty { null } ?: "Marble") to img
+        }.associate { (dn, img) -> dn.first to (dn.second to img) }
+        nights.value = n
+        try { File(context.filesDir, "nights.json").writeText(org.json.JSONObject(n.mapValues { org.json.JSONArray(listOf(it.value.first, it.value.second)) }).toString()) } catch (_: Exception) {}
+    }
+
+    /** The nights as last read, from the phone (once), for your marbles before the list is fetched again. */
+    fun loadNights(context: Context) {
+        if (nightsRead) return
+        nightsRead = true
+        if (nights.value.isNotEmpty()) return
+        try {
+            val o = org.json.JSONObject(File(context.filesDir, "nights.json").readText())
+            nights.value = o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { it.getString(0) to it.getString(1) } }
+        } catch (_: Exception) {}
+    }
+
+    /** The marble of [date]: the night's own if the list had it, else the collection's for that date. */
+    fun marbleOf(date: java.time.LocalDate): Marble {
+        val k = date.toString()
+        nights.value[k]?.let { (name, url) ->
+            val local = today.value?.file?.takeIf { it.name.startsWith(k) }
+            return Marble(name, 0, 384, local, url)
+        }
+        return MARBLES[Math.floorMod(date.toEpochDay(), MARBLES.size.toLong()).toInt()]
     }
 
     fun get(url: String): ByteArray? = try {

@@ -6,9 +6,10 @@ import cc.aaro.cosign.R
 
 /**
  * One of the daily marbles: its name, its picture (light and dark, shadow included), and its radius in the render,
- * in pixels (how big it can be shown). [file]: the night's own marble instead (a transparent, centred PNG; no shadow).
+ * in pixels (how big it can be shown). [file] (on the phone) or [url]: the night's own marble instead (a transparent,
+ * centred PNG; no shadow).
  */
-data class Marble(val name: String, val res: Int, val detail: Int, val file: java.io.File? = null)
+data class Marble(val name: String, val res: Int, val detail: Int, val file: java.io.File? = null, val url: String? = null)
 
 /** The collection; the day's is picked by date ([Marbles.today]). */
 val MARBLES = listOf(

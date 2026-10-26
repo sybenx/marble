@@ -564,7 +564,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
-        scope.launch { restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater() }
+        scope.launch {
+            restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater()
+            // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
+            kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
+            pullKept()
+        }
         scope.launch {
             try {
                 previews.value = Preview.load(CosignApp.instance)
@@ -776,6 +781,50 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
         val n = Fetch.publish(to, signed)
         if (debuggable) android.util.Log.i("CosignSync", "later sent: ${later.items.value.size} items to $n of ${to.size} relays")
+    }
+
+    // --- Your marbles: the ones you kept -------------------------------------------------------
+    //
+    // A year to an event on your account (kind 30078, d=marble/marbles/<year>, NIP-44 to yourself), read once a
+    // start and written half a minute after a change (read and merged first, as Later is).
+
+    val kept = Kept(prefs).also { it.changed = { y -> keptChanged(y) } }
+    private val keptDirty = java.util.Collections.synchronizedSet(HashSet<String>())
+    private var keptSending: kotlinx.coroutines.Job? = null
+
+    private fun keptChanged(year: String) {
+        if (Sources.viewAs != null) return
+        keptDirty += year
+        keptSending?.cancel()
+        keptSending = scope.launch { delay(30_000); sendKept() }
+    }
+
+    private suspend fun pullKept(sending: Boolean = false) {
+        val me = me ?: return
+        if (Sources.viewAs != null) return
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val years = (2026..java.time.LocalDate.now(java.time.ZoneOffset.UTC).year).map { it.toString() }
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to years.map { "${Kept.TAG}/$it" }, "limit" to 40), 6000)
+            .filter { it.pubkey == me && it.verify() }
+            .groupBy { e -> e.tags.firstOrNull { it.size > 1 && it[0] == "d" }?.get(1)?.removePrefix("${Kept.TAG}/") ?: "" }
+            .mapValues { (_, l) -> l.maxBy { it.createdAt } }
+        for (y in (kept.years() + got.keys).filter { it in years }) {
+            val e = got[y]
+            // This phone has ones that year's copy hasn't (or there's no copy yet): send that year.
+            val ahead = if (e == null) true else kept.merge(toSelf(e.content, encrypt = false) ?: continue, y)
+            if (ahead) keptDirty += y
+        }
+        if (!sending && keptDirty.isNotEmpty()) { keptSending?.cancel(); keptSending = scope.launch { delay(30_000); sendKept() } }
+    }
+
+    private suspend fun sendKept() {
+        val me = me ?: return
+        pullKept(sending = true)
+        for (y in keptDirty.toList()) {
+            val text = toSelf(kept.json(y), encrypt = true) ?: return
+            val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", "${Kept.TAG}/$y")), text).withId()) } catch (_: Exception) { return }
+            if (Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed) > 0) keptDirty -= y
+        }
     }
 
     // --- What you call your devices ------------------------------------------------------------

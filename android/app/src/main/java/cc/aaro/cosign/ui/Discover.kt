@@ -145,13 +145,15 @@ private sealed class Route {
     /** Your engine's results for [q], inside Marble (its own pages only). */
     data class Results(val q: String) : Route()
     data object Later : Route()
+    /** The marbles you kept. */
+    data object Shelf : Route()
     /** A new post; [link]: a story to post with a comment. */
     data class Compose(val link: String = "") : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"; Shelf -> "marbles"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -161,6 +163,7 @@ private sealed class Route {
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             s.startsWith("results:") -> Results(s.removePrefix("results:"))
             s == "later" -> Later
+            s == "marbles" -> Shelf
             else -> null
         }
     }
@@ -186,8 +189,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     if (stack.isNotEmpty()) BackHandler(onBack = back)
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
-    // The marble, full screen, grown from where it was tapped.
-    var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    // A marble, full screen, grown from where it was tapped: today's, or one you kept.
+    var bigMarble by remember { mutableStateOf<BigMarble?>(null) }
     // Away a while ([Away.after]): back on the main page, at the top, its search box showing (no keyboard), the
     // feed as it was. Away a moment (copying a link, answering a text): just where you were. Kept through Android
     // recreating Marble, as the screens are.
@@ -198,7 +201,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // Home: the main page, at the top, its search box showing, the feed as it was (the swirl in any screen's bar, or back after a while).
     val home: () -> Unit = {
         stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
-        viewing = null; marbleFrom = null
+        viewing = null; bigMarble = null
         header.px = 0f
         scope.launch { feedState.scrollToItem(0) }
     }
@@ -217,14 +220,15 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
 
-    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it }, home = home)
+    val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
     val askedScreen by DebugOpen.screen.collectAsState()
     LaunchedEffect(askedScreen) {
         when (askedScreen) {
-            "marble" -> { delay(1500); marbleFrom = androidx.compose.ui.geometry.Offset.Zero }
+            "marble" -> { delay(1500); bigMarble = BigMarble(androidx.compose.ui.geometry.Offset.Zero) }
+            "shelf" -> stack.add(Route.Shelf)
             "stories" -> stack.add(Route.Stories)
             "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
             "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
@@ -254,11 +258,12 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             is Route.Compose -> ComposeScreen(top.link, social, nav)
             is Route.Results -> ResultsScreen(top.q, social, nav)
             Route.Later -> LaterScreen(social, nav)
+            Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
     }
 
     viewing?.let { (urls, i) -> ImageViewer(urls, i) { viewing = null } }
-    marbleFrom?.let { MarbleView(it) { marbleFrom = null } }
+    bigMarble?.let { b -> MarbleView(b, social, onShelf = { bigMarble = null; if (stack.lastOrNull() != Route.Shelf) stack.add(Route.Shelf) }) { bigMarble = null } }
     VideoFullScreen()
 
     social.held.collectAsState().value?.let { h ->
@@ -551,13 +556,17 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     }
 }
 
+/** Which marble is big: today's (null), or one you kept, with its day. */
+private data class BigMarble(val from: androidx.compose.ui.geometry.Offset, val marble: Marble? = null, val date: java.time.LocalDate? = null)
+
 /**
  * The marble, full screen and still: large on the app's ground (the light or dark render), grown from the
  * header where it was tapped, leaning a little as the phone tilts. A tap or back closes it. With
  * animations off on the phone (Remove animations), it simply appears, and doesn't move.
  */
 @Composable
-private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () -> Unit) {
+private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onClose: () -> Unit) {
+    val from = big.from
     val context = LocalContext.current
     val still = remember { android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
     val shown = remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0f) }
@@ -595,7 +604,8 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
     ) {
         // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
         val d = androidx.compose.ui.platform.LocalDensity.current
-        val marble = Marbles.current()
+        val today = Marbles.current()
+        val marble = big.marble ?: today
         // As big as the screen allows, but no bigger than the render has detail for (the marble is 0.556 of the
         // picture; shown up to 1.3 times its size in the render, no more).
         val size = minOf(minOf(maxWidth, maxHeight) * 1.45f, with(d) { (marble.detail * 2 * 1.3f / 0.556f).toDp() })
@@ -612,15 +622,17 @@ private fun MarbleView(from: androidx.compose.ui.geometry.Offset, onClose: () ->
             })
         // Its name, in a small chip under it. The first look of the (UTC) day collects it: the chip springs in and a
         // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
-        val first = remember { Daily.collect(context, Daily.utcDate()) }
-        NameChip(marble.name, java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still,
-            Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
+        // Only today's is kept, and only by looking at it big (no button, no word); one you kept opens just to look at.
+        val first = remember { big.marble == null && Marbles.shift == 0L && social.kept.keep(Daily.utcDate()) }
+        val count = social.kept.all.collectAsState().value.size
+        NameChip(marble.name, big.date ?: java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still, count = count.takeIf { it > 0 },
+            onClick = onShelf, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
     }
 }
 
 /** "✦ Ruby Rift 27 Oct": the day's marble's name. [flourish]: it springs in, and a few gold flecks fly off the star. */
 @Composable
-private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean, modifier: Modifier) {
+private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean, count: Int? = null, onClick: (() -> Unit)? = null, modifier: Modifier) {
     val view = androidx.compose.ui.platform.LocalView.current
     val pop = remember { androidx.compose.animation.core.Animatable(if (flourish) 0f else 1f) }
     val flecks = remember { androidx.compose.animation.core.Animatable(if (flourish) 0f else 1f) }
@@ -638,6 +650,7 @@ private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean,
     Box(modifier) {
         Row(Modifier.graphicsLayer { val p = pop.value; scaleX = 0.5f + 0.5f * p; scaleY = 0.5f + 0.5f * p; alpha = p.coerceIn(0f, 1f) }
             .clip(RoundedCornerShape(18.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp))
+            .then(if (onClick != null) Modifier.clickable(onClickLabel = "Your marbles", onClick = onClick) else Modifier)
             .drawWithContent {
                 drawContent()
                 // The glint: a soft light running across once.
@@ -653,6 +666,13 @@ private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean,
             Text(name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.width(6.dp))
             Text(date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM")), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            // How many you have (only that): a tap opens them.
+            count?.let {
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.width(1.dp).height(16.dp).background(Vault.Edge))
+                Spacer(Modifier.width(8.dp))
+                Text(it.toString(), color = Vault.Muted, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.labelLarge)
+            }
         }
         // The flecks, from the star (outside the chip, so they aren't clipped).
         if (flourish) androidx.compose.foundation.Canvas(Modifier.align(Alignment.CenterStart).offset(x = 20.dp).size(1.dp)) {
@@ -683,9 +703,9 @@ private fun NameChip(name: String, date: java.time.LocalDate, flourish: Boolean,
 @Composable
 private fun MarbleArt(marble: Marble, description: String?, modifier: Modifier) {
     val file = marble.file
-    if (file == null) return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(marble.res), description, modifier)
-    val bitmap = remember(file) { android.graphics.BitmapFactory.decodeFile(file.path)?.asImageBitmap() }
-        ?: return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(Marbles.today().res), description, modifier)
+    if (file == null && marble.url == null) return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(marble.res), description, modifier)
+    val bitmap = file?.let { f -> remember(f) { android.graphics.BitmapFactory.decodeFile(f.path)?.asImageBitmap() } }
+    if (bitmap == null && marble.url == null) return androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(Marbles.today().res), description, modifier)
     Box(modifier, contentAlignment = Alignment.Center) {
         androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
             val r = size.width * 0.278f
@@ -694,7 +714,47 @@ private fun MarbleArt(marble: Marble, description: String?, modifier: Modifier) 
                 drawCircle(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color.Black.copy(alpha = 0.4f), Color.Transparent), c, r * 0.9f), r * 0.9f, c)
             }
         }
-        androidx.compose.foundation.Image(bitmap, description, Modifier.fillMaxSize(0.556f))
+        if (bitmap != null) androidx.compose.foundation.Image(bitmap, description, Modifier.fillMaxSize(0.556f))
+        else NetImage(marble.url, Modifier.fillMaxSize(0.556f), 768, androidx.compose.ui.layout.ContentScale.Fit, description)
+    }
+}
+
+/**
+ * Your marbles: the ones you kept, newest first, a month at a time, each with its name and date. Only what you
+ * have: no gaps, no counts of days missed. A tap opens one big.
+ */
+@Composable
+private fun ShelfScreen(social: Social, nav: Nav, onOpen: (androidx.compose.ui.geometry.Offset, Marble, java.time.LocalDate) -> Unit) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { Daily.loadNights(context) }
+    val kept by social.kept.all.collectAsState()
+    val nights by Daily.nights.collectAsState()
+    val days = remember(kept) { kept.keys.mapNotNull { runCatching { java.time.LocalDate.parse(cc.aaro.cosign.Kept.dateOf(it)) }.getOrNull() }.sortedDescending() }
+    TopBar(null, nav)
+    Text("Your marbles", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 20.dp, top = 4.dp))
+    Text(if (days.size == 1) "1 marble" else "${days.size} marbles", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 20.dp, bottom = 6.dp))
+    if (days.isEmpty()) return@Column Text("Tap today's marble to look at it big, and it's yours.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    val months = remember(days) { days.groupBy { it.withDayOfMonth(1) } }
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(androidx.compose.foundation.lazy.grid.GridCells.Adaptive(104.dp), Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp)) {
+        for ((month, inMonth) in months) {
+            item(key = "m$month", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                Text(month.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy")).uppercase(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(start = 8.dp, top = 14.dp, bottom = 2.dp))
+            }
+            items(inMonth.size, key = { "d" + inMonth[it] }) { i ->
+                val d = inMonth[i]
+                val m = remember(d, nights) { Daily.marbleOf(d) }
+                var at by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                Column(Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClickLabel = "Look at ${m.name}") { onOpen(at, m, d) }.padding(bottom = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    MarbleArt(m, m.name, Modifier.fillMaxWidth().aspectRatio(1f).padding(horizontal = 2.dp).onGloballyPositioned { at = it.boundsInRoot().center })
+                    Text(m.name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.offset(y = (-10).dp))
+                    Text(d.format(java.time.format.DateTimeFormatter.ofPattern("d MMM")), color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.offset(y = (-10).dp))
+                }
+            }
+        }
     }
 }
 
