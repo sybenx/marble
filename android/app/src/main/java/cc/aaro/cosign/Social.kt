@@ -46,6 +46,10 @@ object Sources {
     val SEARCH = listOf("wss://search.nos.today", "wss://search.nostrarchives.com", "wss://relay.ditto.pub")
     val PROFILES = listOf("wss://purplepag.es", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://indexer.coracle.social")
     val GENERAL = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
+    /** Discover's posts: fiatjaf's Pyramid, what its members liked or replied to this week (read only, no sign-in). */
+    const val POPULAR = "wss://pyramid.fiatjaf.com/popular"
+    /** Discover reads the popular list (and your Special Follow list) instead of building its own. */
+    const val POPULAR_ONLY = true
     /** Debug builds only: more relays to read from (a local relay for tests). */
     val extra = MutableStateFlow<List<String>>(emptyList())
     /** Debug builds only: publish your own likes, follows and mutes to [extra] alone, nowhere public. */
@@ -368,11 +372,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 else allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
             }
             // Nothing to show yet (a new phone, say): a few good posts from quick asks first, in a second or two.
-            if (f.posts.isEmpty() || force) launch {
+            // (Discover reads one curated list now, quick enough on its own.)
+            if (!Sources.POPULAR_ONLY && (f.posts.isEmpty() || force)) launch {
                 val quick = try { quickPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 if (quick.isNotEmpty() && feed.value.loading) { feed.update { if (it.posts.isEmpty() || force) it.copy(posts = quick) else it }; Startup.mark("feed quick ${quick.size}"); loadPreviews(quick.map { it.e }) }
             }
-            val posts = try { buildPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
+            val posts = try { if (Sources.POPULAR_ONLY) popularPosts(onScreen) else buildPosts(onScreen) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             if (posts == null) return@launch feed.update { it.copy(loading = false, failed = it.posts.isEmpty() && it.stories.isEmpty()) }
             // Pulled: what you just pulled for (the quick posts at the top, if any, stay there). On its own (every
             // 30 minutes, or back after a while): everything stays as it is, the new posts come in below it.
@@ -546,6 +551,51 @@ class Social private constructor(private val phone: Phone, context: Context) {
         picks
     }
     private fun nameOf(pk: String) = People.known.value[pk]?.shown ?: shortNpub(pk)
+
+    /**
+     * Discover's posts, the simple way: what fiatjaf's Pyramid says was popular this week (read only, already
+     * curated, so no trust filter of ours), newest first, with recent posts from your Special Follow list woven in.
+     */
+    private suspend fun popularPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
+        val now = Clock.now()
+        val pop = async { Fetch.query(listOf(Sources.POPULAR), mapOf("kinds" to listOf(1), "limit" to 120), 8000) }
+        val theirs = async { specialPosts(now) }
+        val hidden = muted.value
+        fun ok(e: Event) = e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600
+        val woven = Calm.weave(pop.await().filter(::ok), theirs.await().filter(::ok))
+        if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
+        woven.map { (e, special) -> Pick(e, "", 0.0, if (special) "★ Special Follow" else "") }.also {
+            remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
+        }
+    }
+
+    /** Your Special Follow list (kind 10010, the one Jumble keeps), and how many: public names, and private ones if it has any (NIP-44 to yourself). */
+    val special = MutableStateFlow<Set<String>>(prefs.getStringSet("special", emptySet())!!.toSet())
+    @Volatile private var specialAt = 0L
+    private suspend fun specialPeople(): Set<String> {
+        if (System.currentTimeMillis() - specialAt < 30 * 60_000L) return special.value
+        val me = reader ?: return special.value
+        val list = Fetch.query((writeRelays() + readRelays()).distinct().take(8), mapOf("kinds" to listOf(10010), "authors" to listOf(me), "limit" to 3), 6000)
+            .maxByOrNull { it.createdAt } ?: return special.value
+        val public = list.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
+        val private = list.content.takeIf { it.isNotBlank() && me == this.me }?.let { c -> toSelf(c, encrypt = false) }?.let { j ->
+            try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.takeIf { it.size > 1 && it[0] == "p" }?.get(1) as? String } } catch (_: Exception) { null }
+        } ?: emptyList()
+        val all = (public + private).filter { it.length == 64 }.toSet()
+        specialAt = System.currentTimeMillis()
+        special.value = all
+        prefs.edit().putStringSet("special", all).apply()
+        return all
+    }
+
+    /** What your Special Follow people posted in the last two days (their own posts, not replies). */
+    private suspend fun specialPosts(now: Long): List<Event> {
+        val who = specialPeople().take(300)
+        if (who.isEmpty()) return emptyList()
+        return Fetch.query((readRelays() + writeRelays() + POST_RELAYS).distinct().take(8),
+            mapOf("kinds" to listOf(1), "authors" to who, "since" to now - 2 * 86_400L, "limit" to 150), 8000)
+            .filter { parentOf(it) == null }
+    }
 
     /** Link previews for these posts' links, in the background, kept on this phone. */
     private fun loadPreviews(posts: List<Event>) = scope.launch {

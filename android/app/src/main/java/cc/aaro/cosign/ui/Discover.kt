@@ -112,6 +112,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -153,6 +155,8 @@ private sealed class Route {
     data object Bell : Route()
     data object Search : Route()
     data object Stories : Route()
+    /** Discover: what people liked this week, with your Special Follow people woven in, and today's news a tap away. */
+    data object Feed : Route()
     data class Thread(val id: String, val reply: Boolean = false) : Route()
     data class Profile(val pubkey: String) : Route()
     /** Your engine's results for [q], inside Marble (its own pages only). */
@@ -165,12 +169,12 @@ private sealed class Route {
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
-        Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"
+        Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
         is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"; Shelf -> "marbles"
     }
     companion object {
         fun of(s: String): Route? = when {
-            s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories
+            s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories; s == "discover" -> Feed
             s.startsWith("thread:") -> s.split(':').let { Thread(it[1], it.getOrNull(2) == "true") }
             s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
@@ -267,6 +271,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Bell -> BellScreen(phone, ui, social, nav)
             Route.Search -> SearchScreen(social, nav)
             Route.Stories -> StoriesScreen(social, nav)
+            Route.Feed -> FeedScreen(social, nav)
             is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
             is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
             is Route.Compose -> ComposeScreen(top.link, social, nav)
@@ -344,7 +349,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
     val storiesNow by androidx.compose.runtime.rememberUpdatedState(stories)
     SeenWatcher(state, social) { k -> if (k == "stories") storiesNow.map { "t:" + it.id } else listOf(k) }
     LaunchedEffect(Unit) { Startup.mark("home composed", once = false) }
-    if (posts.isNotEmpty() || stories.isNotEmpty()) LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("first cards painted", once = false); social.painted.complete(Unit) }
+    LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("home painted", once = false); social.painted.complete(Unit) }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         // The name: back to the top of the feed (opening the header up again); already there, refresh it (as pulling down does).
@@ -383,37 +388,123 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
             LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
-                // What you saved, a tap away (only once there's something).
-                val laterCount = laterItems.count { it.deleted == null && it.done == null }
-                if (laterCount > 0) item(key = "later") { LaterLink(laterCount) { nav.open(Route.Later) } }
+                // What you kept lately (your words), and the rest of Later a tap away.
+                item(key = "kept") { KeptLately(laterItems, social, nav) }
                 tomorrow?.let { t -> item(key = "tomorrow") { TomorrowCard(t, social) } }
                 // Tap it away (it also goes by itself after a while).
                 ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) } }
-                if (feed.failed) item(key = "failed") {
-                    Column(Modifier.padding(24.dp)) {
-                        Text("Discover isn't answering right now.", color = Vault.Text)
-                        TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Accent) }
-                    }
-                }
-                // Today's stories, kept together at the top; never between the posts.
-                if (stories.isNotEmpty()) item(key = "stories") { StoryBox(stories, social, saved, nav) { nav.open(Route.Stories) } }
-                if (posts.isEmpty() && (feed.loading || feed.at == 0L && !feed.failed)) item(key = "loading") {
-                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
-                }
-                if (posts.isNotEmpty()) item(key = "from people") {
-                    Text("From people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted, modifier = Modifier.padding(start = 18.dp, top = 6.dp, bottom = 10.dp))
-                }
-                items(posts, key = { it.e.id }) { p ->
-                    HorizontalDivider(color = Vault.Edge)
-                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
-                        saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
-                }
-                // It ends.
-                if (posts.isNotEmpty() && !feed.loading) item(key = "end") {
-                    HorizontalDivider(color = Vault.Edge)
-                    Text("That's everything for now. New posts show up through the day.", color = Vault.Field, style = MaterialTheme.typography.bodySmall,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 28.dp))
-                }
+                item(key = "room") { Spacer(Modifier.height(96.dp)) }
+            }
+            // Discover, below: a lip saying what's there. Swipe it up, or tap it.
+            DiscoverLip(posts.size, posts.count { it.reason.startsWith("★") }, Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Feed) }
+        }
+    }
+}
+
+/** The bottom of home: Discover's lip. Tap it, or swipe it up. */
+@Composable
+private fun DiscoverLip(posts: Int, special: Int, modifier: Modifier, onOpen: () -> Unit) {
+    var dragged by remember { mutableStateOf(0f) }
+    Column(modifier.fillMaxWidth().background(Vault.Ground).clickable(onClickLabel = "Open Discover", onClick = onOpen)
+        .pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { dragged = 0f }, onDragEnd = { if (dragged < -24.dp.toPx()) onOpen() }) { c, dy -> c.consume(); dragged += dy }
+        }.padding(top = 10.dp, bottom = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Vault.Line))
+        Spacer(Modifier.height(8.dp))
+        Text(androidx.compose.ui.text.buildAnnotatedString {
+            withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Text, fontWeight = FontWeight.SemiBold)) { append("Discover") }
+            append(when {
+                posts == 0 -> " · what people liked this week"
+                special > 0 -> " · $posts posts, $special from your ★ people"
+                else -> " · $posts popular posts"
+            })
+        }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** On home: the last two things you kept, in your own hand, and Later. */
+@Composable
+private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav) {
+    val open = items.filter { it.deleted == null && it.done == null }
+    if (open.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
+        Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
+        for (item in open.take(2)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { nav.open(Route.Later) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable { social.later.done(item, true) })
+            Spacer(Modifier.width(12.dp))
+            Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
+        }
+        Text("Later · ${open.size} ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clickable { nav.open(Route.Later) }.padding(vertical = 6.dp))
+    }
+}
+
+/**
+ * Discover: today's news in one row you open, then what people liked this week (fiatjaf's Pyramid), newest first,
+ * with your Special Follow people (★) woven in near the top. Where it comes from is said at the end.
+ */
+@Composable
+private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    val feed by social.feed.collectAsState()
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    val saved by social.saved.collectAsState()
+    val previews by social.previews.collectAsState()
+    val muted by social.muted.collectAsState()
+    val dismissed by social.dismissed.collectAsState()
+    val special by social.special.collectAsState()
+    val all by social.allStories.collectAsState()
+    val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
+    val state = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(Unit) { social.loadFeed() }
+    SeenWatcher(state, social) { listOf(it) }
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.Filled.KeyboardArrowDown, "Back home", tint = Vault.Text) }
+        // The name: refresh, as pulling down did.
+        Text("Discover", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f).clickable(onClickLabel = "Reload") { social.loadFeed(force = true) })
+        IconButton({ social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
+    }
+    if (feed.loading && posts.isNotEmpty()) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
+    LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+        item(key = "news") {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface)
+                .border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.Stories) }.padding(horizontal = 16.dp, vertical = 13.dp)) {
+                Text("Today's news", color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(if (all.isEmpty()) "›" else "${all.size} stories ›", color = Vault.Muted)
+            }
+        }
+        if (feed.failed) item(key = "failed") {
+            Column(Modifier.padding(24.dp)) {
+                Text("Discover isn't answering right now.", color = Vault.Text)
+                TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Accent) }
+            }
+        }
+        if (posts.isEmpty() && !feed.failed) item(key = "loading") {
+            Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+        }
+        if (posts.isNotEmpty()) item(key = "from") {
+            Text(if (special.isEmpty()) "Popular this week" else "Popular this week · ★ your Special Follow people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted,
+                modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
+        }
+        items(posts, key = { it.e.id }) { p ->
+            HorizontalDivider(color = Vault.Edge)
+            NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
+                saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
+        }
+        if (posts.isNotEmpty() && !feed.loading) item(key = "end") {
+            HorizontalDivider(color = Vault.Edge)
+            Text("That's everything for now. New posts show up through the day.", color = Vault.Field, style = MaterialTheme.typography.bodySmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 24.dp))
+        }
+        // Where it comes from, plainly.
+        item(key = "source") {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)) {
+                Text("Posts come from Popular, by fiatjaf's Pyramid: what its members liked or replied to this week.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                if (special.isNotEmpty()) Text("Woven in: your Special Follow list (${special.size} people), the list Jumble keeps on your account.", color = Vault.Muted,
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -990,7 +1081,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         ) {
             Icon(Icons.Filled.Search, null, tint = Vault.Muted)
             Spacer(Modifier.width(12.dp))
-            Text("Search people, posts, #tags", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
+            Text("Search, or keep a thought", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

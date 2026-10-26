@@ -18,6 +18,26 @@ data class Pick(val e: Event, val topic: String, val score: Double, val reason: 
 data class Standing(val follow: Boolean, val trustedBy: Int, val followers: Long)
 
 object Calm {
+    /**
+     * Discover's posts: [popular] (what people liked this week), newest first, with [special] (people you single out)
+     * woven in near the top: every third of the first twelve, then every sixth; two of anyone's at most. True: special.
+     */
+    fun weave(popular: List<Event>, special: List<Event>): List<Pair<Event, Boolean>> {
+        val pop = popular.distinctBy { it.id }.sortedByDescending { it.createdAt }
+        val ids = pop.map { it.id }.toSet()
+        val each = HashMap<String, Int>()
+        val sp = ArrayDeque(special.distinctBy { it.id }.filter { it.id !in ids }.sortedByDescending { it.createdAt }
+            .filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= 2 })
+        val out = ArrayList<Pair<Event, Boolean>>()
+        for (e in pop) {
+            while (sp.isNotEmpty() && (if (out.size < 12) out.size % 3 == 0 else out.size % 6 == 0) && out.lastOrNull()?.second != true) out += sp.removeFirst() to true
+            out += e to false
+        }
+        // Few popular ones (or none): the rest of yours after them.
+        while (sp.isNotEmpty() && out.size < 12) out += sp.removeFirst() to true
+        return out
+    }
+
     /** Notes, articles and videos. */
     val POOL_KINDS = listOf(1, 30023, 21, 22, 34235, 34236)
     /** The last two days. */
