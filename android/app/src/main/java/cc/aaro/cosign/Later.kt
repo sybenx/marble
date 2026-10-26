@@ -40,12 +40,15 @@ class Later(private val prefs: android.content.SharedPreferences) {
         val t = text.trim().take(500).ifEmpty { return null }
         val now = Clock.now()
         val have = items.value.firstOrNull { it.text.equals(t, ignoreCase = true) && it.deleted == null }
-        val item = have?.copy(done = null, updated = now) ?: LaterItem(newId(), t, now, now, url = url)
+        val item = have?.copy(done = null, updated = next(have)) ?: LaterItem(newId(), t, now, now, url = url)
         put(item)
         return item
     }
-    fun done(item: LaterItem, on: Boolean) = put(item.copy(done = if (on) Clock.now() else null, updated = Clock.now()))
-    fun remove(item: LaterItem) = put(item.copy(deleted = Clock.now(), updated = Clock.now()))
+    fun done(item: LaterItem, on: Boolean) = put(item.copy(done = if (on) Clock.now() else null, updated = next(item)))
+    /** Removed: only a marker stays (no text), so other devices learn it, for a month. */
+    fun remove(item: LaterItem) = put(item.copy(text = "", deleted = Clock.now(), updated = next(item)))
+    /** A change's time: now, or just after the last change if that was this same second (so it still wins, and is still sent). */
+    private fun next(item: LaterItem) = maxOf(Clock.now(), item.updated + 1)
     /** Undo of a save just made: gone as if it never was (other devices may not have it yet; a tombstone tells them). */
     fun unsave(item: LaterItem) = remove(item)
 
@@ -105,8 +108,9 @@ class Later(private val prefs: android.content.SharedPreferences) {
         private fun itemsOf(a: org.json.JSONArray?): List<LaterItem> = (0 until (a?.length() ?: 0)).mapNotNull { i ->
             val x = a!!.optJSONObject(i) ?: return@mapNotNull null
             val id = x.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            val text = x.optString("text").trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             fun long(k: String) = if (x.isNull(k)) null else x.optLong(k).takeIf { it > 0 }
+            // A removed one may have no text left (only a marker); anything else needs some.
+            val text = x.optString("text").trim().takeIf { it.isNotEmpty() || long("deleted") != null } ?: return@mapNotNull null
             LaterItem(id, text, x.optLong("created"), x.optLong("updated", x.optLong("created")), long("done"), long("deleted"),
                 x.optString("url").takeIf { it.isNotEmpty() }, x.keys().asSequence().filter { it !in KNOWN }.associateWith { x.opt(it) })
         }
