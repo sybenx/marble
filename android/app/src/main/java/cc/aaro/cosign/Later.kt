@@ -62,6 +62,14 @@ class Later(private val prefs: android.content.SharedPreferences) {
         put(item)
         return item
     }
+    /**
+     * Enter in the box: what you typed, kept as a note (as [save] does). Second: whether this Enter made it; a note
+     * you had already isn't new, and only a new one turns into a visit when you open a result.
+     */
+    fun jot(text: String): Pair<LaterItem, Boolean>? {
+        val had = items.value.any { it.url == null && it.deleted == null && same(it.text, text) }
+        return save(text)?.let { it to !had }
+    }
     /** A page saved from the browser's Save button: by its address (saved again, it comes back rather than doubling). */
     fun savePage(url: String, title: String): LaterItem? {
         val t = title.trim().take(500).ifEmpty { return null }

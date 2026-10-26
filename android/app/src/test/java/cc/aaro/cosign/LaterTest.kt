@@ -171,4 +171,17 @@ class LaterTest {
         assertNull(l.shown().first { it.id == a.id }.done)
         assertEquals(1, l.shown().count { it.url == null && Later.same(it.text, "syb.lol") })
     }
+
+    @Test fun enterMakesANoteOnlyOnce() {
+        val l = Later(Prefs())
+        val (a, made) = l.jot("furnace filter size")!!
+        assertTrue(made)
+        // The same words again: the note you have, not a new one, and not "made" (so opening a result keeps it).
+        val (b, again) = l.jot("Furnace  filter size")!!
+        assertEquals(a.id, b.id); assertFalse(again)
+        // A visit removes only a note this Enter made; the removal is a marker, as ever.
+        l.remove(a)
+        assertNull(l.saved("furnace filter size"))
+        assertEquals("", Later.fromJson(l.json()).first { it.id == a.id }.text)
+    }
 }

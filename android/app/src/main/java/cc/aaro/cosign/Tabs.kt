@@ -79,7 +79,7 @@ object Tabs {
         }
     }
 
-    private fun label(saved: Boolean) = if (saved) "In Later" else "Save to Later"
+    private fun label(saved: Boolean) = if (saved) "Kept as a note" else "Keep as note"
     private fun icon(context: Context, saved: Boolean) = context.getDrawable(if (saved) R.drawable.ic_saved_page else R.drawable.ic_save_page)?.toBitmap()
 
     // Mutable: the browser fills in the address of the page on screen when Save is tapped.

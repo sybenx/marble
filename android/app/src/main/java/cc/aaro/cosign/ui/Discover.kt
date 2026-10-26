@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -199,6 +202,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val stack = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Route>, String>(
         save = { l -> l.map { it.save() } }, restore = { l -> mutableStateListOf<Route>().apply { addAll(l.mapNotNull { Route.of(it) }) } })) { mutableStateListOf() }
     val feedState = rememberLazyListState()
+    // The panes: Following on the left, Search (home) in the middle; Messages comes on the right later.
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 2 }
     // How far the header had folded, kept with the list's place when Android recreates Marble.
     val header = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<TopCollapse, Float>({ it.px }, { TopCollapse().apply { px = it } })) { TopCollapse() }
     // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
@@ -230,7 +235,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
         viewing = null; bigMarble = null
         header.px = 0f
-        scope.launch { feedState.scrollToItem(0) }
+        scope.launch { feedState.scrollToItem(0); pager.scrollToPage(PANE_SEARCH) }
     }
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
@@ -277,16 +282,16 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // The box is for typing in: out of search and its results (home, or anywhere else), the next search starts empty.
     // While a results page is still open behind you, the box keeps its query, as a browser's does.
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
-    LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; social.clearSearch() } }
+    LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.note.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Home(phone, ui, social, nav)
+    if (top == null) Panes(phone, ui, social, nav, pager)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
             Route.Bell -> BellScreen(phone, ui, social, nav)
             Route.Search -> SearchScreen(social, nav)
             Route.Stories -> StoriesScreen(social, nav)
-            Route.Feed -> FeedScreen(social, nav)
+            Route.Feed -> FeedScreen(social, nav, pane = false)
             is Route.Thread -> ThreadScreen(top.id, social, nav, top.reply)
             is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
             is Route.Compose -> ComposeScreen(top.link, social, nav)
@@ -364,11 +369,12 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     // The pull: the finger's travel down (times Stretch.GIVE), in pixels; up, towards opening Discover.
     var pull by remember { mutableFloatStateOf(0f) }
     var lift by remember { mutableFloatStateOf(0f) }
-    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().pointerInput(Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
+        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)).pointerInput(Unit) {
         detectVerticalDragGestures(
             onDragStart = { lift = 0f },
             onDragEnd = {
-                if (lift < -48.dp.toPx()) nav.open(Route.Feed)
+                if (lift < -48.dp.toPx()) nav.open(Route.Later)
                 scope.launch { androidx.compose.animation.core.animate(pull, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> pull = v } }
             },
             onDragCancel = { pull = 0f },
@@ -399,9 +405,13 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Search, null, tint = Vault.Muted)
                 Spacer(Modifier.width(12.dp))
-                Text("Search, or keep a thought", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
+                Text("Search or jot anything…", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                // Enter: kept as a note, and searched.
+                Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text), contentAlignment = Alignment.Center) {
+                    Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
             }
-            Box(Modifier.widthIn(max = 600.dp).fillMaxWidth()) { KeptLately(laterItems, social, nav, max = keptMax) }
+            Box(Modifier.widthIn(max = 600.dp).fillMaxWidth())
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
             val (top, box, kept) = parts.map { it.measure(loose) }
@@ -413,26 +423,80 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
             }
         }
-        // Your picture and the bell, top right. Home is yours: nothing here posts (the pencil is in Discover).
-        Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton({ nav.open(Route.Bell) }) {
-                Box {
-                    Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
-                    if (waiting + fresh > 0) Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(9.dp)
-                        .background(if (waiting > 0) Vault.Amber else Vault.Accent, CircleShape))
-                }
-            }
-            Spacer(Modifier.width(4.dp))
-            Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
-        }
         // What needs you (an approval, say), and a passing error, under the bar.
-        Column(Modifier.align(Alignment.TopCenter).padding(top = 60.dp).widthIn(max = 600.dp).fillMaxWidth()) {
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
             NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
             tomorrow?.let { TomorrowCard(it, social) }
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
-        // Discover, below: a lip saying what's there. Swipe it up, or tap it.
-        DiscoverLip(posts.size, posts.count { it.reason.startsWith("★") }, Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Feed) }
+        // Your notes, below: swipe up, or tap.
+        NotesLip(Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Later) }
+    }
+}
+
+/** Which pane is which. */
+private const val PANE_FOLLOWING = 0
+private const val PANE_SEARCH = 1
+
+/**
+ * The panes: Following (the world: what people you follow and like post, the news, and the one place to post) and
+ * Search (home: yours). Swipe between them, or tap a tab. Each has a quiet cue of its own: Following, cobalt.
+ */
+@Composable
+private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState) {
+    val people by People.known.collectAsState()
+    val notices by social.notices.collectAsState()
+    val seen by social.seenAt.collectAsState()
+    val me = ui.member!!.group.groupX
+    val scope = rememberCoroutineScope()
+    val following = pager.currentPage == PANE_FOLLOWING
+    Column(Modifier.fillMaxSize().background(if (following) Vault.AccentGround.copy(alpha = 0.35f) else Color.Transparent)
+        .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
+        Box(Modifier.fillMaxWidth().height(56.dp)) {
+            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(26.dp)) {
+                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search")) {
+                    val on = pager.currentPage == i
+                    val c = if (!on) Vault.Muted else if (i == PANE_FOLLOWING) Vault.Accent else Vault.Text
+                    Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 4.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(label, color = c, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.height(5.dp))
+                        Box(Modifier.width(44.dp).height(2.dp).background(if (on) c else Color.Transparent))
+                    }
+                }
+            }
+            // The bell and your picture, on every pane.
+            Row(Modifier.align(Alignment.CenterEnd).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                val waiting = ui.asks.size + ui.batchAsks.size
+                val fresh = notices.list.count { it.event.createdAt > seen }
+                IconButton({ nav.open(Route.Bell) }) {
+                    Box {
+                        Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
+                        if (waiting + fresh > 0) Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(9.dp)
+                            .background(if (waiting > 0) Vault.Amber else Vault.Accent, CircleShape))
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
+                Avatar(people[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account")
+            }
+        }
+        androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true) else Home(phone, ui, social, nav)
+        }
+    }
+}
+
+/** The bottom of the Search pane: your notes, a swipe up (or a tap) away. */
+@Composable
+private fun NotesLip(modifier: Modifier, onOpen: () -> Unit) {
+    var dragged by remember { mutableStateOf(0f) }
+    Column(modifier.fillMaxWidth().clickable(onClickLabel = "Open your notes", onClick = onOpen)
+        .pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { dragged = 0f }, onDragEnd = { if (dragged < -24.dp.toPx()) onOpen() }) { c, dy -> c.consume(); dragged += dy }
+        }.padding(top = 10.dp, bottom = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Vault.Line))
+        Spacer(Modifier.height(8.dp))
+        Text("swipe up · notes", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -489,7 +553,9 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
  * with your Special Follow people (★) woven in near the top. Where it comes from is said at the end.
  */
 @Composable
-private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+private fun FeedScreen(social: Social, nav: Nav, pane: Boolean) = Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().then(
+    if (pane) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
+        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)) else Modifier.safeDrawingPadding())) {
     val feed by social.feed.collectAsState()
     val people by People.known.collectAsState()
     val liked by social.liked.collectAsState()
@@ -504,14 +570,35 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
     LaunchedEffect(Unit) { social.loadFeed() }
     SeenWatcher(state, social) { listOf(it) }
     LogWatcher(state, "discover", posts.map { it.e.id })
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    // All, or only people (those you follow, and your Special Follow list), the news, or the topics you follow.
+    var chip by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
+    val follows by social.follows.collectAsState()
+    val followedTopics by social.followedTopics.collectAsState()
+    val shown = when (chip) {
+        "people" -> posts.filter { it.reason.startsWith("★") || it.e.pubkey in (follows ?: emptySet()) || it.e.pubkey in special }
+        "all" -> posts
+        else -> emptyList()
+    }
+    val stories = remember(all, chip, followedTopics) {
+        if (chip != "news" && chip != "topics") emptyList()
+        else cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
+            .filter { chip == "news" || it.topic in followedTopics }.take(60)
+    }
+    val savedLinks by social.saved.collectAsState()
+    if (pane) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((k, label) in listOf("all" to "All", "people" to "People", "news" to "News", "topics" to "Topics")) {
+            val on = chip == k
+            Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
+                    .clickable { chip = k }.padding(horizontal = 14.dp, vertical = 8.dp))
+        }
+    }
+    if (!pane) Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.Filled.KeyboardArrowDown, "Back home", tint = Vault.Text) }
         // The name: refresh, as pulling down did.
         Text("Discover", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f).clickable(onClickLabel = "Reload") { social.loadFeed(force = true) })
         IconButton({ social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
-        // Discover is the world: writing a public post starts here.
-        IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New public post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
     }
     // Pull down to refresh (home has nothing to refresh now; this is where it went).
     var pulled by remember { mutableStateOf(false) }
@@ -519,7 +606,12 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
     @OptIn(ExperimentalMaterial3Api::class)
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true) }, Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
-        item(key = "news") {
+        if (chip == "news" || chip == "topics") {
+            if (stories.isEmpty()) item(key = "nostories") { Text(if (chip == "topics") "Follow a topic from a story's ⋯ to see it here." else "No stories just now.",
+                color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+            items(stories, key = { "t:" + it.id }) { c -> StoryRow(c, social, c.url in savedLinks, nav); HorizontalDivider(color = Vault.Edge) }
+        }
+        if (chip == "all") item(key = "news") {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface)
                 .border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.Stories) }.padding(horizontal = 16.dp, vertical = 13.dp)) {
                 Text("Today's news", color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -532,19 +624,19 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
                 TextButton({ social.loadFeed(force = true) }, contentPadding = PaddingValues(0.dp)) { Text("Try again", color = Vault.Accent) }
             }
         }
-        if (posts.isEmpty() && !feed.failed) item(key = "loading") {
+        if (chip != "news" && chip != "topics" && posts.isEmpty() && !feed.failed) item(key = "loading") {
             Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
         }
-        if (posts.isNotEmpty()) item(key = "from") {
+        if (shown.isNotEmpty()) item(key = "from") {
             Text(if (special.isEmpty()) "Popular this week" else "Popular this week · ★ your Special Follow people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted,
                 modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
         }
-        items(posts, key = { it.e.id }) { p ->
+        items(shown, key = { it.e.id }) { p ->
             HorizontalDivider(color = Vault.Edge)
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
                 saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
         }
-        if (posts.isNotEmpty() && !feed.loading) item(key = "end") {
+        if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
             HorizontalDivider(color = Vault.Edge)
             Text("That's everything for now. New posts show up through the day.", color = Vault.Field, style = MaterialTheme.typography.bodySmall,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 24.dp))
@@ -557,7 +649,13 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
+        item(key = "room") { Spacer(Modifier.height(72.dp)) }
     }}
+    }
+    // The one place to post: public, and the composer says so.
+    if (pane) Text("+ Post", color = Vault.Ground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Bottom))
+            .padding(16.dp).clip(RoundedCornerShape(18.dp)).background(Vault.Accent).clickable(onClickLabel = "New public post") { nav.compose() }.padding(horizontal = 20.dp, vertical = 13.dp))
 }
 
 /**
@@ -1667,7 +1765,6 @@ private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(8.dp)) { Swirl(28f) }
         Spacer(Modifier.weight(1f))
         IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
-        IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
         IconButton({ nav.open(Route.Bell) }) { Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text) }
         nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account") }
     }
@@ -1910,7 +2007,11 @@ private fun ProfileTimer(pk: String, named: () -> Boolean) {
 // --- Search ----------------------------------------------------------------------------------
 
 /** What's in the search box, kept while you look at results (and given back to the box when you tap it there). */
-object SearchText { val q = kotlinx.coroutines.flow.MutableStateFlow("") }
+object SearchText {
+    val q = kotlinx.coroutines.flow.MutableStateFlow("")
+    /** The note the last Enter made (its id), until a result is opened (then it's a visit) or you leave the search. */
+    val note = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+}
 
 /**
  * Search: the box is for typing in. Enter searches the web with your engine; Save (the chip at its end) keeps what
@@ -1961,7 +2062,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             atPeople -> social.search(t.drop(1))
             site?.sure == true -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
-            else -> nav.results(t)
+            // Enter: what you typed is kept as a note, then searched (opening a result makes it a visit instead).
+            else -> { val j = social.later.jot(t); SearchText.note.value = j?.takeIf { it.second }?.first?.id; social.interests.noticed(t); nav.results(t) }
         }
     }
     // People as you type after @; posts only once asked.
@@ -1985,20 +2087,21 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         TextField(
             androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v -> sel = v.selection; q = v.text },
             Modifier.weight(1f).focusRequester(focus), singleLine = true,
-            placeholder = { Text("Search, or save for later", color = Vault.Muted) },
+            placeholder = { Text("Search or jot anything…", color = Vault.Muted) },
             // A web address box, as a browser's: what you type stays exactly as typed (no corrections, no capitals, no space
             // after a full stop), so sites work; the keyboard's suggestions are still there to tap.
             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
                 capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { go() }),
-            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) SaveChip(saved != null) { if (saved == null) save() else social.message.value = "Already in Later" } },
+            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) Box(Modifier.padding(end = 6.dp).size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text)
+                .clickable(onClickLabel = "Keep as a note and search") { go() }, contentAlignment = Alignment.Center) { Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 17.sp) } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
         )
     }
     // Honest about both: what you save stays yours; a search goes to your engine.
-    OnlyYou("What you save is only yours · searches go to ${engine.label}", Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp))
+    OnlyYou("Enter keeps it as a note, only yours · searches go to ${engine.label}", Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp))
     Box(Modifier.fillMaxSize()) {
         when {
             pasted != null -> LinkResults(pasted, social, nav)
@@ -2061,13 +2164,40 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Text(q, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            SaveChip(saved != null) { if (saved == null) social.later.save(q) else social.message.value = "Already in Later" }
+            Text(q, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 12.dp))
         }
     }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("🔒 ${engine.home} · links open in your browser", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+    // What happened to what you typed: kept as a note (until you open a result), or a visit now (keep it anyway?).
+    val made by SearchText.note.collectAsState()
+    val visited = made == null && saved == null
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp))
+        .border(1.dp, Vault.Line, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (visited) "A VISIT · NOT A NOTE" else "KEPT AS A NOTE", color = if (visited) Vault.Muted else Vault.Accent, style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (visited) Text("Keep as note", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Accent, RoundedCornerShape(14.dp)).clickable { social.later.save(q) }.padding(horizontal = 10.dp, vertical = 4.dp))
+        }
+        Text(when {
+            visited -> "You opened a result, so it left your notes."
+            made != null -> "Leave now and it stays. Open a result and it becomes a visit instead."
+            else -> "It was a note already, and stays one."
+        }, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 2.dp))
     }
+    // Yours: other notes about the same things.
+    val yours = remember(laterItems, q) {
+        val words = cc.aaro.cosign.Entities.of(q)
+        laterItems.filter { it.deleted == null && it.id != saved?.id && words.isNotEmpty() && cc.aaro.cosign.Entities.of(it.text).any { w -> w in words } }.take(3)
+    }
+    for (n in yours) Row(Modifier.fillMaxWidth().clickable { n.url?.let { openInBrowser(context, it) } ?: nav.results(n.text) }.padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text("YOURS", color = Vault.Text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(56.dp))
+        Text(n.text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = if (n.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    Text("From the web · ${engine.label} · links open in your browser", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
     if (loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
     else Spacer(Modifier.height(2.dp))
     androidx.compose.ui.viewinterop.AndroidView({ c ->
@@ -2081,6 +2211,8 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
                 if (real.scheme == "http" || real.scheme == "https") {
                     social.later.opened(url, real.host ?: url, q)
                     social.titlePage(url)
+                    // A result opened: the note this search made becomes a visit (a note you had before stays).
+                    SearchText.note.value?.let { id -> social.later.items.value.firstOrNull { it.id == id && it.deleted == null }?.let(social.later::remove); SearchText.note.value = null }
                 }
                 try { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, real).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
             }
@@ -2115,16 +2247,16 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     val pg = pages.filter { hit(it.title) || hit(it.url) || hit(it.from) }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-        Text("Later", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Text("Notes", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         OnlyYou()
     }
     TextField(filter, { filter = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), singleLine = true,
-        placeholder = { Text("Filter Later", color = Vault.Muted) }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Vault.Muted) },
+        placeholder = { Text("Filter your notes", color = Vault.Muted) }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Vault.Muted) },
         shape = RoundedCornerShape(26.dp),
         colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Saved · ${open.size}", "pages" to "Pages · ${pg.size}", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "pages" to "Visited · ${pg.size}", "done" to "Done")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
@@ -2139,7 +2271,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
                 color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         }
         if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
-            item { Text("PAGES YOU OPENED", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
+            item { Text("VISITED · NOT NOTES", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp)) }
             items(if (show == "pages") pg else pg.take(5), key = { "p" + it.url }) { p ->
                 Row(Modifier.fillMaxWidth().clickable { openInBrowser(context, p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val host = android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: ""
@@ -2151,6 +2283,10 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
                         Text(p.title, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("$host · ${agoWords(p.at)}" + (if (p.from.isNotEmpty()) " · opened from “${p.from}”" else ""), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
+                    // A visit kept anyway: a note with its page.
+                    if (items.none { it.url == p.url && it.deleted == null }) Text("Keep as note", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Accent, RoundedCornerShape(14.dp))
+                            .clickable { social.later.savePage(p.url, p.title) }.padding(horizontal = 10.dp, vertical = 4.dp))
                 }
             }
         }
