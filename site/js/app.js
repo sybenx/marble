@@ -3,7 +3,7 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05 } from "./data.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
 import { goodPosts, stories, yours, loadStories, prepareMine } from "./find.js";
 import { current as currentMe, onMe, canSignIn, signIn, signOut, myFollows } from "./me.js";
@@ -271,15 +271,136 @@ async function showEvent(d, signal, { hex = false } = {}) {
     list.innerHTML = tree(e.id, 0);
     fillLater(list);
   };
-  replies(e, { hints: found, onEvent: (r) => {
-    if (!(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
+  const tally = { reposts: 0, likes: 0 };
+  engagement(e, { hints: found, signal, onEvent: (r) => {
+    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
+    if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
     all.set(r.id, r);
     if (!timer) timer = setTimeout(draw, all.size < 4 ? 0 : 120);
-  } }).then(() => {
+  } }).then(({ counts = {} }) => {
     if (signal.aborted) return;
     if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
     else draw();
+    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
+    mark("replies", { n: all.size, counts });
   });
+}
+
+/** How a post points at another: "reply" (in its thread), "quote" (embeds it) or "mention". */
+function kindOf(r, e) {
+  if (r.kind === 1111) return "reply";
+  const quotes = (r.tags || []).some((t) => t[0] === "q" && t[1] === e.id)
+    || [...(r.content || "").matchAll(/nostr:((?:note|nevent)1[02-9ac-hj-np-z]+)/gi)].some((m) => decode(m[1])?.id === e.id);
+  if (quotes) return "quote";
+  if (replyTo(r)?.[1] === e.id || rootOf(r)?.[1] === e.id) return "reply";
+  return "mention";
+}
+
+const totals = ({ replies, reposts, likes, quotes }) => [
+  replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
+  quotes && `${quotes} ${quotes === 1 ? "quote" : "quotes"}`,
+  reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
+  likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
+].filter(Boolean).join(" · ");
+
+// ── A pasted post or person: it at the top, then what points at it ───────────────────────────────────
+
+async function showFound(parsed, signal) {
+  const root = pageEl;
+  const d = parsed.kind === "hex" ? { type: "event", id: parsed.hex, relays: [] } : parsed.decoded;
+  root.innerHTML = `<div class="found"><div id="f-top"><div class="card main skeleton"><div class="who"><span class="av" style="--s:48px"></span><div class="who-text"><span class="bar w40"></span><span class="bar w20"></span></div></div><span class="bar"></span><span class="bar w60"></span></div></div><div id="f-rest"></div></div>`;
+  const top = $("#f-top", root), rest = $("#f-rest", root);
+  if (d.type === "profile") return foundPerson(d.pubkey, d.relays, top, rest, signal);
+
+  const asPost = findEvent(d.id, { relays: d.relays, author: d.pubkey });
+  const asPerson = parsed.kind === "hex" ? profile(d.id) : Promise.resolve(null);
+  const e = await Promise.race([asPost, asPerson.then((p) => p || asPost)]).then((x) => (x && x.kind === undefined ? null : x));
+  if (signal.aborted) return;
+  if (!e && await asPerson && !signal.aborted) return foundPerson(d.id, [], top, rest, signal);
+  if (!e) { top.innerHTML = `<div class="empty"><p>Couldn't find this post.</p><p class="muted">It may have been deleted, or the places that keep it aren't answering right now.</p></div>`; return; }
+  const found = foundOn(e.id);
+  top.innerHTML = card(e, { context: true }).replace('class="card', 'class="card lead') + `<p class="totals"></p>`;
+  document.title = `${name(e.pubkey)}: “${(e.content || "").replace(/\s+/g, " ").slice(0, 60)}” · Marble`;
+  mark("post", { relay: found[0] || "kept" });
+  fillLater(top);
+
+  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, likes: 0 };
+  const opened = new Set();
+  let timer = null;
+  const section = (id, title, items, n, draw, more) => !items.length ? "" : `<section><h2>${title}</h2><div class="list">
+    ${(opened.has(id) ? items : items.slice(0, n)).map(draw).join("")}
+    ${items.length > n && !opened.has(id) ? (more || `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>`) : ""}</div></section>`;
+  const draw = () => {
+    timer = null;
+    if (signal.aborted) return;
+    const newest = (m) => [...m.values()].sort((a, b) => b.created_at - a.created_at);
+    // replies: the direct ones, those with the most answers under them first, then the oldest
+    const under = new Map();
+    for (const r of got.reply.values()) { const to = replyTo(r)?.[1]; if (to) under.set(to, (under.get(to) || 0) + 1); }
+    const direct = [...got.reply.values()].filter((r) => r.kind === 1111 || replyTo(r)?.[1] === e.id)
+      .sort((a, b) => (under.get(b.id) || 0) - (under.get(a.id) || 0) || a.created_at - b.created_at);
+    rest.innerHTML = section("quote", "Quoted by", newest(got.quote), 3, (r) => card(r, { clamp: true, context: false }))
+      + section("reply", "Replies", direct, 3, (r) => card(r, { clamp: true, context: false }),
+        `<a class="more" href="${postPath(e, found.slice(0, 2))}">See all ${got.reply.size}</a>`)
+      + section("mention", "Mentioned in", newest(got.mention), 3, (r) => card(r, { clamp: true, context: false }));
+    fillLater(rest);
+  };
+  rest.onclick = (ev) => { const o = ev.target.closest("[data-open]"); if (o) { opened.add(o.dataset.open); draw(); } };
+  const { counts = {} } = await engagement(e, { hints: found, signal, onEvent: (r) => {
+    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
+    if (!(r.content || "").trim() || warning(r)) return;
+    got[kindOf(r, e)].set(r.id, r);
+    if (!timer) timer = setTimeout(draw, 150);
+  } });
+  if (signal.aborted) return;
+  clearTimeout(timer);
+  draw();
+  if (!rest.innerHTML.trim()) rest.innerHTML = `<p class="muted loading-text">Nothing points at this post yet.</p>`;
+  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), quotes: got.quote.size, reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
+  mark("engagement", { replies: got.reply.size, quotes: got.quote.size, mentions: got.mention.size, ...tally, counts });
+}
+
+async function foundPerson(pk, hints, top, rest, signal) {
+  const got = { people: [], extra: {}, follows: await Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 800))]) };
+  const drawTop = () => {
+    const p = profiles.get(pk);
+    if (p) top.innerHTML = topPerson({ ...p, pubkey: pk }, got).replace('class="pcard"', 'class="pcard lead"');
+  };
+  if (profiles.has(pk)) { drawTop(); mark("profile"); }
+  profile(pk, hints).then((p) => {
+    if (signal.aborted) return;
+    if (!p) { top.innerHTML = `<div class="empty"><p>Couldn't find this person.</p></div>`; return; }
+    drawTop();
+    document.title = `${name(pk)} · Marble`;
+    if (!document.documentElement.dataset.profile) mark("profile");
+    verifyNip05(p.nip05, pk).then((ok) => { got.extra.verified = new Map([[pk, ok]]); if (!signal.aborted) drawTop(); });
+  });
+  signal.addEventListener("abort", onProfile((who2) => { if (who2 === pk) drawTop(); }));
+
+  // posts that name them in the text (not replies to them, which only carry a tag)
+  const mentions = new Map();
+  let open = false, timer = null;
+  const names = (e) => [...(e.content || "").matchAll(/nostr:((?:npub|nprofile)1[02-9ac-hj-np-z]+)/gi)].some((m) => decode(m[1])?.pubkey === pk);
+  const draw = () => {
+    timer = null;
+    if (signal.aborted) return;
+    const list = [...mentions.values()].sort((a, b) => b.created_at - a.created_at);
+    rest.innerHTML = list.length ? `<section><h2>Posts mentioning them</h2><div class="list">${(open ? list : list.slice(0, 5)).map((r) => card(r, { clamp: true })).join("")}
+      ${!open && list.length > 5 ? `<button type="button" class="more" data-open="m">See all ${list.length}</button>` : ""}</div></section>` : "";
+    fillLater(rest);
+  };
+  rest.onclick = (ev) => { if (ev.target.closest("[data-open]")) { open = true; draw(); } };
+  await mentionsOf(pk, { signal, onEvent: (e) => {
+    if (e.pubkey === pk || !names(e) || warning(e)) return;
+    mentions.set(e.id, e);
+    if (!timer) timer = setTimeout(draw, 150);
+  } });
+  if (signal.aborted) return;
+  clearTimeout(timer);
+  draw();
+  if (!mentions.size) rest.innerHTML = `<p class="muted loading-text">No posts mention them yet.</p>`;
 }
 
 function mainPost(e) {
@@ -288,6 +409,7 @@ function mainPost(e) {
   return `<article class="card main" data-id="${e.id}">
     ${who(e.pubkey, null, { big: true })}
     ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    <p class="totals"></p>
     <div class="meta"><time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time>
     <button type="button" class="link" data-copy="${esc(location.origin + postPath(e, foundOn(e.id).slice(0, 2)))}">Copy link</button></div>
   </article>`;
@@ -424,6 +546,7 @@ async function showProfile(d, signal) {
 async function showSearch(q, signal) {
   page("search", q);
   const parsed = parseInput(q);
+  if (parsed.kind === "hex" || (parsed.kind === "entity" && parsed.decoded.type !== "address")) return showFound(parsed, signal);
   const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(q) ? q : null;
   const root = pageEl;
@@ -660,15 +783,17 @@ input.addEventListener("input", () => {
   const parsed = parseInput(text);
   clearTimeout(typing);
   // An address opens what it names at once, without waiting for Enter.
-  if (parsed.kind === "entity") {
+  // A pasted post or person shows at once, as the top of a results page (what quotes, answers or mentions
+  // it); an article opens directly.
+  if (parsed.kind === "entity" || parsed.kind === "hex") {
     const t0 = navStart && performance.now() - navStart < 50 ? navStart : performance.now();
-    input.value = "";
+    const key = parsed.kind === "hex" ? parsed.hex : parsed.entity;
+    input.value = key;
     input.blur();
-    go(pathFor(parsed.entity, parsed.decoded));
+    go(parsed.kind === "entity" && parsed.decoded.type === "address" ? pathFor(parsed.entity, parsed.decoded) : `/?q=${key}`, { replace: document.body.dataset.page === "search" });
     navStart = t0;
     return;
   }
-  if (parsed.kind === "hex") { input.blur(); return go(`/e/${parsed.hex}`); }
   if (!text.trim()) {
     if (document.body.dataset.page === "search") go("/", { replace: true });
     return;

@@ -145,6 +145,16 @@
     body[data-page="search"] .search { max-width: 650px; }
   }
   .count { color: var(--muted); font-size: 14px; margin: 8px 0 18px; }
+  /* A pasted post or person: it on top, big, then what points at it */
+  .found { display: grid; gap: 6px; }
+  .found section { padding-block: 14px 4px; }
+  .found .card.lead { padding: 18px 18px 12px; }
+  .found .card.lead > .text { font-size: 19px; display: -webkit-box; -webkit-line-clamp: 10; -webkit-box-orient: vertical; overflow: hidden; }
+  .found .pcard.lead .pcard-banner { height: 120px; }
+  .totals { color: var(--muted); font-size: 14px; margin: 8px 4px 0; }
+  .totals:empty { display: none; }
+  .card.main .totals { margin: 12px 0 0; }
+  a.more { text-decoration: none; }
   .res { display: block; padding: 4px 0 22px; overflow-wrap: anywhere; }
   article.res { cursor: pointer; }
   .res-why { color: var(--muted); font-size: 13px; margin: 0 0 6px; }
@@ -190,7 +200,7 @@
   .pline small { color: var(--muted); font-size: 12.5px; }
   .pline:hover b { text-decoration: underline; }
   .see-all { display: block; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 10px 0 0; color: var(--accent); font-size: 14px; cursor: pointer; }
-  .results h2, .replies h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 6px 4px 10px; letter-spacing: 0; }
+  .results h2, .replies h2, .found h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin: 6px 4px 10px; letter-spacing: 0; }
   .card {
     display: block; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px;
     overflow-wrap: anywhere; cursor: pointer;

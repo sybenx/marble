@@ -99,6 +99,7 @@ class Relay {
     const sub = this.subs.get(m[1]);
     if (!sub) return;
     if (m[0] === "EVENT") sub.event(m[2], this.url);
+    else if (m[0] === "COUNT") { this.subs.delete(m[1]); sub.count?.(m[2]?.count, this.url); sub.done(this.url); }
     else if (m[0] === "EOSE" || m[0] === "CLOSED") { this.subs.delete(m[1]); sub.done(this.url); }
   }
 }
@@ -162,6 +163,40 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
       if (r.dead) { waiting.delete(u); continue; }
       r.subs.set(id, sub);
       r.send(["REQ", id, ...filters]);
+    }
+    if (!waiting.size) finish();
+  });
+}
+
+/**
+ * NIP-45: how many events match, by the relays' own count (they hold more than they'd send). Resolves with
+ * the highest count any of them gave, or null when none answered (not every relay counts).
+ */
+export function count(urls, filter, { timeout = 2500 } = {}) {
+  const list = relays(urls);
+  return new Promise((resolve) => {
+    const id = `c${(nextId++).toString(36)}`;
+    const waiting = new Set(list);
+    let best = null, finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      for (const u of list) sockets.get(u)?.subs.delete(id);
+      resolve(best);
+    };
+    const sub = {
+      event() {},
+      count(n) { if (Number.isFinite(n)) best = Math.max(best ?? 0, n); },
+      done(url) { waiting.delete(url); if (!waiting.size) finish(); },
+    };
+    const timer = setTimeout(finish, timeout);
+    if (!list.length) return finish();
+    for (const u of list) {
+      const r = relay(u);
+      if (r.dead) { waiting.delete(u); continue; }
+      r.subs.set(id, sub);
+      r.send(["COUNT", id, filter]);
     }
     if (!waiting.size) finish();
   });
