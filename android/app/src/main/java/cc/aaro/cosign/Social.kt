@@ -408,7 +408,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun returned(fetchAfter: Long = 10 * 60_000L) {
         if (feed.value.loading) return
         lookedAt = 0
-        feed.update { it.copy(posts = it.posts.filter { p -> unseen(p.e.id) }) }
+        if (!Sources.POPULAR_ONLY) feed.update { it.copy(posts = it.posts.filter { p -> unseen(p.e.id) }) }
         if (System.currentTimeMillis() - feed.value.at >= fetchAfter) loadFeed(top = true) else loadFeed()
     }
 
@@ -634,7 +634,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val posts = (m["posts"] as? List<*>)?.mapNotNull { x ->
                     val p = x as? Map<*, *> ?: return@mapNotNull null
                     val e = Event.fromMap(p["event"]) ?: return@mapNotNull null
-                    if ((!Sources.resumed && !unseen(e.id)) || !forDiscover(e) || interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
+                    // (The popular list is already curated, and short: it comes back whole, seen or not.)
+                    if (!Sources.POPULAR_ONLY && ((!Sources.resumed && !unseen(e.id)) || !forDiscover(e))) return@mapNotNull null
+                    if (interests.hidden("hiddenPeople", e.pubkey)) return@mapNotNull null
                     val reason = p["reason"] as? String ?: ""
                     // A fresh start checks last time's page against today's rules (a newsletter, a heavy post from a stranger).
                     if (!Sources.resumed && !reason.contains("someone you follow") && Curate.heavy(Calm.text(e))) return@mapNotNull null

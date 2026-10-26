@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -268,7 +269,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Home(phone, ui, social, feedState, header, nav)
+    if (top == null) Home(phone, ui, social, nav)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
@@ -324,14 +325,15 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val social: S
 
 // --- Home ------------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Home, calm: the search box at the very middle of the screen, the marble and the name above it, what you kept lately
+ * below, and Discover's lip at the bottom. Nothing to refresh here: a pull down only stretches the marble (to a third
+ * of the screen at most) and lets it spring back; a swipe up opens Discover.
+ */
 @Composable
-private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top: TopCollapse, nav: Nav) {
+private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     val feed by social.feed.collectAsState()
     val people by People.known.collectAsState()
-    val liked by social.liked.collectAsState()
-    val saved by social.saved.collectAsState()
-    val previews by social.previews.collectAsState()
     val notices by social.notices.collectAsState()
     val seen by social.seenAt.collectAsState()
     val laterItems by social.later.items.collectAsState()
@@ -341,35 +343,65 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
     val muted by social.muted.collectAsState()
     val dismissed by social.dismissed.collectAsState()
     val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
-    val stories = remember(feed.stories, dismissed) { feed.stories.filter { "t:" + it.id !in dismissed } }
-    // How far down you've looked, in posts: what's above it stays put when the order changes.
-    val postsNow by androidx.compose.runtime.rememberUpdatedState(posts)
-    LaunchedEffect(state) {
-        snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.key }.collect { key ->
-            val i = postsNow.indexOfFirst { it.e.id == key }
-            if (i > social.lookedAt) social.lookedAt = i
-        }
-    }
-    val storiesNow by androidx.compose.runtime.rememberUpdatedState(stories)
-    SeenWatcher(state, social) { k -> if (k == "stories") storiesNow.map { "t:" + it.id } else listOf(k) }
     LaunchedEffect(Unit) { Startup.mark("home composed", once = false) }
     LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; Startup.mark("home painted", once = false); social.painted.complete(Unit) }
-
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        // The name: back to the top of the feed (opening the header up again); already there, refresh it (as pulling down does).
-        val scope = rememberCoroutineScope()
-        val toTop: () -> Unit = {
-            if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0 && top.px == 0f) { social.loadFeed(force = true); social.loadNotices(force = true) }
-            else scope.launch {
-                launch { androidx.compose.animation.core.animate(top.px, 0f) { v, _ -> top.px = v } }
-                // From far down, jump most of the way first, so the smooth part is short.
-                if (state.firstVisibleItemIndex > 6) state.scrollToItem(6)
-                state.animateScrollToItem(0)
-            }
-        }
+    val d = androidx.compose.ui.platform.LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.toFloat()
+    // The pull: the finger's travel down (times Stretch.GIVE), in pixels; up, towards opening Discover.
+    var pull by remember { mutableFloatStateOf(0f) }
+    var lift by remember { mutableFloatStateOf(0f) }
+    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().pointerInput(Unit) {
+        detectVerticalDragGestures(
+            onDragStart = { lift = 0f },
+            onDragEnd = {
+                if (lift < -48.dp.toPx()) nav.open(Route.Feed)
+                scope.launch { androidx.compose.animation.core.animate(pull, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> pull = v } }
+            },
+            onDragCancel = { pull = 0f },
+        ) { c, dy -> c.consume(); if (dy > 0 || pull > 0f) pull = (pull + dy * Stretch.GIVE).coerceAtLeast(0f) else lift += dy }
+    }) {
+        val w = maxWidth.value
+        // The most the marble grows: a third of the screen's height, and 24dp clear of each side.
+        val most = with(d) { (minOf(screenH / 3f, w - 48f) - 72f).coerceAtLeast(130f).dp.toPx() }
+        val grow = with(d) { Stretch.band(pull, 0f, most).toDp().value }
+        val m = 72f + grow
+        val keptMax = if (maxHeight < 700.dp) 2 else 3
         val waiting = ui.asks.size + ui.batchAsks.size
         val fresh = notices.list.count { it.event.createdAt > seen }
-        HomeTop(top, toTop, onSearch = { social.clearSearch(); nav.open(Route.Search) }, onMarble = nav.marble) {
+        // Everything centred on the box: the marble and the name above it, what you kept below.
+        androidx.compose.ui.layout.Layout(content = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                val marble = Marbles.current()
+                Box(Modifier.size(m.dp).onGloballyPositioned { centre = it.boundsInRoot().center }.clip(CircleShape)
+                    .clickable(onClickLabel = "Look at the marble") { nav.marble(centre) }, contentAlignment = Alignment.Center) {
+                    MarbleArt(marble, "The marble", Modifier.wrapContentSize(Alignment.Center, unbounded = true).requiredSize((m * 1.8f).dp))
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1)
+            }
+            Row(Modifier.padding(horizontal = 16.dp).widthIn(max = 600.dp).fillMaxWidth().height(52.dp)
+                .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
+                .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Search, null, tint = Vault.Muted)
+                Spacer(Modifier.width(12.dp))
+                Text("Search, or keep a thought", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
+            }
+            Box(Modifier.widthIn(max = 600.dp).fillMaxWidth()) { KeptLately(laterItems, social, nav, max = keptMax) }
+        }, modifier = Modifier.fillMaxSize()) { parts, c ->
+            val loose = c.copy(minWidth = 0, minHeight = 0)
+            val (top, box, kept) = parts.map { it.measure(loose) }
+            // The box's middle at the screen's middle (moved down by half the pull, as the marble grows above it).
+            val boxY = (c.maxHeight - box.height) / 2 + (grow * density / 2).toInt()
+            layout(c.maxWidth, c.maxHeight) {
+                top.place((c.maxWidth - top.width) / 2, boxY - 20.dp.roundToPx() - top.height)
+                box.place((c.maxWidth - box.width) / 2, boxY)
+                kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
+            }
+        }
+        // Your picture, the bell and the pencil, top right.
+        Row(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton({ nav.compose() }) { Icon(Glyphs.pencil, "New post", tint = Vault.Text, modifier = Modifier.size(22.dp)) }
             IconButton({ nav.open(Route.Bell) }) {
                 Box {
@@ -381,27 +413,14 @@ private fun Home(phone: Phone, ui: Ui, social: Social, state: LazyListState, top
             Spacer(Modifier.width(4.dp))
             Avatar(people[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
         }
-
-        // Pulled far enough: a refresh, shown as a thin line under the header (never over the marble). A refresh
-        // in the background (it can take a while) stays out of sight.
-        var pulled by remember { mutableStateOf(false) }
-        LaunchedEffect(feed.loading) { if (!feed.loading) pulled = false }
-        top.onRefresh = { pulled = true; social.loadFeed(force = true); social.loadNotices(force = true) }
-        if (pulled && feed.loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
-        Box(Modifier.fillMaxSize()) {
-            // The header folds away before the feed scrolls, and opens again once you're back at the top (before pull to refresh).
-            LazyColumn(Modifier.fillMaxSize().nestedScroll(top.connection), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
-                item(key = "needs") { NeedsYou(phone, ui, social) { nav.open(Route.Bell) } }
-                // What you kept lately (your words), and the rest of Later a tap away.
-                item(key = "kept") { KeptLately(laterItems, social, nav) }
-                tomorrow?.let { t -> item(key = "tomorrow") { TomorrowCard(t, social) } }
-                // Tap it away (it also goes by itself after a while).
-                ui.error?.let { e -> item(key = "error") { Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) } }
-                item(key = "room") { Spacer(Modifier.height(96.dp)) }
-            }
-            // Discover, below: a lip saying what's there. Swipe it up, or tap it.
-            DiscoverLip(posts.size, posts.count { it.reason.startsWith("★") }, Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Feed) }
+        // What needs you (an approval, say), and a passing error, under the bar.
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 60.dp).widthIn(max = 600.dp).fillMaxWidth()) {
+            NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
+            tomorrow?.let { TomorrowCard(it, social) }
+            ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
+        // Discover, below: a lip saying what's there. Swipe it up, or tap it.
+        DiscoverLip(posts.size, posts.count { it.reason.startsWith("★") }, Modifier.align(Alignment.BottomCenter)) { nav.open(Route.Feed) }
     }
 }
 
@@ -428,12 +447,12 @@ private fun DiscoverLip(posts: Int, special: Int, modifier: Modifier, onOpen: ()
 
 /** On home: the last two things you kept, in your own hand, and Later. */
 @Composable
-private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav) {
+private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav, max: Int = 2) {
     val open = items.filter { it.deleted == null && it.done == null }
     if (open.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
         Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
-        for (item in open.take(2)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { nav.open(Route.Later) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { item.url?.let { nav.open(Route.Later) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
@@ -471,7 +490,11 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
             modifier = Modifier.weight(1f).clickable(onClickLabel = "Reload") { social.loadFeed(force = true) })
         IconButton({ social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
     }
-    if (feed.loading && posts.isNotEmpty()) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
+    // Pull down to refresh (home has nothing to refresh now; this is where it went).
+    var pulled by remember { mutableStateOf(false) }
+    LaunchedEffect(feed.loading) { if (!feed.loading) pulled = false }
+    @OptIn(ExperimentalMaterial3Api::class)
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(pulled && feed.loading, { pulled = true; social.loadFeed(force = true) }, Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         item(key = "news") {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface)
@@ -511,7 +534,7 @@ private fun FeedScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize()
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
-    }
+    }}
 }
 
 /**
