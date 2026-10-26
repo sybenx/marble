@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -580,6 +581,43 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
             SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
+        }
+
+        // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
+        item { Heading("Search") }
+        item {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
+            val suggest by cc.aaro.cosign.SearchPrefs.suggestions.collectAsState()
+            val posts by cc.aaro.cosign.SearchPrefs.posts.collectAsState()
+            Column {
+                Text("Search with", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (e in cc.aaro.cosign.Engine.entries) {
+                        val on = e == engine
+                        Text(e.label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                                .clickable { cc.aaro.cosign.SearchPrefs.setEngine(context, e) }.padding(horizontal = 10.dp, vertical = 7.dp))
+                    }
+                }
+                Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.SearchPrefs.setSuggestions(context, !suggest) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Suggestions as you type", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                        Text("What you type goes to ${engine.label} as you type, as in a browser.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.Switch(suggest, { cc.aaro.cosign.SearchPrefs.setSuggestions(context, it) })
+                }
+                Text("Search posts", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((k, label) in listOf("auto" to "Automatic", "always" to "Always", "never" to "Never")) {
+                        val on = k == posts
+                        Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                                .clickable { cc.aaro.cosign.SearchPrefs.setPosts(context, k) }.padding(horizontal = 12.dp, vertical = 7.dp))
+                    }
+                }
+                Text("Automatic: offered under your search only if you follow people.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
         }
 
         // Discover's topics you follow: on this phone only.

@@ -546,7 +546,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
-        scope.launch { restored.await(); afterPaint(); pullSeen(); pullDeviceNames() }
+        scope.launch { restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater() }
         scope.launch {
             try {
                 previews.value = Preview.load(CosignApp.instance)
@@ -709,6 +709,43 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
         val n = Fetch.publish(to, signed)
         if (debuggable) android.util.Log.i("CosignSync", "seen sent: ${text.length} chars to $n of ${to.size} relays")
+    }
+
+    // --- Later: what you saved from the search box ------------------------------------------------
+    //
+    // Your account's copy (kind 30078, d=marble/later, NIP-44 to yourself), read once a start and written half a
+    // minute after the last change (read again and merged first, so another device's saves are never lost).
+
+    val later = Later(prefs).also { it.changed = { laterChanged() } }
+    private var laterSending: kotlinx.coroutines.Job? = null
+
+    private fun laterChanged() {
+        if (Sources.viewAs != null) return
+        laterSending?.cancel()
+        laterSending = scope.launch { delay(30_000); sendLater() }
+    }
+
+    /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
+    /** A page opened from search: its title for Later, from the page itself, in the background. */
+    fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it) } }
+
+    private suspend fun pullLater(sending: Boolean = false) {
+        val me = me ?: return
+        if (Sources.viewAs != null) return
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(Later.TAG), "limit" to 4), 6000)
+            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        // This phone has things the account's copy hasn't (or there's no copy yet): send them.
+        val ahead = if (got == null) later.items.value.isNotEmpty() else later.merge(toSelf(got.content, encrypt = false) ?: return)
+        if (ahead && !sending) laterChanged()
+    }
+
+    private suspend fun sendLater() {
+        val me = me ?: return
+        pullLater(sending = true)
+        val text = toSelf(later.json(), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", Later.TAG)), text).withId()) } catch (_: Exception) { return }
+        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
     }
 
     // --- What you call your devices ------------------------------------------------------------
