@@ -517,6 +517,8 @@ private fun StoriesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     SeenWatcher(state, social) { listOf(it) }
     if (all == null) Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
     else if (list.isEmpty()) Text("You've seen all of today's stories. New ones come through the day.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    val stale by TopicFeeds.stale.collectAsState()
+    if (all != null && stale) Text("Couldn't get the newest stories just now; these are from earlier.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         items(list, key = { "t:" + it.id }) { s ->
             StoryRow(s, social, s.url in saved, nav)
