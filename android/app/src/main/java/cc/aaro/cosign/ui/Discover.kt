@@ -194,9 +194,10 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         scope.launch { feedState.scrollToItem(0) }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        if (awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after) home()
+        val away = awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after
         awaySince = 0
-        social.loadFeed(); social.loadNotices()
+        if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
+        social.loadNotices()
     }
     // And every 30 minutes while it's open: new things come in below what you're reading.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
