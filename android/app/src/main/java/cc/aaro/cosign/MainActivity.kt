@@ -137,5 +137,7 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra("profile")?.let { cc.aaro.cosign.ui.DebugOpen.profile.value = it }
         // Your own events to the test relay alone (--ez local_only true).
         if (intent?.getBooleanExtra("local_only", false) == true) cc.aaro.cosign.Sources.localOnly = true
+        // Back on the main page after this long away, instead of five minutes (--el away_ms 20000).
+        intent?.getLongExtra("away_ms", 0L)?.takeIf { it > 0 }?.let { cc.aaro.cosign.ui.Away.after = it }
     }
 }

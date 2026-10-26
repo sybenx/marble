@@ -171,16 +171,31 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val open: (Route) -> Unit = { stack.add(it) }
     val back: () -> Unit = { kept.removeState(keyOf(stack.lastIndex)); stack.removeAt(stack.lastIndex) }
     if (stack.isNotEmpty()) BackHandler(onBack = back)
-    // Read on open and when you come back to it; nothing in between.
-    LifecycleEventEffect(Lifecycle.Event.ON_START) { social.loadFeed(); social.loadNotices() }
-    // And every 30 minutes while it's open: new things come in below what you're reading.
-    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
-
     // A note's pictures, full screen, over everything else.
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     // The marble, full screen, grown from where it was tapped.
     var marbleFrom by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    // Away a while ([Away.after]): back on the main page, at the top, its search box showing (no keyboard), the
+    // feed as it was. Away a moment (copying a link, answering a text): just where you were. Kept through Android
+    // recreating Marble, as the screens are.
+    var awaySince by androidx.compose.runtime.saveable.rememberSaveable { mutableLongStateOf(0L) }
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime() }
+    // Read on open and when you come back to it; nothing in between.
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        if (awaySince > 0 && android.os.SystemClock.elapsedRealtime() - awaySince >= Away.after) {
+            stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear()
+            viewing = null; marbleFrom = null
+            header.px = 0f
+            scope.launch { feedState.scrollToItem(0) }
+        }
+        awaySince = 0
+        social.loadFeed(); social.loadNotices()
+    }
+    // And every 30 minutes while it's open: new things come in below what you're reading.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
+
     val nav = Nav(open = open, back = back, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { marbleFrom = it })
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val searchAsked by OpenSearch.query.collectAsState()
@@ -1134,6 +1149,13 @@ private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationIn
 /** Debug builds: a profile to open, asked for by intent. */
 /** A search asked for from outside (a launcher's search: marble://search?q=…): Discover opens search with it. */
 object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+
+/** How long away before Marble opens on the main page again, rather than where you were. */
+object Away {
+    const val AFTER = 5 * 60_000L
+    /** [AFTER], or shorter in a debug build's test (--el away_ms 20000). */
+    var after = AFTER
+}
 
 object DebugOpen { val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
