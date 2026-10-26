@@ -1160,11 +1160,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, 1) else nav.thread(n.id) })
             // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (liked) Glyphs.heartOn else Glyphs.heart, if (liked) "Liked" else "Like", tint = if (liked) Vault.Amber else Vault.Muted,
-                    modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onLike).padding(10.dp))
-                // How many liked it, once counted (in a thread, on a pasted post).
-                val counts by nav.social.engagement.collectAsState()
-                counts[n.id]?.likeTotal?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
+                // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
+                Heart(n, liked, nav.social, onLike)
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
                 // Save: into your bookmarks.

@@ -247,6 +247,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Notifications newer than this were not seen yet: the bell's dot. */
     val seenAt = MutableStateFlow(prefs.getLong("seen", 0))
     val liked = MutableStateFlow(prefs.getStringSet("liked", emptySet())!!.toSet())
+    /** Your newest reaction to each post you reacted to with an emoji ("+" is a plain like, and isn't kept here). */
+    val reactions = MutableStateFlow(prefs.getStringSet("reactions", emptySet())!!.mapNotNull { r -> r.split(' ', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap())
+    /** How often you've used each emoji, for the row a long press on the heart opens. */
+    private val emojiUse = HashMap<String, Int>().apply {
+        prefs.getString("emojiUse", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
+    }
     /** Who you follow, from your newest follow list. Null until it's known. */
     val follows = MutableStateFlow<Set<String>?>(null)
     /** People being followed or unfollowed right now. */
@@ -650,6 +656,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         fun vote(e: Event, by: Double) = TopicGuess.of(e).take(2).forEachIndexed { i, t -> votes[t] = (votes[t] ?: 0.0) + by / (i + 1) }
         mine.filter { it.kind == 1 }.forEach { vote(it, 0.3) }
         mine.filter { it.kind == 6 }.forEach { r -> reposted(r)?.let { vote(it, 2.0) } }
+        // The emojis you react with elsewhere, to offer first on a long press.
+        if (emojiUse.isEmpty()) mine.filter { it.kind == 7 && it.content.isNotBlank() && it.content != "+" && it.content != "-" && !it.content.startsWith(":") && it.content.length <= 8 }
+            .forEach { emojiUse[it.content] = (emojiUse[it.content] ?: 0) + 1 }
         readerLiked = mine.filter { it.kind == 7 }.mapNotNull { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }.toSet()
         val likedIds = mine.filter { it.kind == 7 && it.content != "-" }.mapNotNull { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }.distinct().take(300)
         for (chunk in likedIds.chunked(150)) Fetch.query(readRelays().take(6), mapOf("ids" to chunk), 8000).forEach { vote(it, 1.0) }
@@ -1608,15 +1617,37 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // --- Likes and follows -------------------------------------------------------------
 
     fun like(note: Event) {
-        val me = me ?: return
         if (note.id in liked.value) return
+        react(note, "+")
+    }
+
+    /**
+     * A reaction: "+" is a like, anything else the emoji it is. Again on a post you've reacted to, it's a new
+     * reaction, and the newest is the one shown (what's learned from it is learned once).
+     */
+    fun react(note: Event, emoji: String) {
+        val me = me ?: return
+        val first = note.id !in liked.value
+        val before = reactions.value[note.id]
         mark(note.id, true)
-        interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
-        newsletterTaste(reposted(note) ?: note, 1)
+        setReaction(note.id, emoji.takeIf { it != "+" })
+        if (emoji != "+") { emojiUse[emoji] = (emojiUse[emoji] ?: 0) + 1; prefs.edit().putString("emojiUse", org.json.JSONObject(emojiUse.entries.sortedByDescending { it.value }.take(40).associate { it.key to it.value }).toString()).apply() }
+        if (first) {
+            interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
+            newsletterTaste(reposted(note) ?: note, 1)
+        }
         scope.launch {
             val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
-            if (!act(Event(me, Clock.now(), 7, tags, "+").withId())) mark(note.id, false)
+            if (!act(Event(me, Clock.now(), 7, tags, emoji).withId())) { if (first) mark(note.id, false); setReaction(note.id, before) }
         }
+    }
+
+    /** The emojis a long press on the heart offers: the ones you use most, then the usual ones. */
+    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key } + listOf("❤️", "😂", "😮", "😢", "🔥", "🤙")).distinct().take(6)
+
+    private fun setReaction(id: String, emoji: String?) {
+        reactions.update { if (emoji == null) it - id else it + (id to emoji) }
+        prefs.edit().putStringSet("reactions", reactions.value.entries.toList().takeLast(1000).map { "${it.key} ${it.value}" }.toSet()).apply()
     }
 
     private fun mark(id: String, on: Boolean) {
