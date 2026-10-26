@@ -68,7 +68,7 @@ object TopicFeeds {
         "art" to "Art and design", "photos" to "Photos and places", "news" to "General news")
 
     /** The last try to fetch the stories failed: what's shown is the phone's older copy. */
-    @Volatile var stale = false
+    val stale = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** The phone's copy was fetched in the last 30 minutes. */
     fun fresh(context: Context) = File(context.cacheDir, "topic-feeds.json").let { it.exists() && System.currentTimeMillis() - it.lastModified() < 30 * 60_000L }
 
@@ -84,12 +84,12 @@ object TopicFeeds {
             val indexText = get(INDEX) ?: return@coroutineScope null
             val list = ((Json.parse(indexText) as? Map<*, *>)?.get("topics") as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
             indexText to list.map { t -> t["id"] as? String to async { known[t["id"]]?.await() ?: (t["url"] as? String)?.let { get(it) } } }.map { (id, b) -> id to b.await() }
-        } ?: return@withContext (if (file.exists()) parse(file.readText()) else null).also { stale = true } ?: emptyList()
+        } ?: return@withContext (if (file.exists()) parse(file.readText()) else null).also { stale.value = true } ?: emptyList()
         // A topic that didn't come: its stories from the phone's copy, rather than none.
         val missing = bodies.filter { it.second == null }.mapNotNull { it.first }.toSet()
         val old = if (missing.isEmpty() || !file.exists()) emptyMap() else oldBodies(file.readText())
         val kept = bodies.mapNotNull { (id, b) -> b ?: old[id] }
-        stale = missing.isNotEmpty()
+        stale.value = missing.isNotEmpty()
         // Kept as the site sent it: the index, then each topic's file.
         val text = org.json.JSONArray(listOf(indexText) + kept).toString()
         try { file.writeText(text) } catch (_: Exception) {}
