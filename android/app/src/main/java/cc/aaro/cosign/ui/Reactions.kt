@@ -34,6 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -50,11 +52,12 @@ import androidx.compose.ui.window.PopupProperties
 import cc.aaro.cosign.core.Event
 import kotlinx.coroutines.withTimeoutOrNull
 
-// The heart under a post. A tap likes it. A long press opens a row of emojis above it (the ones you use
-// most): slide to one and let go, or let go and tap one; + opens them all. Again on a post you've
-// reacted to, it changes your reaction. The heart then shows your emoji, and beside it, what others chose.
+// The heart under a post, as on Marble Web. A tap likes it. A long press opens a row of emojis above it (your
+// most-used, then the usual six): slide to one and let go, or let go and tap one; + opens them all. On a post
+// you've reacted to, a tap opens the row too, and a new pick changes your reaction. The heart then shows your
+// emoji (a ❤️ shows as the filled heart), and beside it, what others chose.
 
-private val ITEM = 44.dp
+private val ITEM = 36.dp
 private val LIFT = 60.dp
 private val LEFT = (-10).dp
 
@@ -68,19 +71,28 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
     var all by remember { mutableStateOf(false) }
     var hover by remember { mutableIntStateOf(-1) }
     var choices by remember { mutableStateOf(emptyList<String>()) }
+    // Where the row starts, from the heart's left edge: above it, but kept on screen however near the edge the heart is.
+    var heartX by remember { mutableStateOf(0f) }
+    val screenW = with(px) { androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    fun rowLeft(n: Int): Float = with(px) {
+        val w = (n + 1) * ITEM.toPx()
+        (heartX + LEFT.toPx()).coerceAtMost(screenW - w - 8.dp.toPx()).coerceAtLeast(8.dp.toPx()) - heartX
+    }
     fun pick(e: String) { open = false; hover = -1; social.react(n, e) }
     val chosen = mine[n.id]
     Box {
         Box(Modifier.size(40.dp).clip(CircleShape)
+            .onGloballyPositioned { heartX = it.boundsInWindow().left }
             .semantics { contentDescription = if (liked) "Liked" else "Like"; onLongClick("React with an emoji") { choices = social.topEmojis(); open = true; true } }
             .pointerInput(n.id) {
-                val item = ITEM.toPx(); val left = LEFT.toPx(); val top = -LIFT.toPx()
-                fun at(x: Float, y: Float) = if (y < top - item * 0.6f || y > 20.dp.toPx()) -1 else ((x - left) / item).toInt().takeIf { x >= left && it <= choices.size } ?: -1
+                val item = ITEM.toPx(); val top = -LIFT.toPx()
+                fun at(x: Float, y: Float): Int { val left = rowLeft(choices.size); return if (y < top - item * 0.6f || y > 20.dp.toPx()) -1 else ((x - left) / item).toInt().takeIf { x >= left && it <= choices.size } ?: -1 }
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     var up = false
                     val quick = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { up = waitForUpOrCancellation() != null; true } != null
-                    if (quick) { if (up) onLike(); return@awaitEachGesture }
+                    // A tap: a like; on a post you've reacted to, the row, to change it.
+                    if (quick) { if (up) { if (liked) { choices = social.topEmojis(); hover = -1; open = true } else onLike() }; return@awaitEachGesture }
                     // Held: the row opens, and follows the finger.
                     choices = social.topEmojis(); open = true; hover = -1
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -101,21 +113,21 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
                     }
                 }
             }, contentAlignment = Alignment.Center) {
-            if (chosen != null) Text(chosen, fontSize = 19.sp)
+            if (chosen != null && chosen != "❤️") Text(chosen, fontSize = 19.sp)
             else Icon(if (liked) Glyphs.heartOn else Glyphs.heart, null, tint = if (liked) Vault.Amber else Vault.Muted, modifier = Modifier.padding(10.dp))
         }
-        if (open) Popup(offset = with(px) { IntOffset(LEFT.roundToPx(), -LIFT.roundToPx()) }, onDismissRequest = { open = false; hover = -1 },
+        if (open) Popup(offset = with(px) { IntOffset(rowLeft(choices.size).toInt(), -LIFT.roundToPx()) }, onDismissRequest = { open = false; hover = -1 },
             properties = PopupProperties(focusable = true)) {
             Row(Modifier.clip(RoundedCornerShape(26.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp)), verticalAlignment = Alignment.CenterVertically) {
                 choices.forEachIndexed { i, e ->
                     Box(Modifier.size(ITEM).clickable { pick(e) }, contentAlignment = Alignment.Center) {
-                        Text(e, fontSize = 24.sp, modifier = Modifier.graphicsLayer {
+                        Text(e, fontSize = 22.sp, modifier = Modifier.graphicsLayer {
                             val s = if (hover == i) 1.45f else 1f; scaleX = s; scaleY = s; translationY = if (hover == i) -10.dp.toPx() else 0f
                         })
                     }
                 }
                 Box(Modifier.size(ITEM).clickable { open = false; all = true }, contentAlignment = Alignment.Center) {
-                    Text("+", color = if (hover == choices.size) Vault.Accent else Vault.Muted, fontSize = 24.sp)
+                    Text("+", color = if (hover == choices.size) Vault.Accent else Vault.Muted, fontSize = 22.sp)
                 }
             }
         }

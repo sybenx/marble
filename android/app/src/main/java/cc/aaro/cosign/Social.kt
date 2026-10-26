@@ -1642,8 +1642,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
-    /** The emojis a long press on the heart offers: the ones you use most, then the usual ones. */
-    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key } + listOf("❤️", "😂", "😮", "😢", "🔥", "🤙")).distinct().take(6)
+    /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
+    fun topEmojis(): List<String> = emojiUse.entries.sortedByDescending { it.value }.map { it.key }
+        .filter { it !in USUAL_EMOJIS && it.codePointCount(0, it.length) <= 4 }.take(4) + USUAL_EMOJIS
+
+    private val USUAL_EMOJIS = listOf("❤️", "😂", "😮", "😢", "🔥", "🤙")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }
