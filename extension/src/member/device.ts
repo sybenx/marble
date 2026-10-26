@@ -33,6 +33,8 @@ export interface MemberState {
   ownGrant?: string;
   /** Which refresh of the key these shares belong to (0 before any). */
   epoch?: number;
+  /** A quiet refresh followed but not yet committed by the servers (COSIGN.md §7.7). */
+  pending?: { epoch: number; id: string | null; shares: { idx: number; secret: string }[]; points: [number, string][]; at: number };
   /** This browser was reported lost by another device: its shares sign nothing now. */
   removed?: { by: string; at: number };
   /** The profile event last signed, as published. */
@@ -60,7 +62,7 @@ export class Device {
 
   constructor(public st: MemberState, private save: (st: MemberState) => void) {
     this.box = new Mailbox(st.sk, st.group.relays, (m, from, at) => this.handle(m, from, at));
-    const ping = () => { for (const s of this.servers()) this.box.send(s.pk!, { type: 'ping', idx: st.shares[0].idx, ts: Date.now() }); };
+    const ping = () => { this.dropStalePending(); for (const s of this.servers()) this.box.send(s.pk!, { type: 'ping', idx: st.shares[0].idx, ts: Date.now() }); };
     setTimeout(ping, 1500);
     this.pinger = setInterval(ping, 10_000);
   }
@@ -241,17 +243,40 @@ export class Device {
       return this.takeRefresh(inner, m.from);
     }
     if (m.type === 'refresh_plan') { this.follow(m.plan as RefreshPlan); return true; }
+    if (m.type === 'refresh_committed') { this.committed(m); return true; }
     if (m.type === 'refresh_part') { this.refresh?.take(m, from); return true; }
     if (m.type === 'removed') { this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() }; this.save(this.st); return true; }
     return false;
   }
 
   private follow(plan: RefreshPlan) {
-    if ((this.st.epoch ?? 0) >= plan.epoch || this.refresh?.plan.epoch === plan.epoch) return;
+    if ((this.st.epoch ?? 0) >= plan.epoch || this.refresh?.plan.epoch === plan.epoch || this.st.pending?.epoch === plan.epoch) return;
+    // A quiet refresh (COSIGN.md §7.7) is held: the servers keep the new shares pending and go
+    // on signing with the current ones until a device commits, so a member that applied them
+    // at once would be alone on an epoch — and stranded for good if nobody ever commits.
+    const done = plan.periodic === true
+      ? (r: RefreshResult) => { this.st.pending = { ...r, id: plan.id ?? null, at: Date.now() }; this.save(this.st); }
+      : (r: RefreshResult) => this.refreshed(r);
     try {
-      this.refresh = new RefreshRun(plan, pubOf(this.st.sk), this.st.shares, (to, msg) => this.box.send(to, msg), r => this.refreshed(r));
+      this.refresh = new RefreshRun(plan, pubOf(this.st.sk), this.st.shares, (to, msg) => this.box.send(to, msg), done);
       this.refresh.start();
     } catch { /* a plan that doesn't start from our shares: not ours to follow */ }
+  }
+
+  /** A server says the key has moved: what was waiting is ours now. */
+  private committed(m: any) {
+    const p = this.st.pending;
+    if (!p || Number(m.epoch) !== p.epoch || (m.id && p.id && m.id !== p.id)) return;
+    this.st.pending = undefined;
+    this.refreshed({ epoch: p.epoch, shares: p.shares, points: p.points });
+  }
+
+  /** One nobody committed is let go after 48 hours, as the servers let theirs go. */
+  private dropStalePending() {
+    const p = this.st.pending;
+    if (!p || Date.now() - p.at < 48 * 3600_000) return;
+    this.st.pending = undefined;
+    this.save(this.st);
   }
 
   private refreshed(r: RefreshResult) {
@@ -263,7 +288,7 @@ export class Device {
       m.sharePub = pts[0].sharePub;
       if (m.shares) m.shares = pts;
     }
-    this.st.shares = r.shares; this.st.epoch = r.epoch;
+    this.st.shares = r.shares; this.st.epoch = r.epoch; this.st.pending = undefined;
     this.save(this.st);
     for (const s of this.servers()) this.box.send(s.pk!, { type: 'refreshed', epoch: r.epoch });
   }

@@ -23,6 +23,10 @@ export interface RefreshPlan {
   holders: { idx: number; pk: string }[];
   /** Every share's point before the refresh. Everyone starts from these, whatever it has heard since. */
   points: [number, string][];
+  /** A quiet one (COSIGN.md §7.7): held by everyone until a device commits it. */
+  periodic?: boolean;
+  /** Which attempt: a dropped one and the next share an epoch. */
+  id?: string;
 }
 
 /** One dealer's part: a delta for each share, and the points of g's coefficients a1..a(t-1). */
