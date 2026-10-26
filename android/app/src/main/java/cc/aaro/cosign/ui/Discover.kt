@@ -263,6 +263,10 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     }
     val asked by DebugOpen.profile.collectAsState()
     LaunchedEffect(asked) { asked?.let { stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); nav.profile(it); DebugOpen.profile.value = null } }
+    // The box is for typing in: out of search and its results (home, or anywhere else), the next search starts empty.
+    // While a results page is still open behind you, the box keeps its query, as a browser's does.
+    val inSearch = stack.any { it == Route.Search || it is Route.Results }
+    LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; social.clearSearch() } }
     val top = stack.lastOrNull()
     if (top == null) Home(phone, ui, social, feedState, header, nav)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
