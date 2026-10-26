@@ -863,6 +863,22 @@ private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
     }
 }
 
+/** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
+@Composable
+private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClickLabel = "Open in your browser", onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Box(Modifier.size(40.dp).background(Vault.Surface, CircleShape).border(1.dp, Vault.Edge, CircleShape), contentAlignment = Alignment.Center) {
+        Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+    }
+    Spacer(Modifier.width(14.dp))
+    Column(Modifier.weight(1f)) {
+        Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 /** A link's preview: the page's picture, its site, title and a line of summary. */
 @Composable
 private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
@@ -1261,9 +1277,12 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val scope = rememberCoroutineScope()
     // A pasted link to someone or a post: their page of results, here (see LinkResults); name@domain opens whoever it names.
     val pasted = remember(q) { Ref.parse(q.trim()) }
+    // An address, or a well-known site's name: "Go to …" at the top. Enter opens it only when it's a sure thing.
+    val site = remember(q) { cc.aaro.cosign.Sites.match(q) }
+    val context = LocalContext.current
     val go = {
         val t = q.trim()
-        if (pasted == null) run {
+        if (pasted == null) site?.takeIf { it.sure }?.let { openInBrowser(context, it.url) } ?: run {
             social.search(t)
             if (Nip05.isAddress(t)) scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } }
         }
@@ -1292,6 +1311,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         )
     }
     pasted?.let { return@Column LinkResults(it, social, nav) }
+    site?.let { s -> GoToSite(s) { openInBrowser(context, s.url) } }
     val f = found ?: return@Column Text("Search names, words or #hashtags. Paste a link to someone or a post to see who replied, quoted or mentioned it.",
         color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(20.dp))
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
