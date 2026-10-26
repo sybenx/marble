@@ -65,12 +65,18 @@ object Daily {
         if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) android.util.Log.i("CosignDaily", what)
     }
 
+    /**
+     * A night's marble's real detail, as a radius in pixels: the generator draws it about 530 px across in its
+     * render, and the 768 px cut is that, enlarged. The list's "detail" (the marble's own width, if it ever says) wins.
+     */
+    private const val NIGHT_DETAIL = 265
+
     private fun fetch(context: Context) {
         val date = utcDate()
         val dir = File(context.filesDir, "marbles").apply { mkdirs() }
         val png = File(dir, "$date.png"); val name = File(dir, "$date.name")
         val have = png.exists() && name.exists()
-        today.value = if (have) Marble(name.readText(), 0, 384, png) else null
+        today.value = if (have) Marble(name.readText(), 0, NIGHT_DETAIL, png) else null
         if (askedFor == date && System.currentTimeMillis() - asked < AGAIN) return
         asked = System.currentTimeMillis(); askedFor = date
         val text = get(manifest)?.decodeToString() ?: return debug(context, "no list from $manifest")
@@ -91,7 +97,7 @@ object Daily {
         png.writeBytes(bytes); name.writeText((e["name"] as? String)?.trim()?.take(40)?.ifEmpty { null } ?: "Today's marble")
         // A week of them on the phone, no more.
         dir.listFiles()?.filter { it.name.take(10) < LocalDate.now(ZoneOffset.UTC).minusDays(7).toString() }?.forEach { it.delete() }
-        if (utcDate() == date) today.value = Marble(name.readText(), 0, ((e["size"] as? Long)?.toInt() ?: 768) / 2, png)
+        if (utcDate() == date) today.value = Marble(name.readText(), 0, (e["detail"] as? Long)?.toInt()?.div(2) ?: NIGHT_DETAIL, png)
     }
 
     private fun rememberNights(context: Context, days: List<*>) {
@@ -120,7 +126,7 @@ object Daily {
         val k = date.toString()
         nights.value[k]?.let { (name, url) ->
             val local = today.value?.file?.takeIf { it.name.startsWith(k) }
-            return Marble(name, 0, 384, local, url)
+            return Marble(name, 0, NIGHT_DETAIL, local, url)
         }
         return MARBLES[Math.floorMod(date.toEpochDay(), MARBLES.size.toLong()).toInt()]
     }
