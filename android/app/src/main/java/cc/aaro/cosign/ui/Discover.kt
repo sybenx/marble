@@ -40,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -405,14 +406,12 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
             }
             Row(Modifier.padding(horizontal = 16.dp).widthIn(max = 600.dp).fillMaxWidth().height(52.dp)
                 .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
-                .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Search, null, tint = Vault.Muted)
                 Spacer(Modifier.width(12.dp))
                 Text("Search or jot anything…", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                // Enter: kept as a note, and searched.
-                Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text), contentAlignment = Alignment.Center) {
-                    Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 24.sp)
-                }
+                // Enter: kept as a note, and searched (the box opens for typing; the chip says what Enter does).
+                GoChip(null)
             }
             Box(Modifier.widthIn(max = 600.dp).fillMaxWidth())
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
@@ -2128,8 +2127,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
                 capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { go() }),
-            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) Box(Modifier.padding(end = 6.dp).size(36.dp).clip(RoundedCornerShape(12.dp)).background(Vault.Text)
-                .clickable(onClickLabel = "Keep as a note and search") { go() }, contentAlignment = Alignment.Center) { Text("↵", color = Vault.Ground, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 24.sp) } },
+            trailingIcon = { if (t.isNotEmpty() && pasted == null && !atPeople) GoChip { go() } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
@@ -2418,6 +2416,19 @@ private fun SaveChip(saved: Boolean, onClick: () -> Unit) = Row(
     Icon(if (saved) Icons.Filled.CheckCircle else Glyphs.save, null, tint = if (saved) Vault.Ground else Vault.Accent, modifier = Modifier.size(16.dp))
     Spacer(Modifier.width(6.dp))
     Text(if (saved) "Saved" else "Save", color = if (saved) Vault.Ground else Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+}
+
+/** The box's Enter, in the Save chip's look (0.12.18): keep what's typed as a note, and search it. */
+@Composable
+private fun GoChip(onClick: (() -> Unit)?) = Row(
+    Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround)
+        .then(if (onClick != null) Modifier.clickable(onClickLabel = "Keep as a note and search", onClick = onClick) else Modifier)
+        .padding(horizontal = 12.dp, vertical = 7.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Vault.Accent, modifier = Modifier.size(16.dp))
+    Spacer(Modifier.width(6.dp))
+    Text("Go", color = Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
 }
 
 /** A row of the dropdown: a search (what's typed in plain, the rest in bold), and ↖ to put it in the box. */
