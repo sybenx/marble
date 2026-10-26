@@ -297,9 +297,9 @@ function kindOf(r, e) {
   return "mention";
 }
 
-const totals = ({ replies, reposts, likes, quotes }) => [
+// "N replies · N reposts · N likes", the same line as the app's (quotes have their own section)
+const totals = ({ replies, reposts, likes }) => [
   replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
-  quotes && `${quotes} ${quotes === 1 ? "quote" : "quotes"}`,
   reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
   likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
 ].filter(Boolean).join(" · ");
@@ -358,7 +358,7 @@ async function showFound(parsed, signal) {
   clearTimeout(timer);
   draw();
   if (!rest.innerHTML.trim()) rest.innerHTML = `<p class="muted loading-text">Nothing points at this post yet.</p>`;
-  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), quotes: got.quote.size, reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
+  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0) });
   mark("engagement", { replies: got.reply.size, quotes: got.quote.size, mentions: got.mention.size, ...tally, counts });
 }
 
