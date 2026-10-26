@@ -575,8 +575,8 @@ private data class BigMarble(val from: androidx.compose.ui.geometry.Offset, val 
 
 /**
  * The marble, full screen and still: large on the app's ground (the light or dark render), grown from the
- * header where it was tapped, leaning a little as the phone tilts. Pinch or double-tap to look closer (as far
- * as the render has detail), drag to look round; double-tap or pinch out to go back. A tap or back closes it.
+ * header where it was tapped, leaning a little as the phone tilts. Pinch to peek closer (as far as the render has
+ * detail); let go and it springs back. A tap or back closes it.
  * With animations off on the phone (Remove animations), it simply appears, and doesn't move.
  */
 @Composable
@@ -611,10 +611,9 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         onDispose { sm?.unregisterListener(listener) }
     }
     var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    // Looking closer: how much (1: not), and where to (from the centre, in pixels). The tilt rests meanwhile.
+    // A peek, while two fingers pinch: how much closer (1: not), and where the fingers took it (from the centre, in pixels).
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    val leaning by androidx.compose.animation.core.animateFloatAsState(if (zoom > 1.01f) 0f else 1f, label = "lean")
     val d = androidx.compose.ui.platform.LocalDensity.current
     val today = Marbles.current()
     val marble = big.marble ?: today
@@ -627,43 +626,37 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         val sizePx = with(d) { size.toPx() }
         val start = with(d) { (72f * 1.8f).dp.toPx() } / sizePx       // the header's marble, the same picture
         val leanPx = with(d) { 8.dp.toPx() }
-        // Closer, up to twice the render's own size (past that it's only blur), and never so far it slips out of view.
+        // Closer, up to twice the render's own detail (the view already shows it at up to 1.3 times; at 1:1 there'd be no peek at all).
         val mid = with(d) { androidx.compose.ui.geometry.Offset(maxWidth.toPx() / 2f, maxHeight.toPx() / 2f) }
         val most = ((marble.detail * 2 * 2f / 0.556f) / sizePx).coerceAtLeast(1f)
-        fun held(p: androidx.compose.ui.geometry.Offset, z: Float): androidx.compose.ui.geometry.Offset {
-            val r = 0.278f * sizePx * (z - 1f)
-            return androidx.compose.ui.geometry.Offset(p.x.coerceIn(-r, r), p.y.coerceIn(-r, r))
-        }
-        fun glide(z: Float, to: androidx.compose.ui.geometry.Offset) = scope.launch {
+        // Let go: back to where it was, with a little bounce (or at once, with animations off).
+        fun back() = scope.launch {
             val z0 = zoom; val p0 = pan
-            androidx.compose.animation.core.animate(0f, 1f, animationSpec = androidx.compose.animation.core.tween(if (still) 0 else 260)) { t, _ ->
-                zoom = z0 + (z - z0) * t; pan = p0 + (to - p0) * t
+            if (still) { zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero; return@launch }
+            androidx.compose.animation.core.animate(0f, 1f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 380f)) { t, _ ->
+                zoom = z0 + (1f - z0) * t; pan = p0 * (1f - t)
             }
         }
         Box(Modifier.fillMaxSize()
-            // A tap closes; a double tap goes closer, to where it was tapped, or back.
-            .pointerInput(most) {
-                detectTapGestures(onTap = { close() }, onDoubleTap = { at ->
-                    if (zoom > 1.01f || most <= 1.01f) glide(1f, androidx.compose.ui.geometry.Offset.Zero)
-                    else glide(most, held((mid - at) * (most - 1f), most))
-                })
-            }
-            // Two fingers: closer or further, about the point between them; one finger, while closer: look round.
+            // A tap closes.
+            .pointerInput(Unit) { detectTapGestures(onTap = { close() }) }
+            // Two fingers: closer, about the point between them, following them; let go and it springs back.
             .pointerInput(most) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    var peeked = false
                     do {
                         val ev = awaitPointerEvent()
-                        val fingers = ev.changes.count { it.pressed }
-                        if (fingers >= 2 || zoom > 1f) {
+                        if (ev.changes.count { it.pressed } >= 2) {
+                            peeked = true
                             val z = (zoom * ev.calculateZoom()).coerceIn(1f, most)
                             val c = ev.calculateCentroid(useCurrent = true).let { if (it.isSpecified) it - mid else androidx.compose.ui.geometry.Offset.Zero }
-                            pan = held(c - (c - pan) * (z / zoom) + ev.calculatePan(), z)
+                            pan = c - (c - pan) * (z / zoom) + ev.calculatePan()
                             zoom = z
                             ev.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (ev.changes.any { it.pressed })
-                    if (zoom < 1.03f) { zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero }
+                    if (peeked) back()
                 }
             })
         MarbleArt(marble, marble.name,
@@ -671,8 +664,8 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
                 val p = shown.value
                 val sc = (start + (1f - start) * p) * zoom
                 scaleX = sc; scaleY = sc
-                translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p * leaning + pan.x
-                translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p * leaning + pan.y
+                translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p + pan.x
+                translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p + pan.y
             })
         // Its name, in a small chip under it. The first look of the (UTC) day collects it: the chip springs in and a
         // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
