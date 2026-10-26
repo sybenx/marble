@@ -101,4 +101,31 @@ class LaterTest {
         assertFalse(l.merge("""{"v":2,"items":[{"id":"cccccccccccccccc","text":"from the future","created":$now,"updated":$now}]}"""))
         assertEquals(listOf("mine"), l.shown().map { it.text })
     }
+
+    @Test fun pageSavedByItsAddress() {
+        val l = Later(Prefs())
+        val a = l.savePage("https://example.com/a", "example.com")!!
+        l.done(a, true)
+        // Saved again: the same item comes back (not done), not a second one; another page on the same site is its own.
+        assertEquals(a.id, l.savePage("https://example.com/a", "example.com")!!.id)
+        l.savePage("https://example.com/b", "example.com")
+        assertEquals(2, l.shown().size)
+        assertNull(l.shown().first { it.id == a.id }.done)
+        // In the account's copy as an item like any other, with its url (no new field for Marble desktop).
+        val back = Later.fromJson(l.json()).first { it.id == a.id }
+        assertEquals("https://example.com/a", back.url)
+        assertTrue(back.extra.isEmpty())
+    }
+
+    @Test fun pageTitledOnceThePageSays() {
+        val l = Later(Prefs())
+        val a = l.savePage("https://example.com/a", "example.com")!!
+        l.retitle(a.id, "example.com", "  A good read ")
+        val b = l.shown().first { it.id == a.id }
+        assertEquals("A good read", b.text)
+        assertTrue(b.updated > a.updated || b.updated >= now)
+        // Only while it still shows what it was saved with.
+        l.retitle(a.id, "example.com", "Something else")
+        assertEquals("A good read", l.shown().first { it.id == a.id }.text)
+    }
 }

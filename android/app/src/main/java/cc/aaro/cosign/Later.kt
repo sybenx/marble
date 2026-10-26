@@ -44,6 +44,21 @@ class Later(private val prefs: android.content.SharedPreferences) {
         put(item)
         return item
     }
+    /** A page saved from the browser's Save button: by its address (saved again, it comes back rather than doubling). */
+    fun savePage(url: String, title: String): LaterItem? {
+        val t = title.trim().take(500).ifEmpty { return null }
+        val now = Clock.now()
+        val have = items.value.firstOrNull { it.url == url && it.deleted == null }
+        val item = have?.copy(done = null, updated = next(have)) ?: LaterItem(newId(), t, now, now, url = url)
+        put(item)
+        return item
+    }
+    /** A saved page's title, once the page says it: only while it still shows what it was saved with. */
+    fun retitle(id: String, from: String, title: String) {
+        val item = items.value.firstOrNull { it.id == id && it.deleted == null && it.text == from } ?: return
+        val t = title.trim().take(500).ifEmpty { return }
+        if (t != from) put(item.copy(text = t, updated = next(item)))
+    }
     fun done(item: LaterItem, on: Boolean) = put(item.copy(done = if (on) Clock.now() else null, updated = next(item)))
     /** Removed: only a marker stays (no text), so other devices learn it, for a month. */
     fun remove(item: LaterItem) = put(item.copy(text = "", deleted = Clock.now(), updated = next(item)))

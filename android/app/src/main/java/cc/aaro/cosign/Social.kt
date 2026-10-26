@@ -749,6 +749,19 @@ class Social private constructor(private val phone: Phone, context: Context) {
         laterSending = scope.launch { delay(30_000); sendLater() }
     }
 
+    /**
+     * The page on screen in a tab Marble opened, saved with its Save button: by the title Marble knows for it,
+     * else by its site until the page itself says (fetched here, in the background).
+     */
+    fun savePage(url: String): LaterItem? {
+        val host = android.net.Uri.parse(url).host?.removePrefix("www.") ?: url
+        val known = (later.pages.value.firstOrNull { it.url == url }?.title ?: allStories.value.firstOrNull { it.url == url }?.title)
+            ?.takeIf { it.isNotBlank() && it != host && it != url }
+        val item = later.savePage(url, known ?: host) ?: return null
+        if (item.text == host) scope.launch { Preview.fetch(url)?.title?.let { later.retitle(item.id, host, it) } }
+        return item
+    }
+
     /** A page opened from search: its title for Later, from the page itself, in the background. */
     fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it) } }
 

@@ -121,6 +121,8 @@
                 android:value="Holds one share of a threshold signing key and answers co-signing requests from the user's own servers." />
         </service>
 
+        <!-- Save, in a page Marble opened: the browser sends the page's address here. -->
+        <receiver android:name=".SavePageReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:process=":signer" android:exported="false" />
 
         <!-- ntfy (or any UnifiedPush distributor) wakes the app when an approval is waiting. -->

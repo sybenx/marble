@@ -107,6 +107,8 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.drawable.toBitmap
 import cc.aaro.cosign.CosignApp
 import cc.aaro.cosign.Notice
 import cc.aaro.cosign.People
@@ -951,13 +953,27 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
 }
 
 /**
- * Open a page in a Custom Tab, inside this app, when the browser has them. These two extras
- * are what androidx.browser's CustomTabsIntent sets; any other browser just opens the page.
+ * Open a page in a Custom Tab, inside this app, when the browser has them, in Marble's colours, with one
+ * button: Save, which puts the page on screen in Later ([cc.aaro.cosign.SavePageReceiver]). These extras are
+ * what androidx.browser's CustomTabsIntent sets; any other browser just opens the page.
  */
 private fun openInBrowser(context: android.content.Context, url: String) {
     val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
     i.putExtras(android.os.Bundle().apply { putBinder("android.support.customtabs.extra.SESSION", null) })
-    i.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", android.graphics.Color.rgb(0x13, 0x11, 0x0F))
+    i.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", Vault.Ground.toArgb())
+    i.putExtra("androidx.browser.customtabs.extra.COLOR_SCHEME", if (Vault.dark) 2 else 1)
+    // Mutable: the browser fills in the address of the page on screen when Save is tapped.
+    val save = android.app.PendingIntent.getBroadcast(context, 0,
+        android.content.Intent(context, cc.aaro.cosign.SavePageReceiver::class.java).putExtra("slot", CosignApp.instance.phone.slot),
+        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE)
+    context.getDrawable(cc.aaro.cosign.R.drawable.ic_save_page)?.let { icon ->
+        i.putExtra("android.support.customtabs.extra.ACTION_BUTTON_BUNDLE", android.os.Bundle().apply {
+            putParcelable("android.support.customtabs.customaction.ICON", icon.toBitmap())
+            putString("android.support.customtabs.customaction.DESCRIPTION", "Save to Later")
+            putParcelable("android.support.customtabs.customaction.PENDING_INTENT", save)
+        })
+        i.putExtra("android.support.customtabs.extra.TINT_ACTION_BUTTON", true)
+    }
     try { context.startActivity(i) } catch (_: android.content.ActivityNotFoundException) {}
 }
 
@@ -1906,13 +1922,14 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     }
 }
 
-/** One saved thing: a circle to tick it done, your words (tap: search them again), when, and a page you opened for it. Hold to remove. */
+/** One saved thing: a circle to tick it done, your words (tap: search them again; a saved page opens), when, and a page you opened for it. Hold to remove. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<cc.aaro.cosign.Page>, social: Social, nav: Nav) {
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { nav.results(item.text) }.padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { item.url?.let { openInBrowser(context, it) } ?: nav.results(item.text) }
+        .padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
         IconButton({ social.later.done(item, item.done == null) }) {
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)
             else Box(Modifier.size(24.dp).border(1.5.dp, Vault.Line, CircleShape))
@@ -1925,7 +1942,8 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 }
             }, color = if (item.done != null) Vault.Muted else Vault.Text, style = MaterialTheme.typography.bodyLarge,
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
-            Text(if (item.done != null) "Done · ${agoWords(item.done)}" else "Saved ${agoWords(item.created)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") }?.let { "$it · " } ?: ""
+            Text(site + if (item.done != null) "Done · ${agoWords(item.done)}" else "Saved ${agoWords(item.created)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
             page.firstOrNull()?.let { p -> Text("${p.title} — ${android.net.Uri.parse(p.url).host?.removePrefix("www.")}", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp).clickable { openInBrowser(context, p.url) }) }
         }
