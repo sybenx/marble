@@ -90,7 +90,8 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     var up = false
-                    val quick = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { up = waitForUpOrCancellation() != null; true } != null
+                    // The tap is the heart's: consumed, so the post under it doesn't open too.
+                    val quick = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { up = waitForUpOrCancellation()?.also { it.consume() } != null; true } != null
                     // A tap: a like; on a post you've reacted to, the row, to change it.
                     if (quick) { if (up) { if (liked) { choices = social.topEmojis(); hover = -1; open = true } else onLike() }; return@awaitEachGesture }
                     // Held: the row opens, and follows the finger.
