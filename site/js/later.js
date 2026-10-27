@@ -157,64 +157,20 @@ export const engine = () => { const e = read(ENGINE, "DuckDuckGo"); return ENGIN
 export const setEngine = (name) => { if (ENGINES[name]) write(ENGINE, name); };
 export const results = (q) => ENGINES[engine()](q, matchMedia("(prefers-color-scheme: dark)").matches);
 
-// ── "Go to …": an address, or a well-known site's name (android Sites.kt, the same list) ─────────────
+// ── "Go to …": only for an address you typed (android Sites.kt's rule) ───────────────────────────────
+// A dot and an ending, or a scheme: "example.com", "lemmy.world/c/x". A bare word ("apple") is never a site:
+// .com has to be typed on purpose, so it searches.
 
-const BY_NAME = new Map();
-for (const d of `google.com youtube.com facebook.com instagram.com wikipedia.org amazon.com reddit.com x.com twitter.com whatsapp.com
-  tiktok.com linkedin.com yahoo.com bing.com netflix.com microsoft.com apple.com live.com office.com openai.com chatgpt.com
-  claude.ai anthropic.com github.com gitlab.com stackoverflow.com twitch.tv discord.com telegram.org signal.org pinterest.com
-  quora.com tumblr.com medium.com substack.com wordpress.com blogger.com ebay.com etsy.com walmart.com target.com bestbuy.com
-  costco.com homedepot.com lowes.com ikea.com aliexpress.com alibaba.com temu.com shein.com wayfair.com zillow.com redfin.com
-  craigslist.org indeed.com glassdoor.com paypal.com venmo.com stripe.com chase.com bankofamerica.com wellsfargo.com
-  capitalone.com americanexpress.com coinbase.com kraken.com binance.com strike.me cashapp.com robinhood.com fidelity.com
-  vanguard.com schwab.com spotify.com soundcloud.com bandcamp.com pandora.com deezer.com tidal.com vimeo.com dailymotion.com
-  rumble.com odysee.com hulu.com disneyplus.com max.com peacocktv.com paramountplus.com primevideo.com crunchyroll.com
-  imdb.com rottentomatoes.com letterboxd.com goodreads.com audible.com kindle.com archive.org nytimes.com washingtonpost.com
-  wsj.com bloomberg.com reuters.com apnews.com bbc.com bbc.co.uk cnn.com foxnews.com nbcnews.com cbsnews.com abcnews.go.com
-  npr.org theguardian.com economist.com ft.com forbes.com businessinsider.com cnbc.com axios.com politico.com theatlantic.com
-  newyorker.com vox.com theverge.com wired.com arstechnica.com techcrunch.com engadget.com gizmodo.com cnet.com zdnet.com
-  macrumors.com 9to5mac.com 9to5google.com androidpolice.com xda-developers.com tomshardware.com anandtech.com pcmag.com
-  ign.com gamespot.com polygon.com kotaku.com pcgamer.com steampowered.com store.steampowered.com epicgames.com gog.com
-  itch.io roblox.com minecraft.net xbox.com playstation.com nintendo.com ea.com chess.com lichess.org duolingo.com khanacademy.org
-  coursera.org udemy.com edx.org wolframalpha.com weather.com accuweather.com wunderground.com espn.com nfl.com nba.com mlb.com
-  nhl.com fifa.com uefa.com strava.com fitbit.com allrecipes.com seriouseats.com bonappetit.com foodnetwork.com yelp.com
-  tripadvisor.com booking.com airbnb.com expedia.com kayak.com hotels.com uber.com lyft.com doordash.com ubereats.com
-  grubhub.com instacart.com maps.google.com openstreetmap.org mail.google.com gmail.com outlook.com proton.me protonmail.com
-  tutanota.com fastmail.com icloud.com dropbox.com box.com drive.google.com docs.google.com notion.so evernote.com obsidian.md
-  trello.com asana.com slack.com zoom.us teams.microsoft.com figma.com canva.com adobe.com behance.net dribbble.com
-  unsplash.com pexels.com flickr.com imgur.com giphy.com deviantart.com artstation.com 500px.com vsco.co mastodon.social
-  bsky.app bluesky.social threads.net lemmy.world kbin.social hackernews.com news.ycombinator.com lobste.rs slashdot.org
-  producthunt.com indiehackers.com dev.to hashnode.com npmjs.com pypi.org crates.io docker.com kubernetes.io python.org
-  rust-lang.org go.dev kotlinlang.org developer.android.com developer.apple.com mozilla.org firefox.com brave.com
-  duckduckgo.com startpage.com kagi.com perplexity.ai gemini.google.com bard.google.com huggingface.co kaggle.com arxiv.org
-  nature.com science.org nasa.gov noaa.gov cdc.gov nih.gov who.int un.org irs.gov usps.com ups.com fedex.com dhl.com
-  stacker.news primal.net damus.io snort.social iris.to coracle.social nostr.band jumble.social ditto.pub njump.me nostr.com
-  zap.stream habla.news yakihonne.com highlighter.com olas.app zapstore.dev bitcoin.org mempool.space blockstream.info
-  lightning.network getalby.com wikihow.com fandom.com britannica.com dictionary.com merriam-webster.com thesaurus.com
-  translate.google.com deepl.com speedtest.net fast.com downdetector.com pastebin.com archive.ph web.archive.org`.trim().split(/\s+/)) {
-  const name = d.replace(/^www\./, "").split(".")[0];
-  if (!BY_NAME.has(name)) BY_NAME.set(name, d);
-}
 const ADDRESS = /^(?:https?:\/\/)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})(?:[/:?#]\S*)?$/i;
 const NOT_TLDS = new Set(["js", "ts", "kt", "py", "rs", "txt", "md", "json", "png", "jpg", "jpeg", "gif", "pdf", "mp4", "mp3", "exe", "apk", "zip", "html", "css"]);
 
-/**
- * A site to go to for what's typed: {address, url, sure}. Only an address is sure (Enter opens it): a dot and an
- * ending, or a scheme. A bare name ("apple") never is: it shows "Go to apple.com", and Enter searches.
- */
+/** The site an address names: {address, url}, or null for anything that isn't one (it's searched). */
 export function site(typed) {
   const q = String(typed || "").trim();
   if (!q || q.includes(" ")) return null;
   const m = ADDRESS.exec(q);
-  if (m) {
-    const host = m[1].toLowerCase();
-    if (NOT_TLDS.has(host.split(".").pop())) return null;
-    return { address: host.replace(/^www\./, ""), url: /^https?:\/\//i.test(q) ? q : `https://${q}`, sure: true };
-  }
-  const name = q.toLowerCase();
-  if (BY_NAME.has(name)) return { address: BY_NAME.get(name), url: `https://${BY_NAME.get(name)}`, sure: false };
-  if (name.length >= 3 && /^[\p{L}\p{N}-]+$/u.test(name)) {
-    for (const [k, v] of BY_NAME) if (k.startsWith(name)) return { address: v, url: `https://${v}`, sure: false };
-  }
-  return null;
+  if (!m) return null;
+  const host = m[1].toLowerCase();
+  if (NOT_TLDS.has(host.split(".").pop())) return null;
+  return { address: host.replace(/^www\./, ""), url: /^https?:\/\//i.test(q) ? q : `https://${q}` };
 }

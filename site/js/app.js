@@ -852,8 +852,8 @@ function personRow(p, { verified, followers, follow = false } = {}) {
 
 // ── The search box: search or jot, as in the app ─────────────────────────────────────────────────────
 // Enter keeps the words as a note and opens your engine's results in a new tab (sites can't show them inside).
-// An address (a dot and an ending, or a scheme) goes to the site; a well-known site's name offers "Go to …" and
-// Enter still searches. A pasted link to a post or person, @name and name@domain open here.
+// Only an address you typed (a dot and an ending, or a scheme) goes to the site, with "Go to …" under the box; a bare
+// word ("apple") always searches. A pasted link to a post or person, @name and name@domain open here.
 
 let warmed = false;
 const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
@@ -870,16 +870,11 @@ function boxState() {
   keptMark.hidden = !(t && notes.saved(t));
   rows = [];
   const kind = parseInput(t).kind;
-  if (t && kind !== "entity" && kind !== "hex" && !t.startsWith("@")) {
-    const s = notes.site(t);
-    if (s) rows.push({ site: s });
-    // your notes that have these words (not the very same note)
-    if (t.length >= 2) for (const i of notes.open().filter((i) => !notes.same(i.text, t) && i.text.toLowerCase().includes(t.toLowerCase())).slice(0, 4)) rows.push({ note: i });
-  }
+  // only an address gets a row; bare words get nothing (no engine allows its suggestions to be read from a page)
+  const s = t && kind !== "entity" && kind !== "hex" ? notes.site(t) : null;
+  if (s) rows.push({ site: s });
   pick = -1;
-  drop.innerHTML = rows.map((r, k) => r.site
-    ? `<a class="drop-row" role="option" id="drop-${k}" data-k="${k}" href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`
-    : `<div class="drop-row" role="option" id="drop-${k}" data-k="${k}">${MARK}<span class="t${r.note.url ? "" : " typed"}">${esc(r.note.text)}</span><span class="sub">${agoWords(r.note.created)}</span></div>`).join("");
+  drop.innerHTML = rows.map((r, k) => `<a class="drop-row" role="option" id="drop-${k}" data-k="${k}" href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`).join("");
   showDrop();
 }
 function showDrop() {
@@ -902,11 +897,7 @@ function goToSite(s, from) {
   window.open(s.url, "_blank", "noopener");
   done();
 }
-function choose(r) {
-  if (r.site) return goToSite(r.site, input.value.trim());
-  if (r.note.url) { notes.opened(r.note.url, r.note.text, r.note.text); window.open(r.note.url, "_blank", "noopener"); return done(); }
-  searchFor(r.note.text);
-}
+const choose = (r) => goToSite(r.site, input.value.trim());
 
 input.addEventListener("paste", () => { navStart = performance.now(); });
 input.addEventListener("input", () => {
@@ -953,7 +944,7 @@ form.addEventListener("submit", async (ev) => {
   const parsed = parseInput(t);
   if (t.startsWith("@") && t.length > 1) { input.blur(); return go(`/?q=${encodeURIComponent(t)}`); }
   const s = notes.site(t);
-  if (s?.sure) return goToSite(s, t);
+  if (s) return goToSite(s, t);
   if (parsed.kind === "nip05") {
     // someone's address (name@domain): their page here, if it names someone; otherwise a search like any other
     const r = await resolveNip05(parsed.address);
@@ -981,13 +972,18 @@ counts();
 // The marble of the day (marble-daily: one a day, the same for everyone, from 00:00 UTC); the bundled one until then.
 function marbleOfTheDay() {
   const today = new Date().toISOString().slice(0, 10);
+  // swapped in once it has loaded, so the bundled one (cut round) never shows uncut in between
   const show = (d) => {
-    const pic = $(".brand .marble");
-    pic.querySelectorAll("source").forEach((x) => x.remove());
-    const img = $("img", pic);
-    img.src = d.image;
-    img.alt = d.name || "";
-    pic.classList.add("daily");
+    const next = new Image();
+    next.onload = () => {
+      const pic = $(".brand .marble");
+      pic.querySelectorAll("source").forEach((x) => x.remove());
+      const img = $("img", pic);
+      img.src = d.image;
+      img.alt = d.name || "";
+      pic.classList.add("daily");
+    };
+    next.src = d.image;
   };
   let cached = null;
   try { cached = JSON.parse(localStorage.getItem("marble.today")); } catch {}
