@@ -849,6 +849,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // minute after the last change (read again and merged first, so another device's saves are never lost).
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
+    /** What you searched, on this phone only (not synced), 30 days. */
+    val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
 
     private fun laterChanged() {
@@ -882,7 +884,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** A page opened from search: its title for Later, from the page itself, in the background. */
-    fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it) } }
+    fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it); searches.titled(url, it) } }
 
     @Volatile private var laterPulledAt = 0L
     /** What you saved on your other devices: coming back to Marble or opening Later, at most once a minute. */

@@ -170,6 +170,8 @@ private sealed class Route {
     /** Your engine's results for [q], inside Marble (its own pages only). */
     data class Results(val q: String) : Route()
     data object Later : Route()
+    /** What you searched (this phone, 30 days), with the pages you opened from each. */
+    data object Searches : Route()
     /** The marbles you kept. */
     data object Shelf : Route()
     /** A new post; [link]: a story to post with a comment. */
@@ -178,7 +180,7 @@ private sealed class Route {
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"; Shelf -> "marbles"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -188,6 +190,7 @@ private sealed class Route {
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             s.startsWith("results:") -> Results(s.removePrefix("results:"))
             s == "later" -> Later
+            s == "searches" -> Searches
             s == "marbles" -> Shelf
             else -> null
         }
@@ -287,7 +290,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // The box is for typing in: out of search and its results (home, or anywhere else), the next search starts empty.
     // While a results page is still open behind you, the box keeps its query, as a browser's does.
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
-    LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.note.value = null; social.clearSearch() } }
+    LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.search.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
     if (top == null) Home(phone, ui, social, nav)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
@@ -302,6 +305,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             is Route.Compose -> ComposeScreen(top.link, social, nav)
             is Route.Results -> ResultsScreen(top.q, social, nav)
             Route.Later -> LaterScreen(social, nav)
+            Route.Searches -> SearchesScreen(social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
     }
@@ -410,16 +414,13 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 Icon(Icons.Filled.Search, null, tint = Vault.Muted)
                 Spacer(Modifier.width(12.dp))
                 Text("Search or jot anything…", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                // Enter: kept as a note, and searched (the box opens for typing; the chip says what Enter does).
+                // Enter searches (the box opens for typing).
                 GoChip(null)
             }
-            // Your notes, and the pages you opened (tabs), just under the box.
+            // Your notes, just under the box (your searches are at the foot of Notes).
             Row(Modifier.widthIn(max = 600.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 val notes = laterItems.count { it.deleted == null && it.done == null }
-                val tabs by social.later.pages.collectAsState()
                 HomePill(Glyphs.save, if (notes > 0) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
-                Spacer(Modifier.width(10.dp))
-                HomePill(Glyphs.site, if (tabs.isNotEmpty()) "Tabs · ${tabs.size}" else "Tabs") { LaterTab.value = "pages"; nav.open(Route.Later) }
             }
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
@@ -2055,11 +2056,10 @@ private fun ProfileTimer(pk: String, named: () -> Boolean) {
 object SearchText {
     val q = kotlinx.coroutines.flow.MutableStateFlow("")
     /**
-     * The note this search made (its id), until a result is opened (then it's a visit) or a new search starts. An edit of
-     * the search is the same search: Enter rewords this note. A new one starts with ×, an emptied box, typing over the
-     * whole search, or a fresh box (out of search and back).
+     * This search, in Searches (its id): the pages you open are listed under it, and changing it within a couple of
+     * minutes is the same search. A new one starts with ×, an emptied box, typing over the whole search, or a fresh box.
      */
-    val note = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val search = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     /** Where you tapped in the results bar's text (the cursor goes there); null: at the end. */
     val cursor = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
 }
@@ -2104,19 +2104,30 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     LaunchedEffect(t) { if (!atPeople) posts = false }
     val showPostsRow = when (postsPref) { "always" -> true; "never" -> false; else -> !follows.isNullOrEmpty() }
     val saved = remember(laterItems, t) { social.later.saved(t) }
+    // The bookmark keeps what you typed as a note; tapped again straight after, it's taken back.
     var undo by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
-    LaunchedEffect(undo) { if (undo != null) { delay(4000); undo = null } }
-    val save = { if (t.isNotEmpty()) { if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) } } }
-    // A search: what you typed (or the suggestion you tapped) is kept as a note, then searched (opening a result
-    // makes it a visit instead). "Go to a site", a pasted link and @name aren't notes.
-    fun searchFor(x: String) { val j = SearchText.note.value?.let { social.later.reword(it, x) } ?: social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; FeedLog.ev("search", "note" to j?.let { "l:" + it.first.id }, "new" to j?.second); social.interests.noticed(x); nav.results(x) }
-    // The search went to a site instead: the note it made goes (a note you had before stays).
-    fun dropNote() { SearchText.note.value?.let { id -> social.later.items.value.firstOrNull { it.id == id && it.deleted == null }?.let(social.later::remove) }; SearchText.note.value = null }
+    val save = {
+        if (t.isNotEmpty()) {
+            if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) }
+            else if (saved.id == undo?.id) { social.later.unsave(saved); undo = null }
+        }
+    }
+    // Your own, first: up to two of your searches and notes with these words (your latest searches, with the box empty).
+    val searchList by social.searches.all.collectAsState()
+    val own = remember(t, searchList, laterItems) {
+        val s = searchList.filter { t.isEmpty() || (it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t)) }.map { it.text to null as cc.aaro.cosign.LaterItem? }
+        val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { it.text to it }
+        (s + n).distinctBy { it.first.lowercase() }.take(2)
+    }
+    // A search: into Searches (an edit of this one takes its place), then your engine's results.
+    fun searchFor(x: String) { SearchText.search.value = social.searches.searched(x, SearchText.search.value).id; social.interests.noticed(x); nav.results(x) }
+    // A site, from the box: in Searches too, with the site under it.
+    fun goTo(s: cc.aaro.cosign.Sites.Go) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, s.url, s.address) }; SearchText.search.value = null; openInBrowser(context, s.url) }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
             atPeople -> social.search(t.drop(1))
-            site?.sure == true -> { dropNote(); social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
+            site?.sure == true -> goTo(site)
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
             else -> searchFor(t)
         }
@@ -2142,7 +2153,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         TextField(
             androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v ->
                 // Typed over the whole search, or emptied: a new search from here.
-                if (v.text != q && (v.text.isEmpty() || (q.isNotEmpty() && sel.min == 0 && sel.max == q.length))) SearchText.note.value = null
+                if (v.text != q && (v.text.isEmpty() || (q.isNotEmpty() && sel.min == 0 && sel.max == q.length))) SearchText.search.value = null
                 sel = v.selection; q = v.text
             },
             Modifier.weight(1f).focusRequester(focus), singleLine = true,
@@ -2154,8 +2165,12 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             keyboardActions = KeyboardActions(onSearch = { go() }),
             trailingIcon = { if (q.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
                 // Clear: the whole search, in one tap.
-                Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0); SearchText.note.value = null }.padding(8.dp))
-                if (t.isNotEmpty() && pasted == null && !atPeople) GoChip { go() }
+                Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0); SearchText.search.value = null }.padding(8.dp))
+                if (t.isNotEmpty() && pasted == null && !atPeople) {
+                    Icon(if (saved != null) Glyphs.saveOn else Glyphs.save, if (saved != null) "Kept as a note" else "Keep as a note", tint = Vault.Accent,
+                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = save).padding(9.dp))
+                    GoChip { go() }
+                }
             } },
             shape = RoundedCornerShape(26.dp),
             colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
@@ -2168,17 +2183,15 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             pasted != null -> LinkResults(pasted, social, nav)
             atPeople || posts -> MarbleResults(found, people, liked, social, nav, peopleOnly = atPeople)
             t.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
-                val n = laterItems.count { it.deleted == null && it.done == null }
-                if (n > 0) item { LaterLink(n) { nav.open(Route.Later) } }
-                item { Text("Enter searches ${engine.label}. Save keeps what you typed in Later. @name finds people; paste a link to someone or a post to see it here.",
-                    color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(20.dp)) }
+                items(own, key = { "o:" + it.first }) { (text, _) -> OwnRow(text, null, "") { q = text; searchFor(text) } }
             }
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                // What Enter does, first.
-                item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
-                site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { dropNote(); social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
-                site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
-                items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
+                site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
+                site?.takeIf { it.sure }?.let { item(key = "search") { DropRow(t, null, onFill = null) { searchFor(t) } } }
+                items(own, key = { "o:" + it.first }) { (text, note) ->
+                    OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else { q = text; searchFor(text) } }
+                }
+                items(suggestions.filter { sug -> own.none { cc.aaro.cosign.Later.same(it.first, sug) } }, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
                     Row(Modifier.fillMaxWidth().clickable { posts = true }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2190,13 +2203,6 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                         }
                     }
                 }
-            }
-        }
-        undo?.let { u ->
-            Row(Modifier.align(Alignment.BottomCenter).padding(16.dp).fillMaxWidth().background(Vault.Text, RoundedCornerShape(14.dp)).padding(start = 18.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text("✓  Saved to Later", color = Vault.Ground, modifier = Modifier.weight(1f))
-                TextButton({ social.later.unsave(u); undo = null }) { Text("Undo", color = Vault.AccentEdge, fontWeight = FontWeight.SemiBold) }
             }
         }
     }
@@ -2249,20 +2255,22 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
                 val real = cc.aaro.cosign.Engine.unwrap(u)
                 val url = real.toString()
                 if (real.scheme == "http" || real.scheme == "https") {
-                    social.later.opened(url, real.host ?: url, q)
+                    // Listed under this search in Searches (one opened from a note, say, starts its own).
+                    val id = SearchText.search.value ?: social.searches.searched(query).id.also { SearchText.search.value = it }
+                    social.searches.opened(id, url, real.host?.removePrefix("www.") ?: url)
                     social.titlePage(url)
-                    // A result opened: the note this search made becomes a visit (a note you had before stays).
-                    SearchText.note.value?.let { id -> social.later.items.value.firstOrNull { it.id == id && it.deleted == null }?.let(social.later::remove); SearchText.note.value = null }
-                    cc.aaro.cosign.FeedLog.open(url, "visit")
+                    // In a Custom Tab: the Keep bookmark is there, Back closes it, and no tab is left behind in your browser.
+                    openInBrowser(c, url)
+                    return
                 }
                 try { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, real).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
             }
-            // The search changed in the page: Marble's box follows, and it's the same search (its note takes the new words).
+            // The search changed in the page: Marble's box follows, and it's in Searches (changed straight away: the same search).
             fun followed(u: android.net.Uri) {
                 val nq = engine.query(u) ?: return
                 if (cc.aaro.cosign.Later.same(nq, query)) return
                 query = nq; SearchText.q.value = nq
-                val j = SearchText.note.value?.let { social.later.reword(it, nq) } ?: social.later.jot(nq); SearchText.note.value = j?.takeIf { it.second }?.first?.id
+                SearchText.search.value = social.searches.searched(nq, SearchText.search.value).id
             }
             // The engine's own box, hidden: one box, Marble's.
             fun hideOwnBox(v: android.webkit.WebView) = v.evaluateJavascript(
@@ -2290,57 +2298,96 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
 private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
     LaunchedEffect(Unit) { social.refreshLater() }
     val items by social.later.items.collectAsState()
-    val pages by social.later.pages.collectAsState()
     var filter by remember { mutableStateOf("") }
-    var show by remember { mutableStateOf(LaterTab.value) }
-    val context = LocalContext.current
+    var show by remember { mutableStateOf(LaterTab.value.takeIf { it == "done" } ?: "saved") }
     val f = filter.trim()
     fun hit(t: String) = f.isEmpty() || t.contains(f, ignoreCase = true)
     val open = items.filter { it.deleted == null && it.done == null && (hit(it.text) || it.quote?.let(::hit) == true) }
     val done = items.filter { it.deleted == null && it.done != null && (hit(it.text) || it.quote?.let(::hit) == true) }
-    val pg = pages.filter { hit(it.title) || hit(it.url) || hit(it.from) }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
         Text("Notes", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         OnlyYou()
     }
-    TextField(filter, { filter = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), singleLine = true,
-        placeholder = { Text("Filter your notes", color = Vault.Muted) }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Vault.Muted) },
-        shape = RoundedCornerShape(26.dp),
-        colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
+    FilterBox(filter, "Filter your notes") { filter = it }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "pages" to "Tabs · ${pg.size}", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "done" to "Done")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
                     .clickable { show = k }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
         val list = if (show == "done") done else open
-        if (show != "pages") {
-            items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, pages.filter { it.from.equals(item.text, true) }.take(1), social, nav) }
-            if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing in Later matches “$f”.",
-                color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
-        }
-        if (show == "pages" || (show == "saved" && pg.isNotEmpty())) {
-            if (show == "saved") item { HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(top = 12.dp)) }
-            items(if (show == "pages") pg else pg.take(5), key = { "p" + it.url }) { p ->
-                Row(Modifier.fillMaxWidth().clickable { FeedLog.open("u:" + p.url, "page"); openInBrowser(context, p.url, "u:" + p.url) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val host = android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: ""
-                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
-                        Text(host.take(1).uppercase(), color = Vault.Accent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                    }
-                    Spacer(Modifier.width(14.dp))
+        items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, emptyList(), social, nav) }
+        if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing matches “$f”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+    }
+    // Your searches, at the foot.
+    HorizontalDivider(color = Vault.Edge)
+    Row(Modifier.fillMaxWidth().clickable { nav.open(Route.Searches) }.padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Glyphs.clock, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Text("Searches", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun FilterBox(value: String, hint: String, onChange: (String) -> Unit) = TextField(value, onChange, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), singleLine = true,
+    placeholder = { Text(hint, color = Vault.Muted) }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Vault.Muted) },
+    shape = RoundedCornerShape(26.dp),
+    colors = TextFieldDefaults.colors(focusedContainerColor = Vault.Surface, unfocusedContainerColor = Vault.Surface, focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
+
+/**
+ * Searches: what you searched on this phone, 30 days, by day; under each, the sites you opened from it (a tap opens
+ * one). A tap on a search searches it again; its bookmark keeps the words as a note; hold to take it out.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun SearchesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    val all by social.searches.all.collectAsState()
+    val items by social.later.items.collectAsState()
+    val context = LocalContext.current
+    var filter by remember { mutableStateOf("") }
+    val f = filter.trim()
+    val list = remember(all, f) { all.filter { e -> f.isEmpty() || e.text.contains(f, ignoreCase = true) || e.pages.any { it.url.contains(f, ignoreCase = true) || it.title.contains(f, ignoreCase = true) } } }
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        Text("Searches", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        OnlyYou()
+    }
+    FilterBox(filter, "Filter your searches") { filter = it }
+    val zone = java.time.ZoneId.systemDefault()
+    val today = java.time.LocalDate.now(zone)
+    fun dayOf(at: Long) = java.time.Instant.ofEpochSecond(at).atZone(zone).toLocalDate()
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing matches “$f”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        for ((day, inDay) in list.groupBy { dayOf(it.at) }) {
+            item(key = "d$day") {
+                Text(when (day) { today -> "Today"; today.minusDays(1) -> "Yesterday"; else -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM")) },
+                    color = Vault.Muted, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 20.dp, top = 18.dp, bottom = 4.dp))
+            }
+            items(inDay, key = { "s" + it.id }) { e ->
+                var menu by remember { mutableStateOf(false) }
+                val kept = items.any { it.url == null && it.deleted == null && it.done == null && cc.aaro.cosign.Later.same(it.text, e.text) }
+                Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { SearchText.q.value = e.text; SearchText.search.value = social.searches.searched(e.text).id; nav.results(e.text) }
+                    .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(p.title, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("$host · ${agoWords(p.at)}", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(e.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (e.pages.isNotEmpty()) Row(Modifier.padding(top = 2.dp)) {
+                            e.pages.distinctBy { android.net.Uri.parse(it.url).host }.take(3).forEachIndexed { i, p ->
+                                if (i > 0) Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                                Text(android.net.Uri.parse(p.url).host?.removePrefix("www.") ?: p.url, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                                    modifier = Modifier.clickable(onClickLabel = "Open ${p.title}") { openInBrowser(context, p.url) })
+                            }
+                        }
                     }
-                    // A visit kept anyway: a note with its page.
-                    val kept = items.any { it.url == p.url && it.deleted == null }
-                    Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept as a note" else "Keep as note", tint = Vault.Accent,
-                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable { if (!kept) social.later.savePage(p.url, p.title) }.padding(10.dp))
+                    Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept as a note" else "Keep as a note", tint = if (kept) Vault.Accent else Vault.Line,
+                        modifier = Modifier.size(44.dp).clip(CircleShape).clickable { if (!kept) social.later.save(e.text) }.padding(11.dp))
+                    if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                        DropdownMenuItem({ Text("Remove from Searches", color = Vault.Danger) }, { menu = false; social.searches.remove(e.id) })
+                    }
                 }
             }
         }
@@ -2434,13 +2481,13 @@ private fun SaveChip(saved: Boolean, onClick: () -> Unit) = Row(
 }
 
 /**
- * The box's Enter, in the Save chip's shape (0.12.18): a return arrow drawn as Marble's other line icons are. Keep
- * what's typed as a note, and search it. [SOLID_ENTER]: filled cobalt instead of the pale chip.
+ * The box's Enter, in the Save chip's shape (0.12.18): a return arrow drawn as Marble's other line icons are. It
+ * searches (keeping is the bookmark's). [SOLID_ENTER]: filled cobalt instead of the pale chip.
  */
 @Composable
 private fun GoChip(onClick: (() -> Unit)?) = Box(
     Modifier.padding(end = 6.dp).clip(RoundedCornerShape(18.dp)).background(if (SOLID_ENTER) Vault.Accent else Vault.AccentGround)
-        .then(if (onClick != null) Modifier.clickable(onClickLabel = "Keep as a note and search", onClick = onClick) else Modifier)
+        .then(if (onClick != null) Modifier.clickable(onClickLabel = "Search", onClick = onClick) else Modifier)
         .padding(horizontal = 14.dp, vertical = 7.dp),
     contentAlignment = Alignment.Center,
 ) {
@@ -2462,6 +2509,20 @@ private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
         Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
     }
+}
+
+/** One of your own in the box's list: a past search (the clock) or a note (the bookmark). */
+@Composable
+private fun OwnRow(text: String, note: cc.aaro.cosign.LaterItem?, typed: String, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Icon(if (note != null) Glyphs.save else Glyphs.clock, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
+    Spacer(Modifier.width(16.dp))
+    Text(androidx.compose.ui.text.buildAnnotatedString {
+        val i = if (typed.isEmpty()) -1 else text.indexOf(typed, ignoreCase = true)
+        if (i < 0) append(text) else { append(text.take(i)); withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold)) { append(text.substring(i, i + typed.length)) }; append(text.drop(i + typed.length)) }
+    }, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
 }
 
 /** A row of the dropdown: a search (what's typed in plain, the rest in bold), and ↖ to put it in the box. */
