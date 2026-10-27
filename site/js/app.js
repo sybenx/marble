@@ -1182,7 +1182,9 @@ prepareMine(currentMe());
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
 
 const first = { key: "start" };
+const part = decodeURIComponent(location.hash.slice(1)); // a link to a part of a page, like /about#get (Get Marble)
 history.replaceState(first, "", location.pathname + location.search);
 // GitHub Pages serves 404.html for /e/… and /p/…; the page is the same, so it just starts there.
 route(first);
+if (part) document.getElementById(part)?.scrollIntoView();
 if (matchMedia("(pointer: fine)").matches && document.body.dataset.page === "home") input.focus({ preventScroll: true });

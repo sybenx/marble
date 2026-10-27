@@ -112,23 +112,10 @@ function backWithNoApp(loaded = false) {
 addEventListener("hashchange", () => backWithNoApp());
 // (looked at now: the page may tidy its address before then)
 if (location.hash === NO_APP) setTimeout(() => backWithNoApp(true), 0);
-// Sign-in apps to suggest: a neutral list, alphabetical, by platform.
-const APPS = [
-  { name: "Aegis", on: "iPhone", url: "https://github.com/ZharlieW/Aegis", os: "ios" },
-  { name: "Amber", on: "Android", url: "https://github.com/greenart7c3/Amber", os: "android" },
-  { name: "Marble", on: "Android", url: "https://github.com/sybenx/marble/releases/latest", os: "android" },
-  { name: "nsec.app", on: "Any browser: paste the code into it", url: "https://nsec.app", os: "any" },
-  { name: "Primal", on: "Android", url: "https://primal.net/downloads", os: "android" },
-];
-let beforeApps = "";
-function apps() {
-  beforeApps = box.innerHTML;
-  const os = /iPhone|iPad|iPod/.test(navigator.userAgent) ? "ios" : /Android/.test(navigator.userAgent) ? "android" : "other";
-  const list = APPS.filter((a) => os === "other" || a.os === os || a.os === "any");
-  view(`<h2 id="si-title">Get a sign-in app</h2><p>Any of these will do. Install one, then come back and tap Sign in.</p>
-    <ul class="si-apps">${list.map((a) => `<li><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a><span>${esc(a.on)}</span></li>`).join("")}</ul>
-    <div class="si-actions"><button type="button" class="si-button" data-si="unapps">Back</button></div>`);
-}
+// When tapping the code opened no app, or there's none on your phone: get Marble (Android); on iPhone, where there's no
+// Marble yet, nsec.app in Safari.
+const GET_MARBLE = "https://marble.syb.lol/about#get", NSEC_APP = "https://nsec.app";
+const onIphone = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
 
 function close() {
   attempt++;
@@ -192,8 +179,10 @@ async function withPhone() {
             <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Sign in</a>
             <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
             <p class="si-note" data-none hidden>No sign-in app opened.</p>
+            ${onIphone() ? `<p data-none hidden>Marble isn't on iPhone yet. nsec.app works in Safari: copy the code and paste it there.</p>` : ""}
             <div class="qr" hidden>${svg}</div>
-            <div class="si-actions"><button type="button" class="link" data-si="apps" data-none hidden>Get a sign-in app</button><button type="button" class="link" data-si="qr">Show code</button>
+            <div class="si-actions">${onIphone() ? `<a class="link" href="${NSEC_APP}" target="_blank" rel="noopener" data-none hidden>Open nsec.app</a>`
+              : `<a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener" data-none hidden>Get Marble</a>`}<button type="button" class="link" data-si="qr">Show code</button>
               <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
           if (noAppSoon) noApp();
           return;
@@ -202,6 +191,7 @@ async function withPhone() {
           <div class="qr">${svg}</div>
           <p>Scan this code with the sign-in app on your phone.</p>
           <p class="si-wait">${spinner}Waiting for your phone…</p>
+          <p class="si-get">No sign-in app on your phone? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble</a></p>
           <div class="si-actions">${hasExtension() ? `<button type="button" class="link" data-si="extension">Use the extension</button>` : ""}
             <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
       },
@@ -232,8 +222,6 @@ dialog.addEventListener("click", (ev) => {
   }
   if (what === "chosen") { const c = picking?.[+b.dataset.i]; if (!c) return; picking = null; choose(c); close(); return; }
   if (what === "neither") { picking = null; neither(); close(); return; }
-  if (what === "apps") return apps();
-  if (what === "unapps") { if (beforeApps) view(beforeApps); return; }
   if (what === "qr") { $(".qr", box).hidden = false; b.remove(); return; }
   if (what === "close") close();
   else if (what === "phone") withPhone();
