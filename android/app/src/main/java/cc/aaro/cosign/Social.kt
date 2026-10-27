@@ -1741,10 +1741,46 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
-    fun topEmojis(): List<String> = emojiUse.entries.sortedByDescending { it.value }.map { it.key }
-        .filter { it !in USUAL_EMOJIS && it.codePointCount(0, it.length) <= 4 }.take(4) + USUAL_EMOJIS
+    fun topEmojis(): List<String> = USUAL_EMOJIS
 
-    private val USUAL_EMOJIS = listOf("❤️", "😂", "😮", "😢", "🔥", "🤙")
+    /** The posts you reposted from here (this phone), so the button shows it. */
+    val reposted = MutableStateFlow(prefs.getStringSet("reposted", emptySet())!!.toSet())
+
+    /** A repost (kind 6): the post, as it is, shared with everyone who follows you. Public; the button asks first. */
+    fun repost(note: Event) {
+        val me = me ?: return
+        if (note.id in reposted.value) return
+        FeedLog.act(note.id, "repost")
+        reposted.update { (it + note.id).toList().takeLast(500).toSet() }
+        prefs.edit().putStringSet("reposted", reposted.value).apply()
+        scope.launch {
+            val ev = Event(me, Clock.now(), 6, listOf(listOf("e", note.id, ""), listOf("p", note.pubkey), listOf("k", note.kind.toString())), note.toJson()).withId()
+            if (!act(ev)) { reposted.update { it - note.id }; prefs.edit().putStringSet("reposted", reposted.value).apply() }
+        }
+    }
+
+    /** Your reactions to pages (the news among your people's posts): its address → the emoji. */
+    val pageReactions = MutableStateFlow<Map<String, String>>(try {
+        org.json.JSONObject(prefs.getString("pageReactions", "{}")!!).let { o -> o.keys().asSequence().associateWith { o.getString(it) } }
+    } catch (_: Exception) { emptyMap() })
+
+    /** A reaction to a web page (kind 17, NIP-25's reaction to a site): a news story, say. */
+    fun reactToPage(url: String, emoji: String) {
+        val me = me ?: return
+        val before = pageReactions.value[url]
+        FeedLog.act(null, "react", "url" to url, "emoji" to emoji)
+        pageReactions.update { (it + (url to emoji)).entries.toList().takeLast(500).associate { e -> e.key to e.value } }
+        prefs.edit().putString("pageReactions", org.json.JSONObject(pageReactions.value).toString()).apply()
+        scope.launch {
+            if (!act(Event(me, Clock.now(), 17, listOf(listOf("r", url), listOf("k", "web")), emoji).withId())) {
+                pageReactions.update { if (before == null) it - url else it + (url to before) }
+                prefs.edit().putString("pageReactions", org.json.JSONObject(pageReactions.value).toString()).apply()
+            }
+        }
+    }
+
+    // The usual six, as Facebook's reactions: like, love, haha, wow, sad, angry.
+    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }

@@ -483,11 +483,30 @@ private const val PANE_FOLLOWING = 0
 private const val PANE_SEARCH = 1
 private const val PANE_MESSAGES = 2
 
-/** Messages: conversations with anyone, once your account can open them (it comes with Cosign's messages). Nothing yet. */
+/**
+ * Messages: conversations with anyone, once your account can open them (it comes with Cosign's messages). Nothing
+ * yet; the pencil shows what starting one will offer (someone, a group, a code to scan), not working yet.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MessagesPane() = Box(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
     androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)), contentAlignment = Alignment.Center) {
+    var starting by remember { mutableStateOf(false) }
     Text("Nothing yet.", color = Vault.Muted)
+    Box(Modifier.align(Alignment.BottomEnd).padding(18.dp).size(52.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround)
+        .clickable(onClickLabel = "New message") { starting = true }, contentAlignment = Alignment.Center) {
+        Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+    }
+    if (starting) androidx.compose.material3.ModalBottomSheet({ starting = false }, containerColor = Vault.Surface) {
+        for ((icon, label) in listOf(Icons.Filled.Person to "Message someone", Glyphs.site to "New group", Icons.Filled.Search to "Scan a code")) {
+            Row(Modifier.fillMaxWidth().clickable { starting = false }.padding(horizontal = 24.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(18.dp))
+                Text(label, color = Vault.Muted, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
 }
 
 /**
@@ -678,7 +697,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
         }
         items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
             HorizontalDivider(color = Vault.Edge)
-            if (x is cc.aaro.cosign.TopicCard) return@items NewsCard(x, social)
+            if (x is cc.aaro.cosign.TopicCard) return@items NewsCard(x, social, nav)
             val p = x as cc.aaro.cosign.Pick
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
                 saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
@@ -721,16 +740,33 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     }
 }
 
-/** A news story among your people's posts: its picture, where it's from and when, and the headline. */
+/**
+ * A news story among your people's posts: its picture, where it's from and when, and the headline. Under it, a heart
+ * (a tap: the six reactions; sent as a reaction to the page) and a comment (a public post with the story's link).
+ */
 @Composable
-private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social) {
+private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
     val context = LocalContext.current
-    Column(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    val mine = social.pageReactions.collectAsState().value[c.url]
+    var picking by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
         if (c.image != null) NetImage(c.image, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), 900, ground = Vault.Surface)
         Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.padding(top = if (c.image != null) 8.dp else 0.dp))
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp))
+        Row(Modifier.offset(x = (-9).dp).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClickLabel = "React") { picking = !picking }, contentAlignment = Alignment.Center) {
+                when (mine) {
+                    null -> Icon(Glyphs.heart, "React", tint = Vault.Muted, modifier = Modifier.size(20.dp))
+                    "❤️" -> Icon(Glyphs.heartOn, "You reacted ❤️", tint = Vault.Accent, modifier = Modifier.size(20.dp))
+                    else -> Text(mine, fontSize = 18.sp)
+                }
+            }
+            if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
+                for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
+            } else Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
+        }
     }
 }
 
@@ -1522,6 +1558,19 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Heart(n, liked, nav.social, onLike)
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
+                // Repost: public, so never one tap; a small menu says so first.
+                val reposted = n.id in nav.social.reposted.collectAsState().value
+                var asking by remember { mutableStateOf(false) }
+                Box {
+                    Icon(Glyphs.repost, if (reposted) "Reposted" else "Repost", tint = if (reposted) Vault.Accent else Vault.Muted,
+                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable { if (!reposted) asking = true }.padding(10.dp))
+                    if (asking) DropdownMenu(true, { asking = false }, containerColor = Vault.Surface) {
+                        DropdownMenuItem({ Column {
+                            Text("Repost", color = Vault.Text, fontWeight = FontWeight.SemiBold)
+                            Text("Everyone who follows you sees it", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                        } }, { asking = false; nav.social.repost(n) })
+                    }
+                }
                 // Save: into your bookmarks.
                 if (onSave != null) {
                     Spacer(Modifier.weight(1f))
