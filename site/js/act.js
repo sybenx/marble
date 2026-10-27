@@ -89,6 +89,8 @@ async function withPhone() {
     const { phoneSignIn } = await import("./connect.js");
     const done = await phoneSignIn({
       signal: ctrl.signal,
+      // the site's name the sign-in app shows: the page's own <meta name="application-name">
+      name: document.querySelector('meta[name="application-name"]')?.content || location.hostname,
       onCode: (uri, svg) => {
         if (mine !== attempt) return;
         // On the phone itself a code to scan can't be scanned: the code is a link that opens its sign-in app instead,
