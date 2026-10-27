@@ -93,6 +93,30 @@ fun nevent(id: String, author: String, kind: Int, relays: List<String>): String 
     return Bech32.encode("nevent", out.toByteArray())
 }
 
+/** An article's address for other apps (NIP-19 naddr): its d tag, author and kind (an article is replaceable: this finds its newest version). */
+fun naddr(d: String, author: String, kind: Int): String {
+    val out = java.io.ByteArrayOutputStream()
+    fun tlv(t: Int, v: ByteArray) { out.write(t); out.write(v.size); out.write(v) }
+    tlv(0, d.toByteArray())
+    tlv(2, author.hexToBytes())
+    tlv(3, java.nio.ByteBuffer.allocate(4).putInt(kind).array())
+    return Bech32.encode("naddr", out.toByteArray())
+}
+
+/**
+ * A post's or article's link to share: marble.syb.lol, which opens it at once (Ditto's search finds it by its id) and
+ * which Marble opens itself. The same every time (no relay hints, which change).
+ */
+fun marbleLink(e: Event): String = "https://marble.syb.lol/" +
+    if (e.kind in 30000..39999) naddr(e.firstTag("d") ?: "", e.pubkey, e.kind) else nevent(e.id, e.pubkey, e.kind, emptyList())
+
+/** The post a marble.syb.lol link (or note1/nevent1 in one) stands for, if that's what it is. */
+fun marblePost(url: String): String? {
+    val u = try { android.net.Uri.parse(url) } catch (_: Exception) { return null }
+    if (u.host?.removePrefix("www.") != "marble.syb.lol") return null
+    return (Ref.parse(u.path?.trim('/') ?: return null) as? Ref.Note)?.id
+}
+
 fun shortNpub(pk: String) = try { Nip19.npub(pk).let { it.drop(5).take(6) + "…" + it.takeLast(4) } } catch (_: Exception) { pk.take(8) }
 
 /**
@@ -1221,8 +1245,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         FeedLog.ev("feedVersion", "v" to v)
     }
 
-    /** A post's own link (what keeping it in Notes keeps): the same every time (no relay hints, which change). */
-    fun postLink(e: Event) = "https://njump.me/" + nevent(e.id, e.pubkey, e.kind, emptyList())
+    /** A post's own link (what keeping it in Notes keeps, and what Share sends): its marble.syb.lol link. */
+    fun postLink(e: Event) = marbleLink(e)
 
     /**
      * The bookmark under a post in Following: kept in Notes (who wrote it, and its words), or, tapped again, not. Keeping
@@ -1230,7 +1254,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
      */
     fun keepPost(e: Event, author: String) {
         val url = postLink(e)
-        later.items.value.firstOrNull { it.url == url && it.deleted == null }?.let { FeedLog.act(e.id, "unkeep"); later.remove(it); return }
+        // (Kept before links were marble.syb.lol ones: under the njump.me link.)
+        val old = "https://njump.me/" + nevent(e.id, e.pubkey, e.kind, emptyList())
+        later.items.value.firstOrNull { (it.url == url || it.url == old) && it.deleted == null }?.let { FeedLog.act(e.id, "unkeep"); later.remove(it); return }
         FeedLog.act(e.id, "keep", "author" to e.pubkey)
         interests.learn(TopicGuess.of(e).take(2), 1.0)
         later.keep(author, url, e.content.trim().take(2000).ifEmpty { null })

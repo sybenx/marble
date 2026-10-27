@@ -273,6 +273,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
 
     val nav = Nav(open = open, back = back, searched = searched, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
+    val postAsked by OpenPost.id.collectAsState()
+    LaunchedEffect(postAsked) { postAsked?.let { id -> nav.thread(id); OpenPost.id.value = null } }
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
     val askedScreen by DebugOpen.screen.collectAsState()
@@ -1598,7 +1600,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
+            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
             if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
@@ -1849,7 +1851,9 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
         val style = TextLinkStyles(SpanStyle(color = Vault.Accent))
         for (p in parts) when (p) {
             is Part.Plain -> append(p.s)
-            is Part.Link -> withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
+            // A marble.syb.lol link to a post: that post, here; any other link, in your browser.
+            is Part.Link -> cc.aaro.cosign.marblePost(p.url)?.let { id -> withLink(LinkAnnotation.Clickable(p.url, style) { nav.thread(id) }) { append("↪ a post") } }
+                ?: withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
             is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
             is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
             is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
@@ -1939,7 +1943,7 @@ private fun copy(context: android.content.Context, social: Social, text: String,
 }
 
 /** A link to a post that opens anywhere, for people without Marble. */
-private fun webLink(social: Social, e: Event) = "https://njump.me/" + social.neventOf(e)
+private fun webLink(social: Social, e: Event) = cc.aaro.cosign.marbleLink(e)
 
 private fun since(t: Long): String {
     val s = System.currentTimeMillis() / 1000 - t
@@ -2164,6 +2168,9 @@ private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationIn
 /** Debug builds: a profile to open, asked for by intent. */
 /** A search asked for from outside (a launcher's search: marble://search?q=…): Discover opens search with it. */
 object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+
+/** A post to open, from a marble.syb.lol link that came from outside (an app link). */
+object OpenPost { val id = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
 /** How long away before Marble opens on the main page again, rather than where you were. */
 object Away {

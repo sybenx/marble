@@ -46,6 +46,15 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="cosign.aaro.cc" />
             </intent-filter>
+            <!-- A post's link (marble.syb.lol/nevent1…, /note1…): the post, in Marble, once
+                 marble.syb.lol/.well-known/assetlinks.json names this app. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="marble.syb.lol" android:pathPrefix="/nevent1" />
+                <data android:scheme="https" android:host="marble.syb.lol" android:pathPrefix="/note1" />
+            </intent-filter>
             <!-- Your server's "Add your phone" code, as a link on its page, for when the page is
                  open on this phone and there's nothing to scan. The app asks before joining. -->
             <intent-filter>
