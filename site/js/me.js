@@ -16,9 +16,12 @@ const as = new URLSearchParams(location.search).get("as");
 if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && isHex64(as)) state = { pubkey: as.toLowerCase(), method: null };
 if (!isHex64(state?.pubkey)) state = null;
 
-let remote = null; // the phone connection, made when first needed
+let remote = null; // the phone connection, made when first needed (at once if it came from a code: see watch)
 const listeners = new Set();
 export const onMe = (fn) => listeners.add(fn);
+let lost = () => {};
+/** fn() when you're signed out because someone else answered the code you signed in with (see watch). */
+export const onLost = (fn) => (lost = fn);
 export const current = () => state?.pubkey || null;
 export const method = () => state?.method || null;
 /** Whether a browser extension is here to sign in with. Extensions may arrive a moment after the page. */
@@ -45,7 +48,21 @@ export async function signInWithExtension() {
 export function signedInWithPhone({ pubkey, remote: r, saved }) {
   set({ pubkey, method: "phone", phone: saved });
   remote = r;
+  watch(r);
 }
+
+// A session from a code listens, for as long as it lasts, for a second phone answering that code (connect.js Remote).
+// If one does, the session is given up: you're signed out, and the sign-in asks again with a new code.
+function watch(r) {
+  if (!r?.secret) return;
+  r.onIntruder = () => {
+    if (remote !== r) return;
+    set(null);
+    lost();
+  };
+  r.start();
+}
+if (state?.method === "phone" && state.phone?.secret) setTimeout(() => phoneRemote().then(watch), 0);
 
 export function signOut() {
   if (state?.method === "phone") phoneRemote().then((r) => r.request("logout", [], 5000)).catch(() => {});

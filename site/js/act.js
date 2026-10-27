@@ -3,7 +3,7 @@
 import { publish, req, count, relays, foundOn, FAST } from "./pool.js";
 import { outbox, keep } from "./data.js";
 import { esc } from "./render.js";
-import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe } from "./me.js";
+import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onLost } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const ALSO = ["wss://relay.ditto.pub", "wss://syb.lol"]; // where Discover and search read reactions
@@ -40,6 +40,13 @@ export function openSignIn() {
   if (!dialog.open) dialog.showModal();
   hasExtension() ? withExtension() : withPhone();
 }
+const INTRUDED = "Someone else answered that code. Try again.";
+// someone else answered the code you signed in with: you're signed out; here's a new one
+onLost(() => {
+  toast("");
+  if (!dialog.open) dialog.showModal();
+  withPhone(INTRUDED);
+});
 function close() {
   attempt++;
   phoneAbort?.abort();
@@ -74,8 +81,9 @@ async function withExtension() {
   } finally { clearTimeout(help); clearTimeout(gaveUp); }
 }
 
-async function withPhone() {
+async function withPhone(note = "") {
   const mine = ++attempt;
+  const said = note ? `<p class="si-note" role="alert">${esc(note)}</p>` : "";
   phoneAbort?.abort();
   const ctrl = (phoneAbort = new AbortController());
   view(`<h2 id="si-title">Sign in with your phone</h2><p class="si-wait">${spinner}Making a code…</p>`);
@@ -95,13 +103,13 @@ async function withPhone() {
         if (mine !== attempt) return;
         // On the phone itself a code to scan can't be scanned: the code is a link that opens its sign-in app instead,
         // and the picture is there for signing in with another phone.
-        if (onPhone()) return view(`<h2 id="si-title">Sign in</h2>
+        if (onPhone()) return view(`<h2 id="si-title">Sign in</h2>${said}
           <a class="si-button si-open" href="${esc(uri)}" data-si="open">Sign in</a>
           <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
           <div class="qr" hidden>${svg}</div>
           <div class="si-actions"><button type="button" class="link" data-si="qr">Show code</button>
             <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
-        view(`<h2 id="si-title">Sign in with your phone</h2>
+        view(`<h2 id="si-title">Sign in with your phone</h2>${said}
           <div class="qr">${svg}</div>
           <p>Scan this code with the sign-in app on your phone.</p>
           <p class="si-wait">${spinner}Waiting for your phone…</p>
@@ -115,6 +123,7 @@ async function withPhone() {
     toast("Signed in");
   } catch (err) {
     if (mine !== attempt || ctrl.signal.aborted) return;
+    if (err?.message === "intruder") return withPhone(INTRUDED);
     view(`<h2 id="si-title">Your phone didn't finish signing in</h2><p>${esc(String(err?.message || "").replace(/^[a-z-]+: /, "") || "Try again with a new code.")}</p>
       <div class="si-actions"><button type="button" class="si-button" data-si="phone">Try again</button></div>`);
   } finally { clearTimeout(expire); }
