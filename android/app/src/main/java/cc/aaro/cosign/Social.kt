@@ -578,7 +578,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val woven = Calm.weave(pop.await().filter { ok(it) && !snoozedNow(it.pubkey) }, theirs.await().filter(::ok), ::lift)
         if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
         val starred = special.value
-        woven.map { (e, sp) -> Pick(e, "", 0.0, if (sp || e.pubkey in starred) "★ Special Follow" else "") }.also {
+        woven.map { (e, sp) -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (sp || e.pubkey in starred) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
     }
@@ -1326,9 +1326,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 }
             }
             // Posts: the fast relays together, the slow ones on their own.
-            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1), "search" to text, "limit" to 40)
+            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
             for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
-                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 }
+                // Posts and long-form articles (an article counts once, as its newest version).
+                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == 30023 }
+                    .sortedByDescending { it.createdAt }.distinctBy { if (it.kind == 30023) "a:" + it.pubkey + ":" + (it.firstTag("d") ?: it.id) else it.id }
                 remember(got)
                 notes += got.filter { safe(it) }
                 People.want(got.map { it.pubkey })

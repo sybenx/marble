@@ -719,8 +719,8 @@ private fun FeedLogSetting() {
         if (!unlocked) return@Column
         Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.FeedLog.set(context, !on) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Record how I use Discover", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
-                Text("What you open, like and pass over in Discover, and how long things stay on screen, for tuning it by hand. " +
+                Text("Record how I use Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                Text("What you open, like and pass over in Following, and how long things stay on screen, for tuning it by hand. " +
                     "Kept on this phone only; nothing is sent. " + if (bytes > 0) "%.1f MB so far.".format(bytes / 1_048_576.0) else "Nothing recorded yet.",
                     color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             }

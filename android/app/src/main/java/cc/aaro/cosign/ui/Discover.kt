@@ -301,8 +301,10 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.search.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Panes(phone, ui, social, nav, pager, feedState, followingPlace)
-    else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
+    // The panes stay composed under any screen on top of them, so Back to them is instant, with Following where it was.
+    Panes(phone, ui, social, nav, pager, feedState, followingPlace, covered = top != null)
+    // A screen on top: its own ground, and every touch is its (none reaches the panes under it).
+    if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
             Route.Bell -> BellScreen(phone, ui, social, nav)
@@ -318,7 +320,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Searches -> SearchesScreen(social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
-    }
+    } }
 
     viewing?.let { (urls, i) -> ImageViewer(urls, i) { viewing = null } }
     bigMarble?.let { b -> MarbleView(b, social, onShelf = { bigMarble = null; if (stack.lastOrNull() != Route.Shelf) stack.add(Route.Shelf) }) { bigMarble = null } }
@@ -514,12 +516,13 @@ private fun MessagesPane() = Box(Modifier.fillMaxSize().windowInsetsPadding(andr
  * Three quiet words; swipe between them, or tap one. Your picture is on every pane.
  */
 @Composable
-private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace) {
+private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace,
+                  covered: Boolean = false) {
     val people by People.known.collectAsState()
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
     // The feed log (when on): which pane you settle on, for time per pane.
-    LaunchedEffect(pager.settledPage) { cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_FOLLOWING -> "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
+    LaunchedEffect(pager.settledPage, covered) { if (!covered) cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_FOLLOWING -> "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
     Column(Modifier.fillMaxSize()
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         Box(Modifier.fillMaxWidth().height(56.dp)) {
@@ -540,7 +543,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
             when (page) {
-                PANE_FOLLOWING -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING, listState = feedState, place = place)
+                PANE_FOLLOWING -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
                 PANE_MESSAGES -> MessagesPane()
                 else -> Home(phone, ui, social, nav)
             }
@@ -630,7 +633,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
     val state = listState ?: androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(Unit) { social.loadFeed() }
-    SeenWatcher(state, social) { listOf(it) }
+    // What's been on screen stops being new: only while this list is what you're looking at.
+    if (current) SeenWatcher(state, social) { listOf(it) }
     // All, or only people (those you follow, and your Special Follow list), the news, or the topics you follow.
     var chip by place.chip
     val follows by social.follows.collectAsState()
@@ -648,7 +652,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val savedLinks by social.saved.collectAsState()
     // Following: your people's posts with the news in among them, a story after every third post (the news topic only,
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
-    val news = remember(all) { cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE).filter { it.topic == "news" }.take(40) }
+    val news = remember(all, dismissed) { cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
+        .filter { it.topic == "news" && "t:" + it.id !in dismissed }.take(40) }
     val mixed: List<Any> = remember(shown, news, pane) {
         if (!pane) shown else buildList { var n = 0; shown.forEachIndexed { i, p -> add(p); if (i % 3 == 2 && n < news.size) add(news[n++]) }; if (shown.isEmpty()) addAll(news.take(10)) }
     }
@@ -749,10 +754,21 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
     val context = LocalContext.current
     val mine = social.pageReactions.collectAsState().value[c.url]
     var picking by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
         if (c.image != null) NetImage(c.image, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), 900, ground = Vault.Surface)
-        Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.padding(top = if (c.image != null) 8.dp else 0.dp))
+        Row(Modifier.padding(top = if (c.image != null) 4.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            // ⋯: more or less like this, or nothing more from this source (each learned, and logged).
+            Box {
+                Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(32.dp).clip(CircleShape).clickable { menu = true }.padding(6.dp))
+                if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                    DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { menu = false; social.moreLike(c.topic, key = "t:" + c.id) })
+                    DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { menu = false; social.lessLike(c.topic, "t:" + c.id) })
+                    DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.hideSource(c) })
+                }
+            }
+        }
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp))
         Row(Modifier.offset(x = (-9).dp).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -939,7 +955,8 @@ private fun PostMenu(p: Pick, name: String, social: Social) = Box {
     val topic = TopicFeeds.name(p.topic)
     Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
     if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
-        DropdownMenuItem({ Text(if (followed) "Stop following “$topic”" else "Follow “$topic”", color = Vault.Text) }, { open = false; social.followTopic(p.topic, !followed) })
+        // Its topic, when it has one (a post Marble couldn't place has none, and so no "Follow" without a name).
+        if (p.topic.isNotBlank() && topic.isNotBlank()) DropdownMenuItem({ Text(if (followed) "Stop following “$topic”" else "Follow “$topic”", color = Vault.Text) }, { open = false; social.followTopic(p.topic, !followed) })
         DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { open = false; social.moreLike(p.topic, p.e) })
         DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { open = false; social.lessLike(p.topic, p.e.id, p.e) })
         DropdownMenuItem({ Text("Hide posts from $name", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { open = false; social.hidePerson(p.e.pubkey, p.e.id) })
@@ -1514,7 +1531,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
         Column(Modifier.weight(1f)) {
             Box(Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(end = 32.dp).align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
-                    Text(author?.shown ?: shortNpub(n.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+                    Text(author?.shown ?: shortNpub(n.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).clickable { nav.profile(n.pubkey) })
                     Spacer(Modifier.width(4.dp))
                     PostTime(n, nav.social)
@@ -1529,8 +1546,10 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             val text = remember(body, people.size) { body.annotated(people, nav) }
             if (text.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+                Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
             }
+            // A quoted post, under it: small (name and its first words), a tap shows it whole, another opens it.
+            body.parts.firstNotNullOfOrNull { it as? Body.Part.Quote }?.let { QuoteBox(it.id, people, nav) }
             tr?.let { t ->
                 Text("Translated from ${Translate.name(t.from) ?: "another language"} · " + if (original) "Show translation" else "Show original",
                     color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp).clickable { original = !original })
@@ -1579,6 +1598,26 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 }
             }
         }
+    }
+}
+
+/** A post quoted in another: its author and first words in a small box; a tap shows it whole, another opens it. */
+@Composable
+private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
+    var q by remember(id) { mutableStateOf<Event?>(null) }
+    var open by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) { q = nav.social.fetchNote(id); q?.let { People.want(listOf(it.pubkey)) } }
+    val e = q ?: return
+    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
+        .clickable(onClickLabel = if (open) "Open it" else "Show it whole") { if (open) nav.thread(e.id) else open = true }.padding(horizontal = 12.dp, vertical = 9.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(people[e.pubkey], e.pubkey, 18)
+            Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
+            Text(" · " + since(e.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
+        Text(e.content.trim(), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = if (open) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -1770,7 +1809,7 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
             is Part.Plain -> append(p.s)
             is Part.Link -> withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
             is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
-            is Part.Quote -> withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
+            is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
             is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
         }
     }.let { if (it.text.isBlank()) AnnotatedString("") else it }
@@ -2308,7 +2347,10 @@ private fun PeoplePostsRow(f: cc.aaro.cosign.Found, nav: Nav, onAll: () -> Unit)
                         modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
                     Text(" · " + since(n.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
                 }
-                Text(n.content.trim(), color = Vault.Text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                // An article: its title, in the heavier face; a post: its first lines.
+                if (n.kind == 30023) Text(n.firstTag("title") ?: "Article", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                else Text(n.content.trim(), color = Vault.Text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
             }
         }
     }
