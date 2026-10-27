@@ -635,7 +635,9 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val dismissed by social.dismissed.collectAsState()
     val special by social.special.collectAsState()
     val all by social.allStories.collectAsState()
-    val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
+    // Put-away posts stay where they were (a slim row, with Undo) until the list itself is next refreshed.
+    val posts = remember(feed.posts, muted) { social.dismissed.value.let { gone -> feed.posts.filter { it.e.id !in gone && it.e.pubkey !in muted } } }
+    val justDismissed by social.justDismissed.collectAsState()
     val state = listState ?: androidx.compose.foundation.lazy.rememberLazyListState()
     val context = LocalContext.current
     LaunchedEffect(Unit) { social.loadFeed() }
@@ -661,8 +663,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val keptUrls = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
     // Following: your people's posts with the news in among them, a story after every third post (the news topic only,
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
-    val news = remember(all, dismissed) { cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
-        .filter { it.topic == "news" && "t:" + it.id !in dismissed }.take(40) }
+    val news = remember(all) { social.dismissed.value.let { gone -> cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
+        .filter { it.topic == "news" && "t:" + it.id !in gone }.take(40) } }
     val mixed: List<Any> = remember(shown, news, pane) {
         if (!pane) shown else buildList { var n = 0; shown.forEachIndexed { i, p -> add(p); if (i % 3 == 2 && n < news.size) add(news[n++]) }; if (shown.isEmpty()) addAll(news.take(10)) }
     }
@@ -711,6 +713,10 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
         }
         items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
             HorizontalDivider(color = Vault.Edge)
+            val key = if (x is cc.aaro.cosign.TopicCard) "t:" + x.id else (x as cc.aaro.cosign.Pick).e.id
+            // Put away just now: a slim row where it was, with Undo (nothing moves up into its place).
+            justDismissed[key]?.let { d -> return@items PutAway(d.label) { social.undoDismiss(key) } }
+            if (key in dismissed) return@items
             if (x is cc.aaro.cosign.TopicCard) return@items NewsCard(x, social, nav)
             val p = x as cc.aaro.cosign.Pick
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
@@ -754,6 +760,13 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
         .padding(18.dp).size(52.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround).clickable(onClickLabel = "New public post") { nav.compose() }, contentAlignment = Alignment.Center) {
         Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
     }
+}
+
+/** Something put away in Following: what was done, quietly, and Undo. */
+@Composable
+private fun PutAway(label: String, onUndo: () -> Unit) = Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(label, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    TextButton(onUndo) { Text("Undo", color = Vault.Accent, style = MaterialTheme.typography.labelLarge) }
 }
 
 /** The phone's share sheet, with [text] (and [subject]). When Messages works, your contacts come first ("Send to…"). */

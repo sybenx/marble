@@ -438,6 +438,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 if (Sources.POPULAR_ONLY) cur.copy(posts = (posts.filter { p -> cur.posts.none { it.e.id == p.e.id } } + cur.posts).take(400), loading = false, at = System.currentTimeMillis())
                 else cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
+            // A refresh of the list lets what you put away go (its slim rows with Undo).
+            justDismissed.value = emptyMap()
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
             logPosts(if (force) "pull" else if (top) "back" else "load", feed.value.posts)
             saveFeed()
@@ -1244,7 +1246,25 @@ class Social private constructor(private val phone: Phone, context: Context) {
         interests.learn(listOf(topic), -0.25)
         post?.let { newsletterTaste(it, -1) }
         hide(key)
-        message.value = "Less like this from now on."
+        folded(key, "Less like this") { interests.learn(listOf(topic), 0.25); post?.let { newsletterTaste(it, 1) } }
+    }
+
+    /**
+     * What you've just put away in Following (Not interested, Less like this, Hide…), by its key, with how to take it
+     * back: it stays where it was as a slim row with Undo, and nothing moves up to take its place. The next refresh
+     * of the list lets it go.
+     */
+    data class Dismissal(val label: String, val undo: () -> Unit)
+    val justDismissed = MutableStateFlow<Map<String, Dismissal>>(emptyMap())
+    private fun folded(key: String, label: String, undo: () -> Unit) = justDismissed.update { it + (key to Dismissal(label, undo)) }
+    /** Undo on a put-away row: it comes back as it was, and what was learned from it is taken back. */
+    fun undoDismiss(key: String) {
+        val d = justDismissed.value[key] ?: return
+        FeedLog.act(key, "undo")
+        d.undo()
+        dismissed.update { it - key }
+        prefs.edit().putStringSet("dismissed", dismissed.value).apply()
+        justDismissed.update { it - key }
     }
 
     /**
@@ -1289,13 +1309,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun notInterested(c: TopicCard) {
         FeedLog.act("t:" + c.id, "notInterested", "topic" to c.topic, "src" to c.sourceId)
         hide("t:" + c.id)
+        folded("t:" + c.id, "Not interested") {}
     }
 
     /** "Fewer stories about" a topic: much less of it from now on (more than Less like this). */
     fun fewerAbout(topic: String, key: String?) {
         FeedLog.act(key, "fewerTopic", "topic" to topic)
         interests.learn(listOf(topic), -0.6)
-        message.value = "Fewer stories about ${TopicFeeds.name(topic)}."
+        key?.let { hide(it); folded(it, "Fewer stories about ${TopicFeeds.name(topic)}") { interests.learn(listOf(topic), 0.6) } }
     }
 
     /** What a story is about, as finely as its words say (else its feed's topic). */
@@ -1305,14 +1326,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun hidePerson(pk: String, from: String? = null) {
         FeedLog.act(from, "hideAuthor", "author" to pk)
         interests.hide("hiddenPeople", pk)
+        // From a post in the list: that post folds where it was (with Undo); their others go at the next refresh.
+        if (from != null) { hide(from); folded(from, "Hidden ${nameOf(pk)}") { interests.unhide("hiddenPeople", pk) }; return }
         feed.update { f -> f.copy(posts = f.posts.filter { it.e.pubkey != pk }) }
         message.value = "You won't see posts from ${nameOf(pk)} here."
     }
     fun hideSource(c: TopicCard) {
         FeedLog.act("t:" + c.id, "hideSource", "src" to c.sourceId)
         interests.hide("hiddenSources", c.sourceId)
-        feed.update { f -> f.copy(stories = f.stories.filter { it.sourceId != c.sourceId }) }
-        message.value = "You won't see stories from ${c.sourceName}."
+        hide("t:" + c.id)
+        folded("t:" + c.id, "Hidden ${c.sourceName}") { interests.unhide("hiddenSources", c.sourceId) }
     }
 
     /** You opened a story: a little more of its topic (never of its site, from an open alone), and of what it's about. */

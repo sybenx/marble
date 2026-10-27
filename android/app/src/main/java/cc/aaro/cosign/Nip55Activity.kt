@@ -59,6 +59,11 @@ class Nip55Activity : ComponentActivity() {
 
     private fun reject() = request.reject()
 
+    /** A yes, felt: the phone's confirm tick (the sheet closes a moment later, so this is the only sign it went through). */
+    private fun confirm() {
+        window.decorView.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
     /** With several keys on this phone: which one this is about. */
     private fun whichKey() = if (request.several) ", as ${phone.label}" else ""
 
@@ -76,16 +81,16 @@ class Nip55Activity : ComponentActivity() {
                         "It can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
                         "Remove it under Your account in $appName any time.",
                         no = "Don't connect", yes = "Use it with $label",
-                    ) { request.connect() }
+                    ) { confirm(); request.connect() }
                     Stage.Dms -> Ask(
                         "Let $label read and send your messages?",
                         "It asked to encrypt or decrypt a message. Allow it once and it can do that from now on, until you remove it.",
                         null, no = "Not now", yes = "Allow",
-                    ) { request.allowDms() }
+                    ) { confirm(); request.allowDms() }
                     is Stage.Approve -> Ask(
                         cc.aaro.cosign.ui.question(s.what), "$label asked${whichKey()}.", "It doesn't happen unless you say yes.",
                         no = "Don't", yes = "Yes", amber = true,
-                    ) { request.approve() }
+                    ) { confirm(); request.approve() }
                     is Stage.Working -> {
                         CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))
                         Spacer(Modifier.height(14.dp))

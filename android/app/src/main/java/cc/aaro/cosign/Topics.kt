@@ -295,6 +295,12 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         val list = extra.optJSONArray(kind) ?: org.json.JSONArray().also { extra.put(kind, it) }
         if ((0 until list.length()).none { list.optString(it) == id }) { list.put(id); save() }
     }
+    /** Hidden no longer (Undo). */
+    @Synchronized fun unhide(kind: String, id: String) {
+        val list = extra.optJSONArray(kind) ?: return
+        val keep = org.json.JSONArray(); for (i in 0 until list.length()) list.optString(i).takeIf { it != id }?.let(keep::put)
+        if (keep.length() != list.length()) { extra.put(kind, keep); save() }
+    }
     @Synchronized fun hidden(kind: String, id: String) = extra.optJSONArray(kind)?.let { l -> (0 until l.length()).any { l.optString(it) == id } } == true
 
     /** 0..1 for a topic: followed is the most; learned weight relative to your strongest; each "less" halves it. */
