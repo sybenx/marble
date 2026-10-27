@@ -2,7 +2,9 @@ package cc.aaro.cosign
 
 import cc.aaro.cosign.Handles.Kind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Handles in the box (handles-rule.md): what's looked up, and only once it's whole. Never a site. */
@@ -28,6 +30,17 @@ class HandlesTest {
         assertNull(Handles.kind("@"))
         assertNull(Handles.kind("bob @fedi.test"))
         assertNull(Handles.kind("example.com"))
+    }
+
+    @Test fun aNameCountsOnlyByItsOwnAddress() {
+        assertTrue(Handles.namesIt("rosa@nostr.example", "rosa"))
+        assertTrue(Handles.namesIt("_@both.test", "both"))
+        assertTrue(Handles.namesIt("Rosa@Nostr.example", "rosa"))
+        // A lookalike with a verified address of its own isn't @elonmusk.
+        assertFalse(Handles.namesIt("elonmusk85836@divine.video", "elonmusk"))
+        assertFalse(Handles.namesIt("_@divine.video", "elonmusk"))
+        assertFalse(Handles.namesIt(null, "rosa"))
+        assertFalse(Handles.namesIt("npub1abc", "rosa"))
     }
 
     @Test fun aHandleIsNeverASite() {

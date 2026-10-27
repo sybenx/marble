@@ -19,7 +19,7 @@ object Handles {
         data class Address(val name: String, val domain: String) : Kind()
         /** @name.bsky.social, @domain.tld: Bluesky. */
         data class Bsky(val handle: String) : Kind()
-        /** @name: a Nostr person, only for an exact name whose NIP-05 checks out. */
+        /** @name: a Nostr person, only one whose NIP-05 is that name and checks out. */
         data class Name(val name: String) : Kind()
     }
 
@@ -86,10 +86,12 @@ object Handles {
         if (page == null && self == null) return@coroutineScope null
         val software = async { software(domain) }
         val actor = async { self?.takeIf { it.startsWith("https://") }?.let { get(it, "application/activity+json", redirects = true) } }
+        // The actor, or (where it won't answer an unsigned request, as mastodon.social does) Mastodon's public lookup.
         val a = actor.await()
-        val shown = (a?.get("name") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-        val icon = ((a?.get("icon") as? Map<*, *>)?.get("url") as? String)?.takeIf { it.startsWith("https://") }
-        val url = page ?: (a?.get("url") as? String) ?: self
+        val api = if (a == null) get("https://$domain/api/v1/accounts/lookup?acct=$name", "application/json") else null
+        val shown = ((a?.get("name") ?: api?.get("display_name")) as? String)?.trim()?.takeIf { it.isNotEmpty() }
+        val icon = ((a?.get("icon") as? Map<*, *>)?.get("url") as? String ?: api?.get("avatar") as? String)?.takeIf { it.startsWith("https://") }
+        val url = page ?: (a?.get("url") as? String) ?: (api?.get("url") as? String) ?: self
         Row(title = "Open on ${software.await() ?: domain}", sub = listOfNotNull(shown, "@$acct").joinToString(" · "), picture = icon, url = url)
     }
 
@@ -109,16 +111,23 @@ object Handles {
             url = "https://bsky.app/profile/$h")
     }
 
-    /** @name: someone Nostr search finds named exactly that (their name, or their NIP-05's name), whose NIP-05 checks out. A name alone proves nothing. */
+    /**
+     * Whether [nip05] is [name]'s own address: its name is that name, or it's _@ on a domain named that ("_@rosa.example"
+     * for @rosa). A display name never counts: anyone can call themselves elonmusk, and get some address for it.
+     */
+    fun namesIt(nip05: String?, name: String): Boolean {
+        val (local, domain) = nip05?.trim()?.lowercase()?.split('@')?.takeIf { it.size == 2 }?.let { it[0] to it[1] } ?: return false
+        val n = SearchRank.norm(name).ifEmpty { return false }
+        return SearchRank.norm(local) == n || (local == "_" && SearchRank.norm(domain.substringBefore('.')) == n)
+    }
+
+    /** @name: someone Nostr search finds whose NIP-05 is that name ([namesIt]) and checks out. */
     private suspend fun named(name: String, social: Social): List<Row> {
         social.search(name)
         var f = social.found.value
         for (i in 0 until 40) { f = social.found.value; if (f != null && f.query == name && !f.loading) break; kotlinx.coroutines.delay(100) }
         if (f == null || f.query != name) return emptyList()
         val known = People.known.value
-        return f.people.take(20).filter { pk ->
-            val p = known[pk]
-            SearchRank.exact(p?.name, name) || SearchRank.exact(f.hits[pk]?.name, name) || SearchRank.exact(p?.nip05?.substringBefore('@')?.takeIf { it != "_" }, name)
-        }.filter { pk -> Nip05.check(pk, known[pk]?.nip05) == Nip05.Check.OK }.take(2).map { Row(pubkey = it) }
+        return f.people.take(20).filter { pk -> namesIt(known[pk]?.nip05, name) }.filter { pk -> Nip05.check(pk, known[pk]?.nip05) == Nip05.Check.OK }.take(2).map { Row(pubkey = it) }
     }
 }
