@@ -651,9 +651,19 @@ async function finish(tk: Ticket) {
     pairEmit();
     changed();
     const byLink = !!pairing?.byLink;
-    // With no "Sign in as …?" (same phone), say who you are once you're in.
+    // Who you signed in as, said plainly, **however you got here**. It used to be shown only
+    // for the same-phone handoff, on the grounds that a camera scan had already asked "Sign in
+    // as …?" — but somebody who looked at their phone while the browser asked, or who is
+    // simply not sure which account answered, has nothing to check against afterwards. One
+    // line costs nothing and makes a wrong account obvious.
     const profile = byLink ? Promise.race([fetchProfile(p), new Promise(r => setTimeout(r, 3000))]) : fetchProfile(p);
-    if (!byLink) void profile;
+    void profile.then(async () => {
+      const cur = (await load()).pairing;
+      if (!cur || cur.pubkey !== p.pubkey) return;
+      const npub = nip19.npubEncode(p.pubkey);
+      const who = cur.profile?.name ?? `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+      if (pairing?.view === view && view.done) { view.status = `Signed in as ${who}.`; pairEmit(); }
+    }).catch(() => {});
     // Every site that was waiting on this sign-in goes ahead: you signed in from it.
     const tabs = new Set<number>();
     for (const a of asks.values()) if (a.kind === 'pair') { await grantFor(p, (await load()).sites, a.origin).catch(() => {}); a.resolve(); if (a.tabId !== undefined) tabs.add(a.tabId); }
