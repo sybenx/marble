@@ -12,6 +12,7 @@
 <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="canonical" href="https://marble.syb.lol/">
+<link rel="search" type="application/opensearchdescription+xml" title="Marble" href="/opensearch.xml">
 <link rel="modulepreload" href="/js/app.js">
 <link rel="modulepreload" href="/js/pool.js">
 <link rel="modulepreload" href="/js/ids.js">
@@ -22,8 +23,38 @@
 <link rel="modulepreload" href="/js/find.js">
 <link rel="modulepreload" href="/js/me.js">
 <link rel="modulepreload" href="/js/act.js">
+<link rel="modulepreload" href="/js/later.js">
 <link rel="modulepreload" href="/js/vendor/noble.js">
 <script>
+  // Marble as the browser's search engine (opensearch.xml): /?q=words keeps the words as a note and goes on to your
+  // engine at once, before anything else loads. The note is kept as js/later.js jot() keeps it; it syncs next time
+  // Marble is open. Nostr links, @names and name@domain are left to the page.
+  (function () {
+    var p = new URLSearchParams(location.search), q = (p.get("q") || "").trim();
+    if (location.pathname !== "/" || !q || q.length > 500) return;
+    if (/(?:note|nevent|npub|nprofile|naddr)1[02-9ac-hj-np-z]{6,}/i.test(q) || /^[0-9a-f]{64}$/i.test(q) || /^@/.test(q) || /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(q)) return;
+    if (/^(?:https?:\/\/)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})(?:[\/:?#]\S*)?$/i.test(q) && !/\.(js|ts|kt|py|rs|txt|md|json|png|jpg|jpeg|gif|pdf|mp4|mp3|exe|apk|zip|html|css)$/i.test(q.split(/[\/:?#]/)[0])) {
+      location.replace(/^https?:\/\//i.test(q) ? q : "https://" + q); return;
+    }
+    try {
+      var doc = JSON.parse(localStorage.getItem("marble.later")) || { v: 1, items: [] };
+      if (doc.v === 1 && Array.isArray(doc.items)) {
+        var now = Math.floor(Date.now() / 1000), w = function (s) { return String(s).trim().replace(/\s+/g, " ").toLowerCase(); };
+        var t = q.slice(0, 500), have = doc.items.filter(function (i) { return !i.url && !i.deleted && w(i.text) === w(t); })[0];
+        var item = have ? Object.assign({}, have, { done: null, updated: Math.max(now, (have.updated || 0) + 1) })
+          : { id: Array.from(crypto.getRandomValues(new Uint8Array(8)), function (x) { return x.toString(16).padStart(2, "0"); }).join(""), text: t, created: now, updated: now, done: null, deleted: null };
+        doc.items = doc.items.filter(function (i) { return i.id !== item.id; }).concat(item);
+        doc.at = now;
+        localStorage.setItem("marble.later", JSON.stringify(doc));
+        localStorage.setItem("marble.later.dirty", "true");
+      }
+    } catch (e) {}
+    var e = "DuckDuckGo"; try { e = JSON.parse(localStorage.getItem("marble.engine")) || e; } catch (x) {}
+    var dark = matchMedia("(prefers-color-scheme: dark)").matches, s = encodeURIComponent(q);
+    location.replace({ Google: "https://www.google.com/search?q=" + s, Bing: "https://www.bing.com/search?q=" + s,
+      Brave: "https://search.brave.com/search?q=" + s, Ecosia: "https://www.ecosia.org/search?q=" + s }[e]
+      || "https://duckduckgo.com/?q=" + s + "&kae=" + (dark ? "d" : "-1"));
+  })();
   // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/pool.js).
   if (/^\/(e|p|a|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
     window.marbleWarm = ["wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
@@ -76,17 +107,42 @@
   .marble { display: block; width: 132px; aspect-ratio: 1; filter: drop-shadow(0 10px 14px var(--shadow)); }
   .marble img { display: block; width: 100%; height: 100%; clip-path: circle(48.6%); }
   .word { font-size: 44px; font-weight: 700; line-height: 1.1; letter-spacing: -.02em; margin: 14px 0 22px; }
-  .search { position: relative; width: 100%; max-width: 580px; margin: 0; }
-  .search svg { position: absolute; left: 18px; top: 50%; width: 20px; height: 20px; translate: 0 -50%; color: var(--muted); pointer-events: none; }
-  .search input {
-    width: 100%; font: inherit; font-size: 17px; color: var(--ink); background: var(--field);
-    border: 1px solid var(--field-line); border-radius: 999px; padding: 14px 20px 14px 50px; outline: none;
-    -webkit-appearance: none; appearance: none;
-  }
+  /* The box: one rounded field, as in the app; × clears it, the filled bookmark says it's kept, the chip is Enter */
+  .search { position: relative; display: flex; align-items: center; gap: 2px; width: 100%; max-width: 600px; margin: 0; height: 52px;
+    background: var(--field); border: 1px solid var(--field-line); border-radius: 26px; padding: 0 6px 0 16px; }
+  .search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search > svg { flex: none; width: 20px; height: 20px; color: var(--muted); pointer-events: none; margin-right: 10px; }
+  .search input { flex: 1; min-width: 0; height: 100%; font: inherit; font-size: 17px; color: var(--ink); background: none; border: 0; outline: none; padding: 0; -webkit-appearance: none; appearance: none; }
   .search input::placeholder { color: var(--muted); }
-  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .search input::-webkit-search-cancel-button { display: none; }
-  .hint { color: var(--muted); font-size: 15px; margin: 12px 0 0; }
+  .box-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: none; border-radius: 50%; color: var(--muted); padding: 0; }
+  .box-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  button.box-icon { cursor: pointer; }
+  button.box-icon:hover { background: var(--accent-soft); color: var(--ink); }
+  .box-icon.kept { color: var(--accent); }
+  .box-icon.kept svg { fill: currentColor; }
+  .box-icon[hidden] { display: none; }
+  .go-chip { flex: none; display: grid; place-items: center; height: 38px; padding: 0 14px; margin-left: 2px; border: 0; border-radius: 18px; background: var(--accent-soft); color: var(--accent); cursor: pointer; }
+  .go-chip svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .go-chip:hover { filter: brightness(.97); }
+  .pills { display: flex; justify-content: center; gap: 10px; margin-top: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 16px; }
+  .pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+  .pill:hover { border-color: var(--field-line); }
+  .drop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 12; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 6px 0; box-shadow: 0 10px 28px rgba(0, 0, 0, .14); overflow: hidden; }
+  .drop[hidden] { display: none; }
+  .drop-row { display: flex; align-items: center; gap: 12px; padding: 10px 18px; color: var(--ink); text-decoration: none; cursor: pointer; }
+  .drop-row[aria-selected="true"], .drop-row:hover { background: var(--accent-soft); }
+  .drop-row svg { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .drop-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drop-row .typed { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; }
+  .drop-row .sub { color: var(--muted); font-size: 13px; flex: none; }
+  .about-link { display: none; text-align: center; font-size: 14px; margin: 0; padding: 24px 16px 32px; }
+  .about-link a { color: var(--muted); text-decoration: none; }
+  .about-link a:hover { text-decoration: underline; }
+  body[data-page="home"] .about-link { display: block; }
+  /* the box's middle 41% of the way down, as in the app (HOME_BOX_AT) */
+  body[data-page="home"] .top { min-height: calc(100svh - 80px); justify-content: flex-start; padding-top: max(24px, calc(41svh - 242px)); }
+  @media (min-width: 760px) { body[data-page="home"] .top { padding-top: max(24px, calc(41svh - 287px)); } }
 
   body:not([data-page="home"]) .top {
     position: sticky; top: 0; z-index: 5; flex-direction: row; gap: 14px; padding: 10px 16px;
@@ -96,9 +152,11 @@
   body:not([data-page="home"]) .brand { flex-direction: row; gap: 8px; flex: none; }
   body:not([data-page="home"]) .marble { width: 34px; filter: drop-shadow(0 2px 3px var(--shadow)); }
   body:not([data-page="home"]) .word { font-size: 22px; margin: 0; }
-  body:not([data-page="home"]) .search input { padding-block: 9px; font-size: 16px; }
-  body:not([data-page="home"]) .search svg { left: 16px; width: 18px; height: 18px; }
-  body:not([data-page="home"]) .hint, body:not([data-page="home"]) #landing { display: none; }
+  body:not([data-page="home"]) .search { height: 44px; }
+  body:not([data-page="home"]) .search input { font-size: 16px; }
+  body:not([data-page="home"]) .go-chip { height: 32px; }
+  body:not([data-page="home"]) .pills { display: none; }
+  body:not([data-page="about"]) #landing { display: none; }
   @media (max-width: 520px) { body:not([data-page="home"]) .word { display: none; } }
 
   /* Signed in or not: top right, as in the app */
@@ -301,6 +359,56 @@
   .prose blockquote { border-left: 3px solid var(--accent); margin: 0 0 12px; padding-left: 14px; color: var(--muted); }
   .prose h2 { font-size: 24px; margin: 28px 0 10px; } .prose h3 { font-size: 20px; margin: 22px 0 8px; }
 
+  /* The marble of the day: a transparent picture of just the marble (no circle to cut), its shadow drawn here */
+  .marble.daily img { clip-path: none; }
+
+  /* Notes */
+  #view > div:has(> .notes) { max-width: 680px; }
+  .notes-head { display: flex; align-items: center; gap: 6px; margin: 4px 0 12px; }
+  .notes-head h1 { flex: 1; font-size: 28px; margin: 0; letter-spacing: -.01em; }
+  .back { display: grid; place-items: center; width: 40px; height: 40px; margin-left: -8px; border-radius: 50%; color: var(--ink); }
+  .back:hover { background: var(--accent-soft); }
+  .back svg, .only-you svg, .filter svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .back svg { width: 24px; height: 24px; }
+  .only-you { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 14px; }
+  .only-you svg { width: 14px; height: 14px; }
+  .filter { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; background: var(--field); border: 1px solid var(--field-line); border-radius: 24px; }
+  .filter:focus-within { border-color: var(--accent); }
+  .filter svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
+  .filter input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--ink); background: none; border: 0; outline: none; }
+  .chips { display: flex; gap: 8px; margin: 12px 0 6px; }
+  .chips button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 18px; padding: 7px 14px; font-weight: 600; font-size: 15px; cursor: pointer; }
+  .chips button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .note-row, .tab-row { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--line); padding: 4px 0; }
+  .tick { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: none; cursor: pointer; padding: 0; }
+  .tick span { width: 22px; height: 22px; border: 1.5px solid var(--field-line); border-radius: 50%; }
+  .tick:hover span { border-color: var(--accent); }
+  .tick svg { width: 24px; height: 24px; fill: var(--accent); stroke: var(--on-accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tick svg circle { stroke: none; }
+  .note-main { flex: 1; min-width: 0; display: flex; gap: 10px; padding: 10px 0; color: var(--ink); text-decoration: none; }
+  .note-text { display: flex; flex-direction: column; min-width: 0; }
+  .nt { overflow-wrap: anywhere; }
+  .nt.typed { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 16px; }
+  .is-done .nt { color: var(--muted); text-decoration: line-through; }
+  .nq { color: var(--muted); font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
+  .nm { color: var(--muted); font-size: 14px; }
+  .nm:empty { display: none; }
+  .site-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin-top: 2px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px; }
+  .site-icon.big { width: 28px; height: 28px; border-radius: 6px; font-size: 14px; margin: 2px 4px 0 10px; }
+  .remove, .keep { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin-top: 4px; border: 0; background: none; border-radius: 50%; color: var(--muted); cursor: pointer; }
+  .remove svg, .keep svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .remove { opacity: 0; }
+  .note-row:hover .remove, .remove:focus-visible { opacity: 1; }
+  @media (hover: none) { .remove { opacity: .55; } }
+  .remove:hover { background: var(--accent-soft); color: var(--ink); }
+  .keep { color: var(--accent); }
+  .keep svg { width: 20px; height: 20px; }
+  .keep.on svg { fill: currentColor; }
+  .tabs-under { margin-top: 14px; border-top: 1px solid var(--line); }
+  .empty-line { color: var(--muted); padding: 18px 4px; margin: 0; }
+  .engine-line { color: var(--muted); font-size: 14px; margin: 22px 4px 0; }
+  .engine-line select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; }
+
   /* Signing in */
   dialog#signin { border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--ink); padding: 24px; width: min(400px, calc(100vw - 32px)); }
   dialog#signin::backdrop { background: rgba(10, 9, 8, .55); }
@@ -347,7 +455,7 @@
   dialog#zoom img { display: block; max-width: 96vw; max-height: 96vh; object-fit: contain; }
 
   /* The rest of the front page: what Marble is */
-  #landing { border-top: 1px solid var(--line); margin-top: 56px; }
+  #landing { margin-top: 8px; }
   .intro { text-align: center; padding-block: 48px 24px; }
   .tagline { font-size: clamp(22px, 5vw, 28px); font-weight: 600; margin: 0 auto 24px; max-width: 24ch; line-height: 1.3; letter-spacing: -.01em; text-wrap: balance; }
   .button {
@@ -420,15 +528,23 @@
     <span class="word">Marble</span>
   </a>
   <form class="search" id="search" role="search" action="/">
-    <label for="q" class="visually-hidden">Search people, posts, #tags</label>
+    <label for="q" class="visually-hidden">Search or jot anything</label>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
-    <input id="q" name="q" type="search" placeholder="Search people, posts, #tags" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+    <input id="q" name="q" type="text" inputmode="search" placeholder="Search or jot anything…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" role="combobox" aria-expanded="false" aria-controls="drop" aria-autocomplete="list">
+    <button type="button" class="box-icon clear" id="clear" aria-label="Clear" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <span class="box-icon kept" id="kept" title="Kept as a note" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg></span>
+    <button type="submit" class="go-chip" aria-label="Keep as a note and search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5v7a3 3 0 0 1-3 3H6"/><path d="M10 11l-4 4 4 4"/></svg></button>
+    <div class="drop" id="drop" role="listbox" hidden></div>
   </form>
-  <p class="hint">Or paste a link to a post or a profile.</p>
+  <nav class="pills" aria-label="Yours">
+    <a class="pill" href="/notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg><span id="n-notes">Notes</span></a>
+    <a class="pill" href="/notes?tab=tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg><span id="n-tabs">Tabs</span></a>
+  </nav>
   <div class="account" id="account"></div>
 </header>
 
 <main id="view" aria-live="polite"></main>
+<p class="about-link"><a href="/about">About Marble</a></p>
 
 <div id="landing">
 <section class="wrap intro" aria-labelledby="tagline">

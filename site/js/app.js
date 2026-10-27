@@ -5,9 +5,10 @@ import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
-import { goodPosts, stories, yours, loadStories, prepareMine } from "./find.js";
+import { goodPosts, stories, yours, prepareMine } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
+import * as notes from "./later.js";
 import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -84,10 +85,23 @@ function route(state, back = false) {
     if (d.type === "profile") return showProfile(d, signal);
     return showAddress(d, signal);
   }
+  if (path === "/notes") return showNotes(signal, new URLSearchParams(location.search).get("tab"));
+  if (path === "/about") { page("about", "About"); return; }
   if (path === "/" || path === "/index.html") {
-    if (q) { input.value = q; return showSearch(q, signal); }
+    if (q) {
+      const parsed = parseInput(q);
+      // a pasted post or person, @name or name@domain: here; other words (the address bar, if the page's
+      // first script didn't already): kept as a note, then your engine
+      if (parsed.kind === "entity" || parsed.kind === "hex" || parsed.kind === "nip05") { input.value = q; return showSearch(q, signal); }
+      if (q.startsWith("@") && q.length > 1) { input.value = q; return showSearch(q.slice(1), signal); }
+      notes.jot(q);
+      location.replace(notes.results(q));
+      return;
+    }
     document.body.dataset.page = "home";
     document.title = "Marble";
+    input.value = "";
+    boxState();
     return;
   }
   showMissing("There's nothing here.");
@@ -836,19 +850,68 @@ function personRow(p, { verified, followers, follow = false } = {}) {
   </a>`;
 }
 
-// ── The search box ───────────────────────────────────────────────────────────────────────────────────
+// ── The search box: search or jot, as in the app ─────────────────────────────────────────────────────
+// Enter keeps the words as a note and opens your engine's results in a new tab (sites can't show them inside).
+// An address (a dot and an ending, or a scheme) goes to the site; a well-known site's name offers "Go to …" and
+// Enter still searches. A pasted link to a post or person, @name and name@domain open here.
 
-let typing = null;
 let warmed = false;
-const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); loadStories(); myFollows(); } };
+const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
 for (const ev of ["focus", "pointerdown", "keydown"]) input.addEventListener(ev, warmUp, { passive: true });
+
+const clearButton = $("#clear"), keptMark = $("#kept"), drop = $("#drop");
+const GLOBE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg>`;
+const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
+let rows = [], pick = -1;
+
+function boxState() {
+  const t = input.value.trim();
+  clearButton.hidden = !input.value;
+  keptMark.hidden = !(t && notes.saved(t));
+  rows = [];
+  const kind = parseInput(t).kind;
+  if (t && kind !== "entity" && kind !== "hex" && !t.startsWith("@")) {
+    const s = notes.site(t);
+    if (s) rows.push({ site: s });
+    // your notes that have these words (not the very same note)
+    if (t.length >= 2) for (const i of notes.open().filter((i) => !notes.same(i.text, t) && i.text.toLowerCase().includes(t.toLowerCase())).slice(0, 4)) rows.push({ note: i });
+  }
+  pick = -1;
+  drop.innerHTML = rows.map((r, k) => r.site
+    ? `<a class="drop-row" role="option" id="drop-${k}" data-k="${k}" href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`
+    : `<div class="drop-row" role="option" id="drop-${k}" data-k="${k}">${MARK}<span class="t${r.note.url ? "" : " typed"}">${esc(r.note.text)}</span><span class="sub">${agoWords(r.note.created)}</span></div>`).join("");
+  showDrop();
+}
+function showDrop() {
+  drop.hidden = !rows.length || document.activeElement !== input;
+  input.setAttribute("aria-expanded", String(!drop.hidden));
+  input.removeAttribute("aria-activedescendant");
+  for (const el of drop.children) el.setAttribute("aria-selected", String(+el.dataset.k === pick));
+  if (pick >= 0) input.setAttribute("aria-activedescendant", `drop-${pick}`);
+}
+function done() { input.value = ""; boxState(); }
+
+/** Enter on words: kept as a note, then your engine, in a new tab. */
+function searchFor(t) {
+  notes.jot(t);
+  window.open(notes.results(t), "_blank", "noopener");
+  done();
+}
+function goToSite(s, from) {
+  notes.opened(s.url, s.address, from);
+  window.open(s.url, "_blank", "noopener");
+  done();
+}
+function choose(r) {
+  if (r.site) return goToSite(r.site, input.value.trim());
+  if (r.note.url) { notes.opened(r.note.url, r.note.text, r.note.text); window.open(r.note.url, "_blank", "noopener"); return done(); }
+  searchFor(r.note.text);
+}
 
 input.addEventListener("paste", () => { navStart = performance.now(); });
 input.addEventListener("input", () => {
   const text = input.value;
   const parsed = parseInput(text);
-  clearTimeout(typing);
-  // An address opens what it names at once, without waiting for Enter.
   // A pasted post or person shows at once, as the top of a results page (what quotes, answers or mentions
   // it); an article opens directly.
   if (parsed.kind === "entity" || parsed.kind === "hex") {
@@ -856,44 +919,187 @@ input.addEventListener("input", () => {
     const key = parsed.kind === "hex" ? parsed.hex : parsed.entity;
     input.value = key;
     input.blur();
+    boxState();
     go(parsed.kind === "entity" && parsed.decoded.type === "address" ? pathFor(parsed.entity, parsed.decoded) : `/?q=${key}`, { replace: document.body.dataset.page === "search" });
     navStart = t0;
     return;
   }
-  if (!text.trim()) {
-    if (document.body.dataset.page === "search") go("/", { replace: true });
-    return;
-  }
-  typing = setTimeout(() => runSearch(text), parsed.kind === "nip05" ? 600 : 160);
+  boxState();
 });
-
-function runSearch(text) {
-  const path = `/?q=${encodeURIComponent(text.trim())}`;
-  const already = document.body.dataset.page === "search";
-  if (location.pathname + location.search === path) return;
-  go(path, { replace: already });
-}
+input.addEventListener("focus", showDrop);
+input.addEventListener("blur", () => setTimeout(showDrop, 150));
+input.addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    if (!rows.length) return;
+    ev.preventDefault();
+    pick = ev.key === "ArrowDown" ? Math.min(rows.length - 1, pick + 1) : Math.max(-1, pick - 1);
+    showDrop();
+  } else if (ev.key === "Escape") { rows = []; showDrop(); }
+});
+drop.addEventListener("mousedown", (ev) => ev.preventDefault()); // keeps the box focused
+drop.addEventListener("click", (ev) => {
+  const row = ev.target.closest("[data-k]");
+  if (!row) return;
+  ev.preventDefault();
+  choose(rows[+row.dataset.k]);
+});
+clearButton.addEventListener("click", () => { done(); input.focus(); });
 
 form.addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  clearTimeout(typing);
-  const text = input.value.trim();
-  if (!text) return;
-  const parsed = parseInput(text);
+  const t = input.value.trim();
+  if (!t) return;
+  if (pick >= 0 && rows[pick]) return choose(rows[pick]);
+  const parsed = parseInput(t);
+  if (t.startsWith("@") && t.length > 1) { input.blur(); return go(`/?q=${encodeURIComponent(t)}`); }
+  const s = notes.site(t);
+  if (s?.sure) return goToSite(s, t);
   if (parsed.kind === "nip05") {
+    // someone's address (name@domain): their page here, if it names someone; otherwise a search like any other
     const r = await resolveNip05(parsed.address);
-    if (r) { input.blur(); return go(`/p/${npub(r.pubkey)}`); }
+    if (r) { input.blur(); done(); return go(`/p/${npub(r.pubkey)}`); }
   }
-  runSearch(text);
-  input.blur();
+  searchFor(t);
 });
 
 addEventListener("keydown", (ev) => {
-  if (ev.key === "/" && document.activeElement !== input && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName)) {
+  if (ev.key === "/" && document.activeElement !== input && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
     ev.preventDefault();
     input.focus();
   }
 });
+
+// The counts under the box: your open notes, and the tabs Marble opened in this browser.
+function counts() {
+  const n = notes.open().length, t = notes.tabs().length;
+  $("#n-notes").textContent = n ? `Notes · ${n}` : "Notes";
+  $("#n-tabs").textContent = t ? `Tabs · ${t}` : "Tabs";
+}
+notes.onNotes(() => { counts(); if (!drop.hidden || input.value) boxState(); });
+counts();
+
+// The marble of the day (marble-daily: one a day, the same for everyone, from 00:00 UTC); the bundled one until then.
+function marbleOfTheDay() {
+  const today = new Date().toISOString().slice(0, 10);
+  const show = (d) => {
+    const pic = $(".brand .marble");
+    pic.querySelectorAll("source").forEach((x) => x.remove());
+    const img = $("img", pic);
+    img.src = d.image;
+    img.alt = d.name || "";
+    pic.classList.add("daily");
+  };
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem("marble.today")); } catch {}
+  if (cached?.date === today && cached.image) return show(cached);
+  fetch("https://sybenx.github.io/marble-daily/manifest.json").then((r) => r.json()).then((m) => {
+    const d = (m.days || []).find((x) => x.date === today && x.status === "ok" && /^https:\/\//.test(x.image || ""));
+    if (!d) return;
+    show(d);
+    try { localStorage.setItem("marble.today", JSON.stringify({ date: today, image: d.image, name: d.name })); } catch {}
+  }).catch(() => {});
+}
+marbleOfTheDay();
+
+/** "just now", "5 minutes ago", "yesterday", "3 weeks ago", "2 months ago", as the app says it. */
+function agoWords(sec) {
+  const d = Math.max(0, Date.now() / 1000 - sec);
+  const n = (v, unit) => `${v} ${unit}${v === 1 ? "" : "s"} ago`;
+  if (d < 120) return "just now";
+  if (d < 3600) return n(Math.floor(d / 60), "minute");
+  if (d < 86400) return n(Math.floor(d / 3600), "hour");
+  if (d < 2 * 86400) return "yesterday";
+  if (d < 7 * 86400) return n(Math.floor(d / 86400), "day");
+  if (d < 60 * 86400) return n(Math.floor(d / (7 * 86400)), "week");
+  return n(Math.floor(d / (30 * 86400)), "month");
+}
+
+// ── Notes: what you kept, what you've done, and the tabs Marble opened ──────────────────────────────
+
+const LOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>`;
+const TICK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg>`;
+
+function showNotes(signal, tab) {
+  page("notes", "Notes");
+  const root = pageEl;
+  let show = tab === "tabs" || tab === "done" ? tab : "notes";
+  root.innerHTML = `<div class="notes">
+    <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes</h1><span class="only-you"></span></div>
+    <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+      <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
+    <div class="chips" role="tablist"></div>
+    <div class="note-list"></div>
+    <p class="engine-line">Searches go to <select aria-label="Your search engine">${Object.keys(notes.ENGINES).map((e) => `<option${e === notes.engine() ? " selected" : ""}>${e}</option>`).join("")}</select></p>
+  </div>`;
+  const filter = $(".filter input", root), list = $(".note-list", root), chips = $(".chips", root);
+  const hit = (t, f) => !f || String(t || "").toLowerCase().includes(f.toLowerCase());
+  const mark = (t, f) => {
+    const i = f ? t.toLowerCase().indexOf(f.toLowerCase()) : -1;
+    return i < 0 ? esc(t) : `${esc(t.slice(0, i))}<b>${esc(t.slice(i, i + f.length))}</b>${esc(t.slice(i + f.length))}`;
+  };
+  const host = (u) => notes.hostOf(u);
+  const noteRow = (i, f) => `<div class="note-row${i.done ? " is-done" : ""}" data-id="${i.id}">
+      <button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>
+      <a class="note-main" href="${i.url ? esc(i.url) : "#"}" data-open ${i.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
+        ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
+        <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(i.text, f)}</span>
+          ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
+          <span class="nm">${esc([i.url ? host(i.url) : i.from, i.done ? `done ${agoWords(i.done)}` : agoWords(i.created)].filter(Boolean).join(" · "))}</span></span>
+      </a>
+      <button type="button" class="remove" data-remove aria-label="Remove from Later"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>`;
+  const tabRow = (p) => {
+    const kept = notes.items().some((i) => i.url === p.url);
+    return `<div class="tab-row" data-url="${esc(p.url)}">
+      <a class="note-main" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" data-tab-open>
+        <span class="site-icon big" aria-hidden="true">${esc(host(p.url).slice(0, 1).toUpperCase())}</span>
+        <span class="note-text"><span class="nt">${mark(p.title, filter.value.trim())}</span><span class="nm">${esc(host(p.url))} · ${agoWords(p.at)}</span></span>
+      </a>
+      <button type="button" class="keep${kept ? " on" : ""}" data-keep aria-label="${kept ? "Kept as a note" : "Keep as note"}" aria-pressed="${kept}">${MARK}</button>
+    </div>`;
+  };
+  const draw = () => {
+    const f = filter.value.trim();
+    const all = notes.items().filter((i) => hit(i.text, f) || hit(i.quote, f));
+    const open = all.filter((i) => !i.done), doneList = all.filter((i) => i.done);
+    const tabs = notes.tabs().filter((p) => hit(p.title, f) || hit(p.url, f) || hit(p.from, f));
+    chips.innerHTML = [["notes", `Notes · ${open.length}`], ["tabs", `Tabs · ${tabs.length}`], ["done", "Done"]]
+      .map(([k, label]) => `<button type="button" role="tab" aria-selected="${show === k}" data-show="${k}">${label}</button>`).join("");
+    const these = show === "done" ? doneList : open;
+    const empty = `<p class="empty-line">${f ? `Nothing in Later matches “${esc(f)}”.` : "Nothing yet."}</p>`;
+    list.innerHTML = show === "tabs"
+      ? (tabs.length ? tabs.map(tabRow).join("") : empty)
+      : (these.length ? these.map((i) => noteRow(i, f)).join("") : empty)
+        + (show === "notes" && tabs.length ? `<div class="tabs-under">${tabs.slice(0, 5).map(tabRow).join("")}</div>` : "");
+    $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? "" : " · this browser"}`;
+  };
+  filter.addEventListener("input", draw);
+  root.onclick = (ev) => {
+    const chip = ev.target.closest("[data-show]");
+    if (chip) { show = chip.dataset.show; history.replaceState(history.state, "", show === "notes" ? "/notes" : `/notes?tab=${show}`); return draw(); }
+    const row = ev.target.closest(".note-row"), item = row && notes.items().find((i) => i.id === row.dataset.id);
+    if (item && ev.target.closest("[data-tick]")) return notes.tick(item, !item.done);
+    if (item && ev.target.closest("[data-remove]")) return notes.remove(item);
+    if (item && ev.target.closest("[data-open]")) {
+      if (item.url) return notes.opened(item.url, item.text, item.text);
+      ev.preventDefault();
+      // your own words: searched again
+      window.open(notes.results(item.text), "_blank", "noopener");
+      return;
+    }
+    const tabEl = ev.target.closest(".tab-row");
+    if (tabEl && ev.target.closest("[data-keep]")) {
+      const p = notes.tabs().find((x) => x.url === tabEl.dataset.url);
+      if (p && !notes.items().some((i) => i.url === p.url)) notes.keepPage(p.url, p.title);
+      return;
+    }
+    if (tabEl && ev.target.closest("[data-tab-open]")) notes.opened(tabEl.dataset.url, notes.tabs().find((x) => x.url === tabEl.dataset.url)?.title, "");
+  };
+  $(".engine-line select", root).addEventListener("change", (ev) => notes.setEngine(ev.target.value));
+  signal.addEventListener("abort", notes.onNotes(() => { if (root.isConnected) draw(); }));
+  draw();
+  notes.pull({ force: true }).catch(() => {});
+}
 
 // ── Links, copy, pictures ────────────────────────────────────────────────────────────────────────────
 

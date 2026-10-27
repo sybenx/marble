@@ -138,7 +138,8 @@ export function warm(urls) {
  */
 export function req(urls, filters, { timeout = 5000, onEvent = null, signal = null, stopOnFirst = false, settle = 0, unsigned = false } = {}) {
   filters = Array.isArray(filters) ? filters : [filters];
-  const list = relays(urls);
+  const local = testRelay();
+  const list = relays(urls, local && !unsigned ? [local] : []); // testing on localhost: the local relay is read too
   return new Promise((resolve) => {
     const id = `m${(nextId++).toString(36)}`;
     const events = new Map();
