@@ -15,13 +15,14 @@ const DOMAIN = "((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24})";
 const ADDRESS = new RegExp(`^@?([a-z0-9._~+-]+)@${DOMAIN}$`, "i");
 const HANDLE = new RegExp(`^@${DOMAIN}$`, "i");
 const NAME = /^@([\p{L}\p{N}_]{2,30})$/u;
+const LOCAL = /\.(local|localhost|internal|lan|home|arpa)$/; // a machine on your own network: never asked
 
 /** {kind: "address", name, domain} | {kind: "bluesky", handle} | {kind: "name", name} | null */
 export function handleOf(typed) {
   const t = String(typed || "").trim();
   let m = ADDRESS.exec(t);
-  if (m) return { kind: "address", name: m[1].toLowerCase(), domain: m[2].toLowerCase() };
-  if ((m = HANDLE.exec(t))) return { kind: "bluesky", handle: m[1].toLowerCase() };
+  if (m) return LOCAL.test(m[2].toLowerCase()) ? null : { kind: "address", name: m[1].toLowerCase(), domain: m[2].toLowerCase() };
+  if ((m = HANDLE.exec(t))) return LOCAL.test(m[1].toLowerCase()) ? null : { kind: "bluesky", handle: m[1].toLowerCase() };
   if ((m = NAME.exec(t))) return { kind: "name", name: m[1] };
   return null;
 }
