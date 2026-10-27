@@ -73,7 +73,7 @@ export function rankProfiles(profiles, query, signals = {}) {
 const nip05Cache = new Map() // `${nip05}|${pubkey}` → Promise<boolean>
 
 export function verifyNip05(nip05, pubkey, timeout = 2500) {
-  const m = /^(?:([\w.+-]*)@)?([\w-]+(?:\.[\w-]+)+)$/.exec((nip05 || '').trim())
+  const m = /^(?:([\w.+-]*)@)?([\w-]+(?:\.[\w-]+)+)$/.exec(String(nip05 || '').trim())
   if (!m || !pubkey) return Promise.resolve(false)
   const name = (m[1] || '_').toLowerCase()
   const domain = m[2].toLowerCase()
@@ -100,16 +100,17 @@ export function verifyNip05(nip05, pubkey, timeout = 2500) {
 export function parseProfile(event) {
   try {
     const c = JSON.parse(event.content)
+    const s = (x) => (typeof x === 'string' ? x : '') // a profile can hold anything: only text is kept
     return {
       pubkey: event.pubkey,
       created_at: event.created_at,
-      name: c.name || c.display_name || '',
-      display_name: c.display_name || c.name || '',
-      picture: c.picture || '',
-      nip05: c.nip05 || '',
-      about: c.about || '',
-      lud16: c.lud16 || '',
-      lud06: c.lud06 || '',
+      name: s(c.name) || s(c.display_name),
+      display_name: s(c.display_name) || s(c.name),
+      picture: s(c.picture),
+      nip05: s(c.nip05),
+      about: s(c.about),
+      lud16: s(c.lud16),
+      lud06: s(c.lud06),
     }
   } catch (_) {
     return null

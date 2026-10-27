@@ -2,14 +2,15 @@
 // box does: "@elonmusk" is a search, not a mode). Only what can be confirmed cheaply gets a row:
 //   name@domain.tld, @name@domain.tld  someone's Nostr address (NIP-05) and a fediverse account (WebFinger), asked at once
 //   @name.bsky.social, @domain.tld     a Bluesky handle (its public profile)
-//   @name                              someone on Nostr whose address (NIP-05) is that name (name@… or _@name.…) and
-//                                      checks out (a display name, or an address anyone can get, proves nothing:
-//                                      "@elonmusk" finds "Elonmusk · elonmusk85836@divine.video", verified)
+//   @name                              someone you follow with that name. Nobody else: open search ranks lookalikes,
+//                                      and a checked address only proves someone holds a domain ("@elonmusk" finds a
+//                                      verified "Elonmusk · elonmusk85836@divine.video" with his photo)
 // An email is neither of the first two, so it gets no row. Asking reveals the address to that site, so only an address
 // that looks complete (a dot and an ending after the @) is asked about, once (kept for the visit), after typing stops.
-import { resolveNip05, wantProfile } from "./data.js";
+import { resolveNip05, profile, profiles } from "./data.js";
 import { searchPeople } from "./search.js";
-import { normalizeName, verifyNip05 } from "./search-rank.js";
+import { normalizeName } from "./search-rank.js";
+import { current, myFollows } from "./me.js";
 
 const WAIT = 2500;
 const DOMAIN = "((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24})";
@@ -27,7 +28,8 @@ export function handleOf(typed) {
   if ((m = NAME.exec(t))) return { kind: "name", name: m[1] };
   return null;
 }
-export const keyOf = (h) => (h.kind === "address" ? `${h.name}@${h.domain}` : h.kind === "bluesky" ? `@${h.handle}` : `@${h.name}`.toLowerCase());
+// (a name's answer depends on who's signed in: whom they follow)
+export const keyOf = (h) => (h.kind === "address" ? `${h.name}@${h.domain}` : h.kind === "bluesky" ? `@${h.handle}` : `@${h.name} ${current() || ""}`.toLowerCase());
 
 const asked = new Map(); // key → Promise<rows>
 /**
@@ -50,25 +52,21 @@ async function nostrAddress({ name, domain }) {
   const address = `${name}@${domain}`;
   const r = await resolveNip05(address, WAIT);
   if (!r) return null;
-  wantProfile(r.pubkey, r.relays);
+  // their name and picture with the row, not after it
+  await Promise.race([profile(r.pubkey, r.relays), new Promise((ok) => setTimeout(ok, WAIT))]);
   return { kind: "person", pubkey: r.pubkey, sub: name === "_" ? domain : address };
 }
 
-// Someone on Nostr whose address is this name (name@domain, or _@ a domain named it), and checks out; a display name,
-// or a name with digits added at a site that hands out addresses, isn't worth a row.
+// Someone you follow whose name, display name or address (before the @) is exactly this.
 async function nostrName(name) {
+  const follows = await myFollows();
+  if (!follows.size) return null;
   const n = normalizeName(name), text = (s) => (typeof s === "string" ? s : "");
-  const found = await searchPeople(name, { limit: 5, signal: AbortSignal.timeout(4000) }).catch(() => []);
-  const exact = found.filter((p) => {
-    const [local, domain = ""] = text(p.nip05).toLowerCase().split("@");
-    return normalizeName(local) === n || (local === "_" && normalizeName(domain.split(".")[0]) === n);
-  });
-  for (const p of exact.slice(0, 3)) {
-    if (!(await verifyNip05(p.nip05, p.pubkey, WAIT))) continue;
-    wantProfile(p.pubkey);
-    return { kind: "person", pubkey: p.pubkey, sub: p.nip05.replace(/^_@/, "") };
-  }
-  return null;
+  const found = await searchPeople(name, { limit: 8, follows: [...follows], cached: profiles, signal: AbortSignal.timeout(4000) }).catch(() => []);
+  const p = found.find((p) => follows.has(p.pubkey) && [p.display_name, p.name, text(p.nip05).split("@")[0]].some((x) => normalizeName(text(x)) === n));
+  if (!p) return null;
+  if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p); // the row shows their name and picture at once
+  return { kind: "person", pubkey: p.pubkey, sub: text(p.nip05).replace(/^_@/, "") || `@${name}` };
 }
 
 // A fediverse account (Mastodon and the rest): WebFinger says where its page is; the server's NodeInfo says what it
