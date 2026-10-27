@@ -1208,6 +1208,19 @@ class Social private constructor(private val phone: Phone, context: Context) {
         message.value = "Less like this from now on."
     }
 
+    /**
+     * Which feed Following is: 1, as it was on 27 Oct (branch feed-1: reaction counts beside the heart), or 2 (no counts
+     * in lists; they're a tap in, on the post). A hidden switch in Account › Advanced, so the two can be compared.
+     */
+    val feedVersion = MutableStateFlow(prefs.getInt("feedVersion", 2)).also { FeedLog.RANKER = if (it.value == 1) "following1" else "following2" }
+    fun setFeedVersion(v: Int) {
+        if (v == feedVersion.value) return
+        feedVersion.value = v
+        prefs.edit().putInt("feedVersion", v).apply()
+        FeedLog.RANKER = if (v == 1) "following1" else "following2"
+        FeedLog.ev("feedVersion", "v" to v)
+    }
+
     /** A post's own link (what keeping it in Notes keeps): the same every time (no relay hints, which change). */
     fun postLink(e: Event) = "https://njump.me/" + nevent(e.id, e.pubkey, e.kind, emptyList())
 

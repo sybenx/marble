@@ -726,6 +726,15 @@ private fun FeedLogSetting() {
             }
             androidx.compose.material3.Switch(on, { cc.aaro.cosign.FeedLog.set(context, it) })
         }
+        // Which feed Following is, to compare the two: Feed 1 (as on 27 Oct) or Feed 2.
+        val social = remember { cc.aaro.cosign.Social.of(cc.aaro.cosign.CosignApp.instance.phone) }
+        val feed by social.feedVersion.collectAsState()
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            for (v in listOf(1, 2)) Text("Feed $v", color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (feed == v) Vault.Accent else Vault.Surface).border(1.dp, if (feed == v) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                    .clickable { social.setFeedVersion(v) }.padding(horizontal = 12.dp, vertical = 6.dp))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton({
                 scope.launch {

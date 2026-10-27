@@ -62,7 +62,7 @@ private val LIFT = 60.dp
 private val LEFT = (-10).dp
 
 @Composable
-fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () -> Unit) {
+fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () -> Unit, showCounts: Boolean = true) {
     val mine by social.reactions.collectAsState()
     val counts by social.engagement.collectAsState()
     val haptic = LocalHapticFeedback.current
@@ -134,7 +134,7 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
         }
     }
     // What others reacted with: the top few emojis, and how many liked it in all.
-    counts[n.id]?.let { e ->
+    if (showCounts) counts[n.id]?.let { e ->
         val top = e.emojis.map { it.first }.filter { it != "+" && !it.startsWith(":") && it.length <= 8 }.take(3)
         val total = e.likeTotal
         if (total > 0) Text((if (top.isEmpty()) "" else top.joinToString("") + " ") + total, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp))

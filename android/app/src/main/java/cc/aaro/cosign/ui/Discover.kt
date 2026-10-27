@@ -1613,7 +1613,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
                 // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
-                Heart(n, liked, nav.social, onLike)
+                // Feed 2: no counts in a list (the post itself has them, a tap in).
+                Heart(n, liked, nav.social, onLike, showCounts = full || nav.social.feedVersion.collectAsState().value == 1)
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
                 // Repost: public, so never one tap; a small menu says so first.

@@ -21,7 +21,8 @@ object FeedLog {
     /** The format of a line: it changes only when a field's meaning does. */
     const val V = 1
     /** Which ranking put the lists in order, on every list logged: change it whenever Calm's ranking does. */
-    const val RANKER = "following1"
+    /** Which feed made what's logged: "following1" (Feed 1) or "following2" (Feed 2); set by Social from the switch. */
+    @Volatile var RANKER = "following2"
 
     val on = MutableStateFlow(false)
     /** The switch shows in Account › Advanced. */
