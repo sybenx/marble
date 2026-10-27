@@ -653,6 +653,9 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             .filter { chip == "news" || it.topic in followedTopics }.take(60)
     }
     val savedLinks by social.saved.collectAsState()
+    // What's kept in Notes, by link: the bookmark under a post or story in Following is filled for these.
+    val laterItems by social.later.items.collectAsState()
+    val keptUrls = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
     // Following: your people's posts with the news in among them, a story after every third post (the news topic only,
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
     val news = remember(all, dismissed) { cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
@@ -708,7 +711,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             if (x is cc.aaro.cosign.TopicCard) return@items NewsCard(x, social, nav)
             val p = x as cc.aaro.cosign.Pick
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
-                saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
+                saved = if (pane) social.postLink(p.e) in keptUrls else p.e.id in saved,
+                onSave = { if (pane) social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") else social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
         }
         if (shown.isNotEmpty() && !feed.loading && !pane) item(key = "end") {
             HorizontalDivider(color = Vault.Edge)
@@ -787,16 +791,14 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
                                 .putExtra(android.content.Intent.EXTRA_TEXT, c.url).putExtra(android.content.Intent.EXTRA_SUBJECT, c.title), null))
                         })
                         // Save: into your notes (private), as the bookmark on a page does.
-                        DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, {
-                            menu = false; if (!kept) { FeedLog.act("t:" + c.id, "save"); social.later.savePage(c.url, c.title) }
-                        })
+                        DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, { menu = false; if (!kept) social.keepStory(c) })
                     }
                 }
             }
         }
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp))
-        Row(Modifier.offset(x = (-9).dp).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().offset(x = (-9).dp).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClickLabel = "React") { picking = !picking }, contentAlignment = Alignment.Center) {
                 when (mine) {
                     null -> Icon(Glyphs.heart, "React", tint = Vault.Muted, modifier = Modifier.size(20.dp))
@@ -807,6 +809,11 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
             if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
                 for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
             } else Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
+            // Keep it in Notes (filled once it's there); again, not.
+            Spacer(Modifier.weight(1f))
+            val kept = social.later.items.collectAsState().value.any { it.url == c.url && it.deleted == null }
+            Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept in your notes" else "Keep in your notes", tint = if (kept) Vault.Accent else Vault.Muted,
+                modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable { social.keepStory(c) }.padding(10.dp))
         }
     }
 }

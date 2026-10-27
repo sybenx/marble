@@ -1208,6 +1208,29 @@ class Social private constructor(private val phone: Phone, context: Context) {
         message.value = "Less like this from now on."
     }
 
+    /** A post's own link (what keeping it in Notes keeps): the same every time (no relay hints, which change). */
+    fun postLink(e: Event) = "https://njump.me/" + nevent(e.id, e.pubkey, e.kind, emptyList())
+
+    /**
+     * The bookmark under a post in Following: kept in Notes (who wrote it, and its words), or, tapped again, not. Keeping
+     * is a strong yes for what it's about.
+     */
+    fun keepPost(e: Event, author: String) {
+        val url = postLink(e)
+        later.items.value.firstOrNull { it.url == url && it.deleted == null }?.let { FeedLog.act(e.id, "unkeep"); later.remove(it); return }
+        FeedLog.act(e.id, "keep", "author" to e.pubkey)
+        interests.learn(TopicGuess.of(e).take(2), 1.0)
+        later.keep(author, url, e.content.trim().take(2000).ifEmpty { null })
+    }
+
+    /** The bookmark on a news story: kept in Notes (its headline and link), or, tapped again, not. */
+    fun keepStory(c: TopicCard) {
+        later.items.value.firstOrNull { it.url == c.url && it.deleted == null }?.let { FeedLog.act("t:" + c.id, "unkeep"); later.remove(it); return }
+        FeedLog.act("t:" + c.id, "keep", "topic" to c.topic, "src" to c.sourceId)
+        interests.learn(listOf(storyTopic(c)), 1.0)
+        later.savePage(c.url, c.title)
+    }
+
     /** "Not interested" in one story: it goes, and only it (one story says little about its topic or its site). */
     fun notInterested(c: TopicCard) {
         FeedLog.act("t:" + c.id, "notInterested", "topic" to c.topic, "src" to c.sourceId)
