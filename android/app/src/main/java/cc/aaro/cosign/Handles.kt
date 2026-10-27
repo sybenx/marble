@@ -19,7 +19,7 @@ object Handles {
         data class Address(val name: String, val domain: String) : Kind()
         /** @name.bsky.social, @domain.tld: Bluesky. */
         data class Bsky(val handle: String) : Kind()
-        /** @name: a Nostr person, only one whose NIP-05 is that name and checks out. */
+        /** @name: only someone you follow, called that. Never from open search, which ranks impersonators. */
         data class Name(val name: String) : Kind()
     }
 
@@ -54,7 +54,8 @@ object Handles {
             is Kind.Address -> coroutineScope {
                 val nostr = async { nip05(k.name, k.domain) }
                 val fedi = async { fediverse(k.name, k.domain) }
-                listOfNotNull(nostr.await()?.let { Row(pubkey = it) }, fedi.await())
+                // (The Nostr row waits a moment for their name and picture, so it doesn't change once it's there.)
+                listOfNotNull(nostr.await()?.also { profiles(listOf(it)) }?.let { Row(pubkey = it) }, fedi.await())
             }
             is Kind.Bsky -> listOfNotNull(bluesky(k.handle))
             is Kind.Name -> named(k.name, social)
@@ -112,22 +113,29 @@ object Handles {
     }
 
     /**
-     * Whether [nip05] is [name]'s own address: its name is that name, or it's _@ on a domain named that ("_@rosa.example"
-     * for @rosa). A display name never counts: anyone can call themselves elonmusk, and get some address for it.
+     * @name among [follows]: someone called that (their name, or their NIP-05's name part), at most two. Signed out,
+     * or nobody you follow by that name: none. A display name or a NIP-05 from open search proves nothing: anyone can
+     * call themselves elonmusk, and get an address somewhere.
      */
-    fun namesIt(nip05: String?, name: String): Boolean {
-        val (local, domain) = nip05?.trim()?.lowercase()?.split('@')?.takeIf { it.size == 2 }?.let { it[0] to it[1] } ?: return false
-        val n = SearchRank.norm(name).ifEmpty { return false }
-        return SearchRank.norm(local) == n || (local == "_" && SearchRank.norm(domain.substringBefore('.')) == n)
+    fun followed(name: String, follows: Set<String>?, known: Map<String, Person>): List<String> {
+        val n = SearchRank.norm(name).ifEmpty { return emptyList() }
+        return follows.orEmpty().filter { pk ->
+            val p = known[pk] ?: return@filter false
+            SearchRank.norm(p.name ?: "") == n || SearchRank.norm(p.nip05?.substringBefore('@')?.takeIf { it != "_" } ?: "") == n
+        }.sorted().take(2)
     }
 
-    /** @name: someone Nostr search finds whose NIP-05 is that name ([namesIt]) and checks out. */
     private suspend fun named(name: String, social: Social): List<Row> {
-        social.search(name)
-        var f = social.found.value
-        for (i in 0 until 40) { f = social.found.value; if (f != null && f.query == name && !f.loading) break; kotlinx.coroutines.delay(100) }
-        if (f == null || f.query != name) return emptyList()
-        val known = People.known.value
-        return f.people.take(20).filter { pk -> namesIt(known[pk]?.nip05, name) }.filter { pk -> Nip05.check(pk, known[pk]?.nip05) == Nip05.Check.OK }.take(2).map { Row(pubkey = it) }
+        val follows = social.follows.value ?: return emptyList()
+        profiles(follows)
+        return followed(name, follows, People.known.value).map { Row(pubkey = it) }
+    }
+
+    /** Their names and pictures, asked for and waited on a moment (1.5 s at most). */
+    private suspend fun profiles(pks: Collection<String>) {
+        val missing = pks.filter { it !in People.known.value }
+        if (missing.isEmpty()) return
+        People.want(missing)
+        for (i in 0 until 15) { if (missing.all { it in People.known.value }) break; kotlinx.coroutines.delay(100) }
     }
 }

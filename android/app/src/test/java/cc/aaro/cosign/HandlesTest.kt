@@ -32,15 +32,21 @@ class HandlesTest {
         assertNull(Handles.kind("example.com"))
     }
 
-    @Test fun aNameCountsOnlyByItsOwnAddress() {
-        assertTrue(Handles.namesIt("rosa@nostr.example", "rosa"))
-        assertTrue(Handles.namesIt("_@both.test", "both"))
-        assertTrue(Handles.namesIt("Rosa@Nostr.example", "rosa"))
-        // A lookalike with a verified address of its own isn't @elonmusk.
-        assertFalse(Handles.namesIt("elonmusk85836@divine.video", "elonmusk"))
-        assertFalse(Handles.namesIt("_@divine.video", "elonmusk"))
-        assertFalse(Handles.namesIt(null, "rosa"))
-        assertFalse(Handles.namesIt("npub1abc", "rosa"))
+    @Test fun aBareNameIsOnlySomeoneYouFollow() {
+        val rosa = "a".repeat(64); val alice = "b".repeat(64); val fake = "c".repeat(64)
+        val known = mapOf(
+            rosa to Person(rosa, "Rosa", null, null, "rosa@nostr.example", 0),
+            alice to Person(alice, "alice", null, null, null, 0),
+            fake to Person(fake, "Elonmusk", null, null, "elonmusk85836@divine.video", 0),
+        )
+        assertEquals(listOf(rosa), Handles.followed("rosa", setOf(rosa, fake), known))
+        assertEquals(emptyList<String>(), Handles.followed("rosa", null, known))            // signed out
+        assertEquals(emptyList<String>(), Handles.followed("alice", setOf(rosa), known))    // not followed
+        assertEquals(emptyList<String>(), Handles.followed("elonmusk", null, known))
+        assertEquals(emptyList<String>(), Handles.followed("elonmusk", setOf(rosa), known))
+        // By their NIP-05's name too (followed, so it's who you meant).
+        val bob = "d".repeat(64)
+        assertEquals(listOf(bob), Handles.followed("bob", setOf(bob), known + (bob to Person(bob, "Robert", null, null, "bob@example.com", 0))))
     }
 
     @Test fun aHandleIsNeverASite() {
