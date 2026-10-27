@@ -2098,10 +2098,20 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val pasted = remember(t) { Ref.parse(t) }
     // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
-    val atPeople = t.startsWith("@") && t.length > 1
+    // A handle (alice@example.com, @name.bsky.social, @name): rows for what a quick lookup confirms, once it's whole and
+    // you've stopped typing (at once for a paste). "@" is no mode: Enter searches the web all the same.
+    val handle = remember(t) { cc.aaro.cosign.Handles.kind(t) }
+    val pastedIn = remember { booleanArrayOf(false) }
+    val handleRows by produceState(emptyList<cc.aaro.cosign.Handles.Row>(), handle) {
+        value = emptyList()
+        val k = handle ?: return@produceState
+        if (!pastedIn[0]) delay(600)
+        value = cc.aaro.cosign.Handles.look(k, social)
+        cc.aaro.cosign.People.want(value.mapNotNull { it.pubkey })
+    }
     // "Search posts" for what you typed: only for accounts that follow people, unless set otherwise.
     var posts by remember { mutableStateOf(false) }
-    LaunchedEffect(t) { if (!atPeople) posts = false }
+    LaunchedEffect(t) { posts = false }
     val showPostsRow = when (postsPref) { "always" -> true; "never" -> false; else -> !follows.isNullOrEmpty() }
     val saved = remember(laterItems, t) { social.later.saved(t) }
     // The bookmark keeps what you typed as a note; tapped again straight after, it's taken back.
@@ -2126,22 +2136,19 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
-            atPeople -> social.search(t.drop(1))
             site?.sure == true -> goTo(site)
-            Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
             else -> searchFor(t)
         }
     }
-    // People as you type after @; posts only once asked.
+    // Posts only once asked.
     LaunchedEffect(t, posts) {
-        if (atPeople) { delay(300); if (social.found.value?.query != t.drop(1)) social.search(t.drop(1)) }
-        else if (posts && t.length >= 2) { if (social.found.value?.query != t) social.search(t) }
+        if (posts && t.length >= 2) { if (social.found.value?.query != t) social.search(t) }
         else if (pasted != null || t.isEmpty()) social.clearSearch()
     }
     // Your engine's suggestions: asked straight from the phone, after a short pause.
     val suggestions by produceState(emptyList<String>(), t, engine, suggestOn) {
         value = emptyList()
-        if (!suggestOn || t.length < 2 || pasted != null || atPeople) return@produceState
+        if (!suggestOn || t.length < 2 || pasted != null) return@produceState
         delay(150)
         value = engine.suggest(t)
     }
@@ -2152,6 +2159,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         Spacer(Modifier.width(6.dp))
         TextField(
             androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v ->
+                pastedIn[0] = v.text.length - q.length > 1
                 // Typed over the whole search, or emptied: a new search from here.
                 if (v.text != q && (v.text.isEmpty() || (q.isNotEmpty() && sel.min == 0 && sel.max == q.length))) SearchText.search.value = null
                 sel = v.selection; q = v.text
@@ -2166,7 +2174,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             trailingIcon = { if (q.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
                 // Clear: the whole search, in one tap.
                 Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0); SearchText.search.value = null }.padding(8.dp))
-                if (t.isNotEmpty() && pasted == null && !atPeople) {
+                if (t.isNotEmpty() && pasted == null) {
                     Icon(if (saved != null) Glyphs.saveOn else Glyphs.save, if (saved != null) "Kept as a note" else "Keep as a note", tint = Vault.Accent,
                         modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = save).padding(9.dp))
                     GoChip { go() }
@@ -2181,13 +2189,17 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     Box(Modifier.fillMaxSize()) {
         when {
             pasted != null -> LinkResults(pasted, social, nav)
-            atPeople || posts -> MarbleResults(found, people, liked, social, nav, peopleOnly = atPeople)
+            posts -> MarbleResults(found, people, liked, social, nav, peopleOnly = false)
             t.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
                 items(own, key = { "o:" + it.first }) { (text, _) -> OwnRow(text, null, "") { q = text; searchFor(text) } }
             }
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                 site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
                 site?.takeIf { it.sure }?.let { item(key = "search") { DropRow(t, null, onFill = null) { searchFor(t) } } }
+                items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
+                    if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
+                    else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
+                }
                 items(own, key = { "o:" + it.first }) { (text, note) ->
                     OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else { q = text; searchFor(text) } }
                 }
@@ -2508,6 +2520,21 @@ private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
     Column(Modifier.weight(1f)) {
         Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** A handle's page elsewhere ("Open on Mastodon", "Open on Bluesky"): their picture, then who. */
+@Composable
+private fun HandleRow(r: cc.aaro.cosign.Handles.Row, onOpen: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+) {
+    NetImage(r.picture, Modifier.size(40.dp).clip(CircleShape), 120) {
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp)) }
+    }
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)) {
+        Text(r.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (r.sub.isNotEmpty()) Text(r.sub, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

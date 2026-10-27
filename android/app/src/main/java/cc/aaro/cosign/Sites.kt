@@ -55,7 +55,8 @@ object Sites {
 
     fun match(typed: String): Go? {
         val q = typed.trim()
-        if (q.isEmpty() || q.contains(' ')) return null
+        // (Anything with an @ is a handle or an email, never a site.)
+        if (q.isEmpty() || q.contains(' ') || q.contains('@')) return null
         // An address: lemmy.world, example.com/page.
         ADDRESS.matchEntire(q)?.let { m ->
             val host = m.groupValues[1].lowercase()
