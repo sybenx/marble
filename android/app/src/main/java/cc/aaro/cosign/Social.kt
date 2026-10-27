@@ -933,13 +933,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * Today's marble, kept: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it. Quietly;
-     * tried again on later opens the same UTC day if the issuer isn't there or says no.
+     * Today's marble, claimed: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it,
+     * privately (the issuer only signs and returns it; nothing is published). Quietly; tried again on later opens the
+     * same UTC day if the issuer isn't there or says no.
      */
     fun claimToday() {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
         val id = "marble-$today"
-        if (kept.all.value[id]?.let { it.award == null } != true || claiming) return
+        if (kept.all.value[id]?.let { it.here && it.award == null } != true || claiming) return
         val issuer = cc.aaro.cosign.ui.Daily.issuer ?: return
         claiming = true
         scope.launch {

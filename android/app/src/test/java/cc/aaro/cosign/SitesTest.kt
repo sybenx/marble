@@ -1,25 +1,22 @@
 package cc.aaro.cosign
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Enter goes to a site only when what's typed is an address; a bare name searches (with a row to go there). */
+/** Enter goes to a site only when what's typed is an address; a bare name only searches. */
 class SitesTest {
     @Test fun aBareNameSearches() {
-        val apple = Sites.match("apple")!!
-        assertFalse(apple.sure)
-        assertEquals("apple.com", apple.address)
-        assertFalse(Sites.match("youtube")!!.sure)
+        assertNull(Sites.match("apple"))
+        assertNull(Sites.match("youtube"))
+        assertNull(Sites.match("goo"))
     }
 
     @Test fun anAddressGoes() {
-        assertTrue(Sites.match("apple.com")!!.sure)
-        assertTrue(Sites.match("lemmy.world")!!.sure)
+        assertEquals("apple.com", Sites.match("apple.com")!!.address)
+        assertEquals("https://lemmy.world", Sites.match("lemmy.world")!!.url)
         assertEquals("https://github.com/sybenx", Sites.match("github.com/sybenx")!!.url)
-        assertTrue(Sites.match("https://example.org/a")!!.sure)
+        assertEquals("example.org", Sites.match("https://example.org/a")!!.address)
         // Not addresses: a file name, words.
         assertNull(Sites.match("node.js"))
         assertNull(Sites.match("apple pie"))

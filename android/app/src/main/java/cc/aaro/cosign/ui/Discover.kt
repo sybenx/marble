@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -1021,15 +1022,37 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
                 translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p + pan.x
                 translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p + pan.y
             })
-        // Its name, in a small chip under it. The first look of the (UTC) day collects it: the chip springs in and a
-        // little gold flares off its star, with a tick you feel. After that, or with animations off, just the chip.
-        // Only today's is kept, and only by looking at it big (no button, no word); one you kept opens just to look at.
-        val first = remember { big.marble == null && Marbles.shift == 0L && social.kept.keep(Daily.utcDate()) }
-        // Kept today (now or before): its award, quietly.
-        LaunchedEffect(Unit) { if (big.marble == null) social.claimToday() }
-        val count = social.kept.all.collectAsState().value.size
-        NameChip(marble.name, big.date ?: java.time.LocalDate.now(java.time.ZoneOffset.UTC), flourish = first && !still, count = count.takeIf { it > 0 },
-            onClick = onShelf, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 56.dp).graphicsLayer { alpha = shown.value })
+        // Its name, in a small chip under it. Looking keeps nothing: today's has "Claim this Marble" under it, on its
+        // (UTC) day only, and claiming adds it to your marbles, privately: the chip springs in again and a little gold
+        // flares off its star, with a tick you feel. One of yours opens just to look at, with a trash can to take it off.
+        val all by social.kept.all.collectAsState()
+        val day = remember { Daily.utcDate() }
+        val todays = big.marble == null && Marbles.shift == 0L
+        val claimed = all["marble-$day"]?.here == true
+        var flourish by remember { mutableStateOf(false) }
+        var removing by remember { mutableStateOf(false) }
+        Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp).graphicsLayer { alpha = shown.value }, horizontalAlignment = Alignment.CenterHorizontally) {
+            androidx.compose.runtime.key(flourish) {
+                NameChip(marble.name, big.date ?: java.time.LocalDate.parse(day), flourish = flourish && !still, count = all.values.count { it.here }.takeIf { it > 0 }, onClick = onShelf, modifier = Modifier)
+            }
+            if (todays && !claimed && Daily.utcDate() == day) {
+                Spacer(Modifier.height(14.dp))
+                Text("Claim this Marble", color = Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround)
+                        .clickable { if (social.kept.keep(day)) flourish = true; social.claimToday() }.padding(horizontal = 18.dp, vertical = 9.dp))
+            }
+            if (!todays && big.date != null && all["marble-${big.date}"]?.here == true) {
+                Spacer(Modifier.height(10.dp))
+                IconButton({ removing = true }) { Icon(androidx.compose.material.icons.Icons.Outlined.Delete, "Remove from your marbles", tint = Vault.Muted, modifier = Modifier.size(22.dp)) }
+            }
+        }
+        if (removing) AlertDialog(
+            onDismissRequest = { removing = false },
+            title = { Text("Remove ${marble.name}?") },
+            confirmButton = { TextButton({ removing = false; social.kept.remove("marble-${big.date}"); close() }) { Text("Remove", color = Vault.Danger) } },
+            dismissButton = { TextButton({ removing = false }) { Text("Keep") } },
+            containerColor = Vault.Surface,
+        )
     }
 }
 
@@ -1123,7 +1146,7 @@ private fun MarbleArt(marble: Marble, description: String?, modifier: Modifier) 
 }
 
 /**
- * Your marbles: the ones you kept, newest first, a month at a time, each with its name and date. Only what you
+ * Your marbles: the ones you claimed, newest first, a month at a time, each with its name and date. Only what you
  * have: no gaps, no counts of days missed. A tap opens one big.
  */
 @Composable
@@ -1132,11 +1155,11 @@ private fun ShelfScreen(social: Social, nav: Nav, onOpen: (androidx.compose.ui.g
     LaunchedEffect(Unit) { Daily.loadNights(context) }
     val kept by social.kept.all.collectAsState()
     val nights by Daily.nights.collectAsState()
-    val days = remember(kept) { kept.keys.mapNotNull { runCatching { java.time.LocalDate.parse(cc.aaro.cosign.Kept.dateOf(it)) }.getOrNull() }.sortedDescending() }
+    val days = remember(kept) { kept.filterValues { it.here }.keys.mapNotNull { runCatching { java.time.LocalDate.parse(cc.aaro.cosign.Kept.dateOf(it)) }.getOrNull() }.sortedDescending() }
     TopBar(null, nav)
     Text("Your marbles", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 20.dp, top = 4.dp))
     Text(if (days.size == 1) "1 marble" else "${days.size} marbles", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 20.dp, bottom = 6.dp))
-    if (days.isEmpty()) return@Column Text("Tap today's marble to look at it big, and it's yours.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    if (days.isEmpty()) return@Column Text("Nothing yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
     val months = remember(days) { days.groupBy { it.withDayOfMonth(1) } }
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(androidx.compose.foundation.lazy.grid.GridCells.Adaptive(104.dp), Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp)) {
@@ -1574,22 +1597,6 @@ private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
                 else items(l, key = { it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 8); HorizontalDivider(color = Vault.Edge) }
             }
         }
-    }
-}
-
-/** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
-@Composable
-private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClickLabel = "Open in your browser", onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    Box(Modifier.size(40.dp).background(Vault.Surface, CircleShape).border(1.dp, Vault.Edge, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
-    }
-    Spacer(Modifier.width(14.dp))
-    Column(Modifier.weight(1f)) {
-        Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -2085,7 +2092,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val t = q.trim()
     // A pasted link to someone or a post: their page of results, here (see LinkResults).
     val pasted = remember(t) { Ref.parse(t) }
-    // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
+    // An address: "Go to …", and Enter opens it. A bare word searches.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
     val atPeople = t.startsWith("@") && t.length > 1
     // "Search posts" for what you typed: only for accounts that follow people, unless set otherwise.
@@ -2103,7 +2110,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         when {
             t.isEmpty() || pasted != null -> {}
             atPeople -> social.search(t.drop(1))
-            site?.sure == true -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
+            site != null -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
             else -> searchFor(t)
         }
@@ -2158,9 +2165,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             }
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                 // What Enter does, first.
-                item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
-                site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
-                site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
+                item(key = "enter") { DropRow(t, if (site != null) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
+                site?.let { item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
                 items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
