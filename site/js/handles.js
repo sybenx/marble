@@ -2,8 +2,9 @@
 // box does: "@elonmusk" is a search, not a mode). Only what can be confirmed cheaply gets a row:
 //   name@domain.tld, @name@domain.tld  someone's Nostr address (NIP-05) and a fediverse account (WebFinger), asked at once
 //   @name.bsky.social, @domain.tld     a Bluesky handle (its public profile)
-//   @name                              someone on Nostr with exactly that name and an address (NIP-05) that checks out
-//                                      (a name alone proves nothing: "@elonmusk" finds accounts calling themselves that)
+//   @name                              someone on Nostr whose address (NIP-05) is that name (name@… or _@name.…) and
+//                                      checks out (a display name, or an address anyone can get, proves nothing:
+//                                      "@elonmusk" finds "Elonmusk · elonmusk85836@divine.video", verified)
 // An email is neither of the first two, so it gets no row. Asking reveals the address to that site, so only an address
 // that looks complete (a dot and an ending after the @) is asked about, once (kept for the visit), after typing stops.
 import { resolveNip05, wantProfile } from "./data.js";
@@ -53,12 +54,15 @@ async function nostrAddress({ name, domain }) {
   return { kind: "person", pubkey: r.pubkey, sub: name === "_" ? domain : address };
 }
 
-// Someone on Nostr whose name (or address) is exactly this, and whose address checks out; a looser match, or a name
-// anyone could take, isn't worth a row.
+// Someone on Nostr whose address is this name (name@domain, or _@ a domain named it), and checks out; a display name,
+// or a name with digits added at a site that hands out addresses, isn't worth a row.
 async function nostrName(name) {
   const n = normalizeName(name), text = (s) => (typeof s === "string" ? s : "");
   const found = await searchPeople(name, { limit: 5, signal: AbortSignal.timeout(4000) }).catch(() => []);
-  const exact = found.filter((p) => text(p.nip05) && [p.display_name, p.name, text(p.nip05).split("@")[0]].some((x) => normalizeName(text(x)) === n));
+  const exact = found.filter((p) => {
+    const [local, domain = ""] = text(p.nip05).toLowerCase().split("@");
+    return normalizeName(local) === n || (local === "_" && normalizeName(domain.split(".")[0]) === n);
+  });
   for (const p of exact.slice(0, 3)) {
     if (!(await verifyNip05(p.nip05, p.pubkey, WAIT))) continue;
     wantProfile(p.pubkey);
@@ -76,9 +80,12 @@ async function fediverse({ name, domain }) {
   const self = links.find((l) => l?.rel === "self" && /activity\+json|ld\+json/.test(l.type || "") && https(l.href))?.href;
   if (!page && !self) return null;
   const [runs, actor] = await Promise.all([software(domain), self ? json(self, "application/activity+json") : null]);
-  const url = page || (https(actor?.url) ? actor.url : self);
-  const picture = [actor?.icon].flat().map((i) => i?.url).find(https) || null;
-  return { kind: "web", label: `Open on ${runs || domain}`, url, name: plain(actor?.name) || null, picture, sub: `@${name}@${domain}` };
+  // many servers answer only signed requests for the account itself (mastodon.social): Mastodon's public lookup then
+  // (also on GoToSocial and Akkoma); elsewhere the row has no name or picture
+  const shown = actor || (await json(`https://${domain}/api/v1/accounts/lookup?acct=${encodeURIComponent(name)}`));
+  const url = page || (https(shown?.url) ? shown.url : self);
+  const picture = [shown?.icon].flat().map((i) => i?.url).concat(shown?.avatar).find(https) || null;
+  return { kind: "web", label: `Open on ${runs || domain}`, url, name: plain(shown?.name || shown?.display_name) || null, picture, sub: `@${name}@${domain}` };
 }
 const SOFTWARE = { mastodon: "Mastodon", pleroma: "Pleroma", akkoma: "Akkoma", misskey: "Misskey", sharkey: "Sharkey", gotosocial: "GoToSocial",
   pixelfed: "Pixelfed", friendica: "Friendica", lemmy: "Lemmy", firefish: "Firefish", iceshrimp: "Iceshrimp", hometown: "Hometown", peertube: "PeerTube", threads: "Threads" };
