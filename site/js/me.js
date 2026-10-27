@@ -19,9 +19,9 @@ if (!isHex64(state?.pubkey)) state = null;
 let remote = null; // the phone connection, made when first needed (at once if it came from a code: see watch)
 const listeners = new Set();
 export const onMe = (fn) => listeners.add(fn);
-let lost = () => {};
+const lost = new Set();
 /** fn() when you're signed out because someone else answered the code you signed in with (see watch). */
-export const onLost = (fn) => (lost = fn);
+export const onLost = (fn) => lost.add(fn);
 export const current = () => state?.pubkey || null;
 export const method = () => state?.method || null;
 /** Whether a browser extension is here to sign in with. Extensions may arrive a moment after the page. */
@@ -58,7 +58,7 @@ function watch(r) {
   r.onIntruder = () => {
     if (remote !== r) return;
     set(null);
-    lost();
+    lost.forEach((fn) => fn());
   };
   r.start();
 }
