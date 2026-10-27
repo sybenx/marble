@@ -767,13 +767,27 @@ private fun share(context: android.content.Context, text: String, subject: Strin
  * A news story among your people's posts: its picture, where it's from and when, and the headline. Under it, a heart
  * (a tap: the six reactions; sent as a reaction to the page) and a comment (a public post with the story's link).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val mine = social.pageReactions.collectAsState().value[c.url]
     var picking by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
+    // Held: folded into one quiet row ("seen it, keep it"); a tap on the row opens the story, holding it again unfolds it.
+    val folded = c.id in cc.aaro.cosign.FoldedStories.ids.collectAsState().value
+    val fold = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); cc.aaro.cosign.FoldedStories.toggle(c.id) }
+    val open = { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }
+    if (folded) return Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = fold, onClick = open).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        NetImage(c.image, Modifier.size(32.dp).clip(RoundedCornerShape(6.dp)), 96, ground = Vault.Surface)
+        Spacer(Modifier.width(12.dp))
+        Text(c.title, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
+        Text(c.sourceName, color = Vault.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
+    Column(Modifier.fillMaxWidth().combinedClickable(onLongClick = fold, onClick = open).padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
         if (c.image != null) NetImage(c.image, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), 900, ground = Vault.Surface)
         Row(Modifier.padding(top = if (c.image != null) 4.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))

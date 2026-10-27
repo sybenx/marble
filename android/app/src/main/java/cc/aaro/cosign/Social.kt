@@ -110,11 +110,26 @@ fun naddr(d: String, author: String, kind: Int): String {
 fun marbleLink(e: Event): String = "https://marble.syb.lol/" +
     if (e.kind in 30000..39999) naddr(e.firstTag("d") ?: "", e.pubkey, e.kind) else nevent(e.id, e.pubkey, e.kind, emptyList())
 
-/** The post a marble.syb.lol link (or note1/nevent1 in one) stands for, if that's what it is. */
-fun marblePost(url: String): String? {
+/** What a marble.syb.lol link names: a post or someone (/nevent1…, /note1…, /npub1…, /nprofile1…, and the older /e/… and /p/…). */
+fun marbleRef(url: String): Ref? {
     val u = try { android.net.Uri.parse(url) } catch (_: Exception) { return null }
     if (u.host?.removePrefix("www.") != "marble.syb.lol") return null
-    return (Ref.parse(u.path?.trim('/') ?: return null) as? Ref.Note)?.id
+    return Ref.parse(u.lastPathSegment ?: return null)
+}
+
+/** The post a marble.syb.lol link stands for, if that's what it is. */
+fun marblePost(url: String): String? = (marbleRef(url) as? Ref.Note)?.id
+
+/** Folded news stories ("seen, but keep it"): small rows in Following, kept across restarts. Not a ranking signal. */
+object FoldedStories {
+    private fun prefs() = CosignApp.instance.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE)
+    val ids = kotlinx.coroutines.flow.MutableStateFlow(try { prefs().getStringSet("folded", emptySet())!!.toSet() } catch (_: Exception) { emptySet() })
+    fun toggle(id: String) {
+        val on = id !in ids.value
+        ids.value = if (on) (ids.value + id).toList().takeLast(1000).toSet() else ids.value - id
+        prefs().edit().putStringSet("folded", ids.value).apply()
+        FeedLog.act("t:$id", if (on) "seen" else "unseen")
+    }
 }
 
 fun shortNpub(pk: String) = try { Nip19.npub(pk).let { it.drop(5).take(6) + "…" + it.takeLast(4) } } catch (_: Exception) { pk.take(8) }
