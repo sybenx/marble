@@ -44,6 +44,10 @@ class HandlesTest {
         assertEquals(emptyList<String>(), Handles.followed("alice", setOf(rosa), known))    // not followed
         assertEquals(emptyList<String>(), Handles.followed("elonmusk", null, known))
         assertEquals(emptyList<String>(), Handles.followed("elonmusk", setOf(rosa), known))
+        // A verified elonmusk@ on an open host, or _@elonmusk.xyz, in the pool but not followed: still none.
+        val open = "e".repeat(64); val root = "f".repeat(64)
+        val pool = known + (open to Person(open, "Elon Musk", null, null, "elonmusk@open.host", 0)) + (root to Person(root, "elonmusk", null, null, "_@elonmusk.xyz", 0))
+        assertEquals(emptyList<String>(), Handles.followed("elonmusk", setOf(rosa), pool))
         // By their NIP-05's name too (followed, so it's who you meant).
         val bob = "d".repeat(64)
         assertEquals(listOf(bob), Handles.followed("bob", setOf(bob), known + (bob to Person(bob, "Robert", null, null, "bob@example.com", 0))))
