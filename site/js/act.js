@@ -33,6 +33,8 @@ const box = $(".si", dialog);
 let attempt = 0; // a newer attempt makes an older one's late answer count for nothing
 let phoneAbort = null;
 const spinner = `<span class="spinner" aria-hidden="true"></span>`;
+/** On a phone or tablet (touch first): the sign-in code is opened in Marble on this device, not scanned. */
+const onPhone = () => matchMedia("(pointer: coarse)").matches && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 export function openSignIn() {
   if (!dialog.open) dialog.showModal();
@@ -89,6 +91,14 @@ async function withPhone() {
       signal: ctrl.signal,
       onCode: (uri, svg) => {
         if (mine !== attempt) return;
+        // On the phone itself a code to scan can't be scanned: the code is a link that opens Marble instead,
+        // and the picture is there for signing in with another phone.
+        if (onPhone()) return view(`<h2 id="si-title">Sign in</h2>
+          <a class="si-button si-open" href="${esc(uri)}" data-si="open">Sign in with Marble</a>
+          <p class="si-wait" hidden>${spinner}Waiting for Marble…</p>
+          <div class="qr" hidden>${svg}</div>
+          <div class="si-actions"><button type="button" class="link" data-si="qr">Show code</button>
+            <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
         view(`<h2 id="si-title">Sign in with your phone</h2>
           <div class="qr">${svg}</div>
           <p>Open Marble on your phone, tap Scan, and scan this code.</p>
@@ -113,6 +123,8 @@ dialog.addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-si]");
   if (!b) return;
   const what = b.dataset.si;
+  if (what === "open") { $(".si-wait", box).hidden = false; return; } // the link opens Marble; this page waits for it
+  if (what === "qr") { $(".qr", box).hidden = false; b.remove(); return; }
   if (what === "close") close();
   else if (what === "phone") withPhone();
   else if (what === "extension") withExtension();

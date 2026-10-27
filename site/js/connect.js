@@ -63,6 +63,28 @@ export { conversationKey };
 
 // ── NIP-46 ───────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Waits for answers (kind 24133) to pk, from `since()`. A phone drops a page's connections while it's in the
+ * background (you went to Marble to approve), so when the page is back, it asks again from the same time.
+ */
+function listen(relays, pk, since, onEvent) {
+  let close = subscribe(relays, { kinds: [24133], "#p": [pk], since: since() }, onEvent);
+  const again = () => {
+    if (document.visibilityState !== "visible") return;
+    close();
+    close = subscribe(relays, { kinds: [24133], "#p": [pk], since: since() }, onEvent);
+  };
+  document.addEventListener("visibilitychange", again);
+  addEventListener("pageshow", again);
+  addEventListener("online", again);
+  return () => {
+    close();
+    document.removeEventListener("visibilitychange", again);
+    removeEventListener("pageshow", again);
+    removeEventListener("online", again);
+  };
+}
+
 /** A connection to the signer your phone set up: asks it things and waits for the answers. */
 export class Remote {
   constructor({ sk, signer, relays }) {
@@ -77,7 +99,9 @@ export class Remote {
     const { schnorr } = await load();
     this.pk = toHex(schnorr.getPublicKey(this.sk));
     this.key = await conversationKey(this.sk, this.signer);
-    this.close = subscribe(this.relays, { kinds: [24133], "#p": [this.pk], since: now() - 30 }, async (e) => {
+    // From the oldest question still waiting (asked again when the page comes back), else from now.
+    const since = () => Math.min(now(), ...[...this.waiting.values()].map((w) => w.at)) - 30;
+    this.close = listen(this.relays, this.pk, since, async (e) => {
       if (e.pubkey !== this.signer) return;
       let msg;
       try { msg = JSON.parse(await decrypt(e.content, this.key)); } catch { return; }
@@ -94,7 +118,7 @@ export class Remote {
     const content = await encrypt(JSON.stringify({ id, method, params }), this.key);
     const ev = signWith(this.sk, { kind: 24133, created_at: now(), tags: [["p", this.signer]], content }, { schnorr, sha256 });
     const answer = new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject });
+      this.waiting.set(id, { resolve, reject, at: now() });
       setTimeout(() => { if (this.waiting.delete(id)) reject(new Error("timeout")); }, timeout);
     });
     publish(this.relays, ev);
@@ -127,8 +151,9 @@ export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_e
     + `&name=Marble&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}`;
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
+  const asked = now() - 30;
   const signer = await new Promise((resolve, reject) => {
-    const close = subscribe(relays, { kinds: [24133], "#p": [pk], since: now() - 30 }, async (e) => {
+    const close = listen(relays, pk, () => asked, async (e) => {
       try {
         const msg = JSON.parse(await decrypt(e.content, await conversationKey(sk, e.pubkey)));
         if (msg.result === secret || msg.result === "ack") { close(); resolve(e.pubkey); }

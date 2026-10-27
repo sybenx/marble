@@ -59,6 +59,13 @@ export function relays(...lists) {
 
 const sockets = new Map(); // url → Relay
 const down = new Set(); // relays that failed to connect this visit
+// A phone drops a background page's connections, and whatever it tries meanwhile fails: back on screen (or back
+// online), every relay gets another chance.
+if (typeof document !== "undefined") {
+  const again = () => { if (document.visibilityState === "visible") down.clear(); };
+  document.addEventListener("visibilitychange", again);
+  addEventListener("online", again);
+}
 let nextId = 0;
 
 class Relay {
