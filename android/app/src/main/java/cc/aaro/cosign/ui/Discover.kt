@@ -635,6 +635,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val all by social.allStories.collectAsState()
     val posts = remember(feed.posts, muted, dismissed) { feed.posts.filter { it.e.id !in dismissed && it.e.pubkey !in muted } }
     val state = listState ?: androidx.compose.foundation.lazy.rememberLazyListState()
+    val context = LocalContext.current
     LaunchedEffect(Unit) { social.loadFeed() }
     // What's been on screen stops being new: only while this list is what you're looking at.
     if (current) SeenWatcher(state, social) { listOf(it) }
@@ -712,7 +713,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             val p = x as cc.aaro.cosign.Pick
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
                 saved = if (pane) social.postLink(p.e) in keptUrls else p.e.id in saved,
-                onSave = { if (pane) social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") else social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
+                onSave = { if (pane) social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") else social.save(p.e.id, isLink = false) },
+                onShare = if (!pane) null else ({ FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) })) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
         }
         if (shown.isNotEmpty() && !feed.loading && !pane) item(key = "end") {
             HorizontalDivider(color = Vault.Edge)
@@ -752,6 +754,13 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     }
 }
 
+/** The phone's share sheet, with [text] (and [subject]). When Messages works, your contacts come first ("Send to…"). */
+private fun share(context: android.content.Context, text: String, subject: String?) {
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text)
+    subject?.let { send.putExtra(android.content.Intent.EXTRA_SUBJECT, it) }
+    try { context.startActivity(android.content.Intent.createChooser(send, null)) } catch (_: Exception) {}
+}
+
 /**
  * A news story among your people's posts: its picture, where it's from and when, and the headline. Under it, a heart
  * (a tap: the six reactions; sent as a reaction to the page) and a comment (a public post with the story's link).
@@ -785,11 +794,7 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
                         HorizontalDivider(color = Vault.Edge)
                         DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.hideSource(c) })
                         HorizontalDivider(color = Vault.Edge)
-                        DropdownMenuItem({ Text("Share", color = Vault.Text) }, {
-                            menu = false; FeedLog.act("t:" + c.id, "share")
-                            context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
-                                .putExtra(android.content.Intent.EXTRA_TEXT, c.url).putExtra(android.content.Intent.EXTRA_SUBJECT, c.title), null))
-                        })
+                        DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; FeedLog.act("t:" + c.id, "share"); share(context, c.url, c.title) })
                         // Save: into your notes (private), as the bookmark on a page does.
                         DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, { menu = false; if (!kept) social.keepStory(c) })
                     }
@@ -809,8 +814,10 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
             if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
                 for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
             } else Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
-            // Keep it in Notes (filled once it's there); again, not.
+            // Share it with someone; keep it in Notes (filled once it's there; again, not).
             Spacer(Modifier.weight(1f))
+            Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape)
+                .clickable { FeedLog.act("t:" + c.id, "share"); share(context, c.url, c.title) }.padding(11.dp))
             val kept = social.later.items.collectAsState().value.any { it.url == c.url && it.deleted == null }
             Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept in your notes" else "Keep in your notes", tint = if (kept) Vault.Accent else Vault.Muted,
                 modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable { social.keepStory(c) }.padding(10.dp))
@@ -1517,7 +1524,7 @@ private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
 @Composable
 private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav: Nav, onLike: () -> Unit, maxLines: Int = Int.MAX_VALUE, indent: Int = 0, lit: Boolean = false,
                      onReply: (() -> Unit)? = null, pick: Pick? = null, previews: Map<String, Preview> = emptyMap(), saved: Boolean = false, onSave: (() -> Unit)? = null,
-                     menu: (@Composable () -> Unit)? = null) {
+                     onShare: (() -> Unit)? = null, menu: (@Composable () -> Unit)? = null) {
     // A repost: the post it shares, under a line saying who shared it.
     if (n.kind == 6) {
         // What it reposts: carried in it, or (only pointed at) fetched once it's on screen.
@@ -1625,6 +1632,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 // Save: into your bookmarks.
                 if (onSave != null) {
                     Spacer(Modifier.weight(1f))
+                    // Share: to someone (the phone's share sheet until Messages; then your contacts first).
+                    onShare?.let { Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = it).padding(11.dp)) }
                     Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Accent else Vault.Muted,
                         modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = onSave).padding(10.dp))
                 }

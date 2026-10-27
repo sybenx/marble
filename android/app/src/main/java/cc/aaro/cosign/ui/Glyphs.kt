@@ -24,6 +24,8 @@ object Glyphs {
     val lang = line("lang", "M4 5h9M8.5 3v2M6 5c1 3.5 3.5 6 7 7.5M11 5c-1 4-3.5 7-7 8.5M13 21l4-9 4 9M14.5 18h5")
     val repost = line("repost", "M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3")
     val out = line("out", "M7 17 17 7M8 7h9v9")
+    /** Share: three dots joined. */
+    val share = line("share", "M18 2.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 15.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4")
     /** A past search: the clock. */
     val clock = line("clock", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 7v5l3.5 2")
     /** A site: the globe. */
