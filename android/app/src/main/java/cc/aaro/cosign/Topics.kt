@@ -122,7 +122,7 @@ object TopicFeeds {
             val m = x as? Map<*, *> ?: return@mapNotNull null
             val src = m["source"] as? Map<*, *> ?: return@mapNotNull null
             TopicCard(m["id"] as? String ?: return@mapNotNull null, (m["url"] as? String)?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null,
-                (m["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null, (m["summary"] as? String)?.trim().orEmpty(),
+                (m["title"] as? String)?.let(HtmlText::decode)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null, (m["summary"] as? String)?.let(HtmlText::decode)?.trim().orEmpty(),
                 (m["image"] as? String)?.takeIf { it.startsWith("https://") }, src["id"] as? String ?: "", src["name"] as? String ?: "",
                 (m["published_at"] as? Long) ?: (m["first_seen"] as? Long) ?: 0L, m["topic"] as? String ?: return@mapNotNull null,
                 Discussion.list(m["discussions"], m["url"] as String, m["discussion"]))
