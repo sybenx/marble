@@ -77,7 +77,7 @@
       || "https://duckduckgo.com/?q=" + s + "&kae=" + (dark ? "d" : "-1"));
   })();
   // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/pool.js).
-  if (/^\/(e|p|a|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
+  if (/^\/((e|p|a)\/|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
     window.marbleWarm = ["wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
       .map((u) => { try { return new WebSocket(u); } catch { return null; } }).filter(Boolean);
   }

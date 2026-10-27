@@ -2,7 +2,7 @@
 // /a/ an article, /?q= a search). One page; links change the view without reloading, and going back
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
-import { req, warm, foundOn, FAST, connectTimes } from "./pool.js";
+import { req, warm, foundOn, FAST, connectTimes, verify } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
 import { goodPosts, stories, yours, prepareMine } from "./find.js";
@@ -81,7 +81,8 @@ function route(state, back = false) {
     if (isHex64(entity)) return showEvent({ type: "event", id: entity.toLowerCase(), relays: [] }, signal, { hex: true });
     const d = decode(entity);
     if (!d) return showMissing("That link doesn't look right.");
-    if (!m[1]) return go(pathFor(entity, d), { replace: true });
+    // the older /e/…, /p/… and /a/… links show the short address (the one to share)
+    if (m[1]) history.replaceState(history.state, "", `/${entity}`);
     if (d.type === "event") return showEvent(d, signal);
     if (d.type === "profile") return showProfile(d, signal);
     return showAddress(d, signal);
@@ -247,11 +248,11 @@ async function showEvent(d, signal, { hex = false } = {}) {
   if (e.kind === 0) return go(personPath(e.pubkey), { replace: true });
   if (e.kind === 30023) return showArticle(e, signal);
   const found = foundOn(e.id);
-  if (!/^\/e\/nevent1/.test(location.pathname)) history.replaceState(history.state, "", postPath(e, found.slice(0, 2)));
+  if (!/^\/nevent1/.test(location.pathname)) history.replaceState(history.state, "", postPath(e, found.slice(0, 2)));
 
   const parent = replyTo(e), root = rootOf(e);
   pageEl.innerHTML = `<div class="thread">
-    ${root && root[1] !== parent?.[1] ? `<div class="up" data-up="${root[1]}" data-hint="${esc(root[2] || "")}"></div><a class="gap" href="/e/${note(root[1])}">…</a>` : ""}
+    ${root && root[1] !== parent?.[1] ? `<div class="up" data-up="${root[1]}" data-hint="${esc(root[2] || "")}"></div><a class="gap" href="/${note(root[1])}">…</a>` : ""}
     ${parent ? `<div class="up" data-up="${parent[1]}" data-hint="${esc(parent[2] || "")}"></div>` : ""}
     ${mainPost(e)}
     ${replyBox(e)}
@@ -540,7 +541,7 @@ function showArticle(e, signal) {
 async function showProfile(d, signal) {
   const pk = d.pubkey;
   page("view", profiles.has(pk) ? name(pk) : "Profile");
-  if (!/^\/p\/npub1/.test(location.pathname)) history.replaceState(history.state, "", personPath(pk));
+  if (!/^\/npub1/.test(location.pathname)) history.replaceState(history.state, "", personPath(pk));
   const draw = () => {
     const p = profiles.get(pk) || {};
     const banner = /^https:\/\//.test(p.banner || "") ? p.banner : "";
@@ -1200,6 +1201,10 @@ drawAccount();
 prepareMine(currentMe());
 
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
+
+// A shared link's post or person, fetched by the server with the page (worker/index.js): kept (once checked), so the
+// page shows it at once instead of asking again.
+try { for (const e of JSON.parse($("#seed")?.textContent || "[]")) if (verify(e)) keep(e); } catch {}
 
 const first = { key: "start" };
 const part = decodeURIComponent(location.hash.slice(1)); // a link to a part of a page, like /about#get (Get Marble)

@@ -149,6 +149,7 @@ export function ago(ts) {
 }
 export const fullDate = (ts) => new Date(ts * 1000).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
 
-/** The link to a post on this site, with where it was found and who wrote it, so it opens fast elsewhere too. */
-export const postPath = (e, found = []) => `/e/${nevent(e.id, { relays: found, author: e.pubkey })}`;
-export const personPath = (pk) => `/p/${npub(pk)}`;
+/** The link to a post on this site, with where it was found and who wrote it, so it opens fast elsewhere too; it's
+ *  also the link to share (marble.syb.lol/nevent1…, and /npub1… for a person). */
+export const postPath = (e, found = []) => `/${nevent(e.id, { relays: found, author: e.pubkey })}`;
+export const personPath = (pk) => `/${npub(pk)}`;

@@ -7,3 +7,4 @@ android/keystore.properties
 android/.kotlin/
 .DS_Store
 *.apk
+.wrangler/

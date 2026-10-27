@@ -1,0 +1,22 @@
+// marble.syb.lol on Cloudflare Workers: site/ as static files (any other path gets index.html, as GitHub Pages' 404.html
+// did), and worker/index.js first for shared links to posts and people (and Android's assetlinks.json).
+//   npx wrangler dev                      (http://localhost:8788; --var RELAYS:ws://localhost:10547 for a local relay)
+//   npx wrangler deploy                   (held: see the deploy notes)
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "marble-syb-lol",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-21",
+  "assets": {
+    "directory": "site",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/note1*", "/nevent1*", "/npub1*", "/nprofile1*", "/naddr1*", "/e/*", "/p/*", "/a/*", "/.well-known/assetlinks.json"]
+  },
+  "vars": {
+    // the Android app's signing certificates for App Links, "AA:BB:…" comma-separated (from the Android session)
+    "ANDROID_CERTS": ""
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 }
+  // "routes": [{ "pattern": "marble.syb.lol", "custom_domain": true }]   (held for the user's go: see the deploy notes)
+}
