@@ -170,6 +170,8 @@ private sealed class Route {
     /** Your engine's results for [q], inside Marble (its own pages only). */
     data class Results(val q: String) : Route()
     data object Later : Route()
+    /** People and posts for a search (Marble's own search, through Ditto's relays): what the row on results opens. */
+    data class PeoplePosts(val q: String) : Route()
     /** What you searched (this phone, 30 days), with the pages you opened from each. */
     data object Searches : Route()
     /** The marbles you kept. */
@@ -180,7 +182,7 @@ private sealed class Route {
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -189,6 +191,7 @@ private sealed class Route {
             s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             s.startsWith("results:") -> Results(s.removePrefix("results:"))
+            s.startsWith("pp:") -> PeoplePosts(s.removePrefix("pp:"))
             s == "later" -> Later
             s == "searches" -> Searches
             s == "marbles" -> Shelf
@@ -209,8 +212,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val feedState = rememberLazyListState()
     // Following's place: kept while you read a story, a post or a thread, and while you're on Search.
     val followingPlace = remember { FollowingPlace() }
-    // The panes: Following on the left, Search (home) in the middle; Messages comes on the right later.
-    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 2 }
+    // The panes: Following on the left, Search (home) in the middle, Messages on the right.
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 3 }
     // How far the header had folded, kept with the list's place when Android recreates Marble.
     val header = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<TopCollapse, Float>({ it.px }, { TopCollapse().apply { px = it } })) { TopCollapse() }
     // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
@@ -252,15 +255,21 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         val away = awaySince > 0 && gone >= Away.after
         if (away) FeedLog.start("back") else if (awaySince > 0) FeedLog.ev("back", "gap" to gone / 1000)
         awaySince = 0
-        // Marble is search and notes now (the feed lives on its branch): back after a while, home; nothing to fetch for a feed.
-        if (away) home()
+        // Back after a while: home (Search), and Following brought up to date without moving what you were reading.
+        if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.refreshLater()
         social.knowMe()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
         Daily.refresh(context).invokeOnCompletion { social.claimToday() }
     }
-    // The feed log is frozen with the feed: off, and out of sight (what it kept, and any export, stay).
-    LaunchedEffect(Unit) { if (FeedLog.on.value) FeedLog.set(context, false) }
+    // And every 30 minutes while it's open: new things come in above what you're reading, never moving it.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { delay(30 * 60_000L); social.loadFeed() } } }
+    // The feed log is how Following learns: on, once, with this build (on this phone only; Account › Advanced turns it off).
+    LaunchedEffect(Unit) {
+        val p = context.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE)
+        if (!p.getBoolean("feedLogOn3p", false)) { if (!FeedLog.on.value) FeedLog.set(context, true); p.edit().putBoolean("feedLogOn3p", true).apply() }
+    }
 
     val nav = Nav(open = open, back = back, searched = searched, social = social, pictures = { urls, i -> viewing = urls to i }, marble = { bigMarble = BigMarble(it) }, home = home)
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
@@ -292,7 +301,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val inSearch = stack.any { it == Route.Search || it is Route.Results }
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.search.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
-    if (top == null) Home(phone, ui, social, nav)
+    if (top == null) Panes(phone, ui, social, nav, pager, feedState, followingPlace)
     else kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
@@ -304,6 +313,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             is Route.Profile -> ProfileScreen(top.pubkey, social, nav)
             is Route.Compose -> ComposeScreen(top.link, social, nav)
             is Route.Results -> ResultsScreen(top.q, social, nav)
+            is Route.PeoplePosts -> PeoplePostsScreen(top.q, social, nav)
             Route.Later -> LaterScreen(social, nav)
             Route.Searches -> SearchesScreen(social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
@@ -378,7 +388,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     // The pull: the finger's travel down (times Stretch.GIVE), in pixels; up, towards opening Discover.
     var pull by remember { mutableFloatStateOf(0f) }
     var lift by remember { mutableFloatStateOf(0f) }
-    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().pointerInput(Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
+        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)).pointerInput(Unit) {
         detectVerticalDragGestures(
             onDragStart = { lift = 0f },
             onDragEnd = {
@@ -435,12 +446,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
             }
         }
-        // Your picture, top right: your account, devices and backup.
-        Box(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp)) {
-            Avatar(People.known.collectAsState().value[me], me, 34, Modifier.clickable { nav.open(Route.Account) }, "Your account")
-        }
-        // What needs you (an approval, say), and a passing error, under it.
-        Column(Modifier.align(Alignment.TopCenter).padding(top = 58.dp).widthIn(max = 600.dp).fillMaxWidth()) {
+        // What needs you (an approval, say), and a passing error, under the panes' bar.
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
             NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
             tomorrow?.let { TomorrowCard(it, social) }
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
@@ -474,53 +481,50 @@ private fun HomePill(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
 /** Which pane is which. */
 private const val PANE_FOLLOWING = 0
 private const val PANE_SEARCH = 1
+private const val PANE_MESSAGES = 2
+
+/** Messages: conversations with anyone, once your account can open them (it comes with Cosign's messages). Nothing yet. */
+@Composable
+private fun MessagesPane() = Box(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
+    androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)), contentAlignment = Alignment.Center) {
+    Text("Nothing yet.", color = Vault.Muted)
+}
 
 /**
- * The panes: Following (the world: what people you follow and like post, the news, and the one place to post) and
- * Search (home: yours). Swipe between them, or tap a tab. Each has a quiet cue of its own: Following, cobalt.
+ * The panes: Following (your people and the news, and the one place to post), Search (home: yours) and Messages.
+ * Three quiet words; swipe between them, or tap one. Your picture is on every pane.
  */
 @Composable
 private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace) {
     val people by People.known.collectAsState()
-    val notices by social.notices.collectAsState()
-    val seen by social.seenAt.collectAsState()
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
-    val following = pager.currentPage == PANE_FOLLOWING
     // The feed log (when on): which pane you settle on, for time per pane.
-    LaunchedEffect(pager.settledPage) { cc.aaro.cosign.FeedLog.ev("pane", "to" to if (pager.settledPage == PANE_FOLLOWING) "following" else "search") }
-    Column(Modifier.fillMaxSize().background(if (following) Vault.AccentGround.copy(alpha = 0.35f) else Color.Transparent)
+    LaunchedEffect(pager.settledPage) { cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_FOLLOWING -> "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
+    Column(Modifier.fillMaxSize()
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         Box(Modifier.fillMaxWidth().height(56.dp)) {
-            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(26.dp)) {
-                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search")) {
+            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search", PANE_MESSAGES to "Messages")) {
                     val on = pager.currentPage == i
-                    val c = if (!on) Vault.Muted else if (i == PANE_FOLLOWING) Vault.Accent else Vault.Text
+                    val c = if (on) Vault.Text else Vault.Muted
                     Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 4.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(label, color = c, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.bodyLarge)
+                        Text(label, color = c, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(5.dp))
-                        Box(Modifier.width(44.dp).height(2.dp).background(if (on) c else Color.Transparent))
+                        Box(Modifier.width(28.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(if (on) Vault.Accent else Color.Transparent))
                     }
                 }
             }
-            // The bell and your picture, on every pane.
-            Row(Modifier.align(Alignment.CenterEnd).padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                val waiting = ui.asks.size + ui.batchAsks.size
-                val fresh = notices.list.count { it.event.createdAt > seen }
-                IconButton({ nav.open(Route.Bell) }) {
-                    Box {
-                        Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text)
-                        if (waiting + fresh > 0) Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(9.dp)
-                            .background(if (waiting > 0) Vault.Amber else Vault.Accent, CircleShape))
-                    }
-                }
-                Spacer(Modifier.width(4.dp))
-                Avatar(people[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account")
-            }
+            // Your picture, on every pane: your account, devices and backup.
+            Avatar(people[me], me, 30, Modifier.align(Alignment.CenterEnd).padding(end = 14.dp).clickable { nav.open(Route.Account) }, "Your account")
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
-            if (page == PANE_FOLLOWING) FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING, listState = feedState, place = place) else Home(phone, ui, social, nav)
+            when (page) {
+                PANE_FOLLOWING -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING, listState = feedState, place = place)
+                PANE_MESSAGES -> MessagesPane()
+                else -> Home(phone, ui, social, nav)
+            }
         }
     }
 }
@@ -623,19 +627,17 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             .filter { chip == "news" || it.topic in followedTopics }.take(60)
     }
     val savedLinks by social.saved.collectAsState()
+    // Following: your people's posts with the news in among them, a story after every third post (the news topic only,
+    // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
+    val news = remember(all) { cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE).filter { it.topic == "news" }.take(40) }
+    val mixed: List<Any> = remember(shown, news, pane) {
+        if (!pane) shown else buildList { var n = 0; shown.forEachIndexed { i, p -> add(p); if (i % 3 == 2 && n < news.size) add(news[n++]) }; if (shown.isEmpty()) addAll(news.take(10)) }
+    }
     // The feed log (when on): each list by its pane and chip, so they can be told apart, and only while this pane is
     // the one on screen (the pager keeps it composed beside Search).
-    val logIds = remember(chip, shown, stories) { if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else shown.map { it.e.id } }
+    val logIds = remember(chip, mixed, stories) { if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else mixed.map { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id } }
     if (current) androidx.compose.runtime.key(chip) { LogWatcher(state, if (pane) "following/$chip" else "discover", logIds) }
     LaunchedEffect(chip, stories, current) { if (current && stories.isNotEmpty()) social.logStoryList("following/$chip", stories) }
-    if (pane) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("all" to "All", "people" to "People", "news" to "News", "topics" to "Topics")) {
-            val on = chip == k
-            Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
-                    .clickable { chip = k; cc.aaro.cosign.FeedLog.ev("chip", "screen" to "following", "chip" to k) }.padding(horizontal = 14.dp, vertical = 8.dp))
-        }
-    }
     if (!pane) Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.Filled.KeyboardArrowDown, "Back home", tint = Vault.Text) }
         // The name: refresh, as pulling down did.
@@ -654,7 +656,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
                 color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
             items(stories, key = { "t:" + it.id }) { c -> StoryRow(c, social, c.url in savedLinks, nav); HorizontalDivider(color = Vault.Edge) }
         }
-        if (chip == "all") item(key = "news") {
+        if (chip == "all" && !pane) item(key = "news") {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface)
                 .border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.Stories) }.padding(horizontal = 16.dp, vertical = 13.dp)) {
                 Text("Today's news", color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -670,22 +672,24 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
         if (chip != "news" && chip != "topics" && posts.isEmpty() && !feed.failed) item(key = "loading") {
             Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
         }
-        if (shown.isNotEmpty()) item(key = "from") {
+        if (shown.isNotEmpty() && !pane) item(key = "from") {
             Text(if (special.isEmpty()) "Popular this week" else "Popular this week · ★ your Special Follow people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted,
                 modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
         }
-        items(shown, key = { it.e.id }) { p ->
+        items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
             HorizontalDivider(color = Vault.Edge)
+            if (x is cc.aaro.cosign.TopicCard) return@items NewsCard(x, social)
+            val p = x as cc.aaro.cosign.Pick
             NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 7, pick = p, previews = previews,
                 saved = p.e.id in saved, onSave = { social.save(p.e.id, isLink = false) }) { PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social) }
         }
-        if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
+        if (shown.isNotEmpty() && !feed.loading && !pane) item(key = "end") {
             HorizontalDivider(color = Vault.Edge)
             Text("That's everything for now. New posts show up through the day.", color = Vault.Field, style = MaterialTheme.typography.bodySmall,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 24.dp))
         }
-        // Where it comes from, plainly.
-        item(key = "source") {
+        // Where it comes from, plainly (Discover only; Following is just your people and the news).
+        if (!pane) item(key = "source") {
             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp)) {
                 Text("Posts come from Popular, by fiatjaf's Pyramid: what its members liked or replied to this week.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 if (special.isNotEmpty()) Text("Woven in: your Special Follow list (${special.size} people), the list Jumble keeps on your account.", color = Vault.Muted,
@@ -711,9 +715,23 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     }
     }
     // The one place to post: public, and the composer says so.
-    if (pane) Text("+ Post", color = Vault.Ground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall,
-        modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Bottom))
-            .padding(16.dp).clip(RoundedCornerShape(18.dp)).background(Vault.Accent).clickable(onClickLabel = "New public post") { nav.compose() }.padding(horizontal = 20.dp, vertical = 13.dp))
+    if (pane) Box(Modifier.align(Alignment.BottomEnd).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Bottom))
+        .padding(18.dp).size(52.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround).clickable(onClickLabel = "New public post") { nav.compose() }, contentAlignment = Alignment.Center) {
+        Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+    }
+}
+
+/** A news story among your people's posts: its picture, where it's from and when, and the headline. */
+@Composable
+private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().clickable { social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        if (c.image != null) NetImage(c.image, Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(12.dp)), 900, ground = Vault.Surface)
+        Text(c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(top = if (c.image != null) 8.dp else 0.dp))
+        Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp))
+    }
 }
 
 /**
@@ -2213,6 +2231,58 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
 }
 
+/** The row on results: up to two people and three posts, side by side; "People and posts ›" opens them all. */
+@Composable
+private fun PeoplePostsRow(f: cc.aaro.cosign.Found, nav: Nav, onAll: () -> Unit) {
+    val people by People.known.collectAsState()
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = "All people and posts", onClick = onAll).padding(start = 20.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)) {
+        Text("People and posts", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+        Text("›", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+    }
+    androidx.compose.foundation.lazy.LazyRow(Modifier.fillMaxWidth(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(f.people.take(2), key = { "p:$it" }) { pk ->
+            val p = people[pk]
+            Column(Modifier.width(132.dp).height(112.dp).clip(RoundedCornerShape(14.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                .clickable { nav.profile(pk) }.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Avatar(p, pk, 40)
+                Text(p?.shown ?: shortNpub(pk), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                p?.nip05?.removePrefix("_@")?.takeIf { !it.startsWith("npub1") }?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+        items(f.notes.take(3), key = { "n:" + it.id }) { n ->
+            val p = people[n.pubkey]
+            Column(Modifier.width(220.dp).height(112.dp).clip(RoundedCornerShape(14.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                .clickable { nav.thread(n.id) }.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(p, n.pubkey, 20)
+                    Text(p?.shown ?: shortNpub(n.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
+                    Text(" · " + since(n.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
+                Text(n.content.trim(), color = Vault.Text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+    }
+    HorizontalDivider(color = Vault.Edge)
+}
+
+/** All the people and posts for a search: what the row on results opens. */
+@Composable
+private fun PeoplePostsScreen(q: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    val found by social.found.collectAsState()
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    LaunchedEffect(q) { if (social.found.value?.query != q) social.search(q) }
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
+        Column(Modifier.weight(1f)) {
+            Text("People and posts", style = MaterialTheme.typography.titleMedium, color = Vault.Text, fontWeight = FontWeight.SemiBold)
+            Text(q, color = Vault.Muted, style = MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+    MarbleResults(found?.takeIf { it.query == q }, people, liked, social, nav, peopleOnly = false)
+}
+
 /**
  * Your engine's results, inside Marble: only the engine's own pages open here (its tabs, the next page, its EU
  * consent page). A result, or any other link, opens in your browser, unwrapped from the engine's click-through
@@ -2251,6 +2321,11 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
     }
     if (loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
     else Spacer(Modifier.height(2.dp))
+    // People and posts for the same words, a short row above the web: once the search has settled, and only if it
+    // found any (so it never shows and then goes). › opens them all.
+    LaunchedEffect(query) { if (social.found.value?.query != query) social.search(query) }
+    val found by social.found.collectAsState()
+    found?.takeIf { it.query == query && !it.loading && (it.people.isNotEmpty() || it.notes.isNotEmpty()) }?.let { f -> PeoplePostsRow(f, nav) { nav.open(Route.PeoplePosts(query)) } }
     androidx.compose.ui.viewinterop.AndroidView({ c ->
         android.webkit.WebView(c).apply {
             settings.javaScriptEnabled = true

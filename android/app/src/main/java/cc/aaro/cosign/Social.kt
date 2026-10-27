@@ -565,20 +565,34 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun nameOf(pk: String) = People.known.value[pk]?.shown ?: shortNpub(pk)
 
     /**
-     * Discover's posts, the simple way: what fiatjaf's Pyramid says was popular this week (read only, already
-     * curated, so no trust filter of ours), newest first, with recent posts from your Special Follow list woven in.
+     * Following's posts, the simple way: what the people you follow posted in the last two days (four each at most),
+     * newest first, lifted a little by what you like, with your Special Follow people (★) woven in near the top.
      */
     private suspend fun popularPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
         val now = Clock.now()
-        val pop = async { Fetch.query(listOf(Sources.POPULAR), mapOf("kinds" to listOf(1), "limit" to 120), 8000) }
+        // Following: what the people you follow posted in the last two days (their own posts, not replies).
+        val pop = async { followingPosts(now) }
         val theirs = async { specialPosts(now) }
         val hidden = muted.value
         fun ok(e: Event) = e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600
         val woven = Calm.weave(pop.await().filter { ok(it) && !snoozedNow(it.pubkey) }, theirs.await().filter(::ok), ::lift)
         if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
-        woven.map { (e, special) -> Pick(e, "", 0.0, if (special) "★ Special Follow" else "") }.also {
+        val starred = special.value
+        woven.map { (e, sp) -> Pick(e, "", 0.0, if (sp || e.pubkey in starred) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
+    }
+
+    /** What the people you follow posted in the last two days, their own posts (not replies), from their relays and the big ones. */
+    private suspend fun followingPosts(now: Long): List<Event> {
+        knowFollows()
+        val who = follows.value.orEmpty().toList()
+        if (who.isEmpty()) return emptyList()
+        val relays = (readRelays() + POST_RELAYS + bigRelays).distinct().take(8)
+        return who.chunked(400).map { part ->
+            Fetch.query(relays, mapOf("kinds" to listOf(1), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 300), 8000)
+        }.flatten().filter { parentOf(it) == null }.distinctBy { it.id }.sortedByDescending { it.createdAt }
+            .let { l -> val each = HashMap<String, Int>(); l.filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= 4 } }.take(300)
     }
 
     /** What you like, lightly, in Discover's popular posts: up to a couple of hours earlier for your strongest topics, a little later for your weakest. */
