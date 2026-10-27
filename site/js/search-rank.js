@@ -120,6 +120,6 @@ export function parseProfile(event) {
 // their followers attached.
 const BRIDGES = /(^|[.@])(mostr\.pub|momostr\.pink|brid\.gy)$/i
 export function isBridged(p) {
-  const nip05 = (p?.nip05 || '').trim()
+  const nip05 = String(p?.nip05 || '').trim() // (a profile can hold anything)
   return !!nip05 && (BRIDGES.test(nip05) || /_at_/i.test(nip05.split('@')[0]))
 }

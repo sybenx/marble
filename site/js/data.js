@@ -154,11 +154,11 @@ export async function postsBy(pk, { until, limit = 30, hints = [], onEvent = nul
 }
 
 /** name@domain → pubkey (and the places it says to look), or null. */
-export async function resolveNip05(address) {
+export async function resolveNip05(address, timeout = 4000) {
   const [name, domain] = address.includes("@") ? address.split("@") : ["_", address];
   try {
     const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 4000);
+    setTimeout(() => ctrl.abort(), timeout);
     const r = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`, { signal: ctrl.signal, redirect: "error" });
     const data = await r.json();
     const names = data?.names || {};

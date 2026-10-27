@@ -62,7 +62,7 @@ function drawPick() {
   if (!picking) return;
   view(`<h2 id="si-title">${picking.length === 2 ? "Both of these accounts" : "These accounts"} tried to sign in. Which one is you?</h2>
     <div class="si-choices">${picking.map((c, i) => {
-      const n = npub(c.pubkey), p = profiles.get(c.pubkey), nm = (p?.display_name || p?.name || "").trim();
+      const n = npub(c.pubkey), p = profiles.get(c.pubkey), nm = String(p?.display_name || p?.name || "").trim();
       return `<button type="button" class="si-choice" data-si="chosen" data-i="${i}">${avatar(c.pubkey, 40)}
         <span class="si-acct"><span class="si-name">${esc(nm || "No name")}</span><span class="si-fp">${n.slice(0, 12)}…<b>${n.slice(-6)}</b></span></span></button>`;
     }).join("")}</div>

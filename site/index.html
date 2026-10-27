@@ -29,11 +29,11 @@
 <script>
   // Marble as the browser's search engine (opensearch.xml): /?q=words keeps the words as a note and goes on to your
   // engine at once, before anything else loads. The note is kept as js/later.js jot() keeps it; it syncs next time
-  // Marble is open. Nostr links, @names and name@domain are left to the page.
+  // Marble is open. Nostr links are left to the page; @names and name@domain are searches like any other.
   (function () {
     var p = new URLSearchParams(location.search), q = (p.get("q") || "").trim();
     if (location.pathname !== "/" || !q || q.length > 500) return;
-    if (/(?:note|nevent|npub|nprofile|naddr)1[02-9ac-hj-np-z]{6,}/i.test(q) || /^[0-9a-f]{64}$/i.test(q) || /^@/.test(q) || /^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(q)) return;
+    if (/(?:note|nevent|npub|nprofile|naddr)1[02-9ac-hj-np-z]{6,}/i.test(q) || /^[0-9a-f]{64}$/i.test(q)) return;
     if (/^(?:https?:\/\/)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})(?:[\/:?#]\S*)?$/i.test(q) && !/\.(js|ts|kt|py|rs|txt|md|json|png|jpg|jpeg|gif|pdf|mp4|mp3|exe|apk|zip|html|css)$/i.test(q.split(/[\/:?#]/)[0])) {
       location.replace(/^https?:\/\//i.test(q) ? q : "https://" + q); return;
     }
@@ -156,7 +156,8 @@
   .drop-row svg { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .drop-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drop-row .typed { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; }
-  .drop-row .sub { color: var(--muted); font-size: 13px; flex: none; }
+  .drop-row .sub { color: var(--muted); font-size: 13px; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drop-row .av { flex: none; }
   .about-link { display: none; text-align: center; font-size: 14px; margin: 0; padding: 24px 16px 32px; }
   .about-link a { color: var(--muted); text-decoration: none; }
   .about-link a:hover { text-decoration: underline; }
@@ -652,7 +653,7 @@
       <ul>
         <li>This site is plain files: everything happens in your browser. It has no tracking, no cookies, and nothing of its own loaded from anywhere else.</li>
         <li>When you search here, what you type goes only to the servers Marble searches. When you open a post or a profile, the servers that keep it see which one.</li>
-        <li>When Marble checks an address like name@example.com, that site can see your IP address. Pictures and videos load from wherever they're kept, and those places can too.</li>
+        <li>When Marble checks an address like name@example.com (once you've typed all of it), that site can see your IP address and which address was asked about. A handle like @name.bsky.social is checked with Bluesky. Pictures and videos load from wherever they're kept, and those places can too.</li>
         <li>In the app, the servers that hold part of your account see what you do through them, like a post or a sign-in. Never your messages, and never enough to act as you.</li>
       </ul>
     </div>

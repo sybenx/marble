@@ -11,7 +11,7 @@ const TOKEN = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])|(?:nostr:|@)?\b((?:npu
 
 export function name(pk) {
   const p = profiles.get(pk);
-  return (p?.display_name || p?.name || "").trim() || npub(pk).slice(0, 12) + "…";
+  return String(p?.display_name || p?.name || "").trim() || npub(pk).slice(0, 12) + "…";
 }
 
 export function avatar(pk, size = 40) {

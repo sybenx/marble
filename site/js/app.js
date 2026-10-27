@@ -9,6 +9,7 @@ import { goodPosts, stories, yours, prepareMine } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import * as notes from "./later.js";
+import { handleOf, keyOf, lookUp } from "./handles.js";
 import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -855,7 +856,8 @@ function personRow(p, { verified, followers, follow = false } = {}) {
 // Enter keeps the words as a note and opens your engine's results in a new tab (sites can't show them inside).
 // An address you typed (a dot and an ending, a scheme, or a name and a slash: "xumbrel/") goes to the site. A
 // well-known site's name ("apple") shows "Go to apple.com" to tap, and Enter still searches. A pasted link to a
-// post or person, @name and name@domain open here.
+// post or person opens here. A handle (name@domain, @name@domain, @name.bsky.social, @name) shows a row for each
+// place it's confirmed to be someone (handles.js), and Enter still searches: "@elonmusk" is a search like any other.
 
 let warmed = false;
 const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
@@ -865,6 +867,8 @@ const clearButton = $("#clear"), keptMark = $("#kept"), drop = $("#drop");
 const GLOBE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg>`;
 const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 let rows = [], pick = -1;
+const handled = new Map(); // a handle's key → its rows, once looked up
+let lookTimer = 0, pasted = false;
 
 function boxState() {
   const t = input.value.trim();
@@ -875,10 +879,24 @@ function boxState() {
   // "Go to …" for an address, or a well-known site's name (no engine allows its suggestions to be read from a page)
   const s = t && kind !== "entity" && kind !== "hex" && !t.startsWith("@") ? notes.site(t) : null;
   if (s) rows.push({ site: s });
+  // a handle: its rows once looked up, when typing stops (at once for a paste)
+  const h = handleOf(t);
+  clearTimeout(lookTimer);
+  if (h && handled.has(keyOf(h))) rows.push(...handled.get(keyOf(h)));
+  else if (h) lookTimer = setTimeout(() => lookUp(h).then((found) => { handled.set(keyOf(h), found); if (input.value.trim() === t) boxState(); }), pasted ? 0 : 600);
+  pasted = false;
   pick = -1;
-  drop.innerHTML = rows.map((r, k) => `<a class="drop-row" role="option" id="drop-${k}" data-k="${k}" href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`).join("");
+  drop.innerHTML = rows.map((r, k) => {
+    const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`;
+    if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
+    if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
+    const face = r.picture ? `<span class="av" style="--s:28px" aria-hidden="true"><img src="${esc(r.picture)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><b>${esc([...(r.name || "?")][0].toUpperCase())}</b></span>` : GLOBE;
+    return `<a ${at} href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${face}<span class="t">${esc(r.label)}</span><span class="sub">${esc(r.name ? `${r.name} · ${r.sub}` : r.sub)}</span></a>`;
+  }).join("");
   showDrop();
 }
+// a person's name and picture arriving for a row
+onProfile((pk) => { if (rows.some((r) => r.pubkey === pk)) boxState(); });
 function showDrop() {
   drop.hidden = !rows.length || document.activeElement !== input;
   input.setAttribute("aria-expanded", String(!drop.hidden));
@@ -907,9 +925,18 @@ function goToSite(s, from) {
   window.open(s.url, "_blank", "noopener");
   done();
 }
-const choose = (r) => goToSite(r.site, input.value.trim());
+function choose(r) {
+  const t = input.value.trim();
+  if (r.site) return goToSite(r.site, t);
+  if (r.kind === "web") return goToSite({ url: r.url, address: r.sub }, t);
+  // someone on Nostr: their page here
+  if (chain) notes.dropDraft(chain.id);
+  input.blur();
+  done();
+  go(personPath(r.pubkey));
+}
 
-input.addEventListener("paste", () => { navStart = performance.now(); });
+input.addEventListener("paste", () => { navStart = performance.now(); pasted = true; });
 // Typing over the whole search (all of it selected) starts a new one.
 input.addEventListener("beforeinput", () => {
   if (chain && input.value && input.selectionStart === 0 && input.selectionEnd === input.value.length) chain = null;
@@ -956,15 +983,8 @@ form.addEventListener("submit", async (ev) => {
   const t = input.value.trim();
   if (!t) return;
   if (pick >= 0 && rows[pick]) return choose(rows[pick]);
-  const parsed = parseInput(t);
-  if (t.startsWith("@") && t.length > 1) { input.blur(); return go(`/?q=${encodeURIComponent(t)}`); }
   const s = notes.site(t);
   if (s?.sure) return goToSite(s, t);
-  if (parsed.kind === "nip05") {
-    // someone's address (name@domain): their page here, if it names someone; otherwise a search like any other
-    const r = await resolveNip05(parsed.address);
-    if (r) { input.blur(); done(); return go(`/p/${npub(r.pubkey)}`); }
-  }
   searchFor(t);
 });
 

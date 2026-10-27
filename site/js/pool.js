@@ -38,7 +38,7 @@ export function testRelay() {
 
 export function normalize(url) {
   try {
-    let u = (url || "").trim();
+    let u = String(url || "").trim();
     if (!/^wss?:\/\//i.test(u)) return null;
     const p = new URL(u);
     const local = p.hostname === "localhost" || /^(127\.|10\.|192\.168\.)/.test(p.hostname);
