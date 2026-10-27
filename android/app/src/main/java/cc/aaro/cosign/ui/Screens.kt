@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -47,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -499,6 +502,7 @@ internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone
  * Your account, behind your picture on the home screen: your profile, devices, connected
  * apps and sites, keeping it safe, and what changed. How it works (servers, relays) is under Advanced.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit) {
     val m = ui.member!!
@@ -508,6 +512,10 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val people by cc.aaro.cosign.People.known.collectAsState()
     val me = people[m.group.groupX]
+    val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
+    val names by social.deviceNames.collectAsState()
+    var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
+    LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
 
     LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -549,13 +557,16 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
 
         item { Heading("Your devices") }
         items(m.group.members.filter { it.role != "server" && it.role != "backup" }, key = { "member:" + it.idx }) { d ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // What you've called it (on any of your devices), else the name it joined with. A long press renames it.
+            val name = names[cc.aaro.cosign.Social.deviceKey(d)]?.name ?: d.name
+            Row(Modifier.combinedClickable(onClick = {}, onLongClickLabel = "Rename", onLongClick = { renaming = d }), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(8.dp).background(if (d.idx == m.idx || ui.online[d.idx] == true) Vault.Accent else Vault.Field, CircleShape))
                 Spacer(Modifier.width(10.dp))
-                Text(if (d.idx == m.idx) "${d.name} (this one)" else d.name, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(if (d.idx == m.idx) "$name (this one)" else name, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
                 if (d.idx != m.idx) TextButton({ phone.askReportLost(d) }) { Text("Report lost", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
         }
+        item { Muted("Press and hold a device to rename it.") }
         item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
 
         item { Heading("Apps and sites you're signed in to") }
@@ -570,6 +581,44 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
             SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
+        }
+
+        // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
+        item { Heading("Search") }
+        item {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
+            val suggest by cc.aaro.cosign.SearchPrefs.suggestions.collectAsState()
+            val posts by cc.aaro.cosign.SearchPrefs.posts.collectAsState()
+            Column {
+                Text("Search with", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (e in cc.aaro.cosign.Engine.entries) {
+                        val on = e == engine
+                        Text(e.label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                                .clickable { cc.aaro.cosign.SearchPrefs.setEngine(context, e) }.padding(horizontal = 10.dp, vertical = 7.dp))
+                    }
+                }
+                Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.SearchPrefs.setSuggestions(context, !suggest) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Suggestions as you type", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                        Text("What you type goes to ${engine.label} as you type, as in a browser.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.Switch(suggest, { cc.aaro.cosign.SearchPrefs.setSuggestions(context, it) })
+                }
+                Text("Search posts", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+                Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((k, label) in listOf("auto" to "Automatic", "always" to "Always", "never" to "Never")) {
+                        val on = k == posts
+                        Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                                .clickable { cc.aaro.cosign.SearchPrefs.setPosts(context, k) }.padding(horizontal = 12.dp, vertical = 7.dp))
+                    }
+                }
+                Text("Automatic: offered under your search only if you follow people.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
         }
 
         // Discover's topics you follow: on this phone only.
@@ -632,6 +681,22 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
     }
 
+    renaming?.let { d ->
+        var text by remember(d.idx) { mutableStateOf(names[cc.aaro.cosign.Social.deviceKey(d)]?.name ?: d.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Rename this device") },
+            text = {
+                Column {
+                    TextField(text, { text = it.take(40) }, singleLine = true)
+                    Text("Shown on all your devices.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                }
+            },
+            confirmButton = { TextButton({ social.nameDevice(cc.aaro.cosign.Social.deviceKey(d), text); renaming = null }, enabled = text.isNotBlank()) { Text("Save", color = Vault.Accent) } },
+            dismissButton = { TextButton({ renaming = null }) { Text("Cancel") } },
+            containerColor = Vault.Surface,
+        )
+    }
     if (leaving) AlertDialog(
         onDismissRequest = { leaving = false },
         title = { Text("Remove this phone?") },
@@ -735,7 +800,14 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
     Modifier.fillMaxWidth().background(Vault.Surface, RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp)).padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(origin.removePrefix("https://"), color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        // The address opens the site.
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val web = origin.startsWith("https://") || origin.startsWith("http://")
+        Text(origin.removePrefix("https://"), color = if (web) Vault.Accent else Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false).clickable(enabled = web, onClickLabel = "Open the site") {
+                try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(origin))) } catch (_: Exception) {}
+            }.padding(vertical = 6.dp))
+        Spacer(Modifier.weight(1f))
         if (grants.size > 1) TextButton({ grants.forEach(onRemove) }) { Text("Remove all", color = Vault.AmberText) }
     }
     for (g in grants.sortedByDescending { it.lastUsed }) Row(verticalAlignment = Alignment.CenterVertically) {

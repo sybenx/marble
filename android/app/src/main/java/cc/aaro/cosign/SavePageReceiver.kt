@@ -1,0 +1,46 @@
+package cc.aaro.cosign
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Save, tapped in a page Marble opened (a Custom Tab): the page on screen goes in the Later of the account
+ * that opened it. The browser puts the page's address in the intent's data. Main process.
+ */
+class SavePageReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val url = intent.dataString?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return
+        val slot = intent.getStringExtra("slot")
+        val done = goAsync()
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                val social = account(slot)?.let { Social.of(it) }
+                // Saved already: nothing changes (taking it out of Later is done in Later).
+                val had = social?.later?.items?.value?.any { it.url == url && it.deleted == null } == true
+                val saved = had || social?.savePage(url) != null
+                if (saved) Tabs.markSaved(context)
+                android.widget.Toast.makeText(context.applicationContext, when { had -> "Already in Later"; saved -> "Saved to Later"; else -> "Couldn't save this page" },
+                    android.widget.Toast.LENGTH_SHORT).show()
+            } finally { done.finish() }
+        }
+    }
+
+    companion object {
+        /** The account, once the signer has said who it is (Marble may have been started just for this). */
+        suspend fun account(slot: String?): Phone? = withTimeoutOrNull(8_000) {
+            val accounts = CosignApp.instance.accounts
+            var p: Phone? = null
+            while (p?.isMember != true) {
+                delay(100)
+                p = slot?.let { accounts.phone(it) } ?: accounts.active.takeIf { slot == null }
+            }
+            p
+        }
+    }
+}

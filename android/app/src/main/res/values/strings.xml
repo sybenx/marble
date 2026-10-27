@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Marble</string>
+    <string name="keep_label">Keep in Marble</string>
 </resources>

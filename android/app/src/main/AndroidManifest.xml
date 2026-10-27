@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Browsers that open Custom Tabs: Marble connects to one so a page's Save button can show it was saved. -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".CosignApp"
         android:allowBackup="false"
@@ -121,6 +128,23 @@
                 android:value="Holds one share of a threshold signing key and answers co-signing requests from the user's own servers." />
         </service>
 
+        <!-- Keep in Marble, in other apps' share sheet: your words and what was shared, in Later. -->
+        <activity
+            android:name=".KeepActivity"
+            android:exported="true"
+            android:label="@string/keep_label"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Cosign.Sheet">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+        <!-- Save, in a page Marble opened: the browser sends the page's address here. -->
+        <receiver android:name=".SavePageReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:process=":signer" android:exported="false" />
 
         <!-- ntfy (or any UnifiedPush distributor) wakes the app when an approval is waiting. -->
