@@ -2092,7 +2092,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val t = q.trim()
     // A pasted link to someone or a post: their page of results, here (see LinkResults).
     val pasted = remember(t) { Ref.parse(t) }
-    // An address: "Go to …", and Enter opens it. A bare word searches.
+    // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
     val atPeople = t.startsWith("@") && t.length > 1
     // "Search posts" for what you typed: only for accounts that follow people, unless set otherwise.
@@ -2110,7 +2110,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         when {
             t.isEmpty() || pasted != null -> {}
             atPeople -> social.search(t.drop(1))
-            site != null -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
+            site?.sure == true -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
             else -> searchFor(t)
         }
@@ -2165,8 +2165,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             }
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                 // What Enter does, first.
-                item(key = "enter") { DropRow(t, if (site != null) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
-                site?.let { item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
+                item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
+                site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
+                site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
                 items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
                     HorizontalDivider(color = Vault.Edge)
@@ -2436,6 +2437,22 @@ private fun GoChip(onClick: (() -> Unit)?) = Box(
     Icon(Glyphs.enter, "Enter", tint = if (SOLID_ENTER) Vault.Ground else Vault.Accent, modifier = Modifier.size(20.dp))
 }
 private const val SOLID_ENTER = false
+
+/** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
+@Composable
+private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClickLabel = "Open in your browser", onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Box(Modifier.size(40.dp).background(Vault.Surface, CircleShape).border(1.dp, Vault.Edge, CircleShape), contentAlignment = Alignment.Center) {
+        Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+    }
+    Spacer(Modifier.width(14.dp))
+    Column(Modifier.weight(1f)) {
+        Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
 
 /** A row of the dropdown: a search (what's typed in plain, the rest in bold), and ↖ to put it in the box. */
 @Composable
