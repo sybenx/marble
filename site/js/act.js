@@ -22,7 +22,7 @@ export function toast(text, { stay = false } = {}) {
 
 /** While something waits on you approving it elsewhere, say where, after a moment. */
 async function approving(promise) {
-  const t = setTimeout(() => toast(method() === "phone" ? "Approve it on your phone…" : "Waiting for Marble… approve in the extension window", { stay: true }), 700);
+  const t = setTimeout(() => toast(method() === "phone" ? "Approve it on your phone…" : "Approve it in your extension…", { stay: true }), 700);
   try { return await promise; } finally { clearTimeout(t); toast(""); }
 }
 
@@ -33,7 +33,7 @@ const box = $(".si", dialog);
 let attempt = 0; // a newer attempt makes an older one's late answer count for nothing
 let phoneAbort = null;
 const spinner = `<span class="spinner" aria-hidden="true"></span>`;
-/** On a phone or tablet (touch first): the sign-in code is opened in Marble on this device, not scanned. */
+/** On a phone or tablet (touch first): the sign-in code is opened in the sign-in app on this device, not scanned. */
 const onPhone = () => matchMedia("(pointer: coarse)").matches && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 export function openSignIn() {
@@ -51,15 +51,15 @@ function view(html) { box.innerHTML = html; }
 async function withExtension() {
   const mine = ++attempt;
   phoneAbort?.abort();
-  view(`<h2 id="si-title">Waiting for Marble…</h2>
+  view(`<h2 id="si-title">Waiting for your extension…</h2>
     <p class="si-wait">${spinner}Approve in the extension window.</p>
-    <p class="si-help" hidden>Open the Marble extension to approve.</p>
+    <p class="si-help" hidden>Open your extension to approve.</p>
     <div class="si-actions"><button type="button" class="link" data-si="phone">Sign in with your phone instead</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
   const help = setTimeout(() => { const h = $(".si-help", box); if (h && mine === attempt) h.hidden = false; }, 3000);
   const gaveUp = setTimeout(() => {
     if (mine !== attempt) return;
     attempt++;
-    view(`<h2 id="si-title">No answer from the extension</h2><p>Open the Marble extension and try again, or sign in with your phone.</p>
+    view(`<h2 id="si-title">No answer from the extension</h2><p>Open your extension and try again, or sign in with your phone.</p>
       <div class="si-actions"><button type="button" class="link" data-si="phone">Sign in with your phone</button><button type="button" class="si-button" data-si="extension">Try again</button></div>`);
   }, 60000);
   try {
@@ -82,7 +82,7 @@ async function withPhone() {
   const expire = setTimeout(() => {
     if (mine !== attempt) return;
     ctrl.abort();
-    view(`<h2 id="si-title">This code has expired</h2><p>Make a new one and scan it with Marble on your phone.</p>
+    view(`<h2 id="si-title">This code has expired</h2><p>Make a new one and scan it with your phone.</p>
       <div class="si-actions"><button type="button" class="si-button" data-si="phone">New code</button></div>`);
   }, 180000);
   try {
@@ -91,17 +91,17 @@ async function withPhone() {
       signal: ctrl.signal,
       onCode: (uri, svg) => {
         if (mine !== attempt) return;
-        // On the phone itself a code to scan can't be scanned: the code is a link that opens Marble instead,
+        // On the phone itself a code to scan can't be scanned: the code is a link that opens its sign-in app instead,
         // and the picture is there for signing in with another phone.
         if (onPhone()) return view(`<h2 id="si-title">Sign in</h2>
-          <a class="si-button si-open" href="${esc(uri)}" data-si="open">Sign in with Marble</a>
-          <p class="si-wait" hidden>${spinner}Waiting for Marble…</p>
+          <a class="si-button si-open" href="${esc(uri)}" data-si="open">Sign in</a>
+          <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
           <div class="qr" hidden>${svg}</div>
           <div class="si-actions"><button type="button" class="link" data-si="qr">Show code</button>
             <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
         view(`<h2 id="si-title">Sign in with your phone</h2>
           <div class="qr">${svg}</div>
-          <p>Open Marble on your phone, tap Scan, and scan this code.</p>
+          <p>Scan this code with the sign-in app on your phone.</p>
           <p class="si-wait">${spinner}Waiting for your phone…</p>
           <div class="si-actions">${hasExtension() ? `<button type="button" class="link" data-si="extension">Use the extension</button>` : ""}
             <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
@@ -123,7 +123,7 @@ dialog.addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-si]");
   if (!b) return;
   const what = b.dataset.si;
-  if (what === "open") { $(".si-wait", box).hidden = false; return; } // the link opens Marble; this page waits for it
+  if (what === "open") { $(".si-wait", box).hidden = false; return; } // the link opens the sign-in app on this phone (any: Marble, Amber…); this page waits for it
   if (what === "qr") { $(".qr", box).hidden = false; b.remove(); return; }
   if (what === "close") close();
   else if (what === "phone") withPhone();
