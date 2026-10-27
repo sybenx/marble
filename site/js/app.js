@@ -94,7 +94,7 @@ function route(state, back = false) {
       // first script didn't already): kept as a note, then your engine
       if (parsed.kind === "entity" || parsed.kind === "hex" || parsed.kind === "nip05") { input.value = q; return showSearch(q, signal); }
       if (q.startsWith("@") && q.length > 1) { input.value = q; return showSearch(q.slice(1), signal); }
-      notes.jot(q);
+      notes.fromAddressBar(q);
       location.replace(notes.results(q));
       return;
     }

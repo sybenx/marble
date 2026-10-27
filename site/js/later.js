@@ -84,6 +84,24 @@ export function dropDraft(id) {
   remember(item.text);
   remove(item);
 }
+/**
+ * A search from the browser's address bar (marble.syb.lol as its search engine), which can't say whether it's an edit:
+ * taken as one of the last search from there when it comes within 2 minutes and shares at least half of the shorter
+ * one's words, or one holds the other; then it changes the note that search made. Else jot(). (index.html's first
+ * script does the same before the page loads; this is for when it couldn't.)
+ */
+export function fromAddressBar(text) {
+  let last = null;
+  try { last = JSON.parse(localStorage.getItem("marble.lastq")); } catch {}
+  const a = words(text), b = last ? words(last.text) : "";
+  const aw = a.split(" "), bw = b.split(" ");
+  const [short, long] = aw.length <= bw.length ? [aw, bw] : [bw, aw];
+  const edit = last && now() - last.at <= 120 && a !== b && (short.filter((x) => long.includes(x)).length * 2 >= short.length || a.includes(b) || b.includes(a));
+  const r = edit ? refine(last.id, text) : jot(text);
+  write("marble.lastq", r?.fresh ? { id: r.item.id, text: r.item.text, at: now() } : null);
+  return r;
+}
+
 /** Earlier wordings of searches, in this browser only (30 days, at most 500). */
 function remember(text) {
   const list = [{ text, at: now() }, ...read("marble.history", []).filter((h) => now() - h.at < MONTH)].slice(0, 500);

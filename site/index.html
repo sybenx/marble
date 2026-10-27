@@ -40,16 +40,33 @@
     var l = /^(?:(https?):\/\/)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?)(\/\S*)?$/i.exec(q);
     if (l && (l[1] || l[3])) { location.replace(l[1] ? q : "http://" + q); return; }
     try {
+      // as js/later.js fromAddressBar(): an edit of the last search from here (within 2 minutes, half the shorter
+      // one's words shared, or one inside the other) changes the note that search made; else jot()
       var doc = JSON.parse(localStorage.getItem("marble.later")) || { v: 1, items: [] };
       if (doc.v === 1 && Array.isArray(doc.items)) {
         var now = Math.floor(Date.now() / 1000), w = function (s) { return String(s).trim().replace(/\s+/g, " ").toLowerCase(); };
-        var t = q.slice(0, 500), have = doc.items.filter(function (i) { return !i.url && !i.deleted && w(i.text) === w(t); })[0];
-        var item = have ? Object.assign({}, have, { done: null, updated: Math.max(now, (have.updated || 0) + 1) })
+        var t = q.slice(0, 500), last = null, put = function (it) { doc.items = doc.items.filter(function (i) { return i.id !== it.id; }).concat(it); };
+        var bump = function (it) { return Math.max(now, (it.updated || 0) + 1); };
+        try { last = JSON.parse(localStorage.getItem("marble.lastq")); } catch (x) {}
+        var a = w(t), b = last ? w(last.text) : "", aw = a.split(" "), bw = b.split(" "), short = aw.length <= bw.length ? aw : bw, long = short === aw ? bw : aw;
+        var shared = short.filter(function (x) { return long.indexOf(x) >= 0; }).length;
+        var mine = last && now - last.at <= 120 && a !== b && (shared * 2 >= short.length || a.indexOf(b) >= 0 || b.indexOf(a) >= 0)
+          && doc.items.filter(function (i) { return i.id === last.id && !i.deleted; })[0];
+        var have = doc.items.filter(function (i) { return !i.url && !i.deleted && w(i.text) === a && (!mine || i.id !== mine.id); })[0];
+        var item, fresh = !have;
+        if (mine) {
+          var h = []; try { h = JSON.parse(localStorage.getItem("marble.history")) || []; } catch (x) {}
+          localStorage.setItem("marble.history", JSON.stringify([{ text: mine.text, at: now }].concat(h).slice(0, 500)));
+          if (have) put(Object.assign({}, mine, { text: "", deleted: now, updated: bump(mine) }));
+          else { item = Object.assign({}, mine, { text: t, done: null, updated: bump(mine) }); fresh = true; }
+        }
+        if (!item) item = have ? Object.assign({}, have, { done: null, updated: bump(have) })
           : { id: Array.from(crypto.getRandomValues(new Uint8Array(8)), function (x) { return x.toString(16).padStart(2, "0"); }).join(""), text: t, created: now, updated: now, done: null, deleted: null };
-        doc.items = doc.items.filter(function (i) { return i.id !== item.id; }).concat(item);
+        put(item);
         doc.at = now;
         localStorage.setItem("marble.later", JSON.stringify(doc));
         localStorage.setItem("marble.later.dirty", "true");
+        localStorage.setItem("marble.lastq", JSON.stringify(fresh ? { id: item.id, text: t, at: now } : null));
       }
     } catch (e) {}
     var e = "DuckDuckGo"; try { e = JSON.parse(localStorage.getItem("marble.engine")) || e; } catch (x) {}
