@@ -935,6 +935,17 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
+     * One of your marbles taken off (the trash can): the marker goes to your account within seconds, not the usual half
+     * minute, so your other devices drop it too. (Missed, it's sent at the next start: this phone's change is the newer.)
+     */
+    fun removeMarble(id: String) {
+        kept.remove(id)
+        if (Sources.viewAs != null) return
+        keptSending?.cancel()
+        keptSending = scope.launch { delay(2_000); sendKept() }
+    }
+
+    /**
      * Today's marble, claimed: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it,
      * privately (the issuer only signs and returns it; nothing is published). Quietly; tried again on later opens the
      * same UTC day if the issuer isn't there or says no.

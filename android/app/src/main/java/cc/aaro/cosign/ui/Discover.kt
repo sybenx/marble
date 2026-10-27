@@ -1023,25 +1023,18 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
                 translationX = (from.x - centre.x) * (1f - p) + lean.x * leanPx * p + pan.x
                 translationY = (from.y - centre.y) * (1f - p) + lean.y * leanPx * p + pan.y
             })
-        // Its name, in a small chip under it. Looking keeps nothing: today's has "Claim this Marble" under it, on its
-        // (UTC) day only, and claiming adds it to your marbles, privately: the chip springs in again and a little gold
-        // flares off its star, with a tick you feel. One of yours opens just to look at, with a trash can to take it off.
+        // Its name, in a small chip under it. Opening today's (on its UTC day) claims it, privately: the first time, the
+        // chip springs in and a little gold flares off its star, with a tick you feel, and the count beside it goes up.
+        // No button, no word. One of yours opens just to look at, with a trash can to take it off your account.
         val all by social.kept.all.collectAsState()
         val day = remember { Daily.utcDate() }
         val todays = big.marble == null && Marbles.shift == 0L
-        val claimed = all["marble-$day"]?.here == true
-        var flourish by remember { mutableStateOf(false) }
+        val first = remember { todays && social.kept.keep(day) }
+        // Claimed (now or before): its award from the issuer, quietly.
+        LaunchedEffect(Unit) { if (todays) social.claimToday() }
         var removing by remember { mutableStateOf(false) }
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp).graphicsLayer { alpha = shown.value }, horizontalAlignment = Alignment.CenterHorizontally) {
-            androidx.compose.runtime.key(flourish) {
-                NameChip(marble.name, big.date ?: java.time.LocalDate.parse(day), flourish = flourish && !still, count = all.values.count { it.here }.takeIf { it > 0 }, onClick = onShelf, modifier = Modifier)
-            }
-            if (todays && !claimed && Daily.utcDate() == day) {
-                Spacer(Modifier.height(14.dp))
-                Text("Claim this Marble", color = Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround)
-                        .clickable { if (social.kept.keep(day)) flourish = true; social.claimToday() }.padding(horizontal = 18.dp, vertical = 9.dp))
-            }
+            NameChip(marble.name, big.date ?: java.time.LocalDate.parse(day), flourish = first && !still, count = all.values.count { it.here }.takeIf { it > 0 }, onClick = onShelf, modifier = Modifier)
             if (!todays && big.date != null && all["marble-${big.date}"]?.here == true) {
                 Spacer(Modifier.height(10.dp))
                 IconButton({ removing = true }) { Icon(androidx.compose.material.icons.Icons.Outlined.Delete, "Remove from your marbles", tint = Vault.Muted, modifier = Modifier.size(22.dp)) }
@@ -1050,7 +1043,7 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         if (removing) AlertDialog(
             onDismissRequest = { removing = false },
             title = { Text("Remove ${marble.name}?") },
-            confirmButton = { TextButton({ removing = false; social.kept.remove("marble-${big.date}"); close() }) { Text("Remove", color = Vault.Danger) } },
+            confirmButton = { TextButton({ removing = false; social.removeMarble("marble-${big.date}"); close() }) { Text("Remove", color = Vault.Danger) } },
             dismissButton = { TextButton({ removing = false }) { Text("Keep") } },
             containerColor = Vault.Surface,
         )
