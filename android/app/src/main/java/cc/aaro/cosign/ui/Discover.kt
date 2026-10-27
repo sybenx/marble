@@ -842,7 +842,14 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
             }
             if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
                 for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
-            } else Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
+            } else {
+                Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
+                // Repost a story: a public post that quotes its link (there's no plain repost of a page). Held, the same, with a tick.
+                Icon(Glyphs.repost, "Quote it", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).combinedClickable(onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    FeedLog.act("t:" + c.id, "quote"); nav.compose(c.url)
+                }) { FeedLog.act("t:" + c.id, "quote"); nav.compose(c.url) }.padding(10.dp))
+            }
             // Share it with someone; keep it in Notes (filled once it's there; again, not).
             Spacer(Modifier.weight(1f))
             Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape)
@@ -1550,6 +1557,7 @@ private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
 
 // --- Notes -------------------------------------------------------------------------------
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav: Nav, onLike: () -> Unit, maxLines: Int = Int.MAX_VALUE, indent: Int = 0, lit: Boolean = false,
                      onReply: (() -> Unit)? = null, pick: Pick? = null, previews: Map<String, Preview> = emptyMap(), saved: Boolean = false, onSave: (() -> Unit)? = null,
@@ -1646,12 +1654,16 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Heart(n, liked, nav.social, onLike, showCounts = full || nav.social.feedVersion.collectAsState().value == 1)
                 Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
                     modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
-                // Repost: public, so never one tap; a small menu says so first.
+                // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
                 val reposted = n.id in nav.social.reposted.collectAsState().value
                 var asking by remember { mutableStateOf(false) }
+                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
                 Box {
                     Icon(Glyphs.repost, if (reposted) "Reposted" else "Repost", tint = if (reposted) Vault.Accent else Vault.Muted,
-                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable { if (!reposted) asking = true }.padding(10.dp))
+                        modifier = Modifier.size(40.dp).clip(CircleShape).combinedClickable(onLongClickLabel = "Quote it", onLongClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            FeedLog.act(n.id, "quote"); nav.compose(cc.aaro.cosign.marbleLink(n))
+                        }) { if (!reposted) asking = true }.padding(10.dp))
                     if (asking) DropdownMenu(true, { asking = false }, containerColor = Vault.Surface) {
                         DropdownMenuItem({ Column {
                             Text("Repost", color = Vault.Text, fontWeight = FontWeight.SemiBold)
@@ -1798,7 +1810,7 @@ private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modif
     // The story's own picture and headline; a link from elsewhere, its page's.
     val story = remember(link) { social.allStories.value.firstOrNull { it.url == link } }
     val preview by produceState(story?.let { Preview(it.title, it.image, it.summary, it.sourceName) } ?: social.previews.value[link], link) {
-        if (value == null && link.isNotEmpty()) value = Preview.fetch(link)
+        if (value == null && link.isNotEmpty() && cc.aaro.cosign.marblePost(link) == null) value = Preview.fetch(link)
     }
     // Public, and plainly so: your picture, "Public · everyone can see this", and Post publicly.
     Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1817,7 +1829,10 @@ private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modif
         placeholder = { Text(if (link.isEmpty()) "What's on your mind?" else "Add a comment…", color = Vault.Muted) },
         colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent))
-    preview?.let { p -> Box(Modifier.padding(horizontal = 16.dp)) { LinkCard(p) {} } }
+    // A post being quoted: small under what you write, as quotes show in the feed; a story or a page: its card.
+    val quoted = remember(link) { cc.aaro.cosign.marblePost(link) }
+    if (quoted != null) Box(Modifier.padding(horizontal = 16.dp)) { QuoteBox(quoted, People.known.collectAsState().value, nav) }
+    else preview?.let { p -> Box(Modifier.padding(horizontal = 16.dp)) { LinkCard(p) {} } }
 }
 
 /** "⋯": not interested in this note, or mute its author (on this phone and in your mute list). */
