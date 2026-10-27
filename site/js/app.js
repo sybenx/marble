@@ -852,8 +852,9 @@ function personRow(p, { verified, followers, follow = false } = {}) {
 
 // ── The search box: search or jot, as in the app ─────────────────────────────────────────────────────
 // Enter keeps the words as a note and opens your engine's results in a new tab (sites can't show them inside).
-// Only an address you typed (a dot and an ending, or a scheme) goes to the site, with "Go to …" under the box; a bare
-// word ("apple") always searches. A pasted link to a post or person, @name and name@domain open here.
+// An address you typed (a dot and an ending, a scheme, or a name and a slash: "xumbrel/") goes to the site. A
+// well-known site's name ("apple") shows "Go to apple.com" to tap, and Enter still searches. A pasted link to a
+// post or person, @name and name@domain open here.
 
 let warmed = false;
 const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
@@ -870,8 +871,8 @@ function boxState() {
   keptMark.hidden = !(t && notes.saved(t));
   rows = [];
   const kind = parseInput(t).kind;
-  // only an address gets a row; bare words get nothing (no engine allows its suggestions to be read from a page)
-  const s = t && kind !== "entity" && kind !== "hex" ? notes.site(t) : null;
+  // "Go to …" for an address, or a well-known site's name (no engine allows its suggestions to be read from a page)
+  const s = t && kind !== "entity" && kind !== "hex" && !t.startsWith("@") ? notes.site(t) : null;
   if (s) rows.push({ site: s });
   pick = -1;
   drop.innerHTML = rows.map((r, k) => `<a class="drop-row" role="option" id="drop-${k}" data-k="${k}" href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`).join("");
@@ -944,7 +945,7 @@ form.addEventListener("submit", async (ev) => {
   const parsed = parseInput(t);
   if (t.startsWith("@") && t.length > 1) { input.blur(); return go(`/?q=${encodeURIComponent(t)}`); }
   const s = notes.site(t);
-  if (s) return goToSite(s, t);
+  if (s?.sure) return goToSite(s, t);
   if (parsed.kind === "nip05") {
     // someone's address (name@domain): their page here, if it names someone; otherwise a search like any other
     const r = await resolveNip05(parsed.address);
