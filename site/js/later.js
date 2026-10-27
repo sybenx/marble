@@ -57,6 +57,40 @@ export function keepPage(url, title) {
   const have = doc.items.find((i) => i.url === url && !i.deleted);
   put(have ? { ...have, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null, url });
 }
+/**
+ * A search edited and searched again (still the same search): the note its first Enter made takes the new words
+ * (same note, a new time), and the old wording goes to this browser's history only, never to Later. If another
+ * note already has the new words, that one comes back and this one goes. Returns {item, fresh} like jot().
+ */
+export function refine(id, text) {
+  const t = String(text || "").trim().slice(0, 500);
+  const item = doc.items.find((i) => i.id === id && !i.deleted);
+  if (!t) return null;
+  if (!item) return jot(t);
+  if (same(item.text, t)) return { item, fresh: true };
+  remember(item.text);
+  if (doc.items.some((i) => i.id !== id && !i.url && !i.deleted && same(i.text, t))) {
+    put({ ...item, text: "", deleted: now(), updated: next(item) });
+    return jot(t);
+  }
+  const changed = { ...item, text: t, done: null, updated: next(item) };
+  put(changed);
+  return { item: changed, fresh: true };
+}
+/** A search that ended at a site instead: the note its Enter made goes (to history), as it's a visit now. */
+export function dropDraft(id) {
+  const item = doc.items.find((i) => i.id === id && !i.deleted);
+  if (!item) return;
+  remember(item.text);
+  remove(item);
+}
+/** Earlier wordings of searches, in this browser only (30 days, at most 500). */
+function remember(text) {
+  const list = [{ text, at: now() }, ...read("marble.history", []).filter((h) => now() - h.at < MONTH)].slice(0, 500);
+  write("marble.history", list);
+}
+export const history = () => read("marble.history", []);
+
 export const tick = (item, on) => put({ ...item, done: on ? now() : null, updated: next(item) });
 /** Removed: only a marker stays (no text), for a month, so other devices learn it. */
 export const remove = (item) => put({ ...item, text: "", deleted: now(), updated: next(item) });

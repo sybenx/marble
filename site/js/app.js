@@ -101,6 +101,7 @@ function route(state, back = false) {
     document.body.dataset.page = "home";
     document.title = "Marble";
     input.value = "";
+    chain = null;
     boxState();
     return;
   }
@@ -885,15 +886,23 @@ function showDrop() {
   for (const el of drop.children) el.setAttribute("aria-selected", String(+el.dataset.k === pick));
   if (pick >= 0) input.setAttribute("aria-activedescendant", `drop-${pick}`);
 }
-function done() { input.value = ""; boxState(); }
+function done() { input.value = ""; chain = null; boxState(); }
 
-/** Enter on words: kept as a note, then your engine, in a new tab. */
+// One search, however many times it's edited and searched again: the box keeps the words after Enter (selected, as
+// a browser's address bar does), and Enter on an edit of them changes the note this search made rather than adding
+// one. × , emptying the box, or typing over all of it starts a new search. A note that was there before this search
+// (Enter brought it back) is never reworded: the edit becomes a note of its own.
+let chain = null; // {id}: the note this search made
 function searchFor(t) {
-  notes.jot(t);
+  const r = chain ? notes.refine(chain.id, t) : notes.jot(t);
+  chain = r?.fresh ? { id: r.item.id } : null;
   window.open(notes.results(t), "_blank", "noopener");
-  done();
+  input.value = t;
+  input.select();
+  boxState();
 }
 function goToSite(s, from) {
+  if (chain) notes.dropDraft(chain.id); // the search ended at a site: a visit, not a note
   notes.opened(s.url, s.address, from);
   window.open(s.url, "_blank", "noopener");
   done();
@@ -901,6 +910,10 @@ function goToSite(s, from) {
 const choose = (r) => goToSite(r.site, input.value.trim());
 
 input.addEventListener("paste", () => { navStart = performance.now(); });
+// Typing over the whole search (all of it selected) starts a new one.
+input.addEventListener("beforeinput", () => {
+  if (chain && input.value && input.selectionStart === 0 && input.selectionEnd === input.value.length) chain = null;
+});
 input.addEventListener("input", () => {
   const text = input.value;
   const parsed = parseInput(text);
@@ -916,6 +929,7 @@ input.addEventListener("input", () => {
     navStart = t0;
     return;
   }
+  if (!input.value) chain = null;
   boxState();
 });
 input.addEventListener("focus", showDrop);
