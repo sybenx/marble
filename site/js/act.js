@@ -1,9 +1,10 @@
 // Doing things as you: signing in (the extension, or your phone's code), liking and reacting, replying.
 // What you do shows at once and is taken back if it can't be sent.
 import { publish, req, count, relays, foundOn, FAST } from "./pool.js";
-import { outbox, keep } from "./data.js";
-import { esc } from "./render.js";
-import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onLost } from "./me.js";
+import { outbox, keep, profile, profiles, onProfile } from "./data.js";
+import { esc, avatar } from "./render.js";
+import { npub } from "./ids.js";
+import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const ALSO = ["wss://relay.ditto.pub", "wss://syb.lol"]; // where Discover and search read reactions
@@ -40,15 +41,98 @@ export function openSignIn() {
   if (!dialog.open) dialog.showModal();
   hasExtension() ? withExtension() : withPhone();
 }
-const INTRUDED = "Someone else answered that code. Try again.";
-// someone else answered the code you signed in with: you're signed out; here's a new one
-onLost(() => {
+
+// More than one account answered the code you signed in with (me.js): which one is you? Until you say, nothing is
+// signed, and this doesn't close. Each account shows its picture, name and the ends of its npub, as sign-in apps show
+// them (a lookalike can copy a name and a picture, not these).
+let picking = null;
+onAsk((choices) => {
+  attempt++;
+  phoneAbort?.abort();
+  phoneAbort = null;
+  stopWatching();
+  picking = choices;
   toast("");
   if (!dialog.open) dialog.showModal();
-  withPhone(INTRUDED);
+  drawPick();
+  for (const c of choices) profile(c.pubkey).then(drawPick);
 });
+onProfile((pk) => { if (picking?.some((c) => c.pubkey === pk)) drawPick(); });
+function drawPick() {
+  if (!picking) return;
+  view(`<h2 id="si-title">${picking.length === 2 ? "Both of these accounts" : "These accounts"} tried to sign in. Which one is you?</h2>
+    <div class="si-choices">${picking.map((c, i) => {
+      const n = npub(c.pubkey), p = profiles.get(c.pubkey), nm = (p?.display_name || p?.name || "").trim();
+      return `<button type="button" class="si-choice" data-si="chosen" data-i="${i}">${avatar(c.pubkey, 40)}
+        <span class="si-acct"><span class="si-name">${esc(nm || "No name")}</span><span class="si-fp">${n.slice(0, 12)}…<b>${n.slice(-6)}</b></span></span></button>`;
+    }).join("")}</div>
+    <div class="si-actions"><button type="button" class="link" data-si="neither">Neither is me</button></div>`);
+}
+
+// ── When tapping the code opens no app ──
+// Opening one hides this page. If it's still on screen, and has focus, a moment after the tap, nothing did. A question
+// the browser asks first ("Open in …?") takes the focus: then we wait for it to come back. Once the page has been
+// hidden, it's never "nothing", so a slow app can't set this off.
+let stopWatching = () => {};
+function whenNothingOpens(then, wait = 1500) {
+  let t = 0;
+  const check = () => { if (document.visibilityState !== "visible") return stop(); if (!document.hasFocus()) return; stop(); then(); };
+  const hidden = () => { if (document.visibilityState === "hidden") stop(); };
+  const back = () => { clearTimeout(t); t = setTimeout(check, 700); };
+  const stop = () => { clearTimeout(t); document.removeEventListener("visibilitychange", hidden); removeEventListener("pagehide", stop); removeEventListener("focus", back); };
+  document.addEventListener("visibilitychange", hidden);
+  addEventListener("pagehide", stop);
+  addEventListener("focus", back);
+  t = setTimeout(check, wait);
+  return stop;
+}
+// On Android, Chrome and the browsers built on it take an intent:// link, which also says where to go when no app takes
+// the code: back to this page, which then says so. Elsewhere (or on an address that already has a #), the plain code.
+const NO_APP = "#signin-no-app";
+function phoneLink(uri) {
+  const ua = navigator.userAgent;
+  if (!/Android/.test(ua) || !/Chrome\//.test(ua) || /Firefox/.test(ua) || location.hash || !uri.startsWith("nostrconnect://")) return uri;
+  return `intent://${uri.slice(15)}#Intent;scheme=nostrconnect;S.browser_fallback_url=${encodeURIComponent(location.href.split("#")[0] + NO_APP)};end`;
+}
+let noAppSoon = false;
+function noApp() {
+  noAppSoon = false;
+  if (!$("[data-none]", box)) return;
+  $(".si-wait", box).hidden = true;
+  for (const el of box.querySelectorAll("[data-none]")) el.hidden = false;
+}
+// Back from an intent:// link no app took: the address is put back, and the sign-in says so (with a new code, if the
+// browser loaded the page afresh for it).
+function backWithNoApp(loaded = false) {
+  if ((!loaded && location.hash !== NO_APP) || current()) return;
+  if (location.hash === NO_APP) history.replaceState(history.state, "", location.href.split("#")[0]);
+  noAppSoon = true;
+  if (dialog.open) noApp(); else openSignIn();
+}
+addEventListener("hashchange", () => backWithNoApp());
+// (looked at now: the page may tidy its address before then)
+if (location.hash === NO_APP) setTimeout(() => backWithNoApp(true), 0);
+// Sign-in apps to suggest: a neutral list, alphabetical, by platform.
+const APPS = [
+  { name: "Aegis", on: "iPhone", url: "https://github.com/ZharlieW/Aegis", os: "ios" },
+  { name: "Amber", on: "Android", url: "https://github.com/greenart7c3/Amber", os: "android" },
+  { name: "Marble", on: "Android", url: "https://github.com/sybenx/marble/releases/latest", os: "android" },
+  { name: "nsec.app", on: "Any browser: paste the code into it", url: "https://nsec.app", os: "any" },
+  { name: "Primal", on: "Android", url: "https://primal.net/downloads", os: "android" },
+];
+let beforeApps = "";
+function apps() {
+  beforeApps = box.innerHTML;
+  const os = /iPhone|iPad|iPod/.test(navigator.userAgent) ? "ios" : /Android/.test(navigator.userAgent) ? "android" : "other";
+  const list = APPS.filter((a) => os === "other" || a.os === os || a.os === "any");
+  view(`<h2 id="si-title">Get a sign-in app</h2><p>Any of these will do. Install one, then come back and tap Sign in.</p>
+    <ul class="si-apps">${list.map((a) => `<li><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a><span>${esc(a.on)}</span></li>`).join("")}</ul>
+    <div class="si-actions"><button type="button" class="si-button" data-si="unapps">Back</button></div>`);
+}
+
 function close() {
   attempt++;
+  stopWatching();
   phoneAbort?.abort();
   phoneAbort = null;
   if (dialog.open) dialog.close();
@@ -81,9 +165,9 @@ async function withExtension() {
   } finally { clearTimeout(help); clearTimeout(gaveUp); }
 }
 
-async function withPhone(note = "") {
+async function withPhone() {
   const mine = ++attempt;
-  const said = note ? `<p class="si-note" role="alert">${esc(note)}</p>` : "";
+  stopWatching();
   phoneAbort?.abort();
   const ctrl = (phoneAbort = new AbortController());
   view(`<h2 id="si-title">Sign in with your phone</h2><p class="si-wait">${spinner}Making a code…</p>`);
@@ -103,13 +187,18 @@ async function withPhone(note = "") {
         if (mine !== attempt) return;
         // On the phone itself a code to scan can't be scanned: the code is a link that opens its sign-in app instead,
         // and the picture is there for signing in with another phone.
-        if (onPhone()) return view(`<h2 id="si-title">Sign in</h2>${said}
-          <a class="si-button si-open" href="${esc(uri)}" data-si="open">Sign in</a>
-          <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
-          <div class="qr" hidden>${svg}</div>
-          <div class="si-actions"><button type="button" class="link" data-si="qr">Show code</button>
-            <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
-        view(`<h2 id="si-title">Sign in with your phone</h2>${said}
+        if (onPhone()) {
+          view(`<h2 id="si-title">Sign in</h2>
+            <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Sign in</a>
+            <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
+            <p class="si-note" data-none hidden>No sign-in app opened.</p>
+            <div class="qr" hidden>${svg}</div>
+            <div class="si-actions"><button type="button" class="link" data-si="apps" data-none hidden>Get a sign-in app</button><button type="button" class="link" data-si="qr">Show code</button>
+              <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
+          if (noAppSoon) noApp();
+          return;
+        }
+        view(`<h2 id="si-title">Sign in with your phone</h2>
           <div class="qr">${svg}</div>
           <p>Scan this code with the sign-in app on your phone.</p>
           <p class="si-wait">${spinner}Waiting for your phone…</p>
@@ -123,25 +212,35 @@ async function withPhone(note = "") {
     toast("Signed in");
   } catch (err) {
     if (mine !== attempt || ctrl.signal.aborted) return;
-    if (err?.message === "intruder") return withPhone(INTRUDED);
     view(`<h2 id="si-title">Your phone didn't finish signing in</h2><p>${esc(String(err?.message || "").replace(/^[a-z-]+: /, "") || "Try again with a new code.")}</p>
       <div class="si-actions"><button type="button" class="si-button" data-si="phone">Try again</button></div>`);
   } finally { clearTimeout(expire); }
 }
 
 dialog.addEventListener("click", (ev) => {
-  if (ev.target === dialog) return close(); // the backdrop
+  if (ev.target === dialog) return picking ? null : close(); // the backdrop
   const b = ev.target.closest("[data-si]");
   if (!b) return;
   const what = b.dataset.si;
-  if (what === "open") { $(".si-wait", box).hidden = false; return; } // the link opens the sign-in app on this phone (any: Marble, Amber…); this page waits for it
+  if (what === "open") { // the link opens the sign-in app on this phone (any: Marble, Amber…); this page waits for it, unless none opens
+    $(".si-wait", box).hidden = false;
+    for (const el of box.querySelectorAll("[data-none]")) el.hidden = true;
+    stopWatching();
+    const mine = attempt;
+    stopWatching = whenNothingOpens(() => { if (mine === attempt) noApp(); });
+    return;
+  }
+  if (what === "chosen") { const c = picking?.[+b.dataset.i]; if (!c) return; picking = null; choose(c); close(); return; }
+  if (what === "neither") { picking = null; neither(); close(); return; }
+  if (what === "apps") return apps();
+  if (what === "unapps") { if (beforeApps) view(beforeApps); return; }
   if (what === "qr") { $(".qr", box).hidden = false; b.remove(); return; }
   if (what === "close") close();
   else if (what === "phone") withPhone();
   else if (what === "extension") withExtension();
   else if (what === "copy") navigator.clipboard?.writeText(b.dataset.code).then(() => { b.textContent = "Copied"; });
 });
-dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); close(); });
+dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!picking) close(); });
 
 /** Something only a signed-in account can do: true if it can go ahead, else the sign-in opens. */
 function canAct() {

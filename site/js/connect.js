@@ -88,19 +88,20 @@ function listen(relays, pk, since, onEvent) {
 
 /**
  * A connection to the signer your phone set up: asks it things and waits for the answers. One made from a code keeps
- * the code's secret: a code shown on a shared screen can be scanned by two phones, and whoever answers first is
- * signed in, so if a second answers it as well we can't tell which was yours. onIntruder() is then told, and the
- * session should be given up.
+ * the code's secret: a code shown on a shared screen can be scanned by more than one phone, and whoever answers first
+ * is signed in, so if another answers it as well we can't tell which was yours. onSecond(signer) is then told (me.js
+ * asks you which account is yours). others: those not yet decided on; ignored: those decided against.
  */
 export class Remote {
-  constructor({ sk, signer, relays, secret = null, made = 0 }) {
+  constructor({ sk, signer, relays, secret = null, made = 0, others = [], ignored = [] }) {
     this.sk = typeof sk === "string" ? fromHex(sk) : sk;
     this.signer = signer;
     this.relays = relays;
     this.secret = secret;
     this.made = made;
-    this.intruded = false;
-    this.onIntruder = null;
+    this.others = others;
+    this.ignored = new Set(ignored);
+    this.onSecond = null;
     this.waiting = new Map(); // request id → {resolve, reject}
     this.close = null;
   }
@@ -122,12 +123,17 @@ export class Remote {
     });
   }
   async second(e) {
-    if (!this.secret || this.intruded || !isHex64(e.pubkey)) return;
+    const known = () => this.ignored.has(e.pubkey) || this.others.includes(e.pubkey);
+    if (!this.secret || !isHex64(e.pubkey) || known()) return;
     let msg;
     try { msg = JSON.parse(await decrypt(e.content, await conversationKey(this.sk, e.pubkey))); } catch { return; }
-    if (this.intruded || !(msg?.result === this.secret || (msg?.result === "ack" && now() - this.made < ACK_WINDOW))) return;
-    this.intruded = true;
-    this.onIntruder?.();
+    if (known() || !(msg?.result === this.secret || (msg?.result === "ack" && now() - this.made < ACK_WINDOW))) return;
+    this.others.push(e.pubkey);
+    this.onSecond?.(e.pubkey);
+  }
+  /** What a saved session holds. */
+  saved() {
+    return { sk: toHex(this.sk), signer: this.signer, relays: this.relays, secret: this.secret, made: this.made, others: this.others, ignored: [...this.ignored] };
   }
   async request(method, params = [], timeout = 90000) {
     await this.start();
@@ -186,9 +192,8 @@ export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_e
   await remote.start();
   close();
   const pubkey = await remote.request("get_public_key", [], 30000);
-  if (remote.intruded) { remote.stop(); throw new Error("intruder"); }
   if (!isHex64(pubkey)) throw new Error("no account");
-  return { pubkey: pubkey.toLowerCase(), remote, saved: { sk: toHex(sk), signer, relays, secret, made } };
+  return { pubkey: pubkey.toLowerCase(), remote, saved: remote.saved() };
 }
 
 function qrSvg(encodeQR, data) {

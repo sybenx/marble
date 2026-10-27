@@ -19,9 +19,9 @@ if (!isHex64(state?.pubkey)) state = null;
 let remote = null; // the phone connection, made when first needed (at once if it came from a code: see watch)
 const listeners = new Set();
 export const onMe = (fn) => listeners.add(fn);
-const lost = new Set();
-/** fn() when you're signed out because someone else answered the code you signed in with (see watch). */
-export const onLost = (fn) => lost.add(fn);
+const asks = new Set();
+/** fn(choices) when more than one account answered the code you signed in with: ask which one is you (see watch). */
+export const onAsk = (fn) => asks.add(fn);
 export const current = () => state?.pubkey || null;
 export const method = () => state?.method || null;
 /** Whether a browser extension is here to sign in with. Extensions may arrive a moment after the page. */
@@ -30,6 +30,8 @@ export const hasExtension = () => !!window.nostr?.getPublicKey;
 function set(next) {
   remote?.stop?.();
   remote = null;
+  for (const c of choices || []) c.remote.stop();
+  choices = null;
   state = next;
   follows = null;
   try { next ? localStorage.setItem(KEY, JSON.stringify(next)) : localStorage.removeItem(KEY); } catch {}
@@ -51,22 +53,68 @@ export function signedInWithPhone({ pubkey, remote: r, saved }) {
   watch(r);
 }
 
-// A session from a code listens, for as long as it lasts, for a second phone answering that code (connect.js Remote).
-// If one does, the session is given up: you're signed out, and the sign-in asks again with a new code.
+// ── More than one account answered the code ──
+// A code on a shared screen can be scanned by someone else too, who may answer first. So a session from a code
+// listens, for as long as it lasts, for another phone answering it (connect.js Remote). If that's another account,
+// you're asked which one is you (onAsk), and nothing is signed until you say. Your pick is kept and the others are
+// ignored from then on; more answers only add to the list, so nobody can keep you from signing in.
+let choices = null; // [{pubkey, remote}] while you're being asked
+let hold = null, asking = 0; // signing waits on hold while an answer is looked into or you're asked
 function watch(r) {
   if (!r?.secret) return;
-  r.onIntruder = () => {
-    if (remote !== r) return;
-    set(null);
-    lost.forEach((fn) => fn());
-  };
+  r.onSecond = (signer) => contest(r, signer);
+  for (const signer of r.others) contest(r, signer);
   r.start();
+}
+async function contest(r, signer) {
+  if (remote !== r) return;
+  if (!hold) { let resolve; hold = { promise: new Promise((ok) => (resolve = ok)), resolve }; }
+  asking++;
+  save();
+  const { Remote } = await import("./connect.js");
+  const other = new Remote({ sk: r.sk, signer, relays: r.relays });
+  const pk = await other.request("get_public_key", [], 10000).then((x) => String(x).toLowerCase(), () => null);
+  asking--;
+  if (remote !== r) return other.stop();
+  const list = choices || [{ pubkey: state.pubkey, remote: r }];
+  if (!isHex64(pk) || list.some((c) => c.pubkey === pk)) {
+    // no account given, or one already listed (the same person, through another app): nothing to ask about
+    other.stop();
+    r.others = r.others.filter((s) => s !== signer);
+    r.ignored.add(signer);
+    save();
+  } else {
+    choices = [...list, { pubkey: pk, remote: other }];
+    asks.forEach((fn) => fn(choices));
+  }
+  if (!choices && !asking) release();
+}
+/** You picked an account (see contest): its connection is kept, and the other answers are ignored for good. */
+export function choose(choice) {
+  const all = choices || [choice], main = remote, keep = choice.remote;
+  choices = null;
+  for (const c of all) if (c !== choice && c.remote !== main) c.remote.stop();
+  if (keep !== main) Object.assign(keep, { secret: main.secret, made: main.made, others: main.others, ignored: new Set(main.ignored) });
+  for (const c of all) if (c !== choice) keep.ignored.add(c.remote.signer);
+  keep.others = keep.others.filter((s) => !keep.ignored.has(s) && s !== keep.signer);
+  if (keep !== main) signedInWithPhone({ pubkey: choice.pubkey, remote: keep, saved: keep.saved() });
+  else save();
+  if (!asking) release();
+}
+/** None of the accounts was you: signed out. */
+export function neither() { signOut(); }
+function release() { hold?.resolve(); hold = null; }
+function save() {
+  if (state?.method !== "phone" || !remote?.saved) return;
+  state.phone = remote.saved();
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
 }
 if (state?.method === "phone" && state.phone?.secret) setTimeout(() => phoneRemote().then(watch), 0);
 
 export function signOut() {
   if (state?.method === "phone") phoneRemote().then((r) => r.request("logout", [], 5000)).catch(() => {});
   set(null);
+  release();
 }
 
 async function phoneRemote() {
@@ -82,6 +130,7 @@ async function phoneRemote() {
  * (right account, good signature); rejects if you refused, it timed out, or you're signed in read-only.
  */
 export async function sign(template) {
+  if (hold) await hold.promise;
   if (!state?.method) throw new Error("read-only");
   const t = { created_at: Math.floor(Date.now() / 1000), tags: [], content: "", ...template, pubkey: state.pubkey };
   const signed = state.method === "extension"
@@ -97,6 +146,7 @@ export async function sign(template) {
  * purpose (every site that signs in by code shares one signer key; cosign server/core/group.ts).
  */
 export async function nip44Self(text, encrypt = true) {
+  if (hold) await hold.promise;
   if (state?.method !== "extension" || !window.nostr?.nip44) throw new Error("unsupported");
   return encrypt ? window.nostr.nip44.encrypt(state.pubkey, text) : window.nostr.nip44.decrypt(state.pubkey, text);
 }
