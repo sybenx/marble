@@ -1208,6 +1208,22 @@ class Social private constructor(private val phone: Phone, context: Context) {
         message.value = "Less like this from now on."
     }
 
+    /** "Not interested" in one story: it goes, and only it (one story says little about its topic or its site). */
+    fun notInterested(c: TopicCard) {
+        FeedLog.act("t:" + c.id, "notInterested", "topic" to c.topic, "src" to c.sourceId)
+        hide("t:" + c.id)
+    }
+
+    /** "Fewer stories about" a topic: much less of it from now on (more than Less like this). */
+    fun fewerAbout(topic: String, key: String?) {
+        FeedLog.act(key, "fewerTopic", "topic" to topic)
+        interests.learn(listOf(topic), -0.6)
+        message.value = "Fewer stories about ${TopicFeeds.name(topic)}."
+    }
+
+    /** What a story is about, as finely as its words say (else its feed's topic). */
+    fun storyTopic(c: TopicCard): String = TopicGuess.of(Event("", 0, 1, emptyList(), c.title + " " + c.summary)).firstOrNull() ?: c.topic
+
     /** "Hide": nothing more from this person, or from this site. */
     fun hidePerson(pk: String, from: String? = null) {
         FeedLog.act(from, "hideAuthor", "author" to pk)

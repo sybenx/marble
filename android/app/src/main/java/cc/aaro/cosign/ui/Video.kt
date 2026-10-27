@@ -112,6 +112,24 @@ object Videos {
     }
 }
 
+/**
+ * The controls over a playing video, as a browser's or YouTube's: a tap on the picture shows or hides them, and they
+ * fade by themselves a few seconds after the last touch (3 s playing, 4 s paused), so nothing sits over the video.
+ */
+private class Shown {
+    var on by mutableStateOf(true)
+    var touched by mutableLongStateOf(0L)
+    fun touch() { on = true; touched = System.nanoTime() }
+    fun toggle() { if (on) on = false else touch() }
+}
+
+@Composable
+private fun rememberShown(p: ExoPlayer): Shown {
+    val s = remember(p) { Shown() }
+    LaunchedEffect(s.on, s.touched) { if (s.on) { delay(if (p.isPlaying) 3000 else 4000); s.on = false } }
+    return s
+}
+
 /** A video in a card: its picture and ▶ until tapped; then it plays here, with a button for full screen. */
 @Composable
 fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
@@ -123,8 +141,11 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (now?.url == v.url) Videos.pause() }
     Box(modifier.fillMaxWidth().aspectRatio(v.ratio.coerceIn(0.56f, 2.2f)).clip(RoundedCornerShape(12.dp)).background(Color.Black)) {
         if (here) {
-            Surface(Videos.player(context), Modifier.fillMaxSize())
-            Controls(Videos.player(context), Modifier.align(Alignment.BottomCenter), onFull = { Videos.full.value = true }, fullLabel = "⤢")
+            val shown = rememberShown(Videos.player(context))
+            Surface(Videos.player(context), Modifier.fillMaxSize(), onTap = shown::toggle)
+            androidx.compose.animation.AnimatedVisibility(shown.on, Modifier.align(Alignment.BottomCenter), enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+                Controls(Videos.player(context), Modifier, onFull = { Videos.full.value = true }, fullLabel = "⤢", onTouch = shown::touch)
+            }
         } else {
             var frame by remember(v.url) { mutableStateOf<Pair<ImageBitmap?, Int?>?>(null) }
             if (v.poster != null) NetImage(v.poster, Modifier.fillMaxSize(), 1080, ground = Color.Black)
@@ -151,45 +172,52 @@ fun VideoFullScreen() {
     val context = LocalContext.current
     val close = { Videos.full.value = false; if (Videos.player(context).playbackState == Player.STATE_ENDED) Videos.release() }
     BackHandler(onBack = close)
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        Surface(Videos.player(context), Modifier.align(Alignment.Center).fillMaxWidth())
-        Controls(Videos.player(context), Modifier.align(Alignment.BottomCenter).safeDrawingPadding(), onFull = close, fullLabel = "⤡")
-        Box(Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(12.dp).size(40.dp).clip(CircleShape).background(Color(0x66000000)).clickable(onClick = close),
-            contentAlignment = Alignment.Center) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+    val shown = rememberShown(Videos.player(context))
+    // A tap anywhere (not just on the picture) shows or hides the controls.
+    Box(Modifier.fillMaxSize().background(Color.Black).clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = shown::toggle)) {
+        Surface(Videos.player(context), Modifier.align(Alignment.Center).fillMaxWidth(), onTap = shown::toggle)
+        androidx.compose.animation.AnimatedVisibility(shown.on, Modifier.align(Alignment.BottomCenter), enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Controls(Videos.player(context), Modifier.safeDrawingPadding(), onFull = close, fullLabel = "⤡", onTouch = shown::touch)
+        }
+        androidx.compose.animation.AnimatedVisibility(shown.on, Modifier.align(Alignment.TopEnd), enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+            Box(Modifier.safeDrawingPadding().padding(12.dp).size(40.dp).clip(CircleShape).background(Color(0x66000000)).clickable(onClick = close),
+                contentAlignment = Alignment.Center) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+        }
     }
 }
 
 /** Where the picture goes: a TextureView (it scrolls with the list), the video's own shape inside [modifier]. */
 @Composable
-private fun Surface(p: ExoPlayer, modifier: Modifier) {
+private fun Surface(p: ExoPlayer, modifier: Modifier, onTap: () -> Unit) {
     var ratio by remember { mutableFloatStateOf(p.videoSize.let { if (it.height > 0) it.width * it.pixelWidthHeightRatio / it.height else 16f / 9f }) }
     DisposableEffect(p) {
         val l = object : Player.Listener { override fun onVideoSizeChanged(s: VideoSize) { if (s.height > 0) ratio = s.width * s.pixelWidthHeightRatio / s.height } }
         p.addListener(l); onDispose { p.removeListener(l) }
     }
     Box(modifier, contentAlignment = Alignment.Center) {
-        AndroidView({ TextureView(it) }, Modifier.aspectRatio(ratio.coerceIn(0.3f, 4f)).clickable { if (p.isPlaying) p.pause() else p.play() },
+        // A tap shows or hides the controls (play and pause are theirs), as a browser's video does.
+        AndroidView({ TextureView(it) }, Modifier.aspectRatio(ratio.coerceIn(0.3f, 4f)).clickable(onClick = onTap),
             update = { tv -> p.setVideoTextureView(tv) }, onRelease = { tv -> p.clearVideoTextureView(tv) })
     }
 }
 
 /** Play or pause, where it is, how long, and full screen (or back from it). */
 @Composable
-private fun Controls(p: ExoPlayer, modifier: Modifier, onFull: () -> Unit, fullLabel: String) {
+private fun Controls(p: ExoPlayer, modifier: Modifier, onFull: () -> Unit, fullLabel: String, onTouch: () -> Unit) {
     var at by remember { mutableLongStateOf(0L) }
     var length by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(p.isPlaying) }
     var dragging by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(p) { while (true) { at = p.currentPosition; length = p.duration.coerceAtLeast(0); playing = p.isPlaying || p.playWhenReady && p.playbackState == Player.STATE_BUFFERING; delay(400) } }
     Row(modifier.fillMaxWidth().background(Color(0x99000000)).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clip(CircleShape).clickable { if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); p.play() } }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(36.dp).clip(CircleShape).clickable { onTouch(); if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); p.play() } }, contentAlignment = Alignment.Center) {
             // Two bars for pause (the core icon set has no pause).
             if (playing) Row { repeat(2) { i -> if (i == 1) Spacer(Modifier.width(5.dp)); Box(Modifier.size(5.dp, 16.dp).background(Color.White)) } }
             else Icon(Icons.Filled.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(24.dp))
         }
         Text(clock(at), color = Color.White, style = MaterialTheme.typography.labelSmall)
-        Slider(dragging ?: if (length > 0) at.toFloat() / length else 0f, { dragging = it }, Modifier.weight(1f).padding(horizontal = 8.dp),
-            onValueChangeFinished = { dragging?.let { p.seekTo((it * length).toLong()) }; dragging = null },
+        Slider(dragging ?: if (length > 0) at.toFloat() / length else 0f, { dragging = it; onTouch() }, Modifier.weight(1f).padding(horizontal = 8.dp),
+            onValueChangeFinished = { dragging?.let { p.seekTo((it * length).toLong()) }; dragging = null; onTouch() },
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Vault.Accent, inactiveTrackColor = Color(0x66FFFFFF)))
         Text(clock(length), color = Color.White, style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.width(4.dp))

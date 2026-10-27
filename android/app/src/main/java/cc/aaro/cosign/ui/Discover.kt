@@ -765,10 +765,32 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
             // ⋯: more or less like this, or nothing more from this source (each learned, and logged).
             Box {
                 Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(32.dp).clip(CircleShape).clickable { menu = true }.padding(6.dp))
-                if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
-                    DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { menu = false; social.moreLike(c.topic, key = "t:" + c.id) })
-                    DropdownMenuItem({ Text("Less like this", color = Vault.Text) }, { menu = false; social.lessLike(c.topic, "t:" + c.id) })
-                    DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.hideSource(c) })
+                // As Google Discover's: this story, then its topic, then its source; then share or keep it. Each is learned and logged.
+                if (menu) {
+                    val topic = remember(c.id) { social.storyTopic(c) }
+                    val topicName = TopicFeeds.name(topic)
+                    val followed = topic in social.followedTopics.collectAsState().value
+                    val kept = social.later.items.collectAsState().value.any { it.url == c.url && it.deleted == null }
+                    DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { menu = false; social.moreLike(topic, key = "t:" + c.id) })
+                        DropdownMenuItem({ Text("Not interested", color = Vault.Text) }, { menu = false; social.notInterested(c) })
+                        HorizontalDivider(color = Vault.Edge)
+                        DropdownMenuItem({ Text(if (followed) "Stop following $topicName" else "Follow $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            { menu = false; social.followTopic(topic, !followed) })
+                        DropdownMenuItem({ Text("Fewer stories about $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.fewerAbout(topic, "t:" + c.id) })
+                        HorizontalDivider(color = Vault.Edge)
+                        DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.hideSource(c) })
+                        HorizontalDivider(color = Vault.Edge)
+                        DropdownMenuItem({ Text("Share", color = Vault.Text) }, {
+                            menu = false; FeedLog.act("t:" + c.id, "share")
+                            context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                                .putExtra(android.content.Intent.EXTRA_TEXT, c.url).putExtra(android.content.Intent.EXTRA_SUBJECT, c.title), null))
+                        })
+                        // Save: into your notes (private), as the bookmark on a page does.
+                        DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, {
+                            menu = false; if (!kept) { FeedLog.act("t:" + c.id, "save"); social.later.savePage(c.url, c.title) }
+                        })
+                    }
                 }
             }
         }
