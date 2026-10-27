@@ -2054,7 +2054,11 @@ private fun ProfileTimer(pk: String, named: () -> Boolean) {
 /** What's in the search box, kept while you look at results (and given back to the box when you tap it there). */
 object SearchText {
     val q = kotlinx.coroutines.flow.MutableStateFlow("")
-    /** The note the last Enter made (its id), until a result is opened (then it's a visit) or you leave the search. */
+    /**
+     * The note this search made (its id), until a result is opened (then it's a visit) or a new search starts. An edit of
+     * the search is the same search: Enter rewords this note. A new one starts with ×, an emptied box, typing over the
+     * whole search, or a fresh box (out of search and back).
+     */
     val note = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     /** Where you tapped in the results bar's text (the cursor goes there); null: at the end. */
     val cursor = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
@@ -2105,12 +2109,14 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val save = { if (t.isNotEmpty()) { if (saved == null) { undo = social.later.save(t); social.interests.noticed(t) } } }
     // A search: what you typed (or the suggestion you tapped) is kept as a note, then searched (opening a result
     // makes it a visit instead). "Go to a site", a pasted link and @name aren't notes.
-    fun searchFor(x: String) { val j = social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; FeedLog.ev("search", "note" to j?.let { "l:" + it.first.id }, "new" to j?.second); social.interests.noticed(x); nav.results(x) }
+    fun searchFor(x: String) { val j = SearchText.note.value?.let { social.later.reword(it, x) } ?: social.later.jot(x); SearchText.note.value = j?.takeIf { it.second }?.first?.id; FeedLog.ev("search", "note" to j?.let { "l:" + it.first.id }, "new" to j?.second); social.interests.noticed(x); nav.results(x) }
+    // The search went to a site instead: the note it made goes (a note you had before stays).
+    fun dropNote() { SearchText.note.value?.let { id -> social.later.items.value.firstOrNull { it.id == id && it.deleted == null }?.let(social.later::remove) }; SearchText.note.value = null }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
             atPeople -> social.search(t.drop(1))
-            site?.sure == true -> { social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
+            site?.sure == true -> { dropNote(); social.later.opened(site.url, site.address, t); openInBrowser(context, site.url) }
             Nip05.isAddress(t) -> scope.launch { Nip05.lookup(t)?.takeIf { it.length == 64 }?.let { nav.profile(it) } ?: nav.results(t) }
             else -> searchFor(t)
         }
@@ -2134,7 +2140,11 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(6.dp)) { Swirl(28f) }
         Spacer(Modifier.width(6.dp))
         TextField(
-            androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v -> sel = v.selection; q = v.text },
+            androidx.compose.ui.text.input.TextFieldValue(q, if (sel.max <= q.length) sel else androidx.compose.ui.text.TextRange(q.length)), { v ->
+                // Typed over the whole search, or emptied: a new search from here.
+                if (v.text != q && (v.text.isEmpty() || (q.isNotEmpty() && sel.min == 0 && sel.max == q.length))) SearchText.note.value = null
+                sel = v.selection; q = v.text
+            },
             Modifier.weight(1f).focusRequester(focus), singleLine = true,
             placeholder = { Text("Search or jot anything…", color = Vault.Muted) },
             // A web address box, as a browser's: what you type stays exactly as typed (no corrections, no capitals, no space
@@ -2144,7 +2154,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             keyboardActions = KeyboardActions(onSearch = { go() }),
             trailingIcon = { if (q.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
                 // Clear: the whole search, in one tap.
-                Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0) }.padding(8.dp))
+                Icon(Icons.Filled.Close, "Clear", tint = Vault.Muted, modifier = Modifier.size(36.dp).clip(CircleShape).clickable { q = ""; sel = androidx.compose.ui.text.TextRange(0); SearchText.note.value = null }.padding(8.dp))
                 if (t.isNotEmpty() && pasted == null && !atPeople) GoChip { go() }
             } },
             shape = RoundedCornerShape(26.dp),
@@ -2166,7 +2176,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                 // What Enter does, first.
                 item(key = "enter") { DropRow(t, if (site?.sure == true) "Enter · open ${site.address}" else "Enter · search ${engine.label}", strong = true, onFill = null) { go() } }
-                site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
+                site?.takeIf { !it.sure }?.let { s -> item(key = "site") { GoToSite(s) { dropNote(); social.later.opened(s.url, s.address, t); openInBrowser(context, s.url) } } }
                 site?.takeIf { it.sure }?.let { s -> item(key = "search") { DropRow(t, "Search ${engine.label} instead", onFill = null) { searchFor(t) } } }
                 items(suggestions, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
                 if (showPostsRow && t.length >= 2) item(key = "posts") {
@@ -2247,12 +2257,12 @@ private fun ResultsScreen(q: String, social: Social, nav: Nav) = Column(Modifier
                 }
                 try { c.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, real).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
             }
-            // The search changed in the page: Marble's box follows, and it's a new search by the same rules (a note).
+            // The search changed in the page: Marble's box follows, and it's the same search (its note takes the new words).
             fun followed(u: android.net.Uri) {
                 val nq = engine.query(u) ?: return
                 if (cc.aaro.cosign.Later.same(nq, query)) return
                 query = nq; SearchText.q.value = nq
-                val j = social.later.jot(nq); SearchText.note.value = j?.takeIf { it.second }?.first?.id
+                val j = SearchText.note.value?.let { social.later.reword(it, nq) } ?: social.later.jot(nq); SearchText.note.value = j?.takeIf { it.second }?.first?.id
             }
             // The engine's own box, hidden: one box, Marble's.
             fun hideOwnBox(v: android.webkit.WebView) = v.evaluateJavascript(

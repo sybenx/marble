@@ -70,6 +70,20 @@ class Later(private val prefs: android.content.SharedPreferences) {
         val had = items.value.any { it.url == null && it.deleted == null && same(it.text, text) }
         return save(text)?.let { it to !had }
     }
+    /**
+     * Enter on an edit of the same search: the note this search made ([id]) takes the new words, rather than a second
+     * note (only the latest words are synced). Edited into another note's words: this one goes, and that one comes back.
+     * Second, as for [jot]: whether the note is still this search's own.
+     */
+    fun reword(id: String, text: String): Pair<LaterItem, Boolean>? {
+        val t = text.trim().take(500).ifEmpty { return null }
+        val mine = items.value.firstOrNull { it.id == id && it.url == null && it.deleted == null } ?: return jot(t)
+        val other = items.value.firstOrNull { it.id != id && it.url == null && it.deleted == null && same(it.text, t) }
+        if (other != null) { remove(mine); return save(t)?.let { it to false } }
+        val item = mine.copy(text = t, done = null, updated = next(mine))
+        put(item)
+        return item to true
+    }
     /** A page saved from the browser's Save button: by its address (saved again, it comes back rather than doubling). */
     fun savePage(url: String, title: String): LaterItem? {
         val t = title.trim().take(500).ifEmpty { return null }

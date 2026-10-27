@@ -184,4 +184,39 @@ class LaterTest {
         assertNull(l.saved("furnace filter size"))
         assertEquals("", Later.fromJson(l.json()).first { it.id == a.id }.text)
     }
+
+    // An edit of a search is the same search: its note takes the new words (the same cases as Marble Web and desktop).
+    @Test fun anEditedSearchIsOneNote() {
+        val l = Later(Prefs())
+        val (foo, fresh) = l.jot("foo")!!
+        assertTrue(fresh)
+        val bar = l.reword(foo.id, "foo bar")!!
+        assertEquals(foo.id to true, bar.first.id to bar.second)
+        l.reword(foo.id, "foo bar baz")
+        assertEquals(listOf("foo bar baz"), l.shown().map { it.text })
+        assertEquals(foo.id, l.shown().single().id)
+        // × and a new search: a second note.
+        l.jot("weather")
+        assertEquals(2, l.shown().size)
+    }
+
+    @Test fun onlyThisSearchsOwnNoteIsReworded() {
+        val l = Later(Prefs())
+        l.save("milk")
+        val (milk, fresh) = l.jot("milk")!!
+        assertFalse(fresh)                                  // an older note came back: not this search's
+        // So the edit is a note of its own (the box passes no note to reword), and "milk" stays.
+        l.jot("milk prices")
+        assertEquals(setOf("milk", "milk prices"), l.shown().map { it.text }.toSet())
+        assertEquals(milk.id, l.find("milk")!!.id)
+    }
+
+    @Test fun editedIntoAnotherNotesWords() {
+        val l = Later(Prefs())
+        val recipe = l.save("bread recipe")!!
+        val (bread, _) = l.jot("bread")!!
+        val r = l.reword(bread.id, "Bread  recipe")!!
+        assertEquals(recipe.id to false, r.first.id to r.second)
+        assertEquals(listOf(recipe.id), l.shown().map { it.id })   // one note, no duplicate
+    }
 }
