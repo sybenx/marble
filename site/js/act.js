@@ -4,7 +4,7 @@ import { publish, req, count, relays, foundOn, FAST } from "./pool.js";
 import { outbox, keep, profile, profiles, onProfile } from "./data.js";
 import { esc, avatar } from "./render.js";
 import { npub } from "./ids.js";
-import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither } from "./me.js";
+import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const ALSO = ["wss://relay.ditto.pub", "wss://syb.lol"]; // where Discover and search read reactions
@@ -41,6 +41,9 @@ export function openSignIn() {
   if (!dialog.open) dialog.showModal();
   hasExtension() ? withExtension() : withPhone();
 }
+
+// Signed out somewhere else (the extension, the phone): said once, quietly.
+onSignedOut(() => toast("Signed out"));
 
 // More than one account answered the code you signed in with (me.js): which one is you? Until you say, nothing is
 // signed, and this doesn't close. Each account shows its picture, name and the ends of its npub, as sign-in apps show

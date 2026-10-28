@@ -27,6 +27,37 @@ export const method = () => state?.method || null;
 /** Whether a browser extension is here to sign in with. Extensions may arrive a moment after the page. */
 export const hasExtension = () => !!window.nostr?.getPublicKey;
 
+// ── Signed out somewhere else ──
+// Taking this site away in the extension, on the phone, or removing the device: the site finds out at its next
+// contact (a refusal that says so, or another account answering) and shows itself signed out, rather than keeping a
+// sign-in that no longer works (~/igloo/signin-signout-audit.md, fix 2). onSignedOut(fn) tells the page, once.
+const outs = new Set();
+export const onSignedOut = (fn) => outs.add(fn);
+const GONE = /not-connected|revoked|was removed|removed from your key|not signed in|said not now/i;
+function signedOutElsewhere() {
+  if (!state) return;
+  set(null);
+  release();
+  outs.forEach((fn) => fn());
+}
+/** A refusal from the extension or the phone: signed out, if it says we are. Returns the error, to throw on. */
+function checked(err) {
+  if (state && GONE.test(String(err?.message || err))) signedOutElsewhere();
+  return err;
+}
+// The extension says so itself (the Marble extension, when it removes this site or signs out): at once.
+if (typeof window !== "undefined") window.addEventListener("marble:signedout", () => { if (state?.method === "extension") signedOutElsewhere(); });
+// On load, signed in by extension: one quiet check of which account it is, but only with an extension that promises
+// never to open a window without a click (the Marble extension's __marble); any other might ask every load.
+if (typeof window !== "undefined" && state?.method === "extension") setTimeout(async () => {
+  for (let i = 0; i < 10 && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150)); // (extensions arrive late)
+  if (!window.nostr?.__marble || state?.method !== "extension") return;
+  try {
+    const pk = String(await window.nostr.getPublicKey()).toLowerCase();
+    if (state?.method === "extension" && pk !== state.pubkey) signedOutElsewhere();
+  } catch (err) { checked(err); }
+}, 0);
+
 function set(next) {
   remote?.stop?.();
   remote = null;
@@ -112,15 +143,23 @@ function save() {
 if (state?.method === "phone" && state.phone?.secret) setTimeout(() => phoneRemote().then(watch), 0);
 
 export function signOut() {
-  if (state?.method === "phone") phoneRemote().then((r) => r.request("logout", [], 5000)).catch(() => {});
+  // the phone's session is read before it's cleared, so the logout always goes (fix 9)
+  if (state?.method === "phone") logout(state.phone);
   set(null);
   release();
+}
+async function logout(saved) {
+  const { Remote } = await import("./connect.js");
+  const r = new Remote(saved);
+  await r.request("logout", [], 5000).catch(() => {});
+  r.stop();
 }
 
 async function phoneRemote() {
   if (!remote) {
+    const saved = state.phone;
     const { Remote } = await import("./connect.js");
-    remote = new Remote(state.phone);
+    remote = new Remote(saved);
   }
   return remote;
 }
@@ -133,10 +172,13 @@ export async function sign(template) {
   if (hold) await hold.promise;
   if (!state?.method) throw new Error("read-only");
   const t = { created_at: Math.floor(Date.now() / 1000), tags: [], content: "", ...template, pubkey: state.pubkey };
-  const signed = state.method === "extension"
-    ? await window.nostr.signEvent(t)
-    : await (await phoneRemote()).signEvent(t);
-  if (!signed || signed.pubkey !== state.pubkey || !verify(signed)) throw new Error("bad signature");
+  let signed;
+  try {
+    signed = state.method === "extension" ? await window.nostr.signEvent(t) : await (await phoneRemote()).signEvent(t);
+  } catch (err) { throw checked(err); }
+  // another account answered: the extension (or phone) has moved on from the one this site knows
+  if (signed && isHex64(signed.pubkey) && signed.pubkey !== t.pubkey) { signedOutElsewhere(); throw new Error("not signed in: another account"); }
+  if (!signed || signed.pubkey !== t.pubkey || !verify(signed)) throw new Error("bad signature");
   return signed;
 }
 
@@ -148,7 +190,9 @@ export async function sign(template) {
 export async function nip44Self(text, encrypt = true) {
   if (hold) await hold.promise;
   if (state?.method !== "extension" || !window.nostr?.nip44) throw new Error("unsupported");
-  return encrypt ? window.nostr.nip44.encrypt(state.pubkey, text) : window.nostr.nip44.decrypt(state.pubkey, text);
+  try {
+    return await (encrypt ? window.nostr.nip44.encrypt(state.pubkey, text) : window.nostr.nip44.decrypt(state.pubkey, text));
+  } catch (err) { throw checked(err); }
 }
 
 /** Where your posts go: your own write relays (NIP-65), or the fast ones if you have none listed. */

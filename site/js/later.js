@@ -3,12 +3,17 @@
 // item (the newer `updated` wins; removed ones stay a month as markers so other devices learn it). Here they live
 // in this browser, and sync only when you signed in with the Marble extension: signed in by your phone's code,
 // they stay here (your servers don't encrypt for sites, on purpose). Tabs: pages opened from Marble, in this browser.
+// Notes, Searches and Tabs belong to the account signed in (and those from while nobody was, to nobody): another
+// account never sees them or gets them merged in, and signing out leaves none of them on the page
+// (~/igloo/signin-signout-audit.md, fix 3).
 import { req, relays, publish, FAST } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 
 export const TAG = "marble/later";
-const KEY = "marble.later", TABS = "marble.tabs";
+// this browser's copies, by account ("" while nobody's signed in)
+const KEY = (pk) => pk ? `marble.later.${pk}` : "marble.later", TABS = (pk) => pk ? `marble.tabs.${pk}` : "marble.tabs";
+const DIRTY = (pk) => pk ? `marble.later.dirty.${pk}` : "marble.later.dirty", SYNCED = (pk) => `marble.later.synced.${pk}`;
 const now = () => Math.floor(Date.now() / 1000);
 const MONTH = 30 * 86400;
 const listeners = new Set();
@@ -19,8 +24,19 @@ function write(key, value) { try { localStorage.setItem(key, JSON.stringify(valu
 
 // ── Notes ────────────────────────────────────────────────────────────────────────────────────────────
 
-let doc = read(KEY, { v: 1, items: [] }); // the account copy's shape, unknown fields and all
-if (doc.v !== 1 || !Array.isArray(doc.items)) doc = { v: 1, items: [] };
+// Once: what was kept before accounts had their own copies goes to whoever is signed in (if nobody, it stays nobody's).
+if (typeof localStorage !== "undefined" && !localStorage.getItem("marble.later.scoped")) {
+  const pk = current();
+  if (pk) for (const [from, to] of [["marble.later", KEY(pk)], ["marble.tabs", TABS(pk)], ["marble.searches", `marble.searches.${pk}`], ["marble.later.dirty", DIRTY(pk)]]) {
+    const v = localStorage.getItem(from);
+    if (v !== null && localStorage.getItem(to) === null) localStorage.setItem(to, v);
+    localStorage.removeItem(from);
+  }
+  write("marble.later.scoped", 1);
+}
+const load = (pk) => { const d = read(KEY(pk), null); return d?.v === 1 && Array.isArray(d.items) ? d : { v: 1, items: [] }; };
+let who = current() || "";
+let doc = load(who); // the account copy's shape, unknown fields and all
 
 const words = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
 export const same = (a, b) => words(a) === words(b);
@@ -37,7 +53,7 @@ export const saved = (text) => items().find((i) => !i.url && !i.done && same(i.t
 function put(item) {
   doc.items = doc.items.filter((i) => i.id !== item.id).concat(item);
   doc.at = Math.max(...doc.items.map((i) => i.updated || 0), now());
-  write(KEY, doc);
+  write(KEY(who), doc);
   listeners.forEach((fn) => fn());
   changed();
 }
@@ -62,8 +78,8 @@ export function keepPage(url, title) {
 // A search edited within 2 minutes (it shares at least half of the shorter one's words, or one holds the other) takes
 // the last one's place. Not notes: the bookmark keeps a search as a note.
 
-const SEARCHES = "marble.searches";
-export const searches = () => read(SEARCHES, []).filter((x) => x?.text && now() - x.at < MONTH);
+const SEARCHES = (pk) => pk ? `marble.searches.${pk}` : "marble.searches";
+export const searches = () => read(SEARCHES(who), []).filter((x) => x?.text && now() - x.at < MONTH);
 export function searched(text) {
   const t = String(text || "").trim().slice(0, 500);
   if (!t) return;
@@ -72,7 +88,7 @@ export function searched(text) {
   const aw = a.split(" "), bw = b.split(" ");
   const [short, long] = aw.length <= bw.length ? [aw, bw] : [bw, aw];
   const edit = last && now() - last.at <= 120 && (short.filter((x) => long.includes(x)).length * 2 >= short.length || a.includes(b) || b.includes(a));
-  write(SEARCHES, [{ text: t, at: now() }, ...list.slice(edit ? 1 : 0).filter((x) => words(x.text) !== a)].slice(0, 200));
+  write(SEARCHES(who), [{ text: t, at: now() }, ...list.slice(edit ? 1 : 0).filter((x) => words(x.text) !== a)].slice(0, 200));
 }
 
 export const tick = (item, on) => put({ ...item, done: on ? now() : null, updated: next(item) });
@@ -92,18 +108,28 @@ function merge(theirs) {
   const { items: _, ...rest } = theirs;
   const before = JSON.stringify(theirs.items.map((i) => [i.id, i.updated]).sort());
   doc = { ...doc, ...rest, v: 1, items: merged, at: Math.max(...merged.map((i) => i.updated || 0), 0) };
-  write(KEY, doc);
+  write(KEY(who), doc);
   listeners.forEach((fn) => fn());
   return JSON.stringify(merged.map((i) => [i.id, i.updated]).sort()) !== before;
 }
 
 // ── Syncing (signed in with the extension only) ──────────────────────────────────────────────────────
 
-export const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
-let lastPull = 0, sendTimer = null, dirty = read("marble.later.dirty", false);
+// An extension that can't encrypt for this site (paired to the phone: your servers don't, on purpose) doesn't sync.
+let noEncrypt = false;
+export const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt;
+// The last try at syncing failed (not because it can't sync at all): Notes says so, quietly.
+let failing = false;
+export const syncFailing = () => syncs() && failing;
+const failed = (err) => {
+  if (/unsupported/i.test(String(err?.message || err))) noEncrypt = true;
+  else failing = true;
+  listeners.forEach((fn) => fn());
+};
+let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false);
 function changed() {
   dirty = true;
-  write("marble.later.dirty", true);
+  write(DIRTY(who), true);
   if (!syncs()) return;
   clearTimeout(sendTimer);
   sendTimer = setTimeout(send, 10000);
@@ -121,10 +147,14 @@ export async function pull({ force = false } = {}) {
   const me = current();
   const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 }))
     .filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
+  if (me !== who) return false; // (signed out or in as someone else meanwhile)
   if (!got) { if (dirty) changed(); return false; }
   let theirs;
-  try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch { return false; }
+  try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return false; }
+  if (me !== who) return false;
   const ahead = merge(theirs);
+  failing = false;
+  write(SYNCED(me), true);
   if (ahead || dirty) changed();
   return true;
 }
@@ -134,14 +164,45 @@ let sending = false;
 export async function send() {
   if (!syncs() || sending) return;
   sending = true;
+  const me = who;
   try {
     lastPull = 0;
     await pull({ force: true }).catch(() => {});
     const content = await nip44Self(JSON.stringify(doc), true);
     const ev = await sign({ kind: 30078, tags: [["d", TAG]], content });
     const sent = await publish((await where()).write, ev);
-    if (sent.ok.length) { dirty = false; write("marble.later.dirty", false); }
-  } catch {} finally { sending = false; }
+    if (sent.ok.length && me === who) { dirty = false; failing = false; write(DIRTY(me), false); write(SYNCED(me), true); listeners.forEach((fn) => fn()); }
+    else if (!sent.ok.length) failed(new Error("not sent"));
+  } catch (err) { failed(err); } finally { sending = false; }
+}
+
+// Another account (or nobody): its own copy. The one signed out of leaves the page; if all of it is on the account
+// (synced, nothing unsent), this browser's copy goes too; if not (a phone sign-in, or unsent changes), it stays, out
+// of sight, for when that account signs in here again.
+function switchTo(pk) {
+  pk = pk || "";
+  if (pk === who) return;
+  const was = who;
+  if (was && !pk && read(SYNCED(was), false) && !dirty) for (const k of [KEY(was), DIRTY(was)]) try { localStorage.removeItem(k); } catch {}
+  who = pk;
+  doc = load(pk);
+  dirty = read(DIRTY(pk), false);
+  noEncrypt = failing = false;
+  lastPull = 0;
+  clearTimeout(sendTimer);
+  listeners.forEach((fn) => fn());
+}
+
+/** Notes made while nobody was signed in, offered to the account now signed in (never merged in by themselves). */
+export const strays = () => (who ? (read(KEY(""), null)?.items || []).filter((i) => !i.deleted && String(i.text || "").trim()) : []);
+export function adoptStrays() {
+  for (const i of strays()) put({ ...i, updated: next(i) });
+  dropStrays();
+  changed();
+}
+export function dropStrays() {
+  try { localStorage.removeItem(KEY("")); localStorage.removeItem(DIRTY("")); } catch {}
+  listeners.forEach((fn) => fn());
 }
 
 if (typeof document !== "undefined") {
@@ -149,15 +210,21 @@ if (typeof document !== "undefined") {
     if (document.visibilityState === "hidden" && dirty && syncs()) { clearTimeout(sendTimer); send(); }
     if (document.visibilityState === "visible") pull();
   });
-  onMe(() => { lastPull = 0; pull(); });
+  onMe((pk) => { switchTo(pk); pull(); });
+  // when the page starts (the extension may arrive a moment later): your account's copy in, and yours out if unsent
+  setTimeout(async () => {
+    for (let i = 0; i < 10 && current() && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150));
+    if (!syncs()) return;
+    if (dirty) send(); else pull({ force: true }).catch(() => {}); // (send reads and merges first)
+  }, 500);
 }
 
 // ── Tabs: pages opened from Marble, in this browser (30 days, at most 500) ───────────────────────────
 
-export const tabs = () => read(TABS, []).filter((t) => now() - t.at < MONTH);
+export const tabs = () => read(TABS(who), []).filter((t) => now() - t.at < MONTH);
 export function opened(url, title, from) {
   const list = [{ url, title: title || hostOf(url), at: now(), from: from || "" }, ...tabs().filter((t) => t.url !== url)].slice(0, 500);
-  write(TABS, list);
+  write(TABS(who), list);
   listeners.forEach((fn) => fn());
 }
 export const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };

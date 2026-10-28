@@ -1095,6 +1095,7 @@ function showNotes(signal, tab) {
     <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes</h1><span class="only-you"></span></div>
     <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
       <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
+    <p class="strays" hidden></p>
     <div class="chips" role="tablist"></div>
     <div class="note-list"></div>
   </div>`;
@@ -1138,10 +1139,17 @@ function showNotes(signal, tab) {
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : (these.length ? these.map((i) => noteRow(i, f)).join("") : empty)
         + (show === "notes" && tabs.length ? `<div class="tabs-under">${tabs.slice(0, 5).map(tabRow).join("")}</div>` : "");
-    $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? "" : " · this browser"}`;
+    $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
+    // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
+    const strays = notes.strays(), bar = $(".strays", root);
+    bar.hidden = !strays.length;
+    if (strays.length) bar.innerHTML = `${strays.length === 1 ? "A note" : `${strays.length} notes`} from while nobody was signed in here.
+      <button type="button" class="link" data-strays="add">Add to your notes</button> <button type="button" class="link" data-strays="drop">Remove them</button>`;
   };
   filter.addEventListener("input", draw);
   root.onclick = (ev) => {
+    const stray = ev.target.closest("[data-strays]");
+    if (stray) return stray.dataset.strays === "add" ? notes.adoptStrays() : notes.dropStrays();
     const chip = ev.target.closest("[data-show]");
     if (chip) { show = chip.dataset.show; history.replaceState(history.state, "", show === "notes" ? "/notes" : `/notes?tab=${show}`); return draw(); }
     const row = ev.target.closest(".note-row"), item = row && notes.items().find((i) => i.id === row.dataset.id);
