@@ -111,10 +111,22 @@ fun marbleLink(e: Event): String = "https://marble.syb.lol/" +
     if (e.kind in 30000..39999) naddr(e.firstTag("d") ?: "", e.pubkey, e.kind) else nevent(e.id, e.pubkey, e.kind, emptyList())
 
 /** What a marble.syb.lol link names: a post or someone (/nevent1…, /note1…, /npub1…, /nprofile1…, and the older /e/… and /p/…). */
-fun marbleRef(url: String): Ref? {
-    val u = try { android.net.Uri.parse(url) } catch (_: Exception) { return null }
-    if (u.host?.removePrefix("www.") != "marble.syb.lol") return null
-    return Ref.parse(u.lastPathSegment ?: return null)
+fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
+
+/**
+ * A link that's a post, article or someone, opened in Marble rather than a browser: marble.syb.lol (/nevent1…, /e/…,
+ * /p/…, /a/…), njump.me, or nostr:…. Anything else (a real web page): null.
+ */
+fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, setOf("marble.syb.lol", "njump.me"))
+
+private fun refIn(url: String, hosts: Set<String>): Ref? {
+    val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }
+    if (u.scheme?.lowercase() !in setOf("https", "http") || u.host?.lowercase()?.removePrefix("www.") !in hosts) return null
+    val segs = u.path.orEmpty().split('/').filter { it.isNotEmpty() }
+    val last = segs.lastOrNull() ?: return null
+    // /e/<hex> and /p/<hex>; a bare hex says nothing about what it is.
+    if (isHex32(last.lowercase())) return when (segs.getOrNull(segs.size - 2)) { "e" -> Ref.Note(last.lowercase()); "p" -> Ref.Profile(last.lowercase()); else -> null }
+    return Ref.parse(last)
 }
 
 /** The post a marble.syb.lol link stands for, if that's what it is. */

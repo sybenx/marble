@@ -277,6 +277,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // Debug builds: a profile asked for by intent (MainActivity's test hook).
     val postAsked by OpenPost.id.collectAsState()
     LaunchedEffect(postAsked) { postAsked?.let { id -> nav.thread(id); OpenPost.id.value = null } }
+    val refAsked by OpenPost.ref.collectAsState()
+    LaunchedEffect(refAsked) { refAsked?.let { r -> OpenPost.ref.value = null; nav.ref(r, context) } }
     val searchAsked by OpenSearch.query.collectAsState()
     LaunchedEffect(searchAsked) { searchAsked?.let { q -> stack.indices.forEach { kept.removeState(keyOf(it)) }; stack.clear(); social.search(q); stack.add(Route.Search); OpenSearch.query.value = null } }
     val askedScreen by DebugOpen.screen.collectAsState()
@@ -356,6 +358,13 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     /** Open the post with the reply box ready. */
     fun reply(id: String) { FeedLog.open(id, "replyBox"); open(Route.Thread(id, reply = true)) }
     fun profile(pk: String) { FeedLog.ev("open", "what" to "profile", "author" to pk); open(Route.Profile(pk)) }
+    /** A post, someone, or an article (found first; if it can't be, it opens on marble.syb.lol). */
+    suspend fun ref(r: cc.aaro.cosign.Ref, context: android.content.Context) = when (r) {
+        is cc.aaro.cosign.Ref.Note -> thread(r.id)
+        is cc.aaro.cosign.Ref.Profile -> profile(r.pubkey)
+        is cc.aaro.cosign.Ref.Addr -> social.fetchAddr(r)?.let { thread(it.id) }
+            ?: cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/" + r.naddr, false, Vault.dark, Vault.Ground.toArgb(), null)
+    }
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
     /** A search's results: people, posts and articles (Marble's own search). */
@@ -1503,6 +1512,8 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
 
 /** Open a page in a Custom Tab, in Marble's colours, with Save (filled when the page is already in Later): see [cc.aaro.cosign.Tabs]. */
 private fun openInBrowser(context: android.content.Context, url: String, item: String? = null) {
+    // A post, article or someone (a kept post's marble.syb.lol link, say): in Marble, never a browser.
+    cc.aaro.cosign.inAppRef(url)?.let { OpenPost.ref.value = it; return }
     val saved = Social.of(CosignApp.instance.phone).later.items.value.any { it.url == url && it.deleted == null }
     cc.aaro.cosign.Tabs.open(context, url, saved, Vault.dark, Vault.Ground.toArgb(), item)
 }
@@ -1944,12 +1955,14 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
         for (p in parts) when (p) {
             is Part.Plain -> append(p.s)
             // A marble.syb.lol link to a post: that post, here; any other link, in your browser.
-            is Part.Link -> cc.aaro.cosign.marblePost(p.url)?.let { id -> withLink(LinkAnnotation.Clickable(p.url, style) { nav.thread(id) }) { append("↪ a post") } }
+            is Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, style) { OpenPost.ref.value = r }) {
+                append(when (r) { is cc.aaro.cosign.Ref.Note -> "↪ a post"; is cc.aaro.cosign.Ref.Profile -> "@" + (people[r.pubkey]?.shown ?: shortNpub(r.pubkey)); is cc.aaro.cosign.Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" })
+            } }
                 ?: withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
             is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
             is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
             // The first is shown in its own box under the text; any more, as a short link (never the raw string).
-            is Part.QuoteAddr -> if (p != parts.firstOrNull { it is Part.QuoteAddr }) withLink(LinkAnnotation.Url("https://marble.syb.lol/" + p.a.naddr, style)) { append(if (p.a.kind == 30023) "↪ an article" else "↪ quoted") }
+            is Part.QuoteAddr -> if (p != parts.firstOrNull { it is Part.QuoteAddr }) withLink(LinkAnnotation.Clickable(p.a.naddr, style) { OpenPost.ref.value = p.a }) { append(if (p.a.kind == 30023) "↪ an article" else "↪ quoted") }
             is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
         }
     }.let { if (it.text.isBlank()) AnnotatedString("") else it }
@@ -2265,7 +2278,11 @@ private val debugBuild by lazy { cc.aaro.cosign.CosignApp.instance.applicationIn
 object OpenSearch { val query = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
 
 /** A post to open, from a marble.syb.lol link that came from outside (an app link). */
-object OpenPost { val id = kotlinx.coroutines.flow.MutableStateFlow<String?>(null) }
+object OpenPost {
+    val id = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A post, article or someone to open over where you are (back returns there). */
+    val ref = kotlinx.coroutines.flow.MutableStateFlow<cc.aaro.cosign.Ref?>(null)
+}
 
 /** How long away before Marble opens on the main page again, rather than where you were. */
 object Away {

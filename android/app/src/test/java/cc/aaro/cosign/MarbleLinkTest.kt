@@ -45,4 +45,19 @@ class MarbleLinkTest {
         assertEquals("↪ an article and @someone", readable("nostr:${naddr("y", pk, 30023)} and nostr:$npub"))
         assertEquals("nostr:nothing", readable("nostr:nothing"))
     }
+
+    @Test fun keptPostLinksOpenInMarble() {
+        val id = "bea261ef" + "1".repeat(56); val pk = "05e46498" + "0".repeat(56)
+        val nev = Bech32.encode("note", id.hexToBytes())
+        assertEquals(Ref.Note(id), inAppRef("https://marble.syb.lol/$nev"))
+        assertEquals(Ref.Note(id), inAppRef("https://njump.me/$nev"))
+        assertEquals(Ref.Note(id), inAppRef("https://marble.syb.lol/e/$id"))
+        assertEquals(Ref.Profile(pk), inAppRef("https://marble.syb.lol/p/$pk"))
+        assertEquals(Ref.Addr(30023, pk, "x"), inAppRef("https://marble.syb.lol/a/" + naddr("x", pk, 30023)))
+        assertEquals(Ref.Addr(30023, pk, "x"), inAppRef("nostr:" + naddr("x", pk, 30023)))
+        assertEquals(null, inAppRef("https://marble.syb.lol/"))
+        assertEquals(null, inAppRef("https://marble.syb.lol/$id"))
+        assertEquals(null, inAppRef("https://example.com/$nev"))
+        assertEquals(null, inAppRef("https://www.youtube.com/watch?v=abc"))
+    }
 }
