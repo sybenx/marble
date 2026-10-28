@@ -184,9 +184,14 @@ object Calm {
     }
 
     /** All of today's stories, for "More stories": the topics you follow first, then the best fit. */
-    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> =
-        spread(all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
-            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now, shown(it.id)) }), interests)
+    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> {
+        // Each story scored once (a score reads its title and takes a lock; scoring inside the sort's comparisons, again
+        // and again, held up the first draw of Following for seconds).
+        val kept = all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
+        val followed = synchronized(interests) { interests.followed.toSet() }
+        val score = kept.associate { it.id to storyScore(it, interests, now, shown(it.id)) }
+        return spread(kept.sortedWith(compareByDescending<TopicCard> { it.topic in followed }.thenByDescending { score[it.id] ?: 0.0 }), interests)
+    }
 
     /**
      * The order, shared out: near the top, a topic gets as many stories as it weighs (2, up to 10 for your strongest;

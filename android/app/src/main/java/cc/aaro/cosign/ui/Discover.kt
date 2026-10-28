@@ -686,7 +686,9 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val keptUrls = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
     // Following: your people's posts with the news in among them, a story after every third post (the news topic only,
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
-    val news = remember(all) { social.dismissed.value.let { gone -> cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
+    // (Feed 3 has no news between posts: not worked out there at all.)
+    val newsWanted = pane && chip == "all" && social.feedVersion.collectAsState().value != 3
+    val news = remember(all, newsWanted) { if (!newsWanted) emptyList() else social.dismissed.value.let { gone -> cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
         .filter { it.topic == "news" && "t:" + it.id !in gone }.take(40) } }
     // Feed 3 · Edition: what's new from your people (Special Follow first), Today's news, three from beyond, the rest of your people, an end.
     val version by social.feedVersion.collectAsState()
