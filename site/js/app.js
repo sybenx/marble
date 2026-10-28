@@ -3,14 +3,13 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes, verify } from "./pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, resolveNip05, verifyNip05, engagement, mentionsOf } from "./data.js";
-import { searchPeople, followerCounts, SEARCH_RELAYS } from "./search.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf } from "./data.js";
+import { searchPeople, SEARCH_RELAYS } from "./search.js";
 import { goodPosts, stories, yours, prepareMine } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
-import { parseProfile } from "./search-rank.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -34,10 +33,11 @@ let current = null; // {key, ctrl}
 let pageEl = null; // the current page, inside #view
 history.scrollRestoration = "manual";
 
-function go(path, { replace = false } = {}) {
+// live: a search the box is showing as you type (not one to keep, and the box's text is left as it is)
+function go(path, { replace = false, live = false } = {}) {
   save();
   navStart = performance.now();
-  const state = { key: Math.random().toString(36).slice(2) };
+  const state = { key: Math.random().toString(36).slice(2), ...(live ? { live } : {}) };
   if (replace) history.replaceState(state, "", path);
   else history.pushState(state, "", path);
   route(state);
@@ -91,19 +91,16 @@ function route(state, back = false) {
   if (path === "/about") { page("about", "About"); return; }
   if (path === "/" || path === "/index.html") {
     if (q) {
-      const parsed = parseInput(q);
-      // a pasted post or person, @name or name@domain: here; other words (the address bar, if the page's
-      // first script didn't already): kept as a note, then your engine
-      if (parsed.kind === "entity" || parsed.kind === "hex" || parsed.kind === "nip05") { input.value = q; return showSearch(q, signal); }
-      if (q.startsWith("@") && q.length > 1) { input.value = q; return showSearch(q.slice(1), signal); }
-      notes.fromAddressBar(q);
-      location.replace(notes.results(q));
-      return;
+      // Marble's own results: people, posts and articles. From the browser's address bar the words are also kept as a
+      // note (by the page's first script, else here); as you type in the box, the box keeps what you've typed.
+      if (!state.live && !window.marbleJotted && !["entity", "hex"].includes(parseInput(q).kind)) notes.fromAddressBar(q);
+      window.marbleJotted = true;
+      if (!state.live) input.value = q;
+      return showSearch(q, signal);
     }
     document.body.dataset.page = "home";
     document.title = "Marble";
-    input.value = "";
-    chain = null;
+    if (!state.live) { input.value = ""; chain = null; } // (the box emptied as you type: what's left stays)
     boxState();
     return;
   }
@@ -631,13 +628,17 @@ async function showSearch(q, signal) {
   const parsed = parseInput(q);
   if (parsed.kind === "hex" || (parsed.kind === "entity" && parsed.decoded.type !== "address")) return showFound(parsed, signal);
   const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
-  const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(q) ? q : null;
+  // a bare @name: no people from open search (it ranks lookalikes); the box's handle row is the only person shown
+  const bareName = handleOf(q)?.kind === "name";
+  const words = bareName ? q.slice(1) : q;
+  const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(words) ? words : null;
   const root = pageEl;
-  const got = { people: [], extra: {}, peopleDone: !!tagOnly, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const got = { people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
   const opened = new Set(); // lists "See all" has opened, kept across redraws
   const wideQuery = matchMedia("(min-width: 1000px)");
-  root.innerHTML = `<div class="results">
-    <aside class="side" aria-label="People">${parsed.kind === "nip05" ? `<div class="list" id="addr"><p class="muted">Looking up ${esc(parsed.address)}…</p></div>` : ""}<div id="side"></div></aside>
+  // #top: what the box adds above the results (a site to go to, what a handle confirms, your own searches and notes)
+  root.innerHTML = `<div class="top-rows" id="top" hidden></div><div class="results">
+    <aside class="side" aria-label="People"><div id="side"></div></aside>
     <div class="main" id="main"></div>
   </div>`;
   const side = $("#side", root), main = $("#main", root);
@@ -657,9 +658,6 @@ async function showSearch(q, signal) {
     ${!opened.has(id) && items.length > 3 ? `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>` : ""}</div></section>`;
   const personFor = (p) => personRow(p, { verified: got.extra.verified?.get(p.pubkey), followers: got.extra.followers?.get(p.pubkey), follow: got.follows.has(p.pubkey) });
   const postItem = (x) => card(x.e, { why: x.why, clamp: true });
-  const web = `<a class="web" href="https://duckduckgo.com/?q=${encodeURIComponent(q)}" target="_blank" rel="noopener noreferrer">
-    <span class="web-icon" aria-hidden="true">↗</span>
-    <span><span class="web-title">Search the web for “${esc(q)}”</span><span class="web-sub">with DuckDuckGo</span></span></a>`;
   const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
 
   function drawSide() {
@@ -682,7 +680,7 @@ async function showSearch(q, signal) {
         + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
-        + (got.posts === null ? "" : web);
+        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
       fillLater(main);
       return;
     }
@@ -709,41 +707,18 @@ async function showSearch(q, signal) {
       + list.map((r, i) => (i === 3 ? mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
       + (list.length <= 3 ? mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
-      + (got.posts === null ? "" : web);
+      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
     fillLater(main);
   }
   redraw();
   signal.addEventListener("abort", onProfile((pk) => { if (pk === got.people[0]?.pubkey) soon(drawSide); }));
-
-  if (parsed.kind === "nip05") resolveNip05(parsed.address).then(async (r) => {
-    const box = $("#addr", root);
-    if (signal.aborted || !box) return;
-    if (r) {
-      wantProfile(r.pubkey, r.relays);
-      box.innerHTML = personRow({ pubkey: r.pubkey, ...(profiles.get(r.pubkey) || {}) }, { verified: true });
-      return;
-    }
-    // Some sites (primal.net among them) can't be asked from a browser. Then: everyone who says they're
-    // that address, the most followed first, unchecked.
-    const said = (await req(SEARCH_RELAYS, { kinds: [0], search: parsed.address, limit: 30 }, { timeout: 3000, settle: 600 }))
-      .map(parseProfile).filter((p) => p && (p.nip05 || "").toLowerCase() === parsed.address);
-    const counts = said.length ? await followerCounts(said.map((p) => p.pubkey)) : new Map();
-    if (signal.aborted) return;
-    said.sort((a, b) => (counts.get(b.pubkey) || 0) - (counts.get(a.pubkey) || 0));
-    for (const p of said) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
-    const site = esc(parsed.address.split("@")[1]);
-    box.innerHTML = said.length
-      ? `<p class="muted note">${site} didn't answer, so these are the accounts that say they're ${esc(parsed.address)}, the most followed first.</p>`
-        + said.slice(0, 3).map((p) => personRow(p, { followers: counts.get(p.pubkey) })).join("")
-      : `<p class="muted">Nobody found at ${esc(parsed.address)}.</p>`;
-  });
 
   const me = currentMe();
   // Your follows (read once a visit, usually in by now): at most a short wait before people are ranked.
   const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
   followsSoon.then((f) => { got.follows = f; });
 
-  if (!tagOnly) followsSoon.then((follows) => {
+  if (!tagOnly && !bareName) followsSoon.then((follows) => {
     if (signal.aborted) return;
     searchPeople(q, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
       for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
@@ -753,18 +728,19 @@ async function showSearch(q, signal) {
     } }).then(() => { if (!signal.aborted) { got.peopleDone = true; got.extra.ranked = true; soon(drawSide); } });
   });
 
-  goodPosts(q, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
+  boxState(); // the box's rows into #top
+  goodPosts(words, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
     got.posts = list;
     soon(drawMain);
     if (list.length) mark("posts", goodPosts.last);
   });
-  if (oneWord) goodPosts(q, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => { got.tagged = list; soon(drawMain); });
-  if (!tagOnly) stories(q).then((list) => {
+  if (oneWord) goodPosts(words, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => { got.tagged = list; soon(drawMain); });
+  if (!tagOnly) stories(words).then((list) => {
     got.stories = list;
     soon(drawMain);
     if (list.length) mark("stories");
   });
-  if (me) yours(q, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
+  if (me) yours(words, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
 }
 
 const agoLong = (ts) => {
@@ -854,11 +830,11 @@ function personRow(p, { verified, followers, follow = false } = {}) {
 }
 
 // ── The search box: search or jot, as in the app ─────────────────────────────────────────────────────
-// Enter keeps the words as a note and opens your engine's results in a new tab (sites can't show them inside).
-// An address you typed (a dot and an ending, a scheme, or a name and a slash: "xumbrel/") goes to the site. A
-// well-known site's name ("apple") shows "Go to apple.com" to tap, and Enter still searches. A pasted link to a
-// post or person opens here. A handle (name@domain, @name@domain, @name.bsky.social, @name) shows a row for each
-// place it's confirmed to be someone (handles.js), and Enter still searches: "@elonmusk" is a search like any other.
+// Instant search over Marble's own (Ditto's relays), as on the phone: a quarter second after you stop typing, people,
+// posts and articles for what you've typed (the results page, /?q=…); no engine and no web. Above them: a typed
+// address's "Go to" (Enter goes there), a well-known site's name ("apple": "Go to apple.com"), what a handle is
+// confirmed to be (handles.js), and two of your own searches and notes. Enter keeps the search as a note. A pasted
+// link to a post or person opens here.
 
 let warmed = false;
 const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
@@ -886,20 +862,30 @@ function boxState() {
   if (h && handled.has(keyOf(h))) rows.push(...handled.get(keyOf(h)));
   else if (h) lookTimer = setTimeout(() => lookUp(h).then((found) => { handled.set(keyOf(h), found); if (input.value.trim() === t) boxState(); }), pasted ? 0 : 600);
   pasted = false;
+  // two of your own searches and notes that hold what you've typed
+  const low = t.toLowerCase();
+  if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
+    for (const it of notes.open().filter((i) => i.text && i.text.toLowerCase() !== low && i.text.toLowerCase().includes(low)).slice(0, 2)) rows.push({ own: it });
+  }
   pick = -1;
-  drop.innerHTML = rows.map((r, k) => {
+  const html = rows.map((r, k) => {
     const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`;
+    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}">${r.own.url ? GLOBE : MARK}<span class="t">${esc(r.own.text)}</span></a>`;
     if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
     if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
     const face = r.picture ? `<span class="av" style="--s:28px" aria-hidden="true"><img src="${esc(r.picture)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><b>${esc([...(r.name || "?")][0].toUpperCase())}</b></span>` : GLOBE;
     return `<a ${at} href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${face}<span class="t">${esc(r.label)}</span><span class="sub">${esc(r.name ? `${r.name} · ${r.sub}` : r.sub)}</span></a>`;
   }).join("");
+  // with results showing, the rows go above them; otherwise under the box
+  const top = document.body.dataset.page === "search" ? $("#top") : null;
+  if (top) { top.innerHTML = html; top.hidden = !rows.length; }
+  drop.innerHTML = top ? "" : html;
   showDrop();
 }
 // a person's name and picture arriving for a row
 onProfile((pk) => { if (rows.some((r) => r.pubkey === pk)) boxState(); });
 function showDrop() {
-  drop.hidden = !rows.length || document.activeElement !== input;
+  drop.hidden = !drop.children.length || document.activeElement !== input;
   input.setAttribute("aria-expanded", String(!drop.hidden));
   input.removeAttribute("aria-activedescendant");
   for (const el of drop.children) el.setAttribute("aria-selected", String(+el.dataset.k === pick));
@@ -915,10 +901,20 @@ let chain = null; // {id}: the note this search made
 function searchFor(t) {
   const r = chain ? notes.refine(chain.id, t) : notes.jot(t);
   chain = r?.fresh ? { id: r.item.id } : null;
-  window.open(notes.results(t), "_blank", "noopener");
   input.value = t;
-  input.select();
+  showResults(t);
+  // the results are already there: on a phone the keyboard goes; on a computer the words stay selected to edit
+  if (matchMedia("(pointer: coarse)").matches) input.blur(); else input.select();
   boxState();
+}
+// The results for what's in the box, as you type: one history entry for the whole search, not one per letter.
+let liveTimer = 0;
+function showResults(text) {
+  clearTimeout(liveTimer);
+  const t = text.trim(), onResults = document.body.dataset.page === "search";
+  if (t.length < 2) { if (onResults && history.state?.live) go("/", { replace: true, live: true }); return; }
+  if (onResults && new URLSearchParams(location.search).get("q") === t) return;
+  go(`/?q=${encodeURIComponent(t)}`, { replace: onResults, live: true });
 }
 function goToSite(s, from) {
   if (chain) notes.dropDraft(chain.id); // the search ended at a site: a visit, not a note
@@ -930,6 +926,8 @@ function choose(r) {
   const t = input.value.trim();
   if (r.site) return goToSite(r.site, t);
   if (r.kind === "web") return goToSite({ url: r.url, address: r.sub }, t);
+  if (r.own?.url) return goToSite({ url: r.own.url, address: notes.hostOf(r.own.url) }, t);
+  if (r.own) { input.value = r.own.text; return showResults(r.own.text); }
   // someone on Nostr: their page here
   if (chain) notes.dropDraft(chain.id);
   input.blur();
@@ -959,6 +957,15 @@ input.addEventListener("input", () => {
   }
   if (!input.value) chain = null;
   boxState();
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => showResults(input.value), 250);
+});
+// the rows above the results
+view.addEventListener("click", (ev) => {
+  const row = ev.target.closest("#top [data-k]");
+  if (!row || ev.metaKey || ev.ctrlKey) return;
+  ev.preventDefault();
+  choose(rows[+row.dataset.k]);
 });
 input.addEventListener("focus", showDrop);
 input.addEventListener("blur", () => setTimeout(showDrop, 150));
@@ -1061,7 +1068,6 @@ function showNotes(signal, tab) {
       <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
     <div class="chips" role="tablist"></div>
     <div class="note-list"></div>
-    <p class="engine-line">Searches go to <select aria-label="Your search engine">${Object.keys(notes.ENGINES).map((e) => `<option${e === notes.engine() ? " selected" : ""}>${e}</option>`).join("")}</select></p>
   </div>`;
   const filter = $(".filter input", root), list = $(".note-list", root), chips = $(".chips", root);
   const hit = (t, f) => !f || String(t || "").toLowerCase().includes(f.toLowerCase());
@@ -1115,9 +1121,9 @@ function showNotes(signal, tab) {
     if (item && ev.target.closest("[data-open]")) {
       if (item.url) return notes.opened(item.url, item.text, item.text);
       ev.preventDefault();
-      // your own words: searched again
-      window.open(notes.results(item.text), "_blank", "noopener");
-      return;
+      // your own words: searched again, here
+      input.value = item.text;
+      return showResults(item.text);
     }
     const tabEl = ev.target.closest(".tab-row");
     if (tabEl && ev.target.closest("[data-keep]")) {
@@ -1127,7 +1133,6 @@ function showNotes(signal, tab) {
     }
     if (tabEl && ev.target.closest("[data-tab-open]")) notes.opened(tabEl.dataset.url, notes.tabs().find((x) => x.url === tabEl.dataset.url)?.title, "");
   };
-  $(".engine-line select", root).addEventListener("change", (ev) => notes.setEngine(ev.target.value));
   signal.addEventListener("abort", notes.onNotes(() => { if (root.isConnected) draw(); }));
   draw();
   notes.pull({ force: true }).catch(() => {});

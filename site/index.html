@@ -27,9 +27,9 @@
 <link rel="modulepreload" href="/js/later.js">
 <link rel="modulepreload" href="/js/vendor/noble.js">
 <script>
-  // Marble as the browser's search engine (opensearch.xml): /?q=words keeps the words as a note and goes on to your
-  // engine at once, before anything else loads. The note is kept as js/later.js jot() keeps it; it syncs next time
-  // Marble is open. Nostr links are left to the page; @names and name@domain are searches like any other.
+  // Marble as the browser's search engine (opensearch.xml): /?q=words keeps the words as a note, before anything else
+  // loads (as js/later.js jot() keeps it; it syncs next time Marble is open), and the page then shows Marble's own
+  // results for them. A typed address goes to the site. Nostr links are left to the page.
   (function () {
     var p = new URLSearchParams(location.search), q = (p.get("q") || "").trim();
     if (location.pathname !== "/" || !q || q.length > 500) return;
@@ -68,13 +68,9 @@
         localStorage.setItem("marble.later", JSON.stringify(doc));
         localStorage.setItem("marble.later.dirty", "true");
         localStorage.setItem("marble.lastq", JSON.stringify(fresh ? { id: item.id, text: t, at: now } : null));
+        window.marbleJotted = true; // (so the page doesn't keep it again)
       }
     } catch (e) {}
-    var e = "DuckDuckGo"; try { e = JSON.parse(localStorage.getItem("marble.engine")) || e; } catch (x) {}
-    var dark = matchMedia("(prefers-color-scheme: dark)").matches, s = encodeURIComponent(q);
-    location.replace({ Google: "https://www.google.com/search?q=" + s, Bing: "https://www.bing.com/search?q=" + s,
-      Brave: "https://search.brave.com/search?q=" + s, Ecosia: "https://www.ecosia.org/search?q=" + s }[e]
-      || "https://duckduckgo.com/?q=" + s + "&kae=" + (dark ? "d" : "-1"));
   })();
   // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/pool.js).
   if (/^\/((e|p|a)\/|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
@@ -158,6 +154,9 @@
   .drop-row .typed { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; }
   .drop-row .sub { color: var(--muted); font-size: 13px; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drop-row .av { flex: none; }
+  /* the box's rows above search results (a site, a handle, your own searches and notes) */
+  .top-rows[hidden] { display: none; }
+  .top-rows { margin: 0 0 14px; padding: 4px 0; border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
   .about-link { display: none; text-align: center; font-size: 14px; margin: 0; padding: 24px 16px 32px; }
   .about-link a { color: var(--muted); text-decoration: none; }
   .about-link a:hover { text-decoration: underline; }
@@ -428,8 +427,6 @@
   .keep.on svg { fill: currentColor; }
   .tabs-under { margin-top: 14px; border-top: 1px solid var(--line); }
   .empty-line { color: var(--muted); padding: 18px 4px; margin: 0; }
-  .engine-line { color: var(--muted); font-size: 14px; margin: 22px 4px 0; }
-  .engine-line select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; }
 
   /* Signing in */
   dialog#signin { border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--ink); padding: 24px; width: min(400px, calc(100vw - 32px)); }

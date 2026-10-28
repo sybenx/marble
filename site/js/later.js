@@ -8,7 +8,7 @@ import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 
 export const TAG = "marble/later";
-const KEY = "marble.later", TABS = "marble.tabs", ENGINE = "marble.engine";
+const KEY = "marble.later", TABS = "marble.tabs";
 const now = () => Math.floor(Date.now() / 1000);
 const MONTH = 30 * 86400;
 const listeners = new Set();
@@ -195,19 +195,6 @@ export function opened(url, title, from) {
   listeners.forEach((fn) => fn());
 }
 export const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
-
-// ── Your engine ──────────────────────────────────────────────────────────────────────────────────────
-
-export const ENGINES = {
-  DuckDuckGo: (q, dark) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}&kae=${dark ? "d" : "-1"}`,
-  Google: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
-  Bing: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}`,
-  Brave: (q) => `https://search.brave.com/search?q=${encodeURIComponent(q)}`,
-  Ecosia: (q) => `https://www.ecosia.org/search?q=${encodeURIComponent(q)}`,
-};
-export const engine = () => { const e = read(ENGINE, "DuckDuckGo"); return ENGINES[e] ? e : "DuckDuckGo"; };
-export const setEngine = (name) => { if (ENGINES[name]) write(ENGINE, name); };
-export const results = (q) => ENGINES[engine()](q, matchMedia("(prefers-color-scheme: dark)").matches);
 
 // ── "Go to …": what you typed as an address, or a well-known site's name (android Sites.kt, the same list) ───
 // An address is sure, and Enter opens it: a dot and an ending ("example.com/page"), a scheme ("https://…"), or a
