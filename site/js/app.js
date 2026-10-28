@@ -3,8 +3,9 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./ids.js";
 import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf } from "./data.js";
-import { searchPeople, SEARCH_RELAYS } from "./search.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf } from "./data.js";
+import { searchPeople, searchPosts, SEARCH_RELAYS } from "./search.js";
+import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
@@ -715,6 +716,8 @@ async function showSearch(q, signal) {
   root.onclick = (ev) => {
     const open = ev.target.closest("[data-open]");
     if (open) { opened.add(open.dataset.open); redraw(); }
+    const by = ev.target.closest("[data-by]");
+    if (by) { got.by.others = [got.by.author, ...got.by.others.filter((pk) => pk !== by.dataset.by)]; postsFrom(by.dataset.by); }
   };
 
   // One section of the phone layout: its first three, "See all N" for the rest.
@@ -724,6 +727,25 @@ async function showSearch(q, signal) {
   const personFor = (p) => personRow(p, { verified: got.extra.verified?.get(p.pubkey), followers: got.extra.followers?.get(p.pubkey), follow: got.follows.has(p.pubkey) });
   const postItem = (x) => card(x.e, { why: x.why, clamp: true });
   const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
+  // Someone you follow named in the search ("thailand anarko"): their posts with the other words, as well as the rest
+  // (author-query.js); a strong match first, a loose one after the first three of the usual results. Others it could
+  // mean are chips.
+  const fromBlock = (draw) => {
+    const { author, rest, others } = got.by, list = got.byPosts;
+    return `<section class="by"><h2 class="by-head">${avatar(author, 24)}<span data-name="${author}">${esc(name(author))}</span><span class="by-words"> · ${esc(rest)}</span></h2>
+      ${others.length ? `<p class="by-chips">${others.map((pk) => `<button type="button" class="chip" data-by="${pk}">${avatar(pk, 18)}<span data-name="${pk}">${esc(name(pk))}</span></button>`).join("")}</p>` : ""}
+      <div class="list">${list === null ? `<p class="muted loading-text">Searching…</p>`
+        : !list.length ? `<p class="muted">Nothing from <span data-name="${author}">${esc(name(author))}</span> about “${esc(rest)}”.</p>`
+        : (opened.has("by") ? list : list.slice(0, 3)).map(draw).join("") + (!opened.has("by") && list.length > 3 ? `<button type="button" class="more" data-open="by">See all ${list.length}</button>` : "")}</div></section>`;
+  };
+  const postsFrom = (pk) => {
+    got.by.author = pk; got.byPosts = null; soon(drawMain);
+    searchPosts(got.by.rest, { authors: [pk], kinds: [1, 30023], signal }).then((list) => {
+      if (got.by.author !== pk) return;
+      got.byPosts = list.map((e) => ({ e, why: "" }));
+      soon(drawMain);
+    }).catch(() => {});
+  };
 
   function drawSide() {
     const people = got.people;
@@ -737,15 +759,18 @@ async function showSearch(q, signal) {
   }
 
   function drawMain() {
-    const posts = got.posts || [], tagged = got.tagged || [], stories = got.stories || [], yours = got.yours || [];
+    const theirs = new Set((got.byPosts || []).map((x) => x.e.id)), notTheirs = (l) => (l || []).filter((x) => !theirs.has(x.e.id));
+    const posts = notTheirs(got.posts), tagged = notTheirs(got.tagged), stories = got.stories || [], yours = notTheirs(got.yours);
+    const strong = got.by && !got.by.loose, loose = got.by?.loose;
     if (!wideQuery.matches) {
       const shown = new Set(posts.slice(0, 3).map((x) => x.e.id));
-      main.innerHTML = waiting()
+      main.innerHTML = (strong ? fromBlock(postItem) : "") + waiting()
         + section("posts", tagOnly ? esc(q) : "Posts", posts, postItem)
+        + (loose ? fromBlock(postItem) : "")
         + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
-        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
       fillLater(main);
       return;
     }
@@ -768,11 +793,12 @@ async function showSearch(q, signal) {
     const found = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
     const count = got.posts === null || !list.length ? "" : `<p class="count">${found} for “${esc(q)}”. Showing the best ${list.length}.</p>`;
     const mine = yours.length ? `<div class="yours-box"><h3>From your things</h3>${yours.slice(0, 3).map(yourLine).join("")}</div>` : "";
-    main.innerHTML = count + waiting()
-      + list.map((r, i) => (i === 3 ? mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
-      + (list.length <= 3 ? mine : "")
+    const from = got.by ? fromBlock(postResult) : "";
+    main.innerHTML = (strong ? from : "") + count + waiting()
+      + list.map((r, i) => (i === 3 ? (loose ? from : "") + mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
+      + (list.length <= 3 ? (loose ? from : "") + mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
-      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
     fillLater(main);
   }
   redraw();
@@ -791,6 +817,14 @@ async function showSearch(q, signal) {
       soon(drawSide); soon(drawMain);
       if (list.length && !document.documentElement.dataset.people) mark("people");
     } }).then(() => { if (!signal.aborted) { got.peopleDone = true; got.extra.ranked = true; soon(drawSide); } });
+  });
+
+  // someone you follow, named in it (everyone you follow and their names, however long that takes: it's an addition)
+  if (!tagOnly && !bareName && q.trim().split(/\s+/).length > 1) myFollows().then(async (follows) => {
+    if (!follows.size) return;
+    await profilesOf([...follows]);
+    const s = !signal.aborted && authorIn(q, follows, profiles);
+    if (s) { got.by = s; postsFrom(s.author); }
   });
 
   boxState(); // the box's rows into #top

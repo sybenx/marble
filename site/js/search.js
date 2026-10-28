@@ -98,9 +98,9 @@ export async function followerCounts(pubkeys) {
 }
 
 /** Posts matching words, from both search relays, newest first. A #tag asks the fast relays for that tag instead. */
-export async function searchPosts(query, { limit = 40, authors = null, signal = null } = {}) {
+export async function searchPosts(query, { limit = 40, authors = null, kinds = [1], signal = null } = {}) {
   const tag = /^#([\p{L}\p{N}_-]+)$/u.exec(query.trim());
-  const filter = tag ? { kinds: [1], "#t": [tag[1].toLowerCase()], limit } : { kinds: [1], search: query, limit };
+  const filter = tag ? { kinds, "#t": [tag[1].toLowerCase()], limit } : { kinds, search: query, limit };
   if (authors) filter.authors = authors;
   const got = await req(tag ? FAST : SEARCH_RELAYS, filter, { timeout: 5000, settle: 800, signal });
   return got.sort((a, b) => b.created_at - a.created_at);

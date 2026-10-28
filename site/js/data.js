@@ -47,6 +47,15 @@ function flushProfiles() {
   if (wanted.size) flushTimer = setTimeout(flushProfiles, 30);
 }
 
+/** Many people's profiles at once (say, everyone you follow), resolving once they're in (or after a short wait). */
+export async function profilesOf(pks, wait = 2500) {
+  const need = pks.filter((pk) => !profiles.has(pk) && !asked.has(pk));
+  need.forEach((pk) => asked.add(pk));
+  const parts = [];
+  for (let i = 0; i < need.length; i += 300) parts.push(req(relays(FAST, INDEXERS), { kinds: [0], authors: need.slice(i, i + 300) }, { timeout: wait, settle: 800, onEvent: keep }));
+  await Promise.all(parts);
+}
+
 /**
  * Someone's profile: what's known, or the first answer (null if nobody has it). The others keep coming
  * for a moment, and a newer one is announced through onProfile.
