@@ -131,3 +131,57 @@ object LookAlikes {
         return out
     }
 }
+
+/**
+ * Someone you follow, inside a search ("thailand anarko", "from:anarko thailand", "@anarko thailand"): their posts with
+ * the other words come first. Only people you follow (anyone can call themselves anything: handles-rule.md), matched by
+ * their name or their NIP-05's name part, loosely (case, signs and spaces aside). Shared with Marble Web (search-rules).
+ */
+object AuthorQuery {
+    /** [author], whose posts to look in, for [rest]; [others]: other people you follow who match as well (offered as chips). */
+    data class Split(val author: String, val rest: String, val others: List<String> = emptyList())
+
+    private val EXPLICIT = Regex("^(?:from:|@|＠)(.+)$", RegexOption.IGNORE_CASE)
+
+    fun split(q: String, follows: Set<String>?, known: Map<String, Person>): Split? {
+        val words = q.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (words.size < 2 || follows.isNullOrEmpty()) return null
+        val mine = follows.mapNotNull { known[it] }
+        // from:name, @name: that word only (a name that isn't someone you follow: no author, the words as they are).
+        words.indexOfFirst { EXPLICIT.matches(it) }.takeIf { it >= 0 }?.let { i ->
+            val name = EXPLICIT.find(words[i])!!.groupValues[1]
+            val rest = words.filterIndexed { j, _ -> j != i }.joinToString(" ")
+            return best(mine, name)?.let { (who, others) -> Split(who, rest, others) }
+        }
+        // Otherwise the longest run of words (three at most, never all of them) that is someone you follow.
+        for (len in minOf(3, words.size - 1) downTo 1) {
+            for (start in 0..words.size - len) {
+                val name = words.subList(start, start + len).joinToString(" ")
+                val (who, others) = best(mine, name) ?: continue
+                return Split(who, (words.subList(0, start) + words.subList(start + len, words.size)).joinToString(" "), others)
+            }
+        }
+        return null
+    }
+
+    /** Who [typed] names among [mine], best first: their name exactly, then without spaces, then their NIP-05's name. */
+    private fun best(mine: List<Person>, typed: String): Pair<String, List<String>>? {
+        val t = SearchRank.norm(typed)
+        if (t.length < 2) return null
+        val tight = t.replace(" ", "")
+        fun score(p: Person): Int {
+            val n = SearchRank.norm(p.name ?: "")
+            val local = SearchRank.norm(p.nip05?.substringBefore('@')?.takeIf { it != "_" } ?: "")
+            return when {
+                n == t -> 3
+                n.isNotEmpty() && n.replace(" ", "") == tight -> 2
+                local == t || (local.isNotEmpty() && local.replace(" ", "") == tight) -> 2
+                tight.length >= 4 && n.split(' ').firstOrNull() == t -> 1
+                else -> 0
+            }
+        }
+        val hits = mine.map { it to score(it) }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<Person, Int>> { it.second }.thenBy { it.first.pubkey })
+        val first = hits.firstOrNull()?.first ?: return null
+        return first.pubkey to hits.drop(1).map { it.first.pubkey }.take(4)
+    }
+}

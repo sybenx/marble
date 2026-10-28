@@ -3164,6 +3164,29 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
             if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         }
+        // Someone you follow, named in the search: "Anarko · thailand", their posts first (and anyone else it could mean).
+        f.split?.takeIf { !peopleOnly }?.let { sp ->
+            item(key = "ah") {
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(people[sp.author], sp.author, 22, Modifier.clickable { nav.profile(sp.author) })
+                    Text(listOf(people[sp.author]?.shown ?: shortNpub(sp.author), sp.rest).joinToString(" · "), color = Vault.Text, fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp))
+                }
+                if (sp.others.isNotEmpty()) Row(Modifier.padding(start = 16.dp, bottom = 4.dp).horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    for (pk in sp.others) Text(people[pk]?.shown ?: shortNpub(pk), color = Vault.Accent, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                        modifier = Modifier.padding(4.dp).clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.AccentEdge, RoundedCornerShape(14.dp))
+                            .clickable { social.search(f.query, author = pk) }.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
+            }
+            items(f.byAuthor, key = { "a" + it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+            if (!f.loading && f.byAuthor.isEmpty()) item(key = "anone") {
+                Text("Nothing from ${people[sp.author]?.shown ?: "them"} about “${sp.rest}”.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp))
+            }
+        }
         if (showPeople && f.people.isNotEmpty()) {
             item(key = "ph") { Heading("People") }
             // Identical look-alikes (a bridge's copies, say) fold into one quiet row under the best of them.
@@ -3185,7 +3208,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 HorizontalDivider(color = Vault.Edge)
             }
         }
-        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty())) item(key = "none") { Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty()) item(key = "none") { Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
     }
 }
 

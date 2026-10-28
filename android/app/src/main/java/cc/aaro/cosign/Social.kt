@@ -313,7 +313,9 @@ data class Notice(val event: Event, val type: Type, val about: String?) {
 
 data class Notices(val list: List<Notice> = emptyList(), val loading: Boolean = false, val at: Long = 0)
 
-data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap())
+/** A search's results; [split]: someone you follow named in it, and [byAuthor], their posts with the other words (first). */
+data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap(),
+                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
 data class Held(val what: String, val event: Event)
@@ -1452,10 +1454,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * search relays find, each as it answers (none is dropped for being slow); then the order settles
      * as names, NIP-05s and trust come in. A #tag searches posts only.
      */
-    fun search(q: String) {
+    fun search(q: String, author: String? = null) {
         val text = q.trim()
         if (text.isEmpty()) return
-        if (found.value?.query == text && found.value?.loading == true) return
+        if (found.value?.query == text && found.value?.loading == true && (author == null || found.value?.split?.author == author)) return
         searching?.cancel()
         val gen = searchGen.incrementAndGet()
         found.value = Found(text)
@@ -1469,13 +1471,19 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val notes = java.util.Collections.synchronizedList(ArrayList<Event>())
             val order = java.util.concurrent.atomic.AtomicInteger()
             val mine = follows.value ?: emptySet()
+            // Someone you follow, named in it (or picked from the chips): their posts with the other words, first.
+            val split = if (tag != null) null else AuthorQuery.split(text, mine, People.known.value)?.let { s ->
+                if (author == null || author == s.author) s else s.copy(author = author, others = (listOf(s.author) + s.others).filter { it != author })
+            }
+            val byAuthor = java.util.Collections.synchronizedList(ArrayList<Event>())
             var first: String? = null
             fun show(loading: Boolean) {
                 if (searchGen.get() != gen) return
                 val people = SearchRank.sort(hits.values.filter { it.pubkey !in muted.value }, text).take(30)
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
-                found.value = Found(text, people.map { it.pubkey }, posts, loading, people.associateBy { it.pubkey })
+                val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
+                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs)
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
             fun add(pk: String, name: String?, rank: Int = 9) { hits.putIfAbsent(pk, Hit(pk, name, rank * 1000 + order.getAndIncrement(), follow = pk in mine)) }
@@ -1510,6 +1518,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val named = fresh.filter { SearchRank.matches(it.name, text) }
                     if (named.isNotEmpty()) toEnrich.send(named.take(30))
                 }
+            }
+            if (split != null) relayJobs += launch {
+                val got = Fetch.query(SearchRelays.FAST + SearchRelays.SLOW + Sources.extra.value,
+                    mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "search" to split.rest, "limit" to 40), 6000)
+                    .filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) }
+                remember(got)
+                byAuthor += got.filter { safe(it) }
+                show(true); mark("theirs: ${got.size}")
             }
             // Posts: the fast relays together, the slow ones on their own.
             val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
