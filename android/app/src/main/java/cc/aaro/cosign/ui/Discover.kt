@@ -259,6 +259,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.refreshLater()
         social.knowMe()
+        // Your profile and follows on the relays your relay list names (when that list changed, or never had them).
+        social.spreadIdentity()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
         Daily.refresh(context).invokeOnCompletion { social.claimToday() }
     }

@@ -925,6 +925,32 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
+     * Your profile and follow list where apps look for them. Whenever your relay list changes (and once, to catch up),
+     * the newest of each, from every relay known to have them, goes as it is (signed already: no round with your
+     * servers) to the list's write relays and the profile indexes. Only the newest, so an old copy never wins.
+     * Tried again at the next start if a copy reached fewer than two of them.
+     */
+    fun spreadIdentity() = scope.launch {
+        val me = me ?: return@launch
+        val indexes = listOf("wss://purplepag.es", "wss://user.kindpag.es")
+        val lookIn = (indexes + Sources.PROFILES + writeRelays() + readRelays()).distinct()
+        val list = (Fetch.query(lookIn.take(10), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 3), 6000) + listOfNotNull(phone.latest("10002")))
+            .filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt } ?: return@launch
+        val listed = list.tags.filter { it.size > 1 && it[0] == "r" && it[1].startsWith("wss://") }
+        val writes = listed.filter { it.getOrNull(2) != "read" }.map { it[1].trimEnd('/') }.distinct()
+        if (writes.isEmpty()) return@launch
+        val key = list.id
+        if (prefs.getString("identitySpreadFor", null) == key) return@launch
+        val known = (listed.map { it[1].trimEnd('/') } + lookIn + POST_RELAYS).distinct()
+        val got = Fetch.query(known.take(14), mapOf("kinds" to listOf(0, 3), "authors" to listOf(me), "limit" to 10), 8000)
+        val newest = listOf(0, 3).mapNotNull { k -> got.filter { it.kind == k && it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } }
+        if (newest.isEmpty()) return@launch
+        val to = (writes + indexes).distinct()
+        val reached = newest.map { e -> Fetch.publish(to, e).also { n -> if (debuggable) android.util.Log.i("CosignSync", "kind ${e.kind} sent to $n of ${to.size} relays") } }
+        if (reached.all { it >= writes.size.coerceAtMost(2) }) prefs.edit().putString("identitySpreadFor", key).apply()
+    }
+
+    /**
      * The page on screen in a tab Marble opened, saved with its Save button: by the title Marble knows for it,
      * else by its site until the page itself says (fetched here, in the background).
      */
