@@ -1519,13 +1519,23 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     if (named.isNotEmpty()) toEnrich.send(named.take(30))
                 }
             }
-            if (split != null) relayJobs += launch {
-                val got = Fetch.query(SearchRelays.FAST + SearchRelays.SLOW + Sources.extra.value,
-                    mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "search" to split.rest, "limit" to 40), 6000)
-                    .filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) }
-                remember(got)
-                byAuthor += got.filter { safe(it) }
-                show(true); mark("theirs: ${got.size}")
+            if (split != null) {
+                fun theirs(got: List<Event>, how: String) {
+                    val ok = got.filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) }
+                    remember(ok); byAuthor += ok.filter { safe(it) }
+                    show(true); mark("theirs ($how): ${ok.size}")
+                }
+                val f = mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 40)
+                // Newest first where the relay can (Ditto's own search ranks by relevance, and a busy poster's new post falls
+                // past any limit); the others don't know sort:new.
+                relayJobs += launch { theirs(Fetch.query(SearchRelays.FAST, f + ("search" to split.rest + " sort:new"), 6000), "newest") }
+                relayJobs += launch { theirs(Fetch.query(SearchRelays.SLOW + Sources.extra.value, f + ("search" to split.rest), 4000), "search") }
+                // And their latest posts, looked through here: what no search has indexed yet.
+                relayJobs += launch {
+                    val words = SearchRank.norm(split.rest).split(' ').filter { it.isNotEmpty() }
+                    val got = Fetch.query(bigRelays, mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000)
+                    theirs(got.filter { e -> SearchRank.norm(e.content + " " + (e.firstTag("title") ?: "")).let { c -> words.all { it in c } } }, "latest")
+                }
             }
             // Posts: the fast relays together, the slow ones on their own.
             val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
