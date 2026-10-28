@@ -356,8 +356,7 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     fun profile(pk: String) { FeedLog.ev("open", "what" to "profile", "author" to pk); open(Route.Profile(pk)) }
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
-    /** Search the web for [q] with your engine (its results open inside Marble). */
-    /** A search: people, posts and articles first (Marble's own); the web is a row away ([web]). */
+    /** A search's results: people, posts and articles (Marble's own search). */
     fun results(q: String) { SearchText.q.value = q; social.interests.noticed(q); searched(Route.PeoplePosts(q)) }
     /** Your engine's results for [q], over Marble's own (Back returns to them). */
     fun web(q: String) { FeedLog.ev("web", "from" to "results"); open(Route.Results(q)) }
@@ -2299,10 +2298,10 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         value = cc.aaro.cosign.Handles.look(k, social)
         cc.aaro.cosign.People.want(value.mapNotNull { it.pubkey })
     }
-    // "Search posts" for what you typed: only for accounts that follow people, unless set otherwise.
-    var posts by remember { mutableStateOf(false) }
-    LaunchedEffect(t) { posts = false }
-    val showPostsRow = when (postsPref) { "always" -> true; "never" -> false; else -> !follows.isNullOrEmpty() }
+    // Instant: people, posts and articles for what you've typed (Marble's own search, through Ditto's relays), a quarter
+    // second after you stop. A newer search cancels the one before; your follows' matches come first, at once.
+    val bareName = remember(t) { cc.aaro.cosign.Handles.kind(t) is cc.aaro.cosign.Handles.Kind.Name }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val saved = remember(laterItems, t) { social.later.saved(t) }
     // The bookmark keeps what you typed as a note; tapped again straight after, it's taken back.
     var undo by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
@@ -2319,8 +2318,12 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { it.text to it }
         (s + n).distinctBy { it.first.lowercase() }.take(2)
     }
-    // A search: into Searches (an edit of this one takes its place), then your engine's results.
-    fun searchFor(x: String) { SearchText.search.value = social.searches.searched(x, SearchText.search.value).id; social.interests.noticed(x); nav.results(x) }
+    // A search: into Searches (an edit of this one takes its place); its results are already here, so the keyboard goes.
+    fun searchFor(x: String) {
+        SearchText.search.value = social.searches.searched(x, SearchText.search.value).id; social.interests.noticed(x)
+        if (x != t) { q = x; sel = androidx.compose.ui.text.TextRange(x.length) }
+        focusManager.clearFocus()
+    }
     // A site, from the box: in Searches too, with the site under it.
     fun goTo(s: cc.aaro.cosign.Sites.Go) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, s.url, s.address) }; SearchText.search.value = null; openInBrowser(context, s.url) }
     val go = {
@@ -2330,17 +2333,10 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
             else -> searchFor(t)
         }
     }
-    // Posts only once asked.
-    LaunchedEffect(t, posts) {
-        if (posts && t.length >= 2) { if (social.found.value?.query != t) social.search(t) }
-        else if (pasted != null || t.isEmpty()) social.clearSearch()
-    }
-    // Your engine's suggestions: asked straight from the phone, after a short pause.
-    val suggestions by produceState(emptyList<String>(), t, engine, suggestOn) {
-        value = emptyList()
-        if (!suggestOn || t.length < 2 || pasted != null) return@produceState
-        delay(150)
-        value = engine.suggest(t)
+    LaunchedEffect(t) {
+        if (t.length < 2 || pasted != null) { if (t.isEmpty() || pasted != null) social.clearSearch(); return@LaunchedEffect }
+        delay(250)
+        if (social.found.value?.query != t) social.search(t)
     }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
@@ -2375,44 +2371,33 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Vault.Text, unfocusedTextColor = Vault.Text, cursorColor = Vault.Accent),
         )
     }
-    // Honest about both: what you save stays yours; a search goes to your engine.
+    // Your own and the links first, then people, posts and articles as they come; no web search.
     Box(Modifier.fillMaxSize()) {
+        // What goes above the results: a typed address's "Go to", what a handle confirms, and two of your own.
+        val top: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+            site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
+            items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
+                if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
+                else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
+            }
+            items(own, key = { "o:" + it.first }) { (text, note) ->
+                OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text) }
+            }
+        }
         when {
             pasted != null -> LinkResults(pasted, social, nav)
-            posts -> MarbleResults(found, people, liked, social, nav, peopleOnly = false)
+            t.length >= 2 -> MarbleResults(found?.takeIf { it.query == t }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName, top = top)
             t.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
                 items(own, key = { "o:" + it.first }) { (text, _) -> OwnRow(text, null, "") { q = text; searchFor(text) } }
             }
-            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
-                site?.takeIf { it.sure }?.let { item(key = "search") { DropRow(t, null, onFill = null) { searchFor(t) } } }
-                items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
-                    if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
-                    else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
-                }
-                items(own, key = { "o:" + it.first }) { (text, note) ->
-                    OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else { q = text; searchFor(text) } }
-                }
-                items(suggestions.filter { sug -> own.none { cc.aaro.cosign.Later.same(it.first, sug) } }, key = { "s:$it" }) { sug -> DropRow(sug, null, typed = t, onFill = { q = "$sug "; sel = androidx.compose.ui.text.TextRange(q.length) }) { searchFor(sug) } }
-                if (showPostsRow && t.length >= 2) item(key = "posts") {
-                    HorizontalDivider(color = Vault.Edge)
-                    Row(Modifier.fillMaxWidth().clickable { posts = true }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Glyphs.site, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text("Search posts for “$t”", color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (postsPref == "auto") Text("only shown because you follow people · Settings", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                }
-            }
+            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { top() }
         }
     }
 }
 
 /**
- * A search's results: Marble's own first (people, posts and articles, from Ditto's search), and "Search the web for …"
- * at the top, a quiet row that opens your engine's. The box shows the search; its bookmark keeps it as a note.
+ * A search's results: people, posts and articles (Marble's own search, through Ditto's relays); no web search.
+ * The box shows the search; its bookmark keeps it as a note.
  * A bare @name shows no people from open search (anyone can call themselves anything); the box's own rows cover it.
  */
 @Composable
@@ -2437,20 +2422,7 @@ private fun PeoplePostsScreen(q: String, social: Social, nav: Nav) = Column(Modi
         }
     }
     val bareName = remember(q) { cc.aaro.cosign.Handles.kind(q) is cc.aaro.cosign.Handles.Kind.Name }
-    MarbleResults(found?.takeIf { it.query == q }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName, top = {
-        item(key = "web") {
-            Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Search the web") { nav.web(q) }.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Glyphs.site, null, tint = Vault.Muted, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(14.dp))
-                Text(androidx.compose.ui.text.buildAnnotatedString {
-                    append("Search the web for ")
-                    withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Text, fontWeight = FontWeight.SemiBold)) { append(q) }
-                }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text("›", color = Vault.Muted)
-            }
-            HorizontalDivider(color = Vault.Edge)
-        }
-    })
+    MarbleResults(found?.takeIf { it.query == q }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName)
 }
 
 /**
