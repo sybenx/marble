@@ -6,7 +6,8 @@
 import { rankProfiles, matchesQuery, verifyNip05, parseProfile, isBridged } from "./search-rank.js";
 import { req, FAST } from "./pool.js";
 
-export const SEARCH_RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol"];
+// Ditto's (relay.ditto.pub, syb.lol) and two more search relays, as the phone asks (results show as they arrive)
+export const SEARCH_RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol", "wss://search.nos.today", "wss://search.nostrarchives.com"];
 const PRIMAL = ["wss://cache2.primal.net/v1", "wss://cache1.primal.net/v1"];
 const RELAY_WAIT = 2500, ENRICH_WAIT = 2500, LATE_WAIT = 6000;
 const FOLLOWER_COUNTS = 10000133; // Primal's kind for {pubkey: followers}

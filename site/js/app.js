@@ -91,16 +91,15 @@ function route(state, back = false) {
   if (path === "/about") { page("about", "About"); return; }
   if (path === "/" || path === "/index.html") {
     if (q) {
-      // Marble's own results: people, posts and articles. From the browser's address bar the words are also kept as a
-      // note (by the page's first script, else here); as you type in the box, the box keeps what you've typed.
-      if (!state.live && !window.marbleJotted && !["entity", "hex"].includes(parseInput(q).kind)) notes.fromAddressBar(q);
-      window.marbleJotted = true;
+      // Marble's own results: people, posts and articles. From the browser's address bar it's a search like Enter's
+      // (kept in Searches); as you type in the box, the box keeps what you've typed.
+      if (!state.live && state.key === "start" && !["entity", "hex"].includes(parseInput(q).kind)) notes.searched(q);
       if (!state.live) input.value = q;
       return showSearch(q, signal);
     }
     document.body.dataset.page = "home";
     document.title = "Marble";
-    if (!state.live) { input.value = ""; chain = null; } // (the box emptied as you type: what's left stays)
+    if (!state.live) input.value = ""; // (the box emptied as you type: what's left stays)
     boxState();
     return;
   }
@@ -833,8 +832,8 @@ function personRow(p, { verified, followers, follow = false } = {}) {
 // Instant search over Marble's own (Ditto's relays), as on the phone: a quarter second after you stop typing, people,
 // posts and articles for what you've typed (the results page, /?q=…); no engine and no web. Above them: a typed
 // address's "Go to" (Enter goes there), a well-known site's name ("apple": "Go to apple.com"), what a handle is
-// confirmed to be (handles.js), and two of your own searches and notes. Enter keeps the search as a note. A pasted
-// link to a post or person opens here.
+// confirmed to be (handles.js), and two of your own searches and notes (with nothing typed: your two latest searches).
+// Enter keeps the search in Searches (this browser); the bookmark keeps it as a note. A pasted link opens here.
 
 let warmed = false;
 const warmUp = () => { if (!warmed) { warmed = true; warm(FAST); warm(SEARCH_RELAYS); warm(["wss://cache2.primal.net/v1"]); } };
@@ -842,15 +841,22 @@ for (const ev of ["focus", "pointerdown", "keydown"]) input.addEventListener(ev,
 
 const clearButton = $("#clear"), keptMark = $("#kept"), drop = $("#drop");
 const GLOBE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg>`;
+const CLOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>`;
 const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 let rows = [], pick = -1;
 const handled = new Map(); // a handle's key → its rows, once looked up
 let lookTimer = 0, pasted = false;
+// your latest searches show under an empty box once you've clicked or typed in it (not when the page puts the cursor
+// there itself, which would cover Notes and Tabs)
+let engaged = false;
+for (const ev of ["pointerdown", "keydown"]) input.addEventListener(ev, () => { if (!engaged) { engaged = true; boxState(); } });
 
 function boxState() {
   const t = input.value.trim();
   clearButton.hidden = !input.value;
-  keptMark.hidden = !(t && notes.saved(t));
+  keptMark.hidden = !t || ["entity", "hex"].includes(parseInput(t).kind);
+  keptMark.setAttribute("aria-pressed", String(!!notes.saved(t)));
+  keptMark.setAttribute("aria-label", notes.saved(t) ? "Kept as a note: tap to remove" : "Keep as a note");
   rows = [];
   const kind = parseInput(t).kind;
   // "Go to …" for an address, or a well-known site's name (no engine allows its suggestions to be read from a page)
@@ -862,15 +868,18 @@ function boxState() {
   if (h && handled.has(keyOf(h))) rows.push(...handled.get(keyOf(h)));
   else if (h) lookTimer = setTimeout(() => lookUp(h).then((found) => { handled.set(keyOf(h), found); if (input.value.trim() === t) boxState(); }), pasted ? 0 : 600);
   pasted = false;
-  // two of your own searches and notes that hold what you've typed
-  const low = t.toLowerCase();
-  if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
-    for (const it of notes.open().filter((i) => i.text && i.text.toLowerCase() !== low && i.text.toLowerCase().includes(low)).slice(0, 2)) rows.push({ own: it });
+  // two of your own: searches and notes that hold what you've typed (your two latest searches when nothing's typed)
+  const low = t.toLowerCase(), holds = (x) => x.toLowerCase() !== low && x.toLowerCase().includes(low);
+  if (!t && engaged) for (const x of notes.searches().slice(0, 2)) rows.push({ own: { text: x.text, search: true } });
+  else if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
+    const own = [...notes.searches().filter((x) => holds(x.text)).map((x) => ({ text: x.text, search: true })),
+      ...notes.open().filter((i) => i.text && holds(i.text))];
+    for (const it of own.filter((x, i) => own.findIndex((y) => y.text.toLowerCase() === x.text.toLowerCase()) === i).slice(0, 2)) rows.push({ own: it });
   }
   pick = -1;
   const html = rows.map((r, k) => {
     const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`;
-    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}">${r.own.url ? GLOBE : MARK}<span class="t">${esc(r.own.text)}</span></a>`;
+    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}">${r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t">${esc(r.own.text)}</span></a>`;
     if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
     if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
     const face = r.picture ? `<span class="av" style="--s:28px" aria-hidden="true"><img src="${esc(r.picture)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><b>${esc([...(r.name || "?")][0].toUpperCase())}</b></span>` : GLOBE;
@@ -891,16 +900,11 @@ function showDrop() {
   for (const el of drop.children) el.setAttribute("aria-selected", String(+el.dataset.k === pick));
   if (pick >= 0) input.setAttribute("aria-activedescendant", `drop-${pick}`);
 }
-function done() { input.value = ""; chain = null; boxState(); }
+function done() { input.value = ""; boxState(); }
 
-// One search, however many times it's edited and searched again: the box keeps the words after Enter (selected, as
-// a browser's address bar does), and Enter on an edit of them changes the note this search made rather than adding
-// one. × , emptying the box, or typing over all of it starts a new search. A note that was there before this search
-// (Enter brought it back) is never reworded: the edit becomes a note of its own.
-let chain = null; // {id}: the note this search made
+// Enter: into Searches, and its results (already there, as a rule)
 function searchFor(t) {
-  const r = chain ? notes.refine(chain.id, t) : notes.jot(t);
-  chain = r?.fresh ? { id: r.item.id } : null;
+  notes.searched(t);
   input.value = t;
   showResults(t);
   // the results are already there: on a phone the keyboard goes; on a computer the words stay selected to edit
@@ -917,7 +921,6 @@ function showResults(text) {
   go(`/?q=${encodeURIComponent(t)}`, { replace: onResults, live: true });
 }
 function goToSite(s, from) {
-  if (chain) notes.dropDraft(chain.id); // the search ended at a site: a visit, not a note
   notes.opened(s.url, s.address, from);
   window.open(s.url, "_blank", "noopener");
   done();
@@ -929,17 +932,12 @@ function choose(r) {
   if (r.own?.url) return goToSite({ url: r.own.url, address: notes.hostOf(r.own.url) }, t);
   if (r.own) { input.value = r.own.text; return showResults(r.own.text); }
   // someone on Nostr: their page here
-  if (chain) notes.dropDraft(chain.id);
   input.blur();
   done();
   go(personPath(r.pubkey));
 }
 
 input.addEventListener("paste", () => { navStart = performance.now(); pasted = true; });
-// Typing over the whole search (all of it selected) starts a new one.
-input.addEventListener("beforeinput", () => {
-  if (chain && input.value && input.selectionStart === 0 && input.selectionEnd === input.value.length) chain = null;
-});
 input.addEventListener("input", () => {
   const text = input.value;
   const parsed = parseInput(text);
@@ -955,7 +953,6 @@ input.addEventListener("input", () => {
     navStart = t0;
     return;
   }
-  if (!input.value) chain = null;
   boxState();
   clearTimeout(liveTimer);
   liveTimer = setTimeout(() => showResults(input.value), 250);
@@ -975,7 +972,7 @@ input.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     pick = ev.key === "ArrowDown" ? Math.min(rows.length - 1, pick + 1) : Math.max(-1, pick - 1);
     showDrop();
-  } else if (ev.key === "Escape") { rows = []; showDrop(); }
+  } else if (ev.key === "Escape") { rows = []; drop.innerHTML = ""; showDrop(); }
 });
 drop.addEventListener("mousedown", (ev) => ev.preventDefault()); // keeps the box focused
 drop.addEventListener("click", (ev) => {
@@ -985,6 +982,12 @@ drop.addEventListener("click", (ev) => {
   choose(rows[+row.dataset.k]);
 });
 clearButton.addEventListener("click", () => { done(); input.focus(); });
+// the bookmark: these words kept as a note (or not, again)
+keptMark.addEventListener("click", () => {
+  const t = input.value.trim(), have = notes.saved(t);
+  if (have) notes.remove(have); else notes.jot(t);
+  boxState();
+});
 
 form.addEventListener("submit", async (ev) => {
   ev.preventDefault();

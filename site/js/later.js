@@ -57,57 +57,23 @@ export function keepPage(url, title) {
   const have = doc.items.find((i) => i.url === url && !i.deleted);
   put(have ? { ...have, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null, url });
 }
-/**
- * A search edited and searched again (still the same search): the note its first Enter made takes the new words
- * (same note, a new time), and the old wording goes to this browser's history only, never to Later. If another
- * note already has the new words, that one comes back and this one goes. Returns {item, fresh} like jot().
- */
-export function refine(id, text) {
+// ── Searches ─────────────────────────────────────────────────────────────────────────────────────────
+// What you searched (Enter, or the browser's address bar), in this browser only, for 30 days: as the phone keeps them.
+// A search edited within 2 minutes (it shares at least half of the shorter one's words, or one holds the other) takes
+// the last one's place. Not notes: the bookmark keeps a search as a note.
+
+const SEARCHES = "marble.searches";
+export const searches = () => read(SEARCHES, []).filter((x) => x?.text && now() - x.at < MONTH);
+export function searched(text) {
   const t = String(text || "").trim().slice(0, 500);
-  const item = doc.items.find((i) => i.id === id && !i.deleted);
-  if (!t) return null;
-  if (!item) return jot(t);
-  if (same(item.text, t)) return { item, fresh: true };
-  remember(item.text);
-  if (doc.items.some((i) => i.id !== id && !i.url && !i.deleted && same(i.text, t))) {
-    put({ ...item, text: "", deleted: now(), updated: next(item) });
-    return jot(t);
-  }
-  const changed = { ...item, text: t, done: null, updated: next(item) };
-  put(changed);
-  return { item: changed, fresh: true };
-}
-/** A search that ended at a site instead: the note its Enter made goes (to history), as it's a visit now. */
-export function dropDraft(id) {
-  const item = doc.items.find((i) => i.id === id && !i.deleted);
-  if (!item) return;
-  remember(item.text);
-  remove(item);
-}
-/**
- * A search from the browser's address bar (marble.syb.lol as its search engine), which can't say whether it's an edit:
- * taken as one of the last search from there when it comes within 2 minutes and shares at least half of the shorter
- * one's words, or one holds the other; then it changes the note that search made. Else jot(). (index.html's first
- * script does the same before the page loads; this is for when it couldn't.)
- */
-export function fromAddressBar(text) {
-  let last = null;
-  try { last = JSON.parse(localStorage.getItem("marble.lastq")); } catch {}
-  const a = words(text), b = last ? words(last.text) : "";
+  if (!t) return;
+  const list = searches(), last = list[0];
+  const a = words(t), b = last ? words(last.text) : "";
   const aw = a.split(" "), bw = b.split(" ");
   const [short, long] = aw.length <= bw.length ? [aw, bw] : [bw, aw];
-  const edit = last && now() - last.at <= 120 && a !== b && (short.filter((x) => long.includes(x)).length * 2 >= short.length || a.includes(b) || b.includes(a));
-  const r = edit ? refine(last.id, text) : jot(text);
-  write("marble.lastq", r?.fresh ? { id: r.item.id, text: r.item.text, at: now() } : null);
-  return r;
+  const edit = last && now() - last.at <= 120 && (short.filter((x) => long.includes(x)).length * 2 >= short.length || a.includes(b) || b.includes(a));
+  write(SEARCHES, [{ text: t, at: now() }, ...list.slice(edit ? 1 : 0).filter((x) => words(x.text) !== a)].slice(0, 200));
 }
-
-/** Earlier wordings of searches, in this browser only (30 days, at most 500). */
-function remember(text) {
-  const list = [{ text, at: now() }, ...read("marble.history", []).filter((h) => now() - h.at < MONTH)].slice(0, 500);
-  write("marble.history", list);
-}
-export const history = () => read("marble.history", []);
 
 export const tick = (item, on) => put({ ...item, done: on ? now() : null, updated: next(item) });
 /** Removed: only a marker stays (no text), for a month, so other devices learn it. */
