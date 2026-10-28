@@ -233,6 +233,9 @@
   .res-src { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); line-height: 1.25; }
   .res-src small { display: block; font-size: 12.5px; }
   .res-src .dot { width: 28px; height: 28px; border-radius: 50%; background: var(--card); border: 1px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 600; flex: none; }
+  .their-search { margin-left: auto; align-self: center; width: min(240px, 45%); font: inherit; font-size: 14px; padding: 6px 12px; border: 1px solid var(--field-line); border-radius: 999px; background: var(--field); color: var(--ink); }
+  .person .tabs { flex-wrap: wrap; }
+  @media (max-width: 600px) { .their-search { width: 100%; margin-left: 0; } }
   .by { margin: 0 0 26px; }
   .by-head { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; margin: 0 0 10px; }
   .by-head .by-words { color: var(--muted); font-weight: 400; margin-left: -4px; }

@@ -621,7 +621,8 @@ async function showProfile(d, signal) {
   };
   const root = pageEl;
   root.innerHTML = `<div class="person"><div id="person-head">${draw()}</div>
-    <div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="posts">Posts</button><button type="button" role="tab" aria-selected="false" data-tab="all">Posts and replies</button></div>
+    <div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-tab="posts">Posts</button><button type="button" role="tab" aria-selected="false" data-tab="all">Posts and replies</button>
+      <input type="search" class="their-search" placeholder="Search their posts" aria-label="Search their posts" autocomplete="off"></div>
     <div class="list" id="posts"><p class="muted loading-text">Loading posts…</p></div></div>`;
   const head = $("#person-head", root);
   if (!profiles.has(pk)) {
@@ -640,7 +641,36 @@ async function showProfile(d, signal) {
 
   const box = $("#posts", root);
   let shown = [], until = null, all = false, done = false;
-  const render = () => {
+  // Searching their posts: the ones loaded here that have every word, at once, then what the search relays find
+  const find = $(".their-search", root);
+  let looking = "", found = [], findTimer = null;
+  const has = (e, words) => { const t = (e.content || "").toLowerCase(); return e.kind !== 6 && words.every((w) => t.includes(w)); };
+  find.addEventListener("input", () => {
+    clearTimeout(findTimer);
+    looking = find.value.trim();
+    if (!looking) return render();
+    const words = looking.toLowerCase().split(/\s+/);
+    found = shown.filter((e) => has(e, words));
+    render(true);
+    const asked = looking;
+    findTimer = setTimeout(() => searchPosts(asked, { authors: [pk], kinds: [1, 30023], signal }).then((got) => {
+      if (looking !== asked) return;
+      const ids = new Set(found.map((e) => e.id));
+      // (one of the words at least: a relay that ignores the search would send everything)
+      const some = (e) => words.some((w) => (e.content || "").toLowerCase().includes(w) || e.tags.some((t) => t[0] === "title" && String(t[1]).toLowerCase().includes(w)));
+      found = [...found, ...got.filter((e) => !ids.has(e.id) && some(e))].sort((a, b) => b.created_at - a.created_at);
+      render();
+    }).catch(() => {}), 300);
+  });
+  find.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && find.value) { ev.stopPropagation(); find.value = ""; looking = ""; render(); } });
+  const render = (searching = false) => {
+    if (looking) {
+      box.innerHTML = found.length ? found.map((e) => card(e)).join("")
+        : `<p class="muted${searching ? " loading-text" : ""}">${searching ? "Searching…" : `Nothing from <span data-name="${pk}">${esc(name(pk))}</span> about “${esc(looking)}”.`}</p>`;
+      if (searching && found.length) box.insertAdjacentHTML("beforeend", `<p class="muted loading-text">Searching…</p>`);
+      fillLater(box);
+      return;
+    }
     const list = shown.filter((e) => all || e.kind === 6 || !replyTo(e));
     box.innerHTML = (list.length ? list.map((e) => card(e)).join("") : `<p class="muted">${done ? "No posts yet." : "Loading posts…"}</p>`)
       + (done ? "" : `<button type="button" class="more" data-more>More</button>`);
@@ -676,6 +706,7 @@ async function showProfile(d, signal) {
     const tab = ev.target.closest("[data-tab]");
     if (tab) {
       all = tab.dataset.tab === "all";
+      find.value = ""; looking = "";
       for (const b of root.querySelectorAll("[data-tab]")) b.setAttribute("aria-selected", b === tab);
       render();
     }

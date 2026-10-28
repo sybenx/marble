@@ -353,8 +353,6 @@ function openRow(b) {
   const w = row.offsetWidth;
   row.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2 + scrollX))}px`;
   row.style.top = `${r.top + scrollY - row.offsetHeight - 8}px`;
-  row.addEventListener("mouseenter", () => clearTimeout(leaveTimer));
-  row.addEventListener("mouseleave", () => { leaveTimer = setTimeout(closeRow, 300); });
 }
 function closeRow() { row?.remove(); row = null; }
 
@@ -400,15 +398,21 @@ document.addEventListener("pointerup", () => clearTimeout(pressTimer));
 document.addEventListener("pointercancel", () => clearTimeout(pressTimer));
 document.addEventListener("contextmenu", (ev) => { if (ev.target.closest("[data-react]")) ev.preventDefault(); });
 if (matchMedia("(hover: hover)").matches) {
+  // (one timer for leaving, whatever was left: the heart, or the row on the way to an emoji)
   document.addEventListener("mouseover", (ev) => {
     const b = ev.target.closest?.("[data-react]");
-    if (!b) return;
-    clearTimeout(leaveTimer);
-    if (row?.target === b) return;
+    if (b || ev.target.closest?.(".emoji-row")) clearTimeout(leaveTimer);
+    if (!b || row?.target === b) return;
     if (row) closeRow();
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => openRow(b), 500);
-    b.addEventListener("mouseleave", () => { clearTimeout(hoverTimer); leaveTimer = setTimeout(closeRow, 300); }, { once: true });
+  });
+  document.addEventListener("mouseout", (ev) => {
+    const from = ev.target.closest?.("[data-react], .emoji-row");
+    if (!from || from.contains(ev.relatedTarget)) return;
+    clearTimeout(hoverTimer);
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(closeRow, 400);
   });
 }
 
