@@ -1,0 +1,45 @@
+{
+  "name": "html-entities-stay-literal",
+  "rule": "§0",
+  "why": "&mdash; and &amp; written in the text show as written (never decoded)",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "API Response Tester — Originality Tech & Dev App: $4.99, un solo pago. Sorprende sin gastar de más: API RESPONSE TESTER by Daniel Jaimes &mdash; Originality Apps &mdash; Tech &amp; Dev . apps de negocio que trabajan por ti. Míralo aquí:\n\nhttps://originality-tools.surge.sh/go.html?t=pdp&s=n10a039-g5&u=https%3A%2F%2Foriginality.sell.app%2Fproduct%2Fapp-api-response-tester",
+    "created_at": 1793066452,
+    "id": "23baf0a21e51cc71986ab9a376a8c6d984471e456e636dfcbcdf4a22c931d57a",
+    "kind": 1,
+    "pubkey": "559eb52026ffdce6a664cb4f345b1ba3e64174950675f1b65e299ae3082fe61a",
+    "sig": "fcd1828297d22ecf232071a523a0454238ade3c01e697e2ec2d366fece5fa0d8072bed1036437106970e7aa134de67c55eeddddbd02c48664dc658228cbc3285",
+    "tags": [
+      [
+        "t",
+        "originality"
+      ],
+      [
+        "t",
+        "productos-digitales"
+      ],
+      [
+        "client",
+        "orig-nexus10"
+      ]
+    ]
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "API RESPONSE TESTER by Daniel Jaimes &mdash; Originality Apps &mdash; Tech &amp; Dev"
+      },
+      {
+        "link": "https://originality-tools.surge.sh/go.html?t=pdp&s=n10a039-g5&u=https%3A%2F%2Foriginality.sell.app%2Fproduct%2Fapp-api-response-tester"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

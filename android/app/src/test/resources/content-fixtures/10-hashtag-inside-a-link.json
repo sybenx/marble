@@ -1,0 +1,32 @@
+{
+  "name": "hashtag-inside-a-link",
+  "rule": "§1 §6",
+  "why": "a #fragment inside a URL is not a hashtag; @RoyalSerf is plain text",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "R to @RoyalSerf: Mad chill also\n\nhttp://shitter.thepixora.com/RoyalSerf/status/2115251343074250791#m",
+    "created_at": 1793151888,
+    "id": "c6873f6134ad851c6b378d2951cd8126bc5fa818359c566b56f6ed80c1ce4c6c",
+    "kind": 1,
+    "pubkey": "706e3426962375142a52e2494be5486bda98e377b941d071d16b41213b4098cd",
+    "sig": "23074a49cb4540ea51e671a27e5bf36ea9cc428a7099dbf80126dc9fae0ace1773f3c968461dac99e0862000a06337a7263070a5be6e944af43ceda4ba13a216",
+    "tags": []
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "R to @RoyalSerf: Mad chill also"
+      },
+      {
+        "link": "http://shitter.thepixora.com/RoyalSerf/status/2115251343074250791#m"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

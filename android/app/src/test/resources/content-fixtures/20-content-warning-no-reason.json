@@ -1,0 +1,44 @@
+{
+  "name": "content-warning-no-reason",
+  "rule": "§8",
+  "why": "content-warning with no reason: hidden until shown",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "160d78cfdb25d0ec11ce9ddc9c32757d8b3c06c9d09ea9fc0dbb38569b879b9a",
+    "pubkey": "0dfd6aab96ecfe061a9b3acf4ffe6d60eaf3f896792aa7264c6a7259c97c1696",
+    "created_at": 1793149646,
+    "kind": 1,
+    "tags": [
+      [
+        "content-warning"
+      ],
+      [
+        "proxy",
+        "https://baraag.net/users/HollyLoli/statuses/117515855240805260",
+        "activitypub"
+      ],
+      [
+        "client",
+        "Mostr",
+        "31990:6be38f8c63df7dbf84db7ec4a6e6fbbd8d19dca3b980efad18585c46f04b26f9:mostr",
+        "wss://relay.ditto.pub"
+      ]
+    ],
+    "content": "if you were serious about stalking me, id be dead already",
+    "sig": "21294819508f6b8191723caf103beb9d6aee4520b26f6055374fe911495da82b7685c90b90fb5786fc199a2e0257b362e7ec0720e7bf0154e4464b7d471d2b71"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "if you were serious about stalking me"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": "",
+    "never": [
+      "nostr:"
+    ]
+  }
+}

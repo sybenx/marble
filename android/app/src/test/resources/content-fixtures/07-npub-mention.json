@@ -1,0 +1,45 @@
+{
+  "name": "npub-mention",
+  "rule": "§2",
+  "why": "nostr:npub1… in a sentence: @name",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "GM nostr:npub1vyvhnqs4ynctsnp8xw7rtr7c020qqfkspfarl5rdkcyvhdkrgj2ssnrpfx pura vida! 💜",
+    "created_at": 1793153243,
+    "id": "40a4eb15afa71019343a3e158629977822a6e1d8559c996ae428793720be6e86",
+    "kind": 1,
+    "pubkey": "2d14793e6de1ec6209d5af36ff3ef00986e3299e5184cf46eb7fa3f704d804f4",
+    "sig": "3525b44ddf79d9336a57f0b4de58d72b052ce5b0066088049e6d569d3cd6243bc6c3e9f59f02c720ec4f9e91fd06557c44d275a6fb4ecff0fceab65a1262da08",
+    "tags": [
+      [
+        "e",
+        "ca0a17c4807bd50b3eb24a91b6bd0b1ebcd60f8ea152ff3692cd20dfef4afe59"
+      ],
+      [
+        "p",
+        "611979821524f0b84c2733bc358fd87a9e0026d00a7a3fd06db608cbb6c34495"
+      ]
+    ]
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "GM"
+      },
+      {
+        "mention": "611979821524f0b84c2733bc358fd87a9e0026d00a7a3fd06db608cbb6c34495"
+      },
+      {
+        "text": "pura vida! 💜"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "npub1vyvhnqs4ynctsnp8xw7rtr7c020qqfkspfarl5rdkcyvhdkrgj2ssnrpfx"
+    ]
+  }
+}

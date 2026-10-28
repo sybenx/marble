@@ -1,0 +1,63 @@
+{
+  "name": "gif-blank-first-frame",
+  "rule": "§4",
+  "why": "an animated GIF whose first frame is white: showing frame 0 shows nothing",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "wtf 🤩 #amethyst\nhttps://archjourney.blossom.band/92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3.gif",
+    "created_at": 1793149993,
+    "id": "23d321c7264ae67e17b23a9e90df04cc7fe7cdf13688886d44398c7675ccaa84",
+    "kind": 1,
+    "pubkey": "05e4649832dfb8d1bfa81ea7cbf1c92c4f1cd5052bfc8d5465ba744aa6fa5eb8",
+    "sig": "400ccb421d9a1b3386e9ed6cd40823ea117c7dc21eb8ac8499c4120112f7c62f14c248a9f0ce14def1bc90d22cf9590a6a14dd55bfb8d2fc1bce1ddcfbffe071",
+    "tags": [
+      [
+        "t",
+        "amethyst"
+      ],
+      [
+        "r",
+        "https://archjourney.blossom.band/92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3.gif"
+      ],
+      [
+        "imeta",
+        "url https://archjourney.blossom.band/92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3.gif",
+        "x 92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3",
+        "size 22781",
+        "m image/gif",
+        "dim 540x675",
+        "blurhash _TRMScWV.8R%xu%Mx[o|WBt7jZRPj]o0~q%2M{kCWBR*RP$*kWM{jZxuo1R*NuIUV@t7ayofe.RPs;tRV@WBRjt7t8ozjZs:oLRjoftRRjRjtRt7ofWBa#t7ofM{Rjofof",
+        "thumbhash NggKBgLHlomHZ/hpeIiGV2eIN4Z/BJg",
+        "image https://archjourney.blossom.band/fd7ef3d109121b0f7dbf03feaabc970e44426b4fdcbfe27c45f57a28926fb4a9.png",
+        "ox 92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3"
+      ],
+      [
+        "client",
+        "Amethyst"
+      ]
+    ]
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "wtf 🤩"
+      },
+      {
+        "hashtag": "amethyst"
+      }
+    ],
+    "cards": [],
+    "media": [
+      {
+        "image": "https://archjourney.blossom.band/92f17390a0b9e95c4486d853829f3e1ddb97a61fd63fd96f963914edce9563b3.gif",
+        "still": "https://archjourney.blossom.band/fd7ef3d109121b0f7dbf03feaabc970e44426b4fdcbfe27c45f57a28926fb4a9.png"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "archjourney.blossom.band"
+    ]
+  }
+}

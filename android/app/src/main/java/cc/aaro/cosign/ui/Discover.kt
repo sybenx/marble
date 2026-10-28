@@ -110,6 +110,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -151,6 +153,7 @@ import cc.aaro.cosign.Translate
 import cc.aaro.cosign.Ui
 import cc.aaro.cosign.appName
 import cc.aaro.cosign.core.Event
+import cc.aaro.cosign.core.hexToBytes
 import cc.aaro.cosign.parentOf
 import cc.aaro.cosign.shortNpub
 import kotlinx.coroutines.delay
@@ -1639,14 +1642,24 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (indent == 0 && parentOf(n) != null) {
                 Text("Replying to ${to?.let { people[it]?.shown ?: shortNpub(it) } ?: "a note"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             }
+            // A content warning (NIP-36): the text, card and pictures wait for a tap.
+            val warning = remember(n.id) { Body.warning(n) }
+            var unveiled by remember(n.id) { mutableStateOf(false) }
+            val veiled = warning != null && !unveiled
+            if (veiled) Text((warning!!.ifEmpty { "Sensitive" }) + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Surface).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
             val text = remember(body, people.size) { body.annotated(people, nav) }
-            if (text.isNotBlank()) {
+            val emoji = remember(body) { body.emojiContent() }
+            if (!veiled && text.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+                Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis, inlineContent = emoji)
             }
-            // A quoted post, under it: small (name and its first words), a tap shows it whole, another opens it.
-            body.parts.firstNotNullOfOrNull { it as? Body.Part.Quote }?.let { QuoteBox(it.id, people, nav) }
-            body.parts.firstNotNullOfOrNull { it as? Body.Part.QuoteAddr }?.let { AddrBox(it.a, people, nav) }
+            // What it refers to first, under it (a post, an article, something from another app); any later one is a short link.
+            if (!veiled) when (val c = body.card) {
+                is Body.Part.Quote -> QuoteBox(c.id, people, nav)
+                is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
+                else -> {}
+            }
             tr?.let { t ->
                 Text("Translated from ${Translate.name(t.from) ?: "another language"} · " + if (original) "Show translation" else "Show original",
                     color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp).clickable { original = !original })
@@ -1656,8 +1669,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
-            if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
+            if (!veiled) card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
+            if (card == null && !veiled) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
                     // Animated if it's a GIF or WebP; a still of it, or a quiet "Open", if it can't be shown.
@@ -1668,7 +1681,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 }
             }
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-            if (card == null && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+            if (card == null && !veiled && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
             // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
             Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1713,9 +1726,10 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
 @Composable
 private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
     var q by remember(id) { mutableStateOf<Event?>(null) }
+    var looked by remember(id) { mutableStateOf(false) }
     var open by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { q = nav.social.fetchQuoted(id); q?.let { People.want(listOf(it.pubkey)) } }
-    val e = q ?: return
+    LaunchedEffect(id) { q = nav.social.fetchQuoted(id); looked = true; q?.let { People.want(listOf(it.pubkey)) } }
+    val e = q ?: return if (looked) NotFound("https://marble.syb.lol/" + cc.aaro.cosign.core.Bech32.encode("note", id.hexToBytes())) else Unit
     if (e.kind != 1) return OtherBox(e, e.pubkey, people, nav)
     Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
         .clickable(onClickLabel = if (open) "Open it" else "Show it whole") { if (open) nav.thread(e.id) else open = true }.padding(horizontal = 12.dp, vertical = 9.dp)) {
@@ -1725,9 +1739,17 @@ private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
             Text(" · " + since(e.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
-        Text(e.content.trim(), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = if (open) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+        Text(cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown }, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = if (open) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 4.dp))
     }
+}
+
+/** A quoted post that couldn't be found (yet): a quiet line, to its marble.syb.lol page. */
+@Composable
+private fun NotFound(page: String) {
+    val context = LocalContext.current
+    Text("Couldn't load this post ›", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { cc.aaro.cosign.Tabs.open(context, page, false, Vault.dark, Vault.Ground.toArgb(), null) }.padding(vertical = 4.dp))
 }
 
 /**
@@ -1740,8 +1762,8 @@ private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
     var e by remember(a) { mutableStateOf<Event?>(null) }
     var looked by remember(a) { mutableStateOf(false) }
     LaunchedEffect(a) { e = nav.social.fetchAddr(a); looked = true; People.want(listOf(a.pubkey)) }
-    if (e == null && !looked) return
-    OtherBox(e, a.pubkey, people, nav, page = "https://marble.syb.lol/" + a.naddr)
+    if (e == null) { if (looked) NotFound("https://marble.syb.lol/" + a.naddr); return }
+    OtherBox(e, a.pubkey, people, nav)
 }
 
 /**
@@ -1773,7 +1795,7 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
             e?.kind == 30023 -> Box(Modifier.padding(top = 6.dp)) {
                 LinkCard(Preview(e.firstTag("title") ?: "An article", e.firstTag("image")?.takeIf { it.startsWith("https://") }, e.firstTag("summary") ?: "", "Article")) { nav.thread(e.id) }
             }
-            else -> Text(if (e == null) "A post from another app" else if (e.kind == 1) e.content.trim() else OtherApps.what(e),
+            else -> Text(if (e == null) "Couldn't load this post" else if (e.kind == 1) cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown } else OtherApps.what(e),
                 color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp))
         }
@@ -1954,42 +1976,85 @@ private fun ReportDialog(name: String, onClose: () -> Unit, onReport: (String) -
     containerColor = Vault.Surface,
 )
 
-/** A note's text, cut up: pictures apart, mentions and #tags made tappable. */
-private class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>) {
+/**
+ * A note's text, cut up: pictures apart, mentions and #tags made tappable. The rules are shared with Marble Web and
+ * Astral (marble-content-fixtures: content-rules.md); ContentFixturesTest runs its fixtures against [tokens].
+ */
+internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>) {
     val images get() = media.filterIsInstance<Img>()
     sealed class Part {
         data class Plain(val s: String) : Part()
         data class Link(val url: String) : Part()
         data class Mention(val pubkey: String) : Part()
-        data class Quote(val id: String) : Part()
-        /** A quoted addressable event (naddr): an article, a 3D object, a listing… shown in a box under the text. */
-        data class QuoteAddr(val a: Ref.Addr) : Part()
+        /** [raw]: the reference as written (note1…, nevent1…), for its short link. */
+        data class Quote(val id: String, val raw: String = "") : Part()
+        /** A quoted addressable event (naddr): an article, a 3D object, a listing… */
+        data class QuoteAddr(val a: Ref.Addr, val raw: String = "") : Part()
         data class Tag(val tag: String) : Part()
+        /** A custom emoji (NIP-30): its picture, in the line. */
+        data class Emoji(val code: String, val url: String) : Part()
+    }
+
+    /** The first post or thing it refers to: a card under the text. Any later one is a short link in the text. */
+    val card: Part? = parts.firstOrNull { it is Part.Quote || it is Part.QuoteAddr }
+
+    /** What a part shows as, in the text (null: nothing; a card, or an emoji, drawn as its picture). */
+    fun label(p: Part, people: Map<String, Person>): String? = when (p) {
+        is Part.Plain -> p.s
+        is Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r ->
+            when (r) { is Ref.Note -> "↪ a post"; is Ref.Profile -> "@" + (people[r.pubkey]?.shown ?: shortNpub(r.pubkey)); is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" }
+        } ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it }
+        is Part.Mention -> "@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))
+        is Part.Quote -> if (p === card) null else "↪ quoted"
+        is Part.QuoteAddr -> if (p === card) null else if (p.a.kind == 30023) "↪ an article" else "↪ quoted"
+        is Part.Tag -> "#" + p.tag
+        is Part.Emoji -> null
+    }
+
+    /**
+     * What's drawn, as the shared fixtures' tokens: in the text, in order (["text", s], ["mention", pubkey],
+     * ["hashtag", tag], ["link", url], ["emoji", code], ["shortlink", reference]); and the text you can see outside links.
+     */
+    fun tokens(people: Map<String, Person> = emptyMap()): Pair<List<Pair<String, String>>, String> {
+        val out = ArrayList<Pair<String, String>>(); val seen = StringBuilder()
+        for (p in parts) {
+            val shown = label(p, people)
+            when (p) {
+                is Part.Plain -> out += "text" to p.s
+                is Part.Link -> out += "link" to p.url
+                is Part.Mention -> out += "mention" to p.pubkey
+                is Part.Tag -> out += "hashtag" to p.tag
+                is Part.Emoji -> out += "emoji" to p.code
+                is Part.Quote -> if (p !== card) out += "shortlink" to p.raw
+                is Part.QuoteAddr -> if (p !== card) out += "shortlink" to p.raw
+            }
+            if (p !is Part.Link && shown != null) seen.append(shown)
+        }
+        return out to seen.toString()
     }
     sealed class Media
     /** [preview]: the post's own still of it (imeta "image"), for when it can't be shown itself. */
     data class Img(val url: String, val ratio: Float, val preview: String? = null) : Media()
     data class Vid(val v: VideoRef) : Media()
 
-    fun annotated(people: Map<String, Person>, nav: Nav): AnnotatedString = buildAnnotatedString {
-        val style = TextLinkStyles(SpanStyle(color = Vault.Accent))
-        for (p in parts) when (p) {
-            is Part.Plain -> append(p.s)
-            // A marble.syb.lol link to a post: that post, here; any other link, in your browser.
-            is Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, style) { OpenPost.ref.value = r }) {
-                append(when (r) { is cc.aaro.cosign.Ref.Note -> "↪ a post"; is cc.aaro.cosign.Ref.Profile -> "@" + (people[r.pubkey]?.shown ?: shortNpub(r.pubkey)); is cc.aaro.cosign.Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" })
-            } }
-                ?: withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
-            is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
-            is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
-            // The first is shown in its own box under the text; any more, as a short link (never the raw string).
-            is Part.QuoteAddr -> if (p != parts.firstOrNull { it is Part.QuoteAddr }) withLink(LinkAnnotation.Clickable(p.a.naddr, style) { OpenPost.ref.value = p.a }) { append(if (p.a.kind == 30023) "↪ an article" else "↪ quoted") }
-            is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
+    /** The custom emoji's pictures, for the text's inline content. */
+    fun emojiContent(): Map<String, androidx.compose.foundation.text.InlineTextContent> = parts.filterIsInstance<Part.Emoji>().associate { e ->
+        EMOJI + e.url to androidx.compose.foundation.text.InlineTextContent(
+            androidx.compose.ui.text.Placeholder(1.3.em, 1.3.em, androidx.compose.ui.text.PlaceholderVerticalAlign.TextCenter)) {
+            NetImage(e.url, Modifier.fillMaxSize(), 96, ContentScale.Fit, description = e.code, ground = Color.Transparent)
         }
-    }.let { if (it.text.isBlank()) AnnotatedString("") else it }
+    }
 
     companion object {
-        private val TOKEN = Regex("(https?://[^\\s<>\"]+)|nostr:((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)|(?<=^|\\s)#([\\p{L}\\p{N}_]{1,40})")
+        const val EMOJI = "emoji:"
+        // Links first (anything inside one is the link's), then references (with or without nostr:, not inside a word),
+        // #tags (with a letter: #1 is text) and :emoji: (only those the post defines; others stay text).
+        private val TOKEN = Regex("(https?://[^\\s<>\"]+)|(?<![\\p{L}\\p{N}_/:])(?:nostr:)?((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)" +
+            "|(?<=^|[\\s(])#((?=[\\p{N}_]*\\p{L})[\\p{L}\\p{N}_]{1,80})|:([A-Za-z0-9_+-]{1,60}):")
+        private const val TRAILING = ".,;:!?)]}'\""
+
+        /** A NIP-36 content warning: its reason ("": none given); null: none. */
+        fun warning(e: Event): String? = e.tags.firstOrNull { it.isNotEmpty() && it[0] == "content-warning" }?.let { it.getOrNull(1)?.trim() ?: "" }
         private val IMAGE = Regex("\\.(jpe?g|png|gif|webp|avif)(\\?.*)?$", RegexOption.IGNORE_CASE)
         private val VIDEO = Regex("\\.(mp4|webm|mov|m4v|m3u8)(\\?.*)?$", RegexOption.IGNORE_CASE)
         private val BREAKS = Regex("[ \\t]*\\n[ \\t\\n]*\\n[ \\t\\n]*")
@@ -2004,26 +2069,30 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
             fun isVideo(url: String) = VIDEO.containsMatchIn(url) || meta[url]?.get("m")?.startsWith("video/") == true
             fun video(url: String) = Vid(VideoRef(url, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") },
                 ratioOf(url) ?: (16f / 9f), meta[url]?.get("duration")?.toFloatOrNull()?.toInt()))
+            val emojis = e.tags.filter { it.size > 2 && it[0] == "emoji" && it[2].startsWith("https://") }.associate { it[1] to it[2] }
             val parts = ArrayList<Part>(); val images = ArrayList<Media>(); val mentions = ArrayList<String>()
             var at = 0
             val text = content.trim()
             for (m in TOKEN.findAll(text)) {
                 if (m.range.first > at) parts += Part.Plain(text.substring(at, m.range.first))
-                at = m.range.last + 1
-                val url = m.groups[1]?.value?.trimEnd('.', ',', ')', '!', '?')
+                val url = m.groups[1]?.value?.trimEnd { it in TRAILING }
+                // (What's trimmed off a link's end is text again.)
+                at = if (url != null) m.range.first + url.length else m.range.last + 1
                 val ref = m.groups[2]?.value
                 val tag = m.groups[3]?.value
+                val emoji = m.groups[4]?.value
                 when {
                     url != null && isVideo(url) -> images += video(url)
                     url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
                     url != null -> parts += Part.Link(url)
                     ref != null -> when (val r = Ref.parse(ref)) {
                         is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }
-                        is Ref.Note -> parts += Part.Quote(r.id)
-                        is Ref.Addr -> parts += Part.QuoteAddr(r)
+                        is Ref.Note -> parts += Part.Quote(r.id, ref)
+                        is Ref.Addr -> parts += Part.QuoteAddr(r, ref)
                         null -> parts += Part.Plain(m.value)
                     }
                     tag != null -> parts += Part.Tag(tag)
+                    emoji != null -> parts += emojis[emoji]?.let { Part.Emoji(emoji, it) } ?: Part.Plain(m.value)
                 }
             }
             if (at < text.length) parts += Part.Plain(text.substring(at))
@@ -2041,6 +2110,23 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
         }
     }
 }
+
+/** The text, drawn: links, mentions, #tags and short links tappable; custom emoji as pictures ([Body.emojiContent]). */
+private fun Body.annotated(people: Map<String, Person>, nav: Nav): AnnotatedString = buildAnnotatedString {
+    val style = TextLinkStyles(SpanStyle(color = Vault.Accent))
+    for (p in parts) { val shown = label(p, people); when (p) {
+        is Body.Part.Plain -> append(p.s)
+        // A marble.syb.lol link to a post: that post, here; any other link, in your browser.
+        is Body.Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, style) { OpenPost.ref.value = r }) { append(shown!!) } }
+            ?: withLink(LinkAnnotation.Url(p.url, style)) { append(shown!!) }
+        is Body.Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append(shown!!) }
+        // The first is shown in its own box under the text; any more, as a short link (never the raw string).
+        is Body.Part.Quote -> if (shown != null) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append(shown) }
+        is Body.Part.QuoteAddr -> if (shown != null) withLink(LinkAnnotation.Clickable(p.a.naddr, style) { OpenPost.ref.value = p.a }) { append(shown) }
+        is Body.Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append(shown!!) }
+        is Body.Part.Emoji -> appendInlineContent(Body.EMOJI + p.url, ":${p.code}:")
+    } }
+}.let { if (it.text.isBlank() && parts.none { it is Body.Part.Emoji }) AnnotatedString("") else it }
 
 @Composable
 internal fun Avatar(p: Person?, pubkey: String, size: Int, modifier: Modifier = Modifier, description: String? = null) {

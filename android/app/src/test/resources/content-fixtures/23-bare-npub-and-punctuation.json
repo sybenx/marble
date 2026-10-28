@@ -1,0 +1,48 @@
+{
+  "name": "bare-npub-and-punctuation",
+  "rule": "§1 §2 §5 §6",
+  "why": "a bare npub1 (no nostr:), a link in parentheses followed by punctuation, #1 is not a tag",
+  "source": "synthetic",
+  "event": {
+    "kind": 1,
+    "created_at": 1793000005,
+    "tags": [],
+    "content": "hi npub1hmmy6400e5ymtn940ac2j937uvruh6w8fpe0pkx3pqga3quw5p8q7tpk24 (see https://example.com/page). #1 isn't a tag, #glass is.",
+    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+    "id": "a8e4634a5bf87069ad10e0ee8f6fb61bb69b6057973f0a16d2c91f2f14761499",
+    "sig": "28bae87f28f3f26c1a2fba734a83801da01f830212087ae9be1b1add7c69e4a9caaa74936832db1c5965794f0117dc05acc3b6134bb722598e0e2c48ed573306"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "hi"
+      },
+      {
+        "mention": "bef64d55efcd09b5ccb57f70a9163ee307cbe9c74872f0d8d10811d8838ea04e"
+      },
+      {
+        "text": "(see"
+      },
+      {
+        "link": "https://example.com/page"
+      },
+      {
+        "text": "). #1 isn't a tag,"
+      },
+      {
+        "hashtag": "glass"
+      },
+      {
+        "text": "is."
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "npub1hmmy6400e5ymtn940ac2j937uvruh6w8fpe0pkx3pqga3quw5p8q7tpk24"
+    ]
+  }
+}

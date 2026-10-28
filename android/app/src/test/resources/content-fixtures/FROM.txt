@@ -1,0 +1,1 @@
+Copied from marble-content-fixtures 0253b1f (2026-10-27). Rules: content-rules.md there. Update by copying fixtures/*.json again.

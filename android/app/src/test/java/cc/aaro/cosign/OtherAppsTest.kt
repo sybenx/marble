@@ -31,10 +31,12 @@ class OtherAppsTest {
         assertTrue(obj.content.trimStart().startsWith("{") || obj.content.trimStart().startsWith("["))
     }
 
-    @Test fun withNoAltItSaysWhichApp() {
-        val bare = obj.copy(tags = obj.tags.filter { it[0] != "alt" })
-        assertEquals("A post from another app · SNOcrash.art", OtherApps.what(bare))
-        assertEquals("A post from another app", OtherApps.what(bare.copy(tags = bare.tags.filter { it[0] != "client" })))
+    @Test fun withNoAltItsTitleOrNameElseWhichApp() {
+        val noAlt = obj.copy(tags = obj.tags.filter { it[0] != "alt" })
+        assertEquals("AJ FU", OtherApps.what(noAlt))
+        val bare = noAlt.copy(tags = noAlt.tags.filter { it[0] != "name" })
+        assertEquals("Something made in another app · SNOcrash.art", OtherApps.what(bare))
+        assertEquals("Something made in another app", OtherApps.what(bare.copy(tags = bare.tags.filter { it[0] != "client" })))
     }
 
     @Test fun openGoesToTheAppThatMadeIt() {

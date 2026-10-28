@@ -1,0 +1,95 @@
+{
+  "name": "bare-nevent-after-text",
+  "rule": "§1 §3",
+  "why": "a bare nevent1 after text and emoji",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "0fb64607948692f920f8378debceb25a2ca5e3d60b543be4213e284cd557c8ac",
+    "pubkey": "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8",
+    "created_at": 1793115544,
+    "kind": 1,
+    "tags": [
+      [
+        "e",
+        "df66d23abb4965963a43215e48cafcd3f4ec16e82ce2020464f4c5d79a0d36cd",
+        "wss://offchain.pub",
+        "root",
+        "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+      ],
+      [
+        "e",
+        "de68a0cf1e182c63de459ead755538ef366d9c8a7dc591ac2fabd7f81ba12c66",
+        "wss://relay.nostr.blockhenge.com",
+        "reply",
+        "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+      ],
+      [
+        "client",
+        "Damus"
+      ]
+    ],
+    "content": "\"alex\" is hilarious, y'all. \n\n🤣🗞️\n\n\nnevent1qqs2vggylvv8x64tpaw5hg562gqs3uwy3tp4njq4y6jz8dnuqqmwddq8h53uh",
+    "sig": "598359e78b3e499778b239845d15855619772187c386313a1c8008ffaef33ba5594b553f340501f9044c38ce1ba9fde5b5effca2ec615b0b36368682fb164b15"
+  },
+  "related": [
+    {
+      "content": "i wonder what they want, #pravda.... ☕️🗞️\n\nbring them to moscow. for some russian hospitality. and feed them. \n\nhttps://ground.news/article/leaders-of-norway-finland-have-call-with-putin-to-advocate-for-peace_cb54cf?utm_source=mobile-app&utm_medium=newsroom-share",
+      "created_at": 1793112127,
+      "id": "a62104fb18736aab0f5d4ba29a520108f1c48ac359c81526a423b67c0036e6b4",
+      "kind": 1,
+      "pubkey": "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8",
+      "sig": "699b72c13115a982918c1375720a0e023bf7dad644c7a4a1b60a9c39901d63bb40b3d4262e11eba1817ba6cc1364cc11219714272f3fb463b4db3bbca656200d",
+      "tags": [
+        [
+          "e",
+          "df66d23abb4965963a43215e48cafcd3f4ec16e82ce2020464f4c5d79a0d36cd",
+          "wss://offchain.pub",
+          "root",
+          "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+        ],
+        [
+          "e",
+          "aec7f66aa4b5358990b58ce08008ef1f9828c16497c6a18995bb4371f7334101",
+          "wss://nostr.malin.onl",
+          "reply",
+          "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+        ],
+        [
+          "t",
+          "pravda"
+        ],
+        [
+          "r",
+          "https://ground.news/article/leaders-of-norway-finland-have-call-with-putin-to-advocate-for-peace_cb54cf?utm_source=mobile-app&utm_medium=newsroom-share"
+        ],
+        [
+          "client",
+          "Damus"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "\"alex\" is hilarious, y'all."
+      },
+      {
+        "text": "🤣🗞️"
+      }
+    ],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "a62104fb18736aab0f5d4ba29a520108f1c48ac359c81526a423b67c0036e6b4",
+        "line": "i wonder what they want"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nevent1"
+    ]
+  }
+}

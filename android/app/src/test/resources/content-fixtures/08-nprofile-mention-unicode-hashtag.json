@@ -1,0 +1,62 @@
+{
+  "name": "nprofile-mention-unicode-hashtag",
+  "rule": "§2 §1",
+  "why": "nostr:nprofile1… and a Japanese hashtag",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "9c20dcacf5d2d6b76b8879d2290d0799c1ba4da078b7f19cb03c4d78225e2b3e",
+    "pubkey": "35f6d690e345e4dd42dcf3785792f946dccf8472432cd0390975bb1438f3d1e7",
+    "created_at": 1793131450,
+    "kind": 1,
+    "tags": [
+      [
+        "p",
+        "fc9bd4cb3bed761465ee3d46d2ecc3ae387ea421be55ec4dbe96e133764b5f5d",
+        "wss://relay.ditto.pub"
+      ],
+      [
+        "p",
+        "14aba18660b50db834f9eff1997bd3fc569eb5a4e2f00b17ff8be1527cf02de6",
+        "wss://relay.ditto.pub"
+      ],
+      [
+        "t",
+        "ろぐぼチャレンジ"
+      ],
+      [
+        "proxy",
+        "https://misskey.io/notes/asuohbgbojqj03kp",
+        "activitypub"
+      ],
+      [
+        "client",
+        "Mostr",
+        "31990:6be38f8c63df7dbf84db7ec4a6e6fbbd8d19dca3b980efad18585c46f04b26f9:mostr",
+        "wss://relay.ditto.pub"
+      ]
+    ],
+    "content": "ろぐぼ\nnostr:nprofile1qy2hwumn8ghj7un9d3shjtnyd968gmewwp6kyqpqljdafjema4mpge0w84rd9mxr4cu8afpphe27cnd7jmsnxajttaws84rpv5 #ろぐぼチャレンジ",
+    "sig": "9a365064bc8c01a621c3104dbd4c46721d0e97ba4dc2ccc715a776bcdebe236f032e441f4bb2deb715d24f0ba844e955bd7863fbf5589d8fa17116b52e7aa3a2"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "ろぐぼ"
+      },
+      {
+        "mention": "fc9bd4cb3bed761465ee3d46d2ecc3ae387ea421be55ec4dbe96e133764b5f5d"
+      },
+      {
+        "hashtag": "ろぐぼチャレンジ"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nprofile1"
+    ]
+  }
+}

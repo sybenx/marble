@@ -1,0 +1,50 @@
+{
+  "name": "picture-only",
+  "rule": "§4",
+  "why": "only an imeta picture: no text, no link",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "00dccf3862423291a4233baacb635c9f96d18926e74bf3c1db28d1065327c675",
+    "pubkey": "81913081246d192c9a55951704270756b222094470b3171e58bb5e3c42ee8db5",
+    "created_at": 1793078676,
+    "kind": 1,
+    "tags": [
+      [
+        "r",
+        "https://media.libernet.app/s/V36AJv.jpg"
+      ],
+      [
+        "imeta",
+        "url https://media.libernet.app/s/V36AJv.jpg",
+        "x d37dc5e35be7107c3d08e0ed6a0c239d568de03b76faf8d6e2b2eb8b6f7afc2a",
+        "size 87010",
+        "m image/jpeg",
+        "dim 589x1280",
+        "blurhash [bQ+{Dw]x]o#?HWAozogIUtRWBWA?wS2MxoJyEW?V@jFD%adofj]%2aKbHozDioJozRj-oWBWBof",
+        "ox d37dc5e35be7107c3d08e0ed6a0c239d568de03b76faf8d6e2b2eb8b6f7afc2a"
+      ],
+      [
+        "nonce",
+        "30000V",
+        "8"
+      ]
+    ],
+    "content": "https://media.libernet.app/s/V36AJv.jpg",
+    "sig": "c2755f441decc4a34dcb64e564885a596968a523ccdf0d0fd279571e49a4a08ac019a108b0d86be3c29b752a45fbcf3b513e1f89808a55d7c0a446c5c56c3bf3"
+  },
+  "related": [],
+  "expect": {
+    "inline": [],
+    "cards": [],
+    "media": [
+      {
+        "image": "https://media.libernet.app/s/V36AJv.jpg"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "libernet"
+    ]
+  }
+}

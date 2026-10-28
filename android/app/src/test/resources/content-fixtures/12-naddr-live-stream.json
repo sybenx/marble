@@ -1,0 +1,137 @@
+{
+  "name": "naddr-live-stream",
+  "rule": "§3",
+  "why": "nostr:naddr1… to kind 30311 (a live stream, empty content): 'other', its title",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "0000036423dd9349c851ed1db89bbcd74dc583a16a84c3dac3fc600d30058913",
+    "pubkey": "cdecc31c6d9406e9a7d6b0067412aa661d9d31c8035c3fd65c06301d1cac3b92",
+    "created_at": 1793071537,
+    "kind": 1,
+    "tags": [
+      [
+        "p",
+        "f6a25b87f7e7bec9a691e37851b1b57a7b49fa00bb431280303002a3ebca4891",
+        "wss://nos.lol/"
+      ],
+      [
+        "t",
+        "Live"
+      ],
+      [
+        "t",
+        "live"
+      ],
+      [
+        "q",
+        "30311:f6a25b87f7e7bec9a691e37851b1b57a7b49fa00bb431280303002a3ebca4891:035b4c33-2659-4c0d-b255-052d90361498",
+        "wss://relay.dreamith.to/"
+      ],
+      [
+        "client",
+        "Amethyst"
+      ],
+      [
+        "nonce",
+        "100h)0",
+        "20"
+      ]
+    ],
+    "content": "#Live\nnostr:naddr1qqjrqve4vg6xxven95ervdfe956xxvry943rydf495cr2vny8ycrxd33xsunsqgcwaehxw309aex2mrp0yhxgun9v9kkjarg9e6x7tczyrm2yku87lnmajdxj83hs5d3k4a8kj06qza5xy5qxqcq9gltefyfzqcyqqq8vecxev3nt",
+    "sig": "1e688ed8ddc6ebcd03cf040c6226e69eb0e43223db6a1b95014f7c9346c3d9fd3db08549eafb487d7d144cf466417cb53c01186d4bd571ce1204334de4c21954"
+  },
+  "related": [
+    {
+      "content": "",
+      "created_at": 1793076957,
+      "id": "963af55a98c9a397dd0a9647d6f5fe69720d45e7409d377cbf874156b7a3255c",
+      "kind": 30311,
+      "pubkey": "f6a25b87f7e7bec9a691e37851b1b57a7b49fa00bb431280303002a3ebca4891",
+      "sig": "c61fc253089872730f43d6437936b5e1ed02d7122281f7fe8c6fca8ab9b8433cfb0b4d47f1ee27fc151c38fb66cfa226d56cf9d15faec6b1529a86e48e91bac5",
+      "tags": [
+        [
+          "d",
+          "035b4c33-2659-4c0d-b255-052d90361498"
+        ],
+        [
+          "status",
+          "ended"
+        ],
+        [
+          "starts",
+          "1793071449"
+        ],
+        [
+          "ends",
+          "1793076957"
+        ],
+        [
+          "title",
+          "Project Zomboid PVP #NSFW"
+        ],
+        [
+          "summary",
+          "Project Zomboid Build 42 PVP Multiplayer"
+        ],
+        [
+          "image",
+          "https://streamstr.net/035b4c33-2659-4c0d-b255-052d90361498/thumb.webp?n=1793076860"
+        ],
+        [
+          "goal",
+          "3d35710e91f0ea1390f0d08d98b2192a4f7365887f746c0e7a44e39440d33194"
+        ],
+        [
+          "t",
+          "gaming"
+        ],
+        [
+          "t",
+          "live"
+        ],
+        [
+          "t",
+          "english commentary"
+        ],
+        [
+          "t",
+          "lfl_country_za"
+        ],
+        [
+          "t",
+          "letsfo_live"
+        ],
+        [
+          "p",
+          "cdecc31c6d9406e9a7d6b0067412aa661d9d31c8035c3fd65c06301d1cac3b92",
+          "",
+          "host"
+        ],
+        [
+          "service",
+          "https://streamstr.net/api/v1"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "hashtag": "Live"
+      }
+    ],
+    "cards": [
+      {
+        "card": "other",
+        "ref": "30311:f6a25b87f7e7bec9a691e37851b1b57a7b49fa00bb431280303002a3ebca4891:035b4c33-2659-4c0d-b255-052d90361498",
+        "line": "Project Zomboid PVP #NSFW"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "naddr1"
+    ]
+  }
+}

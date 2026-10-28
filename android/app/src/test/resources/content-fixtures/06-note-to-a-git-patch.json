@@ -1,0 +1,95 @@
+{
+  "name": "note-to-a-git-patch",
+  "rule": "§3",
+  "why": "nostr:note1… pointing at kind 1617 (a git patch): an 'other' card, never its content",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "2adc538187e0b93b961b5e8b35888ad508aeaf2bb39116fcec29fb493faf29cd",
+    "pubkey": "aaf59cd0de17009e323e191ed7cb7d10035e67db116cb2718dfb67c8844ff02b",
+    "created_at": 1793153208,
+    "kind": 1,
+    "tags": [
+      [
+        "e",
+        "461be0968f921da82fe7ca91adf8c454c65bcae5736f8e98e1c02733552f6233",
+        "",
+        "mention"
+      ],
+      [
+        "t",
+        "gnostr"
+      ],
+      [
+        "p",
+        "a10411b24f328fffc19cac6ec9b86c2a643cfb41c59297ec63a60dcdb31a8f21"
+      ],
+      [
+        "e",
+        "2251f04cfc2301d3c9dd012513056e97122f55fe87c3119f7f874bc1c24e1aa3",
+        "",
+        "reply"
+      ],
+      [
+        "commit-nonce",
+        "00-000000b0"
+      ]
+    ],
+    "content": "nostr:note1gcd7p950jgw6stl8e2g6m7xy2nr9hjh9wdhcax8pcqnnx4f0vgese8uaxt",
+    "sig": "6375a7ca471dc33adc0230f74ab6f582c894400fc924c264a39eef8f8a3777e7e4140aba01b95b88f5de5671a2151b0cc1cbac13a92e8afbb9ed5e66bdf4ea16"
+  },
+  "related": [
+    {
+      "id": "461be0968f921da82fe7ca91adf8c454c65bcae5736f8e98e1c02733552f6233",
+      "pubkey": "aaf59cd0de17009e323e191ed7cb7d10035e67db116cb2718dfb67c8844ff02b",
+      "created_at": 1793153193,
+      "kind": 1617,
+      "tags": [
+        [
+          "d",
+          ".tmpdPpGte"
+        ],
+        [
+          "commit",
+          "005e4b0c2b72e0ecae231684cae08dbe6ae24ec1"
+        ],
+        [
+          "t",
+          "gnostr"
+        ],
+        [
+          "p",
+          "a10411b24f328fffc19cac6ec9b86c2a643cfb41c59297ec63a60dcdb31a8f21"
+        ],
+        [
+          "e",
+          "2251f04cfc2301d3c9dd012513056e97122f55fe87c3119f7f874bc1c24e1aa3",
+          "",
+          "reply"
+        ],
+        [
+          "commit-nonce",
+          "00-000000b0"
+        ]
+      ],
+      "content": "commit 005e4b0c2b72e0ecae231684cae08dbe6ae24ec1\nAuthor: runner <email@example.com>\nDate:   Wed Oct 28 02:05:51 2026 +0000\n\n    proof-of-work commit\n    \n    00-000000b0\n\ndiff --git a/pretty-print-attestations-1.txt b/pretty-print-attestations-1.txt\nnew file mode 100644\nindex 0000000..3424c8b\n--- /dev/null\n+++ b/pretty-print-attestations-1.txt\n@@ -0,0 +1 @@\n+bitcoindev_2\n\\ No newline at end of file\n",
+      "sig": "1f77d83d25b15681212c4e363ee79e980e2bebe3f9aa103a30488b52d38d1d97b894ce55eb5ccc4dd3f71f014d8e5ec8552af941cd502202937b9ca84c96a241"
+    }
+  ],
+  "expect": {
+    "inline": [],
+    "cards": [
+      {
+        "card": "other",
+        "ref": "461be0968f921da82fe7ca91adf8c454c65bcae5736f8e98e1c02733552f6233",
+        "line": "Something made in another app"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "note1",
+      "commit 005e4b0c"
+    ]
+  }
+}

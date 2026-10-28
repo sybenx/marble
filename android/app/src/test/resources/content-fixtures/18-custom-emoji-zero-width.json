@@ -1,0 +1,54 @@
+{
+  "name": "custom-emoji-zero-width",
+  "rule": "§1 §6",
+  "why": "NIP-30 :usuhoso: between zero-width spaces, then a long Japanese hashtag",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "a628e32a02eac63a634f607f46ac3ebaf1630345e30d50e547ba816a2f5e0e53",
+    "pubkey": "f864b7018ebbbad3beb2ce461b472f7b256360379739103f93a2ae75e7981ebe",
+    "created_at": 1793153236,
+    "kind": 1,
+    "tags": [
+      [
+        "t",
+        "私は存在感が薄いので5人以上にrnされたら負け"
+      ],
+      [
+        "emoji",
+        "usuhoso",
+        "https://media.misskeyusercontent.com/io/24cd70cc-8373-4d0f-9fb9-0aec6428e383.png"
+      ],
+      [
+        "proxy",
+        "https://misskey.io/notes/asv1g9f9oq8z0227",
+        "activitypub"
+      ],
+      [
+        "client",
+        "Mostr",
+        "31990:6be38f8c63df7dbf84db7ec4a6e6fbbd8d19dca3b980efad18585c46f04b26f9:mostr",
+        "wss://relay.ditto.pub"
+      ]
+    ],
+    "content": "​:usuhoso:​ #私は存在感が薄いので5人以上にrnされたら負け",
+    "sig": "9c150d928632a137775150e1d820529cde75ec9a8d0162ddfa9023db552ac00b208d9a86c6e1000c569358ffebf73095eafef4ddc4f514b7cae65c5f66f28f31"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "emoji": "usuhoso"
+      },
+      {
+        "hashtag": "私は存在感が薄いので5人以上にrnされたら負け"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      ":usuhoso:"
+    ]
+  }
+}

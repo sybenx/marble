@@ -1,0 +1,41 @@
+{
+  "name": "youtube-link",
+  "rule": "§5",
+  "why": "a YouTube link: a link (a client may add a preview card)",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "PR 468 https://youtu.be/D1XBfSzyx0A",
+    "created_at": 1793131598,
+    "id": "58ccca59aa82f496b13a1386cdaf64bd328c7f97edc3efb29d71a7dd1c6bfe77",
+    "kind": 1,
+    "pubkey": "b2a0b29313f5bb8626eb0db298136fc8ecf1e35e701005244c7007e69dfb2b57",
+    "sig": "77b4220d8d445ae333ca6ef4c1fc37b30ae948d1cc282846a31fe7107d2fcda62f0ac282c14a18ca8e5f2e084377e77a2c51391443086d1fe2c5a2f2729fe24a",
+    "tags": [
+      [
+        "r",
+        "wss://relay.primal.net/"
+      ],
+      [
+        "client",
+        "Primal Web"
+      ]
+    ]
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "PR 468"
+      },
+      {
+        "link": "https://youtu.be/D1XBfSzyx0A"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

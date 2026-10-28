@@ -1,0 +1,69 @@
+{
+  "name": "longform-markdown",
+  "rule": "§7",
+  "why": "kind 30023: headings, bold, italic, list, quote, link, picture, a mention and a post reference inside",
+  "source": "synthetic",
+  "event": {
+    "kind": 30023,
+    "created_at": 1793000000,
+    "tags": [
+      [
+        "d",
+        "swirls"
+      ],
+      [
+        "title",
+        "On swirls"
+      ],
+      [
+        "summary",
+        "How a swirl gets made."
+      ],
+      [
+        "image",
+        "https://example.com/cover.jpg"
+      ]
+    ],
+    "content": "# On swirls\n\nA swirl starts as **two colours** and a *steady hand*.\n\n## Steps\n\n- Heat the rod\n- Twist it\n\n> Patience is the glass.\n\nMore at [the studio](https://example.com/studio). Thanks nostr:npub1hmmy6400e5ymtn940ac2j937uvruh6w8fpe0pkx3pqga3quw5p8q7tpk24 for the photo:\n\n![a blue swirl](https://example.com/swirl.jpg)\n\nSee also nostr:note14w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4sfreljc.",
+    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+    "id": "4e15d135ea8a124b84a589ef3b6cbf2c1b9b67211ac35854eb8bc27f493152d4",
+    "sig": "ef21036be63b4b545ac3f5f4060ad87642dcf59d7142925eade870a01f08ba9406a5261a117e2fa2d98d183ae01439375ca8d854fdfcfd4a07d26b01b5403176"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "two colours"
+      },
+      {
+        "text": "Heat the rod"
+      },
+      {
+        "text": "Patience is the glass."
+      },
+      {
+        "link": "https://example.com/studio"
+      },
+      {
+        "mention": "bef64d55efcd09b5ccb57f70a9163ee307cbe9c74872f0d8d10811d8838ea04e"
+      },
+      {
+        "shortlink": "note14w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4sfreljc"
+      }
+    ],
+    "cards": [],
+    "media": [
+      {
+        "image": "https://example.com/swirl.jpg"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "npub1hmmy6400e5ymtn940ac2j937uvruh6w8fpe0pkx3pqga3quw5p8q7tpk24",
+      "note1",
+      "**",
+      "]("
+    ]
+  }
+}

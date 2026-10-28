@@ -11,9 +11,12 @@ object OtherApps {
     /** Kinds Marble shows itself: a post and an article. */
     fun drawn(kind: Int) = kind == 1 || kind == 30023
 
-    /** Its NIP-31 alt, else "A post from another app" and the app it came from. */
-    fun what(e: Event): String = e.firstTag("alt")?.trim()?.takeIf { it.isNotEmpty() }?.take(200)
-        ?: ("A post from another app" + (client(e)?.let { " · $it" } ?: ""))
+    /** Its NIP-31 alt, else its title, else its name, else "Something made in another app" (and which, if it says). */
+    fun what(e: Event): String = listOf("alt", "title", "name").firstNotNullOfOrNull { e.firstTag(it)?.trim()?.takeIf { s -> s.isNotEmpty() } }?.take(200)
+        ?: ("Something made in another app" + (client(e)?.let { " · $it" } ?: ""))
+
+    /** The card a quoted event gets (content-rules §3): "note", "article" or "other". */
+    fun card(kind: Int) = when (kind) { 1 -> "note"; 30023 -> "article"; else -> "other" }
 
     /** The app it says it was made with (its client tag). */
     fun client(e: Event): String? = e.firstTag("client")?.trim()?.take(40)?.takeIf { it.isNotEmpty() }

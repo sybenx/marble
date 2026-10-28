@@ -1,0 +1,70 @@
+{
+  "name": "nostr-nevent-quote",
+  "rule": "§3",
+  "why": "nostr:nevent1… after a word: a quote card",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "Would 😊\nnostr:nevent1qqsq4wtp4ljrz8a9avftxpng9yzqq9asx76fr9n8u2l40x6yf82ju4suqvurj",
+    "created_at": 1793066871,
+    "id": "b70526294fabbfb460eacc544150cee1ccc410bfe1446b6201008bfbe8d937c3",
+    "kind": 1,
+    "pubkey": "ab7d91705025289d6149ad9ea1abc4ce4c49555df71904f29136c223785ea6f7",
+    "sig": "0429b455e5d3514384e1e3cb86be601961ff56a78f90d1d4328df6fd5ef394612188ac5991c65ce31bab6dcf99b1bb278b12bcdbba57b58a8faefa59efdc9912",
+    "tags": [
+      [
+        "e",
+        "0ab961afe4311fa5eb12b3066829040017b037b4919667e2bf579b4449d52e56",
+        "",
+        "mention"
+      ],
+      [
+        "p",
+        "e3a59924933c9f9f2df83449055eb3858f1480fdd0c5edb95df08bedcd2e6624",
+        "",
+        "mention"
+      ],
+      [
+        "client",
+        "Primal iOS"
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "https://npub1uwjejfyn8j0e7t0cx3ys2h4nsk83fq8a6rz7mw2a7z97mnfwvcjqcvaxfl.blossom.band/ef25f8f96f01b5467ae7c6cb4c7e93ab53c48f08efc12b10b076fc374a8a8570.jpg",
+      "created_at": 1793066580,
+      "id": "0ab961afe4311fa5eb12b3066829040017b037b4919667e2bf579b4449d52e56",
+      "kind": 1,
+      "pubkey": "e3a59924933c9f9f2df83449055eb3858f1480fdd0c5edb95df08bedcd2e6624",
+      "sig": "d4c74b60fbd96371ebe2028bd46006252622a3aa631af3189410e87df409ffab5253467f112d34f5cad2c9d7c42e72489f52cfc14282584a12bb1f28dae619d0",
+      "tags": [
+        [
+          "imeta",
+          "url https://npub1uwjejfyn8j0e7t0cx3ys2h4nsk83fq8a6rz7mw2a7z97mnfwvcjqcvaxfl.blossom.band/ef25f8f96f01b5467ae7c6cb4c7e93ab53c48f08efc12b10b076fc374a8a8570.jpg",
+          "m image/jpeg",
+          "thumbhash mugNDAIm+Ge3Z4dIV1gGe54T+Q==",
+          "dim 794x1280"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "Would 😊"
+      }
+    ],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "0ab961afe4311fa5eb12b3066829040017b037b4919667e2bf579b4449d52e56"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nevent1"
+    ]
+  }
+}

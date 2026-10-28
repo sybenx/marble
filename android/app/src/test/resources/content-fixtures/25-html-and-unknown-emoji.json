@@ -1,0 +1,38 @@
+{
+  "name": "html-and-unknown-emoji",
+  "rule": "§0 §1",
+  "why": "HTML in the text is text; an emoji without a tag stays :nosuch:",
+  "source": "synthetic",
+  "event": {
+    "kind": 1,
+    "created_at": 1793000007,
+    "tags": [
+      [
+        "emoji",
+        "ok",
+        "https://example.com/ok.png"
+      ]
+    ],
+    "content": "<b>bold?</b> <script>alert(1)</script> :nosuch: & :ok:",
+    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+    "id": "be336fc68cfbd17db33178d8bb18f470346559b092f57d55a948a6ecfe9fae2d",
+    "sig": "59a55b94d20f52a593d13d3fa98c1b23b7b60c6f11381bb44c8507d06541e0f6d74da31882e96d9e76d5c8a776e86cae4bd3beea299f864e706ad8c6c7137583"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "<b>bold?</b> <script>alert(1)</script> :nosuch: &"
+      },
+      {
+        "emoji": "ok"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}
