@@ -183,8 +183,9 @@ function withPost(page, entity, d, seed) {
     const summary = main.kind === 30023 ? text((main.tags.find((t) => t[0] === "summary") || [])[1]) : "";
     const pics = imagesOf(main);
     const cover = main.kind === 30023 ? text((main.tags.find((t) => t[0] === "image") || [])[1]) : "";
-    const image = https(cover) ? cover : pics[0] || (https(p.picture) ? p.picture : null);
-    meta = { title: title || titleOf(p), description: (summary || plain(main.content)).slice(0, 200) || "A post on Marble", image, large: !!(https(cover) || pics[0]) };
+    const still = previewOf(main);
+    const image = https(cover) ? cover : still || (https(p.picture) ? p.picture : null);
+    meta = { title: title || titleOf(p), description: (summary || plain(main.content)).slice(0, 200) || "A post on Marble", image, large: !!(https(cover) || still) };
     const quoted = quotesOf(main).map((id) => seed.events.find((e) => e.id === id)).filter(Boolean);
     body = `<div class="thread ssr"><article class="card main">
       <div class="who"><a href="/${npub(main.pubkey)}" class="who-av">${face(p, main.pubkey, 48)}</a><div class="who-text"><a href="/${npub(main.pubkey)}" class="who-name">${esc(name)}</a>
@@ -226,6 +227,17 @@ function imagesOf(e) {
   const urls = (e.tags || []).filter((t) => t[0] === "imeta").map((t) => (t.find((x) => /^url /.test(x)) || "").slice(4));
   for (const m of String(e.content || "").matchAll(/https:\/\/[^\s<>"']+/g)) if (IMAGE.test(m[0])) urls.push(m[0]);
   return [...new Set(urls.filter(https))];
+}
+// The picture for a preview: chat apps show a GIF's first frame, which is often blank (animations that draw as they
+// go start white), so a post's still picture first, then a GIF's own still (its imeta "image"), and a GIF only last.
+const GIF = /\.gif(?:\?\S*)?$/i;
+function previewOf(e) {
+  const metas = (e.tags || []).filter((t) => t[0] === "imeta").map((t) => Object.fromEntries(t.slice(1).map((x) => [x.split(" ")[0], x.slice(x.indexOf(" ") + 1)])));
+  const gif = (m) => /gif/i.test(m.m || "") || GIF.test(m.url || "");
+  const pics = imagesOf(e);
+  return pics.find((u) => !GIF.test(u) && !metas.some((m) => m.url === u && gif(m)))
+    || metas.filter(gif).map((m) => m.image).find(https)
+    || pics[0] || null;
 }
 // The text for a preview: no links to other posts or people, no addresses.
 const plain = (s) => text(s).replace(/nostr:\S+/g, "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
