@@ -3,8 +3,8 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./ids.js";
 import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf } from "./data.js";
-import { searchPeople, searchPosts, SEARCH_RELAYS } from "./search.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
+import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
@@ -653,12 +653,10 @@ async function showProfile(d, signal) {
     found = shown.filter((e) => has(e, words));
     render(true);
     const asked = looking;
-    findTimer = setTimeout(() => searchPosts(asked, { authors: [pk], kinds: [1, 30023], signal }).then((got) => {
+    findTimer = setTimeout(() => outbox(pk).then((o) => postsAbout(pk, asked, { hints: [...(d.relays || []), ...o.write], signal })).then((got) => {
       if (looking !== asked) return;
       const ids = new Set(found.map((e) => e.id));
-      // (one of the words at least: a relay that ignores the search would send everything)
-      const some = (e) => words.some((w) => (e.content || "").toLowerCase().includes(w) || e.tags.some((t) => t[0] === "title" && String(t[1]).toLowerCase().includes(w)));
-      found = [...found, ...got.filter((e) => !ids.has(e.id) && some(e))].sort((a, b) => b.created_at - a.created_at);
+      found = [...found, ...got.filter((e) => !ids.has(e.id))].sort((a, b) => b.created_at - a.created_at);
       render();
     }).catch(() => {}), 300);
   });
@@ -771,7 +769,7 @@ async function showSearch(q, signal) {
   };
   const postsFrom = (pk) => {
     got.by.author = pk; got.byPosts = null; soon(drawMain);
-    searchPosts(got.by.rest, { authors: [pk], kinds: [1, 30023], signal }).then((list) => {
+    outbox(pk).then((o) => postsAbout(pk, got.by.rest, { hints: o.write, signal })).then((list) => {
       if (got.by.author !== pk) return;
       got.byPosts = list.map((e) => ({ e, why: "" }));
       soon(drawMain);
