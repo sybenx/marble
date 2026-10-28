@@ -1757,6 +1757,38 @@ class Social private constructor(private val phone: Phone, context: Context) {
         Fetch.query((a.relays + POST_RELAYS + Sources.GENERAL).distinct().take(8), mapOf("kinds" to listOf(a.kind), "authors" to listOf(a.pubkey), "#d" to listOf(a.d), "limit" to 2), 6000)
             .filter { it.kind == a.kind && it.pubkey == a.pubkey && it.verify() }.maxByOrNull { it.createdAt }?.also { remember(listOf(it)) }
 
+    /** A quoted post of any kind (a post, an article, or something from another app), by id. */
+    suspend fun fetchQuoted(id: String): Event? {
+        note(id)?.let { return it }
+        val got = Fetch.query(SearchRelays.FAST + Sources.GENERAL, mapOf("ids" to listOf(id)), 4000).firstOrNull { it.id == id && it.verify() } ?: return null
+        remember(listOf(got))
+        People.want(listOf(got.pubkey))
+        return got
+    }
+
+    private val openTargets = ConcurrentHashMap<String, String>()
+
+    /**
+     * Where "Open" takes something Marble doesn't draw: the app its client tag names (that app's NIP-89 handler), else a
+     * handler for its kind that you, someone you follow or its author published or recommended (never a stranger's: a
+     * handler is a redirect), else the client's own site, else its marble.syb.lol page.
+     */
+    suspend fun openTarget(e: Event): String = openTargets[e.id] ?: kotlinx.coroutines.coroutineScope {
+        val named = OtherApps.clientHandler(e)?.let { a -> async { fetchAddr(a)?.takeIf { OtherApps.handles(it, e.kind) }?.let { OtherApps.webLink(it, e) } } }
+        val trusted = (follows.value.orEmpty() + listOfNotNull(reader, e.pubkey)).toSet()
+        val k = e.kind.toString()
+        val found = async {
+            Fetch.query(POST_RELAYS + Sources.GENERAL, listOf(mapOf("kinds" to listOf(31990), "#k" to listOf(k), "limit" to 50),
+                mapOf("kinds" to listOf(31989), "#d" to listOf(k), "authors" to trusted.take(500), "limit" to 50)), 4000).filter { it.verify() }
+        }
+        named?.await() ?: run {
+            val all = found.await()
+            val recommended = all.filter { it.kind == 31989 && it.pubkey in trusted }.flatMap { r -> r.tags.filter { it.size > 1 && it[0] == "a" }.map { it[1] } }.toSet()
+            all.filter { it.kind == 31990 && OtherApps.handles(it, e.kind) && (it.pubkey in trusted || "31990:${it.pubkey}:${it.firstTag("d")}" in recommended) }
+                .sortedByDescending { it.createdAt }.firstNotNullOfOrNull { OtherApps.webLink(it, e) }
+        } ?: OtherApps.clientSite(e) ?: marbleLink(e)
+    }.also { openTargets[e.id] = it }
+
     suspend fun fetchNote(id: String): Event? {
         note(id)?.let { return it }
         val got = kotlinx.coroutines.coroutineScope {

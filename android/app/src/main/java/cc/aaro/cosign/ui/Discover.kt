@@ -142,6 +142,7 @@ import cc.aaro.cosign.Calm
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.withStyle
 import androidx.lifecycle.repeatOnLifecycle
+import cc.aaro.cosign.OtherApps
 import cc.aaro.cosign.Ref
 import cc.aaro.cosign.Social
 import cc.aaro.cosign.FeedLog
@@ -362,8 +363,9 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     suspend fun ref(r: cc.aaro.cosign.Ref, context: android.content.Context) = when (r) {
         is cc.aaro.cosign.Ref.Note -> thread(r.id)
         is cc.aaro.cosign.Ref.Profile -> profile(r.pubkey)
-        is cc.aaro.cosign.Ref.Addr -> social.fetchAddr(r)?.let { thread(it.id) }
-            ?: cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/" + r.naddr, false, Vault.dark, Vault.Ground.toArgb(), null)
+        // Something from another app: to that app (Social.openTarget), never its raw content in a thread.
+        is cc.aaro.cosign.Ref.Addr -> social.fetchAddr(r).let { ev -> if (ev != null && OtherApps.drawn(ev.kind)) thread(ev.id)
+            else cc.aaro.cosign.Tabs.open(context, ev?.let { social.openTarget(it) } ?: ("https://marble.syb.lol/" + r.naddr), false, Vault.dark, Vault.Ground.toArgb(), null) }
     }
     /** Write a post; [link]: with this link under it. */
     fun compose(link: String = "") = open(Route.Compose(link))
@@ -1706,8 +1708,9 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
 private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
     var q by remember(id) { mutableStateOf<Event?>(null) }
     var open by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { q = nav.social.fetchNote(id); q?.let { People.want(listOf(it.pubkey)) } }
+    LaunchedEffect(id) { q = nav.social.fetchQuoted(id); q?.let { People.want(listOf(it.pubkey)) } }
     val e = q ?: return
+    if (e.kind != 1) return OtherBox(e, e.pubkey, people, nav)
     Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
         .clickable(onClickLabel = if (open) "Open it" else "Show it whole") { if (open) nav.thread(e.id) else open = true }.padding(horizontal = 12.dp, vertical = 9.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1728,35 +1731,47 @@ private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
  */
 @Composable
 private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
-    val context = LocalContext.current
     var e by remember(a) { mutableStateOf<Event?>(null) }
     var looked by remember(a) { mutableStateOf(false) }
     LaunchedEffect(a) { e = nav.social.fetchAddr(a); looked = true; People.want(listOf(a.pubkey)) }
-    val ev = e
-    if (ev == null && !looked) return
-    val what = ev?.let { x ->
-        when (x.kind) {
-            1 -> x.content.trim()
-            30023 -> x.firstTag("title") ?: x.firstTag("summary") ?: "An article"
-            else -> x.firstTag("alt") ?: x.firstTag("title") ?: x.firstTag("name") ?: "Something made in another app"
-        }
-    } ?: "Something made in another app"
-    val inMarble = ev != null && (ev.kind == 1 || ev.kind == 30023)
+    if (e == null && !looked) return
+    OtherBox(e, a.pubkey, people, nav, page = "https://marble.syb.lol/" + a.naddr)
+}
+
+/**
+ * A quoted post, article, or something from another app ([e]; null: not found, opened on [page]). A post: its words;
+ * an article: its card; anything else: its NIP-31 alt (or "A post from another app" and the app's name) and "Open",
+ * to the app that made it when we know it (Social.openTarget). Never its raw content.
+ */
+@Composable
+private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav: Nav, page: String? = null) {
+    val context = LocalContext.current
+    val inMarble = e != null && OtherApps.drawn(e.kind)
+    var target by remember(e?.id) { mutableStateOf(page) }
+    if (e != null && !inMarble) LaunchedEffect(e.id) { target = nav.social.openTarget(e) }
+    val host = target?.let { android.net.Uri.parse(it).host?.removePrefix("www.") }
     Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
-        .clickable(onClickLabel = "Open it") { if (inMarble) nav.thread(ev!!.id) else openInBrowser(context, "https://marble.syb.lol/" + a.naddr) }
+        .clickable(onClickLabel = "Open it") {
+            // (Outside Marble, straight to the app that made it: a marble.syb.lol link would come back in here.)
+            if (inMarble) nav.thread(e!!.id) else target?.let { cc.aaro.cosign.Tabs.open(context, it, false, Vault.dark, Vault.Ground.toArgb(), null) }
+        }
         .padding(horizontal = 12.dp, vertical = 9.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(people[a.pubkey], a.pubkey, 18)
-            Text(people[a.pubkey]?.shown ?: shortNpub(a.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+            Avatar(people[author], author, 18)
+            Text(people[author]?.shown ?: shortNpub(author), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
-            ev?.let { Text(" · " + since(it.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+            e?.let { Text(" · " + since(it.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
         }
-        // An article: its card (picture, title, summary), as an article shows in the feed.
-        if (ev?.kind == 30023) Box(Modifier.padding(top = 6.dp)) {
-            LinkCard(Preview(ev.firstTag("title") ?: "An article", ev.firstTag("image")?.takeIf { it.startsWith("https://") }, ev.firstTag("summary") ?: "", "Article")) { nav.thread(ev.id) }
-        } else Text(what, color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp))
-        if (!inMarble) Text("Open ›", color = Vault.Accent, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+        when {
+            // An article: its card (picture, title, summary), as an article shows in the feed.
+            e?.kind == 30023 -> Box(Modifier.padding(top = 6.dp)) {
+                LinkCard(Preview(e.firstTag("title") ?: "An article", e.firstTag("image")?.takeIf { it.startsWith("https://") }, e.firstTag("summary") ?: "", "Article")) { nav.thread(e.id) }
+            }
+            else -> Text(if (e == null) "A post from another app" else if (e.kind == 1) e.content.trim() else OtherApps.what(e),
+                color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp))
+        }
+        if (!inMarble && host != null) Text(if (host == "marble.syb.lol") "Open ›" else "Open on $host ›", color = Vault.Accent, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
