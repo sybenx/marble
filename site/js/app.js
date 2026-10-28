@@ -6,11 +6,12 @@ import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { split as authorIn } from "./author-query.js";
-import { goodPosts, stories, yours, prepareMine } from "./find.js";
+import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
+import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -87,6 +88,11 @@ function route(state, back = false) {
     if (d.type === "event") return showEvent(d, signal);
     if (d.type === "profile") return showProfile(d, signal);
     return showAddress(d, signal);
+  }
+  if ((m = /^\/relay\/(.+)$/.exec(path))) {
+    const r = relayOf(m[1]);
+    input.value = "";
+    return r ? showRelay(r, signal) : showMissing("That doesn't look like a relay's address.");
   }
   if (path === "/notes") return showNotes(signal, new URLSearchParams(location.search).get("tab"));
   if (path === "/about") { page("about", "About"); return; }
@@ -713,6 +719,55 @@ async function showProfile(d, signal) {
   load();
 }
 
+// ── A relay ──────────────────────────────────────────────────────────────────────────────────────────
+
+const RELAY = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></svg>`;
+function relayIcon(info, size) {
+  const pic = /^https:\/\//.test(info?.icon || "") ? info.icon : "";
+  return pic ? `<span class="av" style="--s:${size}px" aria-hidden="true"><img src="${esc(pic)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()"></span>` : RELAY;
+}
+
+// What's on one relay (typed in the box: "pyramid.fiatjaf.com/popular", "wss://…"): what it says about itself, and its
+// posts, newest first, from it alone.
+async function showRelay(r, signal) {
+  page("view", r.address);
+  const root = pageEl;
+  const head = (info) => `<div class="relay-head">${relayIcon(info, 56).replace(RELAY, `<span class="relay-mark">${RELAY}</span>`)}
+    <div><h1>${esc(info?.name || r.address)}</h1><p class="who-sub">Relay · ${esc(r.url)}</p></div></div>
+    ${info?.description ? `<p class="about">${esc(String(info.description).slice(0, 600))}</p>` : ""}
+    <p class="links">${isHex64(info?.pubkey || "") ? `<span>Run by <a href="${personPath(info.pubkey)}" data-name="${info.pubkey}">${esc(name(info.pubkey))}</a></span>` : ""}
+    <button type="button" class="link" data-copy="${esc(location.origin + relayPath(r))}">Copy link</button></p>`;
+  root.innerHTML = `<div class="person"><div class="person-head relay" id="relay-head">${head(null)}</div>
+    <div class="list" id="posts"><p class="muted loading-text">Loading posts…</p></div></div>`;
+  relayInfo(r).then((info) => {
+    if (signal.aborted || !info) return;
+    if (isHex64(info.pubkey || "")) wantProfile(info.pubkey);
+    $("#relay-head", root).innerHTML = head(info);
+    if (info.name) page("view", info.name);
+  });
+  const box = $("#posts", root);
+  let shown = [], done = false;
+  const render = () => {
+    box.innerHTML = (shown.length ? shown.map((e) => card(e)).join("")
+      : `<p class="muted">${done ? "No posts to show here. (Some relays share them only with their members.)" : "Loading posts…"}</p>`)
+      + (done || !shown.length ? "" : `<button type="button" class="more" data-more>More</button>`);
+    fillLater(box);
+  };
+  const load = async () => {
+    const until = shown.length ? shown.at(-1).created_at - 1 : undefined;
+    const got = await req([r.url], { kinds: [1, 6, 30023], limit: 30, ...(until ? { until } : {}) }, { timeout: 6000, signal, onEvent: keep });
+    if (signal.aborted) return;
+    const ids = new Set(shown.map((e) => e.id));
+    // (only what came from this relay: testing on localhost, the local relay is always read too)
+    const fresh = got.filter((e) => !ids.has(e.id) && foundOn(e.id).includes(r.url));
+    if (!fresh.length) done = true;
+    shown = [...shown, ...fresh].sort((a, b) => b.created_at - a.created_at);
+    render();
+  };
+  root.onclick = (ev) => { const more = ev.target.closest("[data-more]"); if (more) { more.textContent = "Loading…"; load(); } };
+  await load();
+}
+
 // ── Search ───────────────────────────────────────────────────────────────────────────────────────────
 
 // A search: people, posts, #tag posts, stories, your things and the web, each only when it has results.
@@ -722,10 +777,12 @@ async function showSearch(q, signal) {
   page("search", q);
   const parsed = parseInput(q);
   if (parsed.kind === "hex" || (parsed.kind === "entity" && parsed.decoded.type !== "address")) return showFound(parsed, signal);
-  const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(q) ? q.slice(1) : null;
+  // "sort:top", "language:en"…: for the search servers only (q stays what you typed, for saying it back)
+  const { words: plain, ops } = operators(q);
+  const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(plain) ? plain.slice(1) : null;
   // a bare @name: no people from open search (it ranks lookalikes); the box's handle row is the only person shown
-  const bareName = handleOf(q)?.kind === "name";
-  const words = bareName ? q.slice(1) : q;
+  const bareName = handleOf(plain)?.kind === "name";
+  const words = bareName ? plain.slice(1) : plain;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(words) ? words : null;
   const root = pageEl;
   const got = { people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
@@ -840,7 +897,7 @@ async function showSearch(q, signal) {
 
   if (!tagOnly && !bareName) followsSoon.then((follows) => {
     if (signal.aborted) return;
-    searchPeople(q, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
+    searchPeople(plain, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
       for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
       got.people = list; got.extra = x;
       soon(drawSide); soon(drawMain);
@@ -849,15 +906,15 @@ async function showSearch(q, signal) {
   });
 
   // someone you follow, named in it (everyone you follow and their names, however long that takes: it's an addition)
-  if (!tagOnly && !bareName && q.trim().split(/\s+/).length > 1) myFollows().then(async (follows) => {
+  if (!tagOnly && !bareName && plain.trim().split(/\s+/).length > 1) myFollows().then(async (follows) => {
     if (!follows.size) return;
     await profilesOf([...follows]);
-    const s = !signal.aborted && authorIn(q, follows, profiles);
+    const s = !signal.aborted && authorIn(plain, follows, profiles);
     if (s) { got.by = s; postsFrom(s.author); }
   });
 
   boxState(); // the box's rows into #top
-  goodPosts(words, { follows: followsSoon, me, tag: tagOnly, signal }).then((list) => {
+  goodPosts(words, { follows: followsSoon, me, tag: tagOnly, ops, signal }).then((list) => {
     got.posts = list;
     soon(drawMain);
     if (list.length) mark("posts", goodPosts.last);
@@ -974,7 +1031,7 @@ const CLOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="1
 const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 let rows = [], pick = -1;
 const handled = new Map(); // a handle's key → its rows, once looked up
-let lookTimer = 0, pasted = false;
+let lookTimer = 0, relayTimer = 0, pasted = false;
 // your latest searches show under an empty box once you've clicked or typed in it (not when the page puts the cursor
 // there itself, which would cover Notes and Tabs)
 let engaged = false;
@@ -988,8 +1045,13 @@ function boxState() {
   keptMark.setAttribute("aria-label", notes.saved(t) ? "Kept as a note: tap to remove" : "Keep as a note");
   rows = [];
   const kind = parseInput(t).kind;
+  // a relay to browse here: wss://… at once; an address once it says it's a relay, when typing stops (as handles)
+  const rl = kind === "text" ? relayOf(t) : null, said = rl && relayAnswered(rl);
+  clearTimeout(relayTimer);
+  if (rl && (said || (rl.sure && said === undefined))) rows.push({ relay: rl, info: said || null });
+  if (rl && said === undefined) relayTimer = setTimeout(() => relayInfo(rl).then(() => { if (input.value.trim() === t) boxState(); }), rl.sure || pasted ? 0 : 600);
   // "Go to …" for an address, or a well-known site's name (no engine allows its suggestions to be read from a page)
-  const s = t && kind !== "entity" && kind !== "hex" && !t.startsWith("@") ? notes.site(t) : null;
+  const s = t && kind !== "entity" && kind !== "hex" && !t.startsWith("@") && !rl?.sure ? notes.site(t) : null;
   if (s) rows.push({ site: s });
   // a handle: its rows once looked up, when typing stops (at once for a paste)
   const h = handleOf(t);
@@ -1010,6 +1072,7 @@ function boxState() {
     const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`;
     if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}">${r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t">${esc(r.own.text)}</span></a>`;
     if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
+    if (r.relay) return `<a ${at} href="${esc(relayPath(r.relay))}">${relayIcon(r.info, 28)}<span class="t">Browse ${esc(r.relay.address)}</span><span class="sub">${esc(r.info?.name ? `Relay · ${r.info.name}` : "Relay")}</span></a>`;
     if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
     const face = r.picture ? `<span class="av" style="--s:28px" aria-hidden="true"><img src="${esc(r.picture)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()"><b>${esc([...(r.name || "?")][0].toUpperCase())}</b></span>` : GLOBE;
     return `<a ${at} href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${face}<span class="t">${esc(r.label)}</span><span class="sub">${esc(r.name ? `${r.name} · ${r.sub}` : r.sub)}</span></a>`;
@@ -1056,6 +1119,7 @@ function goToSite(s, from) {
 }
 function choose(r) {
   const t = input.value.trim();
+  if (r.relay) { input.blur(); done(); return go(relayPath(r.relay)); }
   if (r.site) return goToSite(r.site, t);
   if (r.kind === "web") return goToSite({ url: r.url, address: r.sub }, t);
   if (r.own?.url) return goToSite({ url: r.own.url, address: notes.hostOf(r.own.url) }, t);
@@ -1123,6 +1187,9 @@ form.addEventListener("submit", async (ev) => {
   const t = input.value.trim();
   if (!t) return;
   if (pick >= 0 && rows[pick]) return choose(rows[pick]);
+  // a relay (typed with wss://, or it said so): browse it here
+  const rl = relayOf(t);
+  if (rl && (rl.sure || relayAnswered(rl))) return choose({ relay: rl });
   const s = notes.site(t);
   if (s?.sure) return goToSite(s, t);
   searchFor(t);

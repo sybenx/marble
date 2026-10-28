@@ -9,6 +9,15 @@ const FEEDS = "https://sybenx.github.io/topic-feeds/index.json";
 const now = () => Math.floor(Date.now() / 1000);
 
 // "self-hosting" also finds "self-hosted", "selfhost" and "self hosting"
+// Search servers' own words (NIP-50 extensions, Ditto's): "sort:top", "language:en", "domain:…", "media:true"… go to
+// the servers as typed and aren't looked for in the posts. {words: the rest, ops: [those]}; all of them: none taken.
+const OPS = /^(sort|language|domain|media|video|protocol|include):\S+$/i;
+export function operators(q) {
+  const all = (q || "").trim().split(/\s+/).filter(Boolean);
+  const words = all.filter((w) => !OPS.test(w)).join(" ");
+  return words ? { words, ops: all.filter((w) => OPS.test(w)) } : { words: q, ops: [] };
+}
+
 export function queryRe(q) {
   const parts = q.toLowerCase().replace(/^#/, "").split(/[\s-]+/).filter(Boolean)
     .map((w) => w.replace(/(ing|ed|s)$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
@@ -41,10 +50,13 @@ function followersLabel(n) {
  * servers' own order. One post per person. Each: {e, why}.
  * With tag set, posts with that #tag from the fast servers instead.
  */
-export async function goodPosts(q, { follows: followsP = new Set(), me = null, tag: tagName = null, signal = null } = {}) {
+export async function goodPosts(q, { follows: followsP = new Set(), me = null, tag: tagName = null, ops = [], signal = null } = {}) {
+  // (a sort you typed is the only one asked for)
+  const typed = [q, ...ops].join(" ");
   const filters = tagName
     ? [{ kinds: [1], "#t": [tagName.toLowerCase()], limit: 100 }]
-    : [{ kinds: [1, 30023], search: q + " sort:top", limit: 60 }, { kinds: [1, 30023], search: q, limit: 60 }];
+    : ops.some((o) => /^sort:/i.test(o)) ? [{ kinds: [1, 30023], search: typed, limit: 100 }]
+    : [{ kinds: [1, 30023], search: typed + " sort:top", limit: 60 }, { kinds: [1, 30023], search: typed, limit: 60 }];
   const t0 = performance.now();
   const found = await req(tagName ? FAST : SEARCH_RELAYS, filters, { timeout: 4000, settle: 700, signal, onEvent: keep });
   const follows = await followsP; // the account's follows (a Set, or a promise of one), needed only from here
