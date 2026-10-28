@@ -751,18 +751,22 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             // line where you'd got to (like Instagram's "all caught up"). Nothing is ranked: new or not, Special or not, time.
             val fresh = shown.filter { mark <= 0 || it.e.createdAt > mark }
             val (starNew, otherNew) = fresh.partition { it.reason.startsWith("★") }
-            val lead = starNew + otherNew.take((LEAD - starNew.size).coerceAtLeast(0))
+            val newLead = starNew + otherNew.take((LEAD - starNew.size).coerceAtLeast(0))
+            // Fewer than ten new: your people's latest fill the top all the same (the Earlier line where you'd got to), so
+            // the news never comes first.
+            val seenBefore = shown.filter { mark > 0 && it.e.createdAt <= mark }
+            val lead = newLead + seenBefore.take((LEAD - newLead.size).coerceAtLeast(0))
             val leadIds = lead.map { it.e.id }.toSet()
             val rest = shown.filter { it.e.id !in leadIds }
             fun runsOf(l: List<cc.aaro.cosign.Pick>) = ArrayList<List<cc.aaro.cosign.Pick>>().also { runs ->
                 for (p in l) if (runs.lastOrNull()?.first()?.e?.pubkey == p.e.pubkey) runs[runs.lastIndex] = runs.last() + p else runs += listOf(p)
             }
-            // A person's posts in a row fold ("Jack +5 more"); a tap opens them.
-            fun personRuns(runs: List<List<cc.aaro.cosign.Pick>>, earlier: Boolean) {
-                var lined = false
+            // A person's posts in a row fold ("Jack +5 more"); a tap opens them. One Earlier line, where you'd got to.
+            var lined = false
+            fun personRuns(runs: List<List<cc.aaro.cosign.Pick>>, top: Boolean) {
                 for ((i, run) in runs.withIndex()) {
                     val first = run.first()
-                    if (earlier && !lined && mark > 0 && first.e.createdAt <= mark && (i > 0 || lead.isNotEmpty())) { lined = true; item(key = "earlier") { EarlierLine() } }
+                    if (!lined && mark > 0 && first.e.createdAt <= mark && (i > 0 || !top)) { lined = true; item(key = "earlier") { EarlierLine() } }
                     val open = unfolded[first.e.id] == true
                     for ((j, p) in (if (open) run else run.take(1)).withIndex()) item(key = p.e.id) {
                         if (j == 0) HorizontalDivider(color = Vault.Edge)
@@ -781,7 +785,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
                     }
                 }
             }
-            personRuns(runsOf(lead), earlier = false)
+            personRuns(runsOf(lead), top = true)
             // Today's news.
             item(key = "today") { TodayBlock(feed.stories.take(4), social, nav, justDismissed) }
             // Beyond your people: three, each saying why.
@@ -799,8 +803,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             }
             // The rest of your people: new ones past the first ten, then (the Earlier line) what you'd seen. Then a plain end.
             if (rest.isNotEmpty()) {
-                item(key = "morepeople") { SectionLine(if (rest.any { mark > 0 && it.e.createdAt > mark }) "More from your people" else "Earlier") }
-                personRuns(runsOf(rest), earlier = rest.any { mark > 0 && it.e.createdAt > mark })
+                item(key = "morepeople") { SectionLine("More from your people") }
+                personRuns(runsOf(rest), top = false)
             }
             if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
                 // The end: a plain mark (not a marble to collect), nothing more.

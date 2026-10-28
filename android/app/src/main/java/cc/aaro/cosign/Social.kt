@@ -452,7 +452,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
         feed.update { it.copy(loading = true, failed = false) }
         if (force) FeedLog.ev("pull", "screen" to "discover")
-        if (force || f.posts.isEmpty()) editionVisit()
+        // (Feed 3's "where you'd got to" moves on a new visit only, never on a pull: pulling twice mustn't make it all "earlier".)
+        if (f.posts.isEmpty()) editionVisit()
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         if (force) lookedAt = 0
@@ -500,6 +501,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * use). A short hop never comes here, so coming back from an article changes nothing.
      */
     fun returned(fetchAfter: Long = 10 * 60_000L) {
+        editionVisit()
         if (feed.value.loading) return
         lookedAt = 0
         if (!Sources.POPULAR_ONLY) feed.update { it.copy(posts = it.posts.filter { p -> unseen(p.e.id) }) }
@@ -762,7 +764,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     @Volatile private var editionTop = prefs.getLong("editionMark", 0L)
     /** Seen at the top: remembered for next time (the line on screen now stays where it is). */
     fun editionSeen(newest: Long) { if (newest > editionTop) { editionTop = newest; prefs.edit().putLong("editionMark", newest).apply() } }
-    /** A new visit (a pull, or the first load): the line moves to where you'd got to. */
+    /** A new visit (opening Marble, or back after a while; never a pull): the line moves to where you'd got to. */
     fun editionVisit() { editionMark.value = editionTop }
     /** A story in the box, opened already. */
     fun storyRead(c: TopicCard) = storyOpened(c)
