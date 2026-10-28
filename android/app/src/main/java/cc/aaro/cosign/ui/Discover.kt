@@ -547,7 +547,13 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
                 for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search", PANE_MESSAGES to "Messages")) {
                     val on = pager.currentPage == i
                     val c = if (on) Vault.Text else Vault.Muted
-                    Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable { scope.launch { pager.animateScrollToPage(i) } }.padding(horizontal = 4.dp, vertical = 8.dp),
+                    // Following, tapped while you're on it: back to the top (a long way down: a jump, then the last bit animated).
+                    Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable {
+                        scope.launch {
+                            if (i == PANE_FOLLOWING && pager.currentPage == PANE_FOLLOWING) { if (feedState.firstVisibleItemIndex > 8) feedState.scrollToItem(8); feedState.animateScrollToItem(0) }
+                            else pager.animateScrollToPage(i)
+                        }
+                    }.padding(horizontal = 4.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(label, color = c, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(5.dp))
