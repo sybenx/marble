@@ -1753,9 +1753,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** A post by id, for a repost that only points at it: asked for when that repost comes on screen. */
     /** The newest version of an addressable event (a quoted naddr), from its hints and the usual relays. */
-    suspend fun fetchAddr(a: Ref.Addr): Event? =
-        Fetch.query((a.relays + POST_RELAYS + Sources.GENERAL).distinct().take(8), mapOf("kinds" to listOf(a.kind), "authors" to listOf(a.pubkey), "#d" to listOf(a.d), "limit" to 2), 6000)
-            .filter { it.kind == a.kind && it.pubkey == a.pubkey && it.verify() }.maxByOrNull { it.createdAt }?.also { remember(listOf(it)) }
+    suspend fun fetchAddr(a: Ref.Addr): Event? {
+        val f = mapOf("kinds" to listOf(a.kind), "authors" to listOf(a.pubkey), "#d" to listOf(a.d), "limit" to 2)
+        fun newest(l: List<Event>) = l.filter { it.kind == a.kind && it.pubkey == a.pubkey && it.verify() }.maxByOrNull { it.createdAt }
+        val asked = (a.relays + POST_RELAYS + Sources.GENERAL).map { it.trimEnd('/') }.distinct().take(8)
+        // Not there (the link's hint can be wrong): where its author writes.
+        return (newest(Fetch.query(asked, f, 6000))
+            ?: outboxOf(a.pubkey).map { it.trimEnd('/') }.filter { it !in asked }.takeIf { it.isNotEmpty() }?.let { newest(Fetch.query(it, f, 5000)) })
+            ?.also { remember(listOf(it)) }
+    }
 
     /** A quoted post of any kind (a post, an article, or something from another app), by id. */
     suspend fun fetchQuoted(id: String): Event? {
