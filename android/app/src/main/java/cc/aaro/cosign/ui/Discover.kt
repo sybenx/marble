@@ -1674,14 +1674,16 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                         } }, { asking = false; nav.social.repost(n) })
                     }
                 }
-                // Save: into your bookmarks.
-                if (onSave != null) {
-                    Spacer(Modifier.weight(1f))
-                    // Share: to someone (the phone's share sheet until Messages; then your contacts first).
-                    onShare?.let { Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = it).padding(11.dp)) }
-                    Icon(if (saved) Glyphs.saveOn else Glyphs.save, if (saved) "Saved" else "Save", tint = if (saved) Vault.Accent else Vault.Muted,
-                        modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = onSave).padding(10.dp))
-                }
+                // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
+                // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
+                Spacer(Modifier.weight(1f))
+                val kept = if (onSave != null) saved else cc.aaro.cosign.marbleLink(n).let { link -> nav.social.later.items.collectAsState().value.any { it.url == link && it.deleted == null } }
+                val keep = onSave ?: { nav.social.keepPost(n, author?.shown ?: "A post") }
+                val shareIt = onShare ?: { FeedLog.act(n.id, "share"); share(context, n.content.trim().take(280) + "\n\n" + cc.aaro.cosign.marbleLink(n), null) }
+                // Share: to someone (the phone's share sheet until Messages; then your contacts first).
+                Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = shareIt).padding(11.dp))
+                Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept" else "Keep", tint = if (kept) Vault.Accent else Vault.Muted,
+                    modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = keep).padding(10.dp))
             }
         }
     }

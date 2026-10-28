@@ -1923,8 +1923,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
-    // The usual six, as Facebook's reactions: like, love, haha, wow, sad, angry.
-    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
+    // The usual six, the ones you use: like, love, haha, sad, eyes, the monocle. (Others' 😮 or 😡 still show as they are.)
+    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "😢", "👀", "🧐")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }
