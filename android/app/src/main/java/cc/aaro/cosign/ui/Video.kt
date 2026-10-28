@@ -60,27 +60,14 @@ import kotlinx.coroutines.withContext
 data class VideoRef(val url: String, val poster: String?, val ratio: Float, val seconds: Int?)
 
 /**
- * One player for the whole app: one video plays at a time, in the browser's own video player (a WebView with
- * `<video controls playsinline>`, as tube.syb.lol has it): its controls show on a tap and hide by themselves, and
- * scrubbing, full screen and the rest behave as on the web. Nothing loads before you tap ▶; it's let go when its
- * card leaves the screen, and paused when the app does.
+ * One player for the whole app: one video plays at a time. Nothing loads before you tap ▶;
+ * it's let go when its card leaves the screen, and paused when the app does.
  */
 object Videos {
     /** What's playing (its address), and whether it's full screen. */
     val playing = mutableStateOf<VideoRef?>(null)
     val full = mutableStateOf(false)
-    /** The playing video's web player, and (full screen) the view it handed over and how to give it back. */
-    var web: android.webkit.WebView? = null
-    val webFull = mutableStateOf<Pair<android.view.View, android.webkit.WebChromeClient.CustomViewCallback>?>(null)
     private var exo: ExoPlayer? = null
-
-    /** The page the web player shows: the video, nothing else, black round it. */
-    fun page(v: VideoRef): String {
-        fun esc(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
-        return "<!doctype html><meta name=viewport content=\"width=device-width,initial-scale=1\"><style>html,body{margin:0;height:100%;background:#000}" +
-            "video{display:block;width:100%;height:100%;object-fit:contain;background:#000}</style>" +
-            "<video controls playsinline autoplay preload=metadata src=\"${esc(v.url)}\"" + (v.poster?.let { " poster=\"${esc(it)}\"" } ?: "") + "></video>"
-    }
 
     fun player(context: android.content.Context): ExoPlayer = exo ?: ExoPlayer.Builder(context.applicationContext).build().also { p ->
         exo = p
@@ -88,16 +75,20 @@ object Videos {
         p.addListener(object : Player.Listener { override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_ENDED && !full.value) release() } })
     }
 
-    /** ▶ on a card: its web player opens there (and any other one goes). */
-    fun play(context: android.content.Context, v: VideoRef) { exo?.release(); exo = null; playing.value = v }
+    fun play(context: android.content.Context, v: VideoRef) {
+        val p = player(context)
+        if (playing.value?.url != v.url) { p.setMediaItem(MediaItem.fromUri(v.url)); p.prepare() }
+        p.volume = 1f // you tapped play: with sound
+        p.play()
+        playing.value = v
+    }
 
-    /** The app went to the background: the video stops where it is. */
-    fun pause() { web?.evaluateJavascript("document.querySelector('video')?.pause()", null) }
+    fun pause() = exo?.pause()
 
     /** Its card left the screen: stop and let the player go. Not while it's full screen. */
     fun leave(url: String) { if (playing.value?.url == url && !full.value) release() }
 
-    fun release() { exo?.release(); exo = null; webFull.value?.second?.onCustomViewHidden(); webFull.value = null; playing.value = null; full.value = false }
+    fun release() { exo?.release(); exo = null; playing.value = null; full.value = false }
 
     // A frame to show when a note gives no picture for its video: taken only once the card is on
     // screen, one at a time, and kept (with the length) for as long as the app runs.
@@ -149,21 +140,12 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     DisposableEffect(v.url) { onDispose { Videos.leave(v.url) } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (now?.url == v.url) Videos.pause() }
     Box(modifier.fillMaxWidth().aspectRatio(v.ratio.coerceIn(0.56f, 2.2f)).clip(RoundedCornerShape(12.dp)).background(Color.Black)) {
-        if (now?.url == v.url) {
-            // The browser's own player: a tap shows its controls (only its play/pause pauses), its full-screen button goes full screen.
-            AndroidView({ c ->
-                android.webkit.WebView(c).apply {
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    settings.mediaPlaybackRequiresUserGesture = false   // the tap on the play mark was the gesture
-                    settings.javaScriptEnabled = true                    // only for pausing it when the app goes away
-                    webChromeClient = object : android.webkit.WebChromeClient() {
-                        override fun onShowCustomView(view: android.view.View, callback: CustomViewCallback) { Videos.webFull.value = view to callback; Videos.full.value = true }
-                        override fun onHideCustomView() { Videos.webFull.value = null; Videos.full.value = false }
-                    }
-                    loadDataWithBaseURL("https://marble.syb.lol/", Videos.page(v), "text/html", "utf-8", null)
-                    Videos.web = this
-                }
-            }, Modifier.fillMaxSize(), onRelease = { w -> if (Videos.web === w) Videos.web = null; w.destroy() })
+        if (here) {
+            val shown = rememberShown(Videos.player(context))
+            Surface(Videos.player(context), Modifier.fillMaxSize(), onTap = shown::toggle)
+            androidx.compose.animation.AnimatedVisibility(shown.on, Modifier.align(Alignment.BottomCenter), enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+                Controls(Videos.player(context), Modifier, onFull = { Videos.full.value = true }, fullLabel = "⤢", onTouch = shown::touch)
+            }
         } else {
             var frame by remember(v.url) { mutableStateOf<Pair<ImageBitmap?, Int?>?>(null) }
             if (v.poster != null) NetImage(v.poster, Modifier.fillMaxSize(), 1080, ground = Color.Black)
@@ -182,14 +164,9 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     }
 }
 
-/** The playing video, full screen: the web player's own full screen (from its controls); Back or its own button leaves it. */
+/** The playing video, full screen. Back, ✕ or the end of it closes. */
 @Composable
 fun VideoFullScreen() {
-    Videos.webFull.value?.let { (view, back) ->
-        BackHandler { back.onCustomViewHidden() }
-        AndroidView({ view }, Modifier.fillMaxSize().background(Color.Black))
-        return
-    }
     val v = Videos.playing.value ?: return
     if (!Videos.full.value) return
     val context = LocalContext.current
@@ -217,9 +194,12 @@ private fun Surface(p: ExoPlayer, modifier: Modifier, onTap: () -> Unit) {
         val l = object : Player.Listener { override fun onVideoSizeChanged(s: VideoSize) { if (s.height > 0) ratio = s.width * s.pixelWidthHeightRatio / s.height } }
         p.addListener(l); onDispose { p.removeListener(l) }
     }
-    Box(modifier, contentAlignment = Alignment.Center) {
-        // A tap shows or hides the controls (play and pause are theirs), as a browser's video does.
-        AndroidView({ TextureView(it) }, Modifier.aspectRatio(ratio.coerceIn(0.3f, 4f)).clickable(onClick = onTap),
+    // A tap anywhere on the video's place (not only the picture, so it never falls through to the post under it) shows or
+    // hides the controls; play and pause are theirs alone, as a browser's video does. Drawn into a TextureView, which
+    // scrolls and clips with the list (a WebView's own video surface didn't: it showed black).
+    Box(modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onTap),
+        contentAlignment = Alignment.Center) {
+        AndroidView({ TextureView(it) }, Modifier.aspectRatio(ratio.coerceIn(0.3f, 4f)),
             update = { tv -> p.setVideoTextureView(tv) }, onRelease = { tv -> p.clearVideoTextureView(tv) })
     }
 }
