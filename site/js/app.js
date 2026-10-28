@@ -12,6 +12,7 @@ import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./ac
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
+import { cue, spamOf, inflated, mark as markSpam, setTrusted } from "./spam.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -168,9 +169,33 @@ function card(e, { compact = false, context = true, why = "", clamp = false } = 
     ${why ? `<p class="why">${esc(why)}</p>` : ""}
     ${who(e.pubkey, e)}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
+    ${spamSlot(e)}
     ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     ${compact ? "" : `<div class="actions">${heart(e)}</div>`}
   </article>`;
+}
+
+// Likely spam (spam.js): a slot on each post for its cue, filled again whenever more is known (who you follow, its likes).
+const spamSlot = (e) => `<div class="spam-slot" data-spam="${e.id}">${cue(e)}</div>`;
+function recue() {
+  for (const el of document.querySelectorAll(".spam-slot")) { const e = events.get(el.dataset.spam); if (e) el.innerHTML = cue(e); }
+}
+// who's never marked: you and the people you follow (signed out: nobody)
+function trustNow() {
+  const me = currentMe();
+  if (!me) { setTrusted(new Set()); return recue(); }
+  myFollows().then((f) => { if (currentMe() === me) { setTrusted(new Set([me, ...f])); recue(); } });
+}
+// Manufactured likes on strangers' posts (Wisp's rule): their reactions and reposts, ten posts to a request.
+async function checkLikes(list, signal) {
+  const ids = list.filter((e) => !spamOf(e)).map((e) => e.id).slice(0, 30);
+  const got = [];
+  for (let i = 0; i < ids.length; i += 10)
+    got.push(req(relays(FAST, ["wss://relay.ditto.pub"]), ids.slice(i, i + 10).map((id) => ({ kinds: [7, 6, 16], "#e": [id], limit: 300 })), { timeout: 3500, settle: 800, signal }));
+  const all = (await Promise.all(got)).flat();
+  let any = false;
+  for (const e of list) any = markSpam(e, inflated(e.id, all)) || any;
+  return any;
 }
 
 function repostCard(e) {
@@ -351,8 +376,9 @@ async function showEvent(d, signal, { hex = false } = {}) {
     if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
     all.set(r.id, r);
     if (!timer) timer = setTimeout(draw, all.size < 4 ? 0 : 120);
-  } }).then(({ counts = {} }) => {
+  } }).then(({ counts = {}, events: got = [] }) => {
     if (signal.aborted) return;
+    if (markSpam(e, inflated(e.id, got))) recue();
     if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
     else draw();
     $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
@@ -542,6 +568,7 @@ function mainPost(e) {
   const body = `<div class="text big">${content(e)}</div>`;
   return `<article class="card main" data-id="${e.id}">
     ${who(e.pubkey, null, { big: true })}
+    ${spamSlot(e)}
     ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     <p class="totals"></p>
     <div class="meta"><span class="meta-left">${heart(e)}<time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time></span>
@@ -802,6 +829,8 @@ async function showSearch(q, signal) {
   root.onclick = (ev) => {
     const open = ev.target.closest("[data-open]");
     if (open) { opened.add(open.dataset.open); redraw(); }
+    const close = ev.target.closest("[data-close]");
+    if (close) { opened.delete(close.dataset.close); redraw(); }
     const by = ev.target.closest("[data-by]");
     if (by) { got.by.others = [got.by.author, ...got.by.others.filter((pk) => pk !== by.dataset.by)]; postsFrom(by.dataset.by); }
   };
@@ -846,7 +875,13 @@ async function showSearch(q, signal) {
 
   function drawMain() {
     const theirs = new Set((got.byPosts || []).map((x) => x.e.id)), notTheirs = (l) => (l || []).filter((x) => !theirs.has(x.e.id));
-    const posts = notTheirs(got.posts), tagged = notTheirs(got.tagged), stories = got.stories || [], yours = notTheirs(got.yours);
+    // likely spam (strangers' only): out of the ranking, at the end behind a quiet line
+    const seen = new Set(), spammy = [...notTheirs(got.posts), ...notTheirs(got.tagged)].filter((x) => spamOf(x.e) && !seen.has(x.e.id) && seen.add(x.e.id));
+    const clean = (l) => l.filter((x) => !seen.has(x.e.id));
+    const posts = clean(notTheirs(got.posts)), tagged = clean(notTheirs(got.tagged)), stories = got.stories || [], yours = notTheirs(got.yours);
+    const spamLine = (draw) => !spammy.length ? "" : opened.has("spam")
+      ? `<section class="spam-more"><button type="button" class="link" data-close="spam">Hide the ${spammy.length} that look like spam</button><div class="list">${spammy.map(draw).join("")}</div></section>`
+      : `<section class="spam-more"><button type="button" class="link" data-open="spam">${spammy.length} more that look${spammy.length === 1 ? "s" : ""} like spam · Show</button></section>`;
     const strong = got.by && !got.by.loose, loose = got.by?.loose;
     if (!wideQuery.matches) {
       const shown = new Set(posts.slice(0, 3).map((x) => x.e.id));
@@ -856,6 +891,7 @@ async function showSearch(q, signal) {
         + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
+        + spamLine(postItem)
         + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
       fillLater(main);
       return;
@@ -884,6 +920,7 @@ async function showSearch(q, signal) {
       + list.map((r, i) => (i === 3 ? (loose ? from : "") + mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
       + (list.length <= 3 ? (loose ? from : "") + mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
+      + spamLine(postResult)
       + (got.posts !== null && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
     fillLater(main);
   }
@@ -917,9 +954,15 @@ async function showSearch(q, signal) {
   goodPosts(words, { follows: followsSoon, me, tag: tagOnly, ops, signal }).then((list) => {
     got.posts = list;
     soon(drawMain);
+    checkLikes(list.map((x) => x.e), signal).then((any) => { if (any && !signal.aborted) soon(drawMain); });
     if (list.length) mark("posts", goodPosts.last);
   });
-  if (oneWord) goodPosts(words, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => { got.tagged = list; soon(drawMain); });
+  if (oneWord) goodPosts(words, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => {
+    got.tagged = list;
+    soon(drawMain);
+    checkLikes(list.map((x) => x.e), signal).then((any) => { if (any && !signal.aborted) soon(drawMain); });
+  });
+  myFollows().then(() => soon(drawMain)); // (who's never marked as spam: known now)
   if (!tagOnly) stories(words).then((list) => {
     got.stories = list;
     soon(drawMain);
@@ -941,6 +984,7 @@ function postResult(x) {
   return `<article class="res" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
     <p class="res-why"><b>Post</b>${x.why ? ` · ${esc(x.why)}` : ""}</p>
     <div class="res-who">${avatar(e.pubkey, 28)}<a href="${personPath(e.pubkey)}" data-name="${e.pubkey}">${esc(name(e.pubkey))}</a><span>${agoLong(e.created_at)}</span></div>
+    ${spamSlot(e)}
     ${title ? `<p class="res-title">${esc(title)}</p>` : ""}
     <div class="text clamp4">${e.kind === 30023 ? esc((e.tags.find((t) => t[0] === "summary") || [])[1] || "") : content(e, { quotes: false })}</div>
   </article>`;
@@ -1415,6 +1459,7 @@ account.addEventListener("click", async (ev) => {
 document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
 onMe((me) => {
   drawAccount();
+  trustNow();
   prepareMine(me);
   // the reply box follows who's signed in
   for (const f of document.querySelectorAll(".reply-box")) {
@@ -1424,6 +1469,7 @@ onMe((me) => {
 });
 drawAccount();
 prepareMine(currentMe());
+trustNow();
 
 // ── Start ────────────────────────────────────────────────────────────────────────────────────────────
 
