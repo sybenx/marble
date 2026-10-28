@@ -81,7 +81,9 @@ private fun Zoomable(url: String, px: Int, onZoom: (Boolean) -> Unit) {
         offset = if (s <= 1f) Offset.Zero else Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
         onZoom(s > 1.01f)
     }
-    val state = rememberTransformableState { zoom, pan, _ -> set((scale * zoom).coerceIn(1f, 5f), offset + pan * scale) }
+    // The picture moves with your finger, exactly (the pan is already in screen pixels: scaling it by the zoom made a
+    // double-tapped picture slide 2.5 times as far as the finger). A pinch keeps the middle of the picture where it was.
+    val state = rememberTransformableState { zoom, pan, _ -> val s = (scale * zoom).coerceIn(1f, 5f); set(s, offset * (s / scale) + pan) }
     Box(
         Modifier.fillMaxSize().onSizeChanged { box = it }
             .pointerInput(url) { detectTapGestures(onDoubleTap = { at -> if (scale > 1f) set(1f, Offset.Zero) else set(2.5f, (Offset(size.width / 2f, size.height / 2f) - at) * 1.5f) }) }
