@@ -133,15 +133,23 @@ object LookAlikes {
 }
 
 /**
- * Someone you follow, inside a search ("thailand anarko", "from:anarko thailand", "@anarko thailand"): their posts with
- * the other words come first. Only people you follow (anyone can call themselves anything: handles-rule.md), matched by
- * their name or their NIP-05's name part, loosely (case, signs and spaces aside). Shared with Marble Web (search-rules).
+ * Someone you follow, inside a search ("thailand anarko", "thailand arko", "from:anarko thailand", "@anarko thailand"):
+ * their posts with the other words, as well as (never instead of) the usual results. Only people you follow (anyone can
+ * call themselves anything: handles-rule.md), by their name or their NIP-05's name part: exactly, then a start of it
+ * (3+ letters), a part of it (4+), one typo off (4+). Shared with Marble Web (search-rules).
  */
 object AuthorQuery {
-    /** [author], whose posts to look in, for [rest]; [others]: other people you follow who match as well (offered as chips). */
-    data class Split(val author: String, val rest: String, val others: List<String> = emptyList())
+    /**
+     * [author], whose posts to look in, for [rest]; [others]: other people you follow it could mean (chips). [loose]: a
+     * part of a name, not the name (it could be wrong): its posts come after the first of the usual results, not before.
+     */
+    data class Split(val author: String, val rest: String, val others: List<String> = emptyList(), val loose: Boolean = false)
 
     private val EXPLICIT = Regex("^(?:from:|@|＠)(.+)$", RegexOption.IGNORE_CASE)
+
+    /** How well a typed name names someone; at least [STRONG]: it's their name, not a part of it. */
+    const val EXACT = 7; const val TIGHT = 6; const val FIRST = 5; const val PREFIX = 4; const val PART = 3; const val TYPO = 2
+    const val STRONG = FIRST
 
     fun split(q: String, follows: Set<String>?, known: Map<String, Person>): Split? {
         val words = q.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -151,37 +159,56 @@ object AuthorQuery {
         words.indexOfFirst { EXPLICIT.matches(it) }.takeIf { it >= 0 }?.let { i ->
             val name = EXPLICIT.find(words[i])!!.groupValues[1]
             val rest = words.filterIndexed { j, _ -> j != i }.joinToString(" ")
-            return best(mine, name)?.let { (who, others) -> Split(who, rest, others) }
+            return ranked(mine, name).takeIf { it.isNotEmpty() }?.let { Split(it[0].first, rest, it.drop(1).map { h -> h.first }.take(4), it[0].second < STRONG) }
         }
-        // Otherwise the longest run of words (three at most, never all of them) that is someone you follow.
-        for (len in minOf(3, words.size - 1) downTo 1) {
-            for (start in 0..words.size - len) {
-                val name = words.subList(start, start + len).joinToString(" ")
-                val (who, others) = best(mine, name) ?: continue
-                return Split(who, (words.subList(0, start) + words.subList(start + len, words.size)).joinToString(" "), others)
+        // Otherwise the run of words (three at most, never all of them) that best names someone you follow: the closest
+        // match, then the longest run, then the leftmost.
+        var best: Triple<Int, Int, Split>? = null
+        for (len in minOf(3, words.size - 1) downTo 1) for (start in 0..words.size - len) {
+            val hits = ranked(mine, words.subList(start, start + len).joinToString(" ")).takeIf { it.isNotEmpty() } ?: continue
+            val score = hits[0].second
+            if (best == null || score > best.first || (score == best.first && len > best.second)) {
+                best = Triple(score, len, Split(hits[0].first, (words.subList(0, start) + words.subList(start + len, words.size)).joinToString(" "),
+                    hits.drop(1).map { it.first }.take(4), score < STRONG))
             }
         }
-        return null
+        return best?.third
     }
 
-    /** Who [typed] names among [mine], best first: their name exactly, then without spaces, then their NIP-05's name. */
-    private fun best(mine: List<Person>, typed: String): Pair<String, List<String>>? {
+    /** Who [typed] could name among [mine], with how well, best first. */
+    fun ranked(mine: List<Person>, typed: String): List<Pair<String, Int>> {
         val t = SearchRank.norm(typed)
-        if (t.length < 2) return null
+        if (t.length < 2) return emptyList()
         val tight = t.replace(" ", "")
-        fun score(p: Person): Int {
-            val n = SearchRank.norm(p.name ?: "")
-            val local = SearchRank.norm(p.nip05?.substringBefore('@')?.takeIf { it != "_" } ?: "")
-            return when {
-                n == t -> 3
-                n.isNotEmpty() && n.replace(" ", "") == tight -> 2
-                local == t || (local.isNotEmpty() && local.replace(" ", "") == tight) -> 2
-                tight.length >= 4 && n.split(' ').firstOrNull() == t -> 1
-                else -> 0
-            }
+        return mine.map { p -> p.pubkey to score(p, t, tight) }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
+    }
+
+    private fun score(p: Person, t: String, tight: String): Int {
+        val n = SearchRank.norm(p.name ?: "")
+        val local = SearchRank.norm(p.nip05?.substringBefore('@')?.takeIf { it != "_" } ?: "")
+        val names = listOf(n.replace(" ", ""), local.replace(" ", "")).filter { it.isNotEmpty() }
+        val words = (n.split(' ') + local.split(' ')).filter { it.isNotEmpty() }
+        return when {
+            n == t -> EXACT
+            tight in names -> TIGHT
+            tight.length >= 4 && words.firstOrNull() == t -> FIRST
+            tight.length >= 3 && (names + words).any { it.startsWith(tight) } -> PREFIX
+            tight.length >= 4 && names.any { tight in it } -> PART
+            tight.length >= 4 && (names + words).any { oneOff(it, tight) } -> TYPO
+            else -> 0
         }
-        val hits = mine.map { it to score(it) }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<Person, Int>> { it.second }.thenBy { it.first.pubkey })
-        val first = hits.firstOrNull()?.first ?: return null
-        return first.pubkey to hits.drop(1).map { it.first.pubkey }.take(4)
+    }
+
+    /** One letter added, dropped, changed, or two side by side swapped. */
+    fun oneOff(a: String, b: String): Boolean {
+        if (a == b || kotlin.math.abs(a.length - b.length) > 1) return false
+        if (a.length == b.length) {
+            val d = a.indices.filter { a[it] != b[it] }
+            return d.size == 1 || (d.size == 2 && d[1] == d[0] + 1 && a[d[0]] == b[d[1]] && a[d[1]] == b[d[0]])
+        }
+        val (long, short) = if (a.length > b.length) a to b else b to a
+        var i = 0
+        while (i < short.length && long[i] == short[i]) i++
+        return long.substring(i + 1) == short.substring(i)
     }
 }

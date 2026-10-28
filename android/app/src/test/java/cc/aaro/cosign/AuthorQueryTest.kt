@@ -1,7 +1,9 @@
 package cc.aaro.cosign
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** "thailand anarko": Anarko's posts about Thailand, when you follow Anarko; no one's, when you don't. */
@@ -29,4 +31,27 @@ class AuthorQueryTest {
     @Test fun aNameAloneIsAPeopleSearch() = assertNull(AuthorQuery.split("anarko", follows, known))
     @Test fun signedOut() = assertNull(AuthorQuery.split("thailand anarko", null, known))
     @Test fun noOneNamed() = assertNull(AuthorQuery.split("thailand beaches", follows, known))
+
+    // Partial names (the user: "would something like thailand arko work too?").
+    private val arthur = "e".repeat(64)
+    private val withArthur = known + (arthur to Person(arthur, "Arthur", null, null, null, 0))
+
+    @Test fun aPartOfTheirName() {
+        val s = AuthorQuery.split("thailand arko", follows, known)!!
+        assertEquals(anarko, s.author); assertEquals("thailand", s.rest); assertTrue(s.loose)
+    }
+    @Test fun theStartOfTheirName() = assertEquals(anarko, AuthorQuery.split("ana thailand", follows, known)!!.author)
+    @Test fun oneTypoOff() = assertEquals(anarko, AuthorQuery.split("thailand anrako", follows, known)!!.author)
+    @Test fun theirNameBeatsAPartOfSomeoneElses() = assertEquals(AuthorQuery.Split(anarko, "art"), AuthorQuery.split("anarko art", follows + arthur, withArthur).let { it!!.copy(others = emptyList()) })
+    @Test fun artOnlyLooselyMeansArthur() {
+        // A loose match: shown after the first of the usual results, never instead of them.
+        val s = AuthorQuery.split("art nouveau", follows + arthur, withArthur)!!
+        assertEquals(arthur, s.author); assertTrue(s.loose)
+    }
+    @Test fun twoLettersNameNoOne() = assertNull(AuthorQuery.split("ar thailand", follows + arthur, withArthur))
+    @Test fun aPartOfAStrangersName() = assertNull(AuthorQuery.split("thailand elo", follows, known))
+    @Test fun oneOff() {
+        assertTrue(AuthorQuery.oneOff("anarko", "anrako")); assertTrue(AuthorQuery.oneOff("anarko", "anarkoo")); assertTrue(AuthorQuery.oneOff("anarko", "anaro"))
+        assertFalse(AuthorQuery.oneOff("anarko", "anarko")); assertFalse(AuthorQuery.oneOff("anarko", "abarka"))
+    }
 }

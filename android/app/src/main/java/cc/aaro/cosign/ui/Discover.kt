@@ -3164,8 +3164,9 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
             if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         }
-        // Someone you follow, named in the search: "Anarko · thailand", their posts first (and anyone else it could mean).
-        f.split?.takeIf { !peopleOnly }?.let { sp ->
+        // Someone you follow, named in the search: "Anarko · thailand", their posts (and anyone else it could mean). Their
+        // name: first. A part of a name (it could be wrong): after the first few of the usual posts, never instead of them.
+        val authorSection: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = { f.split?.takeIf { !peopleOnly }?.let { sp ->
             item(key = "ah") {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(people[sp.author], sp.author, 22, Modifier.clickable { nav.profile(sp.author) })
@@ -3186,7 +3187,9 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 Text("Nothing from ${people[sp.author]?.shown ?: "them"} about “${sp.rest}”.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp))
             }
-        }
+        } }
+        val loose = f.split?.loose == true && !peopleOnly && f.notes.isNotEmpty()
+        if (!loose) authorSection()
         if (showPeople && f.people.isNotEmpty()) {
             item(key = "ph") { Heading("People") }
             // Identical look-alikes (a bridge's copies, say) fold into one quiet row under the best of them.
@@ -3203,7 +3206,13 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
         }
         if (!peopleOnly && f.notes.isNotEmpty()) {
             item(key = "nh") { Heading("Posts") }
-            items(f.notes, key = { it.id }) { n ->
+            val lead = if (loose) 3 else 0
+            items(f.notes.take(lead), key = { it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+            if (loose) authorSection()
+            items(f.notes.drop(lead), key = { it.id }) { n ->
                 NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                 HorizontalDivider(color = Vault.Edge)
             }
