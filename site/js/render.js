@@ -56,12 +56,15 @@ export function content(e, { quotes = true } = {}) {
       if (d.type === "profile") {
         wantProfile(d.pubkey, d.relays);
         out += `<a class="mention" href="${pathFor(m[2].toLowerCase(), d)}" data-name="${d.pubkey}">@${esc(name(d.pubkey))}</a>`;
-      } else if (quotes && (d.type === "event" || d.type === "address") && quoted.length < 3) {
+      } else if (quotes && (d.type === "event" || d.type === "address") && !quoted.length) {
+        // the first post or thing it points to: a card (content-rules.md §3); any later one, a short link
         quoted.push(m[2].toLowerCase());
         out += `<span class="quote-slot" data-quote="${esc(m[2].toLowerCase())}"></span>`;
       } else {
-        out += `<a href="${pathFor(m[2].toLowerCase(), d)}">${d.type === "address" ? "an article" : "a post"}</a>`;
+        out += shortLink(m[2].toLowerCase(), d);
       }
+    } else if (m[4] && !/\p{L}/u.test(m[4])) {
+      out += esc(m[0]); // (a tag has a letter: "#1" is just text)
     } else if (m[4]) {
       out += `${esc(m[3])}<a class="tag" href="/?q=${encodeURIComponent("#" + m[4])}">#${esc(m[4])}</a>`;
     } else if (m[5]) {
@@ -77,6 +80,10 @@ export function content(e, { quotes = true } = {}) {
   return out;
 }
 
+/** A post or thing a post points to, beyond the first (which is a card): "↪ quoted", or "↪ an article". */
+export const shortLink = (entity, d) =>
+  `<a class="ref" data-shortlink="${esc(entity)}" href="/${esc(entity)}">↪ ${d.type === "address" && d.kind === 30023 ? "an article" : "quoted"}</a>`;
+
 // Long-form pieces (kind 30023) are Markdown: a small, careful subset, everything escaped first.
 export function markdown(src) {
   const inline = (s) => esc(s)
@@ -87,7 +94,7 @@ export function markdown(src) {
       const d = decode(ent);
       if (!d) return ent;
       if (d.type === "profile") { wantProfile(d.pubkey); return `<a class="mention" href="${pathFor(ent, d)}" data-name="${d.pubkey}">@${esc(name(d.pubkey))}</a>`; }
-      return `<a href="${pathFor(ent, d)}">${d.type === "address" ? "an article" : "a post"}</a>`;
+      return shortLink(ent, d);
     })
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")

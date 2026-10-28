@@ -1,7 +1,7 @@
 // Marble on the web: the front page's search, and the pages it opens (/e/ a post, /p/ a person,
 // /a/ an article, /?q= a search). One page; links change the view without reloading, and going back
 // shows the page as it was, at the same place.
-import { decode, parseInput, pathFor, npub, note, isHex64 } from "./ids.js";
+import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./ids.js";
 import { req, warm, foundOn, FAST, connectTimes, verify } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, SEARCH_RELAYS } from "./search.js";
@@ -161,7 +161,7 @@ function card(e, { compact = false, context = true, why = "", clamp = false } = 
     ${why ? `<p class="why">${esc(why)}</p>` : ""}
     ${who(e.pubkey, e)}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
-    ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     ${compact ? "" : `<div class="actions">${heart(e)}</div>`}
   </article>`;
 }
@@ -203,6 +203,19 @@ onProfile((pk) => {
 });
 
 // Quoted posts and "Replying to" names, filled in after the page is up.
+// What a post points to, as a card (content-rules.md §3): a post; an article; anything else, the author, the time and one
+// line about it (never its content: often JSON or code), and a way to open it. data-card and data-ref say which (tests).
+const SHORT_TEXT = new Set([1, 1111, 1244]);
+const refOf = (q) => (q.kind >= 30000 && q.kind < 40000 ? `${q.kind}:${q.pubkey}:${(q.tags.find((t) => t[0] === "d") || [])[1] || ""}` : q.id);
+const aboutLine = (q) => ["alt", "title", "name"].map((k) => (q.tags.find((t) => t[0] === k) || [])[1]).find((x) => x?.trim()) || "Something made in another app";
+function quoteCard(q, entity) {
+  const kind = q.kind === 30023 ? "article" : SHORT_TEXT.has(q.kind) || q.kind === 6 ? "note" : "other";
+  if (kind !== "other") return card(q, { compact: true, context: false }).replace("<article ", `<article data-card="${kind}" data-ref="${esc(refOf(q))}" `);
+  keep(q);
+  return `<article class="card compact other" data-card="other" data-ref="${esc(refOf(q))}" data-href="/${esc(entity)}">
+    ${who(q.pubkey, q)}<p class="about-line">${esc(aboutLine(q))}</p><a class="open-other" href="/${esc(entity)}">Open ›</a></article>`;
+}
+
 function fillLater(root = pageEl) {
   markReactions(root);
   for (const slot of root.querySelectorAll(".quote-slot:not([data-filled])")) {
@@ -211,7 +224,7 @@ function fillLater(root = pageEl) {
     if (!d) continue;
     slot.innerHTML = `<span class="quote loading"></span>`;
     (d.type === "address" ? findAddress(d) : findEvent(d.id, { relays: d.relays, author: d.pubkey, timeout: 5000 })).then((q) => {
-      slot.innerHTML = q ? card(q, { compact: true, context: false }) : `<a class="quote missing" href="${pathFor(slot.dataset.quote, d)}">A post that couldn't be loaded</a>`;
+      slot.innerHTML = q ? quoteCard(q, slot.dataset.quote) : `<a class="quote missing" href="/${esc(slot.dataset.quote)}">Couldn't load this post</a>`;
       fillLater(slot);
     });
   }
@@ -243,6 +256,7 @@ async function showEvent(d, signal, { hex = false } = {}) {
   }
   if (e.kind === 0) return go(personPath(e.pubkey), { replace: true });
   if (e.kind === 30023) return showArticle(e, signal);
+  if (!SHORT_TEXT.has(e.kind) && e.kind !== 6) return showOther(e);
   const found = foundOn(e.id);
   if (!/^\/nevent1/.test(location.pathname)) history.replaceState(history.state, "", postPath(e, found.slice(0, 2)));
 
@@ -487,11 +501,22 @@ function mainPost(e) {
   const body = `<div class="text big">${content(e)}</div>`;
   return `<article class="card main" data-id="${e.id}">
     ${who(e.pubkey, null, { big: true })}
-    ${cw ? `<details class="cw"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     <p class="totals"></p>
     <div class="meta"><span class="meta-left">${heart(e)}<time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time></span>
     <button type="button" class="link" data-copy="${esc(location.origin + postPath(e, foundOn(e.id).slice(0, 2)))}">Copy link</button></div>
   </article>`;
+}
+
+// Something made in another app (a live stream, a calendar event, a listing, a 3D object…): who made it, one line about
+// it, and a way to open it where it's made to be seen.
+function showOther(e) {
+  page("view", aboutLine(e));
+  const entity = e.kind >= 30000 && e.kind < 40000
+    ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: (e.tags.find((t) => t[0] === "d") || [])[1] || "" }) : nevent(e.id, { author: e.pubkey });
+  pageEl.innerHTML = `<div class="thread"><article class="card main other" data-id="${e.id}">${who(e.pubkey, e, { big: true })}
+    <p class="about-line">${esc(aboutLine(e))}</p>
+    <p><a class="link" href="https://njump.me/${entity}" target="_blank" rel="noopener noreferrer">Open it elsewhere ›</a></p></article></div>`;
 }
 
 // ── An article ───────────────────────────────────────────────────────────────────────────────────────
@@ -503,6 +528,7 @@ async function showAddress(d, signal) {
   if (signal.aborted) return;
   if (!e) return showMissing("Couldn't find this.", "<p class=\"muted\">It may have been deleted, or the places that keep it aren't answering right now.</p>");
   if (e.kind === 30023 || e.kind === 30024) return showArticle(e, signal);
+  if (!SHORT_TEXT.has(e.kind)) return showOther(e);
   pageEl.innerHTML = `<div class="thread">${mainPost(e)}</div>`;
   mark("post", { relay: foundOn(e.id)[0] });
   fillLater();

@@ -179,19 +179,22 @@ function withPost(page, entity, d, seed) {
       text(p.nip05) ? `<span class="who-sub">${esc(text(p.nip05).replace(/^_@/, ""))}</span>` : ""}</div></div>${text(p.about) ? `<p class="text">${esc(text(p.about).slice(0, 600))}</p>` : ""}</div>`;
   } else if (main) {
     const p = profileOf(seed, main.pubkey), name = nameOf(p, main.pubkey);
+    // something made in another app (content-rules.md §3): one line about it, never its content (often JSON or code)
+    const other = ![1, 1111, 1244, 30023].includes(main.kind);
+    const about = aboutOf(main);
     const title = main.kind === 30023 ? text((main.tags.find((t) => t[0] === "title") || [])[1]) : "";
     const summary = main.kind === 30023 ? text((main.tags.find((t) => t[0] === "summary") || [])[1]) : "";
     const pics = imagesOf(main);
     const cover = main.kind === 30023 ? text((main.tags.find((t) => t[0] === "image") || [])[1]) : "";
     const still = previewOf(main);
     const image = https(cover) ? cover : still || (https(p.picture) ? p.picture : null);
-    meta = { title: title || titleOf(p), description: (summary || plain(main.content)).slice(0, 200) || "A post on Marble", image, large: !!(https(cover) || still) };
+    meta = { title: title || titleOf(p), description: (other ? about : summary || plain(main.content)).slice(0, 200) || "A post on Marble", image, large: !!(https(cover) || still) };
     const quoted = quotesOf(main).map((id) => seed.events.find((e) => e.id === id)).filter(Boolean);
     body = `<div class="thread ssr"><article class="card main">
       <div class="who"><a href="/${npub(main.pubkey)}" class="who-av">${face(p, main.pubkey, 48)}</a><div class="who-text"><a href="/${npub(main.pubkey)}" class="who-name">${esc(name)}</a>
         <span class="who-sub"><time datetime="${new Date(main.created_at * 1000).toISOString()}">${esc(new Date(main.created_at * 1000).toUTCString().slice(5, 16))}</time></span></div></div>
-      ${title ? `<h1>${esc(title)}</h1>${summary ? `<p class="text">${esc(summary)}</p>` : ""}` : `<div class="text big">${paragraphs(main)}</div>`}
-      ${quoted.map((q) => { const qp = profileOf(seed, q.pubkey); return `<a class="quote" href="/${note(q.id)}"><b>${esc(nameOf(qp, q.pubkey))}</b> ${esc(plain(q.content).slice(0, 280))}</a>`; }).join("")}
+      ${other ? `<p class="about-line">${esc(about)}</p>` : title ? `<h1>${esc(title)}</h1>${summary ? `<p class="text">${esc(summary)}</p>` : ""}` : `<div class="text big">${paragraphs(main)}</div>`}
+      ${quoted.map((q) => { const qp = profileOf(seed, q.pubkey); return `<a class="quote" href="/${note(q.id)}"><b>${esc(nameOf(qp, q.pubkey))}</b> ${esc([1, 1111, 1244].includes(q.kind) ? plain(q.content).slice(0, 280) : aboutOf(q))}</a>`; }).join("")}
     </article></div>`;
   } else {
     meta = null; // not found in time: the page as it is, which looks for itself
@@ -239,17 +242,24 @@ function previewOf(e) {
     || metas.filter(gif).map((m) => m.image).find(https)
     || pics[0] || null;
 }
+const aboutOf = (e) => ["alt", "title", "name"].map((k) => text((e.tags.find((t) => t[0] === k) || [])[1]).trim()).find(Boolean) || "Something made in another app";
 // The text for a preview: no links to other posts or people, no addresses.
-const plain = (s) => text(s).replace(/nostr:\S+/g, "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+const REF = /(?:nostr:)?\b(?:note|nevent|naddr)1[02-9ac-hj-np-z]{6,}/gi;
+const plain = (s) => text(s).replace(/https?:\/\/\S+/g, "").replace(/nostr:\S+/g, "").replace(REF, "").replace(/\s+/g, " ").trim();
 // The post's text, as the page will show it (roughly): pictures as pictures, links as links, mentions of people and
 // posts without the code they're written in.
 function paragraphs(e) {
   const pics = new Set(imagesOf(e));
-  const out = esc(text(e.content).replace(/nostr:(?:note|nevent)1[02-9ac-hj-np-z]+/gi, "").trim())
-    .replace(/(?:nostr:)?((?:npub|nprofile)1[02-9ac-hj-np-z]{6,})/g, (_, ent) => { const x = decode(ent); return x?.pubkey ? `<a href="/${npub(x.pubkey)}">@${npub(x.pubkey).slice(5, 13)}</a>` : ""; })
-    .replace(/https:\/\/[^\s<>"']+/g, (u) => {
-      const raw = u.replace(/&amp;/g, "&");
-      return pics.has(raw) ? `<img class="ssr-pic" src="${u}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<a href="${u}" rel="noopener nofollow">${esc(raw.replace(/^https:\/\/(www\.)?/, "").slice(0, 40))}</a>`;
-    });
+  const emoji = new Map((e.tags || []).filter((t) => t[0] === "emoji" && https(t[2])).map((t) => [t[1], t[2]]));
+  // links first (anything inside one is part of it), then, outside them, mentions; references to posts are cards
+  const parts = text(e.content).trim().split(/(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])/);
+  const out = parts.map((part, i) => {
+    if (i % 2) return pics.has(part) ? `<img class="ssr-pic" src="${esc(part)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : `<a href="${esc(part)}" rel="noopener nofollow">${esc(part.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40))}</a>`;
+    return esc(part.replace(REF, "")).replace(/(?:nostr:)?\b((?:npub|nprofile)1[02-9ac-hj-np-z]{6,})/g, (_, ent) => {
+      const x = decode(ent);
+      return x?.pubkey ? `<a href="/${npub(x.pubkey)}">@${npub(x.pubkey).slice(5, 13)}</a>` : "";
+    }).replace(/:([\w-]{1,40}):/g, (m, code) => (emoji.has(code) ? `<img class="emoji" src="${esc(emoji.get(code))}" alt=":${code}:" referrerpolicy="no-referrer">` : m));
+  }).join("");
   return out.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
