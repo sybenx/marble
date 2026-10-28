@@ -1640,8 +1640,10 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (card == null) body.media.take(if (full) 4 else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
-                    is Body.Img -> NetImage(m.url, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(if (full) 0.6f else 1f, 2.2f)).clip(RoundedCornerShape(12.dp))
-                        .clickable { FeedLog.open(n.id, "image"); nav.pictures(urls, urls.indexOf(m.url).coerceAtLeast(0)) }, 1080, description = "Picture")
+                    // Animated if it's a GIF or WebP; a still of it, or a quiet "Open", if it can't be shown.
+                    is Body.Img -> PostImage(m.url, m.preview, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(if (full) 0.6f else 1f, 2.2f)).clip(RoundedCornerShape(12.dp))) {
+                        FeedLog.open(n.id, "image"); nav.pictures(urls, urls.indexOf(m.url).coerceAtLeast(0))
+                    }
                     is Body.Vid -> VideoCard(m.v)
                 }
             }
@@ -1887,7 +1889,8 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
         data class Tag(val tag: String) : Part()
     }
     sealed class Media
-    data class Img(val url: String, val ratio: Float) : Media()
+    /** [preview]: the post's own still of it (imeta "image"), for when it can't be shown itself. */
+    data class Img(val url: String, val ratio: Float, val preview: String? = null) : Media()
     data class Vid(val v: VideoRef) : Media()
 
     fun annotated(people: Map<String, Person>, nav: Nav): AnnotatedString = buildAnnotatedString {
@@ -1930,7 +1933,7 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
                 val tag = m.groups[3]?.value
                 when {
                     url != null && isVideo(url) -> images += video(url)
-                    url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f)
+                    url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
                     url != null -> parts += Part.Link(url)
                     ref != null -> when (val r = Ref.parse(ref)) {
                         is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }

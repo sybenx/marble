@@ -89,7 +89,14 @@ private fun Zoomable(url: String, px: Int, onZoom: (Boolean) -> Unit) {
             .transformable(state, canPan = { scale > 1f }),
         contentAlignment = Alignment.Center,
     ) {
-        NetImage(url, Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }, px, ContentScale.Fit, "Picture", Color.Transparent) {
+        // A GIF or WebP moves here too (decoded whole; a still decode would keep only its first frame).
+        val moving = androidx.compose.runtime.remember(url) { Regex("\\.(gif|webp)(\\?.*)?$", RegexOption.IGNORE_CASE).containsMatchIn(url) }
+        val anim by androidx.compose.runtime.produceState<android.graphics.drawable.Drawable?>(null, url) { if (moving) value = Images.animated(url) }
+        val layer = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }
+        anim?.let { d ->
+            androidx.compose.ui.viewinterop.AndroidView({ c -> android.widget.ImageView(c).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER } }, layer,
+                update = { it.setImageDrawable(d); (d as? android.graphics.drawable.AnimatedImageDrawable)?.start() })
+        } ?: NetImage(url, layer, px, ContentScale.Fit, "Picture", Color.Transparent) {
             // The feed's copy, while the full one loads.
             NetImage(url, Modifier.fillMaxSize(), 1080, ContentScale.Fit, "Picture", Color.Transparent)
         }
