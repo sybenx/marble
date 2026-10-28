@@ -16,21 +16,27 @@ import java.io.File
  */
 class ContentFixturesTest {
     /** What was drawn, as compare.mjs's `got`. */
-    private class Got(val inline: List<Pair<String, String>>, val cards: List<Triple<String, String, String>>, val media: List<String>, val warning: String?, val visible: String)
+    private class Card(val card: String, val ref: String, val text: String, val open: String?)
+    private class Got(val inline: List<Pair<String, String>>, val cards: List<Card>, val media: List<String>, val warning: String?, val visible: String)
 
     private fun draw(e: Event, related: List<Event>): Got {
         // As NoteCard does: an article's body isn't drawn in a list (its card is); everything else is.
         val body = Body.of(e, if (e.kind == 30023) "" else e.content)
         val (inline, seen) = body.tokens()
         val cards = listOfNotNull(when (val c = body.card) {
-            is Body.Part.Quote -> related.firstOrNull { it.id == c.id }?.let { q -> Triple(OtherApps.card(q.kind), q.id, cardText(q)) }
+            is Body.Part.Quote -> related.firstOrNull { it.id == c.id }?.let { q -> Card(OtherApps.card(q.kind), q.id, cardText(q), open(q, related)) }
             is Body.Part.QuoteAddr -> related.filter { it.kind == c.a.kind && it.pubkey == c.a.pubkey && it.firstTag("d") == c.a.d }.maxByOrNull { it.createdAt }
-                ?.let { q -> Triple(OtherApps.card(q.kind), "${c.a.kind}:${c.a.pubkey}:${c.a.d}", cardText(q)) }
+                ?.let { q -> Card(OtherApps.card(q.kind), "${c.a.kind}:${c.a.pubkey}:${c.a.d}", cardText(q), open(q, related)) }
             else -> null
         })
         val media = body.media.map { m -> when (m) { is Body.Img -> "image ${m.url}"; is Body.Vid -> "video ${m.v.url}" } }
-        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.third })
+        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.text })
     }
+
+    /** Where a card's Open goes (OtherBox: Social.openTarget, here offline from [related]); a post or article opens in Marble. */
+    private fun open(q: Event, related: List<Event>): String? = if (OtherApps.drawn(q.kind)) null else
+        OtherApps.open(q, OtherApps.clientHandler(q)?.let { a -> related.firstOrNull { it.kind == 31990 && it.pubkey == a.pubkey && it.firstTag("d") == a.d } },
+            related.filter { it.kind == 31990 || it.kind == 31989 }, setOf(q.pubkey))
 
     /** What a card shows (QuoteBox, OtherBox): a post's words, an article's title and summary, anything else's line. */
     private fun cardText(q: Event) = when (OtherApps.card(q.kind)) {
@@ -59,9 +65,10 @@ class ContentFixturesTest {
         if (got.cards.size != wantCards.size) problems += "cards: want ${wantCards.size} got ${got.cards.size}"
         wantCards.forEachIndexed { i, c ->
             val g = got.cards.getOrNull(i) ?: return@forEachIndexed
-            if (g.first != c["card"]) problems += "card $i: want a ${c["card"]} card, got ${g.first}"
-            if (g.second != c["ref"]) problems += "card $i: want ${c["ref"]}, got ${g.second}"
-            (c["line"] as? String)?.let { if (it !in g.third) problems += "card $i: want \"$it\", shows \"${g.third.take(80)}\"" }
+            if (g.card != c["card"]) problems += "card $i: want a ${c["card"]} card, got ${g.card}"
+            if (g.ref != c["ref"]) problems += "card $i: want ${c["ref"]}, got ${g.ref}"
+            (c["line"] as? String)?.let { if (it !in g.text) problems += "card $i: want \"$it\", shows \"${g.text.take(80)}\"" }
+            (c["open"] as? String)?.let { if (g.open != it) problems += "card $i: Open should go to $it, goes to ${g.open ?: "nowhere"}" }
         }
         val wantMedia = (expect["media"] as? List<*>).orEmpty().map { m -> (m as Map<*, *>).let { if ("image" in it) "image ${it["image"]}" else "video ${it["video"]}" } }
         if (got.media != wantMedia) problems += "media: want ${wantMedia.ifEmpty { "none" }} got ${got.media.ifEmpty { "none" }}"

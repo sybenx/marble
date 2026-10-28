@@ -1,0 +1,84 @@
+{
+  "name": "bare-nevent-reply-karnage-2",
+  "rule": "§1 §3",
+  "why": "the same pattern again (Karnage, Halo)",
+  "source": "wss://relay.damus.io, relay.primal.net, offchain.pub (from Astral)",
+  "event": {
+    "content": "nevent1qqsq38epxerjxqdmzvg8fkpxn3u4xv7gx60457rmrwnfkeern35xxwgpz4mhxue69uhhyetvv9ujuerpd46hxtnfduhsz9mhwden5te0wfjkccte9ec8y6tdv9kzumn9wshsygqmcu9qzj9n7vtd5vl78jyly037wxkyl7vcqflvwy4eqhxjfa4yzypsgqqqqqqs3hhtma",
+    "created_at": 1793015247,
+    "id": "f7ba4e92b571b79dda716297f2ed198d428a16c8ddccc0a1fea36d0e0611df31",
+    "kind": 1,
+    "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+    "sig": "8613d7c2b2da5c2b9daecd156e209ea0d0cc00fc35dd1bb7ffb8b07d508f71b8e4aa892961b79c8dda5f36713151247ae0f85632996dbcfbdaac1e6acc137373",
+    "tags": [
+      [
+        "e",
+        "52a6f7896c97dbf205407fd2e9eb6ec823191ed2d8ac1a11a7e3a28c812d463b",
+        "",
+        "root",
+        "81ac33c9db104771432d1c256013f3252a3a68a4985cafb85a59da9f5364cf69"
+      ],
+      [
+        "e",
+        "62add700a4fecc621bcb1be170eb533d301ff51eedac6ab6fd3891e16a56277a",
+        "",
+        "reply",
+        "81ac33c9db104771432d1c256013f3252a3a68a4985cafb85a59da9f5364cf69"
+      ],
+      [
+        "p",
+        "81ac33c9db104771432d1c256013f3252a3a68a4985cafb85a59da9f5364cf69",
+        ""
+      ],
+      [
+        "p",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+        ""
+      ],
+      [
+        "client",
+        "Halo"
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "👀\nhttps://media.21media.to/b105802a0f806096a68bc4c2c195fac9cbf975bb3633c1fcb4ba7db3300cda7f.png",
+      "created_at": 1793009155,
+      "id": "089f2136472301bb131074d8269c795333c8369f5a787b1ba69b67239c686339",
+      "kind": 1,
+      "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+      "sig": "dfd60973a0054b299cac09b71a4d72d97636eb68b5981327e43fe1713cd829bc9df4f0904a86dcb4d81b4e12808ffea684911947aa5c0ed0827efdd848b9f344",
+      "tags": [
+        [
+          "imeta",
+          "url https://media.21media.to/b105802a0f806096a68bc4c2c195fac9cbf975bb3633c1fcb4ba7db3300cda7f.png",
+          "x b105802a0f806096a68bc4c2c195fac9cbf975bb3633c1fcb4ba7db3300cda7f",
+          "m image/png",
+          "size 731600",
+          "dim 1320x2090"
+        ],
+        [
+          "client",
+          "Halo"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "089f2136472301bb131074d8269c795333c8369f5a787b1ba69b67239c686339",
+        "line": "👀"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nevent1"
+    ]
+  }
+}

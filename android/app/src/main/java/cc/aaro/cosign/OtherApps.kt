@@ -46,6 +46,19 @@ object OtherApps {
         return t[1].replace("<bech32>", entity)
     }
 
+    /**
+     * Where "Open" takes [e] (content-rules §3), from what's been found: [named], the handler its client tag names; [found],
+     * handlers (31990) and recommendations (31989) for its kind; [trusted], whose count (you, your follows, its author).
+     * The named handler, else a trusted or trusted-recommended one, else the client's site, else its marble.syb.lol page.
+     */
+    fun open(e: Event, named: Event?, found: List<Event>, trusted: Set<String>): String {
+        named?.takeIf { handles(it, e.kind) }?.let { webLink(it, e) }?.let { return it }
+        val recommended = found.filter { it.kind == 31989 && it.pubkey in trusted }.flatMap { r -> r.tags.filter { it.size > 1 && it[0] == "a" }.map { it[1] } }.toSet()
+        return found.filter { it.kind == 31990 && handles(it, e.kind) && (it.pubkey in trusted || "31990:${it.pubkey}:${it.firstTag("d")}" in recommended) }
+            .sortedByDescending { it.createdAt }.firstNotNullOfOrNull { webLink(it, e) }
+            ?: clientSite(e) ?: marbleLink(e)
+    }
+
     /** Whether [handler] says it opens [kind]. */
     fun handles(handler: Event, kind: Int) = handler.kind == 31990 && handler.tags.any { it.size > 1 && it[0] == "k" && it[1] == kind.toString() }
 }

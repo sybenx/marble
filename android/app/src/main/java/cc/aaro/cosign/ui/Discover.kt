@@ -1980,7 +1980,7 @@ private fun ReportDialog(name: String, onClose: () -> Unit, onReport: (String) -
  * A note's text, cut up: pictures apart, mentions and #tags made tappable. The rules are shared with Marble Web and
  * Astral (marble-content-fixtures: content-rules.md); ContentFixturesTest runs its fixtures against [tokens].
  */
-internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>) {
+internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>, private val quoted: Part? = null) {
     val images get() = media.filterIsInstance<Img>()
     sealed class Part {
         data class Plain(val s: String) : Part()
@@ -1995,8 +1995,11 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         data class Emoji(val code: String, val url: String) : Part()
     }
 
-    /** The first post or thing it refers to: a card under the text. Any later one is a short link in the text. */
-    val card: Part? = parts.firstOrNull { it is Part.Quote || it is Part.QuoteAddr }
+    /**
+     * The first post or thing it refers to: a card under the text (any later one is a short link in the text). Nothing
+     * in the text: its first q tag's (NIP-18), after the text.
+     */
+    val card: Part? = parts.firstOrNull { it is Part.Quote || it is Part.QuoteAddr } ?: quoted
 
     /** What a part shows as, in the text (null: nothing; a card, or an emoji, drawn as its picture). */
     fun label(p: Part, people: Map<String, Person>): String? = when (p) {
@@ -2106,7 +2109,13 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             val tidy = parts.mapIndexed { i, p ->
                 if (p !is Part.Plain) p else Part.Plain(p.s.replace(BREAKS, "\n\n").let { s -> if (i == 0) s.trimStart() else s }.let { s -> if (i == parts.lastIndex) s.trimEnd() else s })
             }
-            return Body(tidy, images.take(4), mentions)
+            // Quoted by q tag only (nothing in the text): its first.
+            val q = e.tags.firstOrNull { it.size > 1 && it[0] == "q" }?.let { t ->
+                val v = t[1].lowercase()
+                if (cc.aaro.cosign.core.isHex32(v)) Part.Quote(v)
+                else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.cosign.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
+            }
+            return Body(tidy, images.take(4), mentions, q)
         }
     }
 }

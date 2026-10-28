@@ -1,0 +1,84 @@
+{
+  "name": "bare-nevent-reply-karnage",
+  "rule": "§1 §3",
+  "why": "Karnage's reply (Halo): the whole content a bare nevent1, no nostr:, no q tag; Astral printed it raw",
+  "source": "wss://relay.damus.io, relay.primal.net, offchain.pub (from Astral)",
+  "event": {
+    "content": "nevent1qqsgaqhm0qs9j0qqzwawvyu02utcuzkq0aq25v8tr8utuzlag4h2aqcpz4mhxue69uhhyetvv9ujuerpd46hxtnfduhsz9mhwden5te0wfjkccte9ec8y6tdv9kzumn9wshsygqmcu9qzj9n7vtd5vl78jyly037wxkyl7vcqflvwy4eqhxjfa4yzypsgqqqqqqs4grrrn",
+    "created_at": 1793067628,
+    "id": "38e6ea03ec467f7cbb096f751d026581f19b53292b5330e5e261e023867fe2d6",
+    "kind": 1,
+    "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+    "sig": "7511a55582a5d28df9209729f3844dff61c83898cf535e9806ed5180cae39b36653e5edb150fc7fcb6d0ae2dfa1b6b8733708875b49c9edb45eb488e8dd5462f",
+    "tags": [
+      [
+        "e",
+        "a67342cba972094e7eeb285313d952a7ef8186723910fb55dead845ce8c16b95",
+        "",
+        "root",
+        "d30ea98ea65e953f91ab93f6b30ea51eb33c506f87d49f600a139aef00aa9511"
+      ],
+      [
+        "e",
+        "bc61c5376d3f7c6971f5e750f3641d2cca48bbcc9f9eeef849f874810f22ecc0",
+        "",
+        "reply",
+        "d30ea98ea65e953f91ab93f6b30ea51eb33c506f87d49f600a139aef00aa9511"
+      ],
+      [
+        "p",
+        "d30ea98ea65e953f91ab93f6b30ea51eb33c506f87d49f600a139aef00aa9511",
+        ""
+      ],
+      [
+        "p",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+        ""
+      ],
+      [
+        "client",
+        "Halo"
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "New toy\nhttps://media.21media.to/cf63f10a6639e66156f6c8ae8d6f42259e7c182ac1e0e753ccca247be0ff8d88.png",
+      "created_at": 1793063707,
+      "id": "8e82fb7820593c0013bae6138f57178e0ac07f40aa30eb19f8be0bfd456eae83",
+      "kind": 1,
+      "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+      "sig": "3f7947519e12eccb21a7124e66aef860db1249e89b4cba24dd4b1c3b10a99bad11ba5358fb32b521d9ec75af70d828035c3e12dac978615318e3dfedd8bebe9b",
+      "tags": [
+        [
+          "imeta",
+          "url https://media.21media.to/cf63f10a6639e66156f6c8ae8d6f42259e7c182ac1e0e753ccca247be0ff8d88.png",
+          "x cf63f10a6639e66156f6c8ae8d6f42259e7c182ac1e0e753ccca247be0ff8d88",
+          "m image/png",
+          "size 2478895",
+          "dim 676x1200"
+        ],
+        [
+          "client",
+          "Halo"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "8e82fb7820593c0013bae6138f57178e0ac07f40aa30eb19f8be0bfd456eae83",
+        "line": "New toy"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nevent1"
+    ]
+  }
+}
