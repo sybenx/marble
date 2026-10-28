@@ -727,7 +727,7 @@ private fun FeedLogSetting() {
             androidx.compose.material3.Switch(on, { cc.aaro.cosign.FeedLog.set(context, it) })
         }
         // Which feed Following is, to compare them (one tap back, any time): Feed 1 · Original (as on 27 Oct), Feed 2 · Mixed
-        // (no counts, news between posts), Feed 3 · Edition (Today, your people in time order, three from beyond, an end).
+        // (no counts, news between posts), Feed 3 · Edition (what's new from your people, Special Follow first; Today's news; three from beyond; the rest of your people; an end).
         val social = remember { cc.aaro.cosign.Social.of(cc.aaro.cosign.CosignApp.instance.phone) }
         val feed by social.feedVersion.collectAsState()
         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {

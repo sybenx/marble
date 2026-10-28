@@ -688,7 +688,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
     val news = remember(all) { social.dismissed.value.let { gone -> cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
         .filter { it.topic == "news" && "t:" + it.id !in gone }.take(40) } }
-    // Feed 3 · Edition: Today, your people in time order (a burst folded), three from beyond, an end. No news between posts.
+    // Feed 3 · Edition: what's new from your people (Special Follow first), Today's news, three from beyond, the rest of your people, an end.
     val version by social.feedVersion.collectAsState()
     val edition = pane && version == 3 && chip == "all"
     val beyond by social.beyond.collectAsState()
@@ -701,7 +701,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     // the one on screen (the pager keeps it composed beside Search).
     val logIds = remember(chip, mixed, stories, edition, beyond, feed.stories) {
         if (chip == "news" || chip == "topics") stories.map { "t:" + it.id }
-        else if (edition) feed.stories.take(4).map { "t:" + it.id } + shown.map { it.e.id } + beyond.map { it.e.id }
+        else if (edition) shown.map { it.e.id } + feed.stories.take(4).map { "t:" + it.id } + beyond.map { it.e.id }  // (the order on screen is set below)
         else mixed.map { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }
     }
     if (current) androidx.compose.runtime.key(chip) { LogWatcher(state, if (pane) "following/$chip" else "discover", logIds) }
@@ -745,41 +745,49 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
                 modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
         }
         if (edition) {
-            item(key = "today") { TodayBlock(feed.stories.take(4), social, nav, justDismissed) }
-            // Your people: strictly by time. Several in a row from one person fold ("Jack +5 more"); a line where you'd got to.
-            val runs = ArrayList<List<cc.aaro.cosign.Pick>>()
-            for (p in shown) if (runs.lastOrNull()?.first()?.e?.pubkey == p.e.pubkey) runs[runs.lastIndex] = runs.last() + p else runs += listOf(p)
-            var lined = false
-            for ((i, run) in runs.withIndex()) {
-                val first = run.first()
-                if (!lined && mark > 0 && i > 0 && first.e.createdAt <= mark) { lined = true; item(key = "earlier") { EarlierLine() } }
-                val open = unfolded[first.e.id] == true
-                for ((j, p) in (if (open) run else run.take(1)).withIndex()) item(key = p.e.id) {
-                    if (j == 0) HorizontalDivider(color = Vault.Edge)
-                    justDismissed[p.e.id]?.let { d -> return@item PutAway(d.label) { social.undoDismiss(p.e.id) } }
-                    if (p.e.id in dismissed) return@item
-                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
-                        saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") },
-                        onShare = { FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) }) {
-                        PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+            // The user's order (28 Oct): the people you care about, then the news, then beyond; without burying the last two.
+            // What's new since you last looked comes first (your Special Follow people first, then everyone by time), up to
+            // ten posts; then Today's news; then three from beyond; then the rest of your people, by time, the "Earlier"
+            // line where you'd got to (like Instagram's "all caught up"). Nothing is ranked: new or not, Special or not, time.
+            val fresh = shown.filter { mark <= 0 || it.e.createdAt > mark }
+            val (starNew, otherNew) = fresh.partition { it.reason.startsWith("★") }
+            val lead = starNew + otherNew.take((LEAD - starNew.size).coerceAtLeast(0))
+            val leadIds = lead.map { it.e.id }.toSet()
+            val rest = shown.filter { it.e.id !in leadIds }
+            fun runsOf(l: List<cc.aaro.cosign.Pick>) = ArrayList<List<cc.aaro.cosign.Pick>>().also { runs ->
+                for (p in l) if (runs.lastOrNull()?.first()?.e?.pubkey == p.e.pubkey) runs[runs.lastIndex] = runs.last() + p else runs += listOf(p)
+            }
+            // A person's posts in a row fold ("Jack +5 more"); a tap opens them.
+            fun personRuns(runs: List<List<cc.aaro.cosign.Pick>>, earlier: Boolean) {
+                var lined = false
+                for ((i, run) in runs.withIndex()) {
+                    val first = run.first()
+                    if (earlier && !lined && mark > 0 && first.e.createdAt <= mark && (i > 0 || lead.isNotEmpty())) { lined = true; item(key = "earlier") { EarlierLine() } }
+                    val open = unfolded[first.e.id] == true
+                    for ((j, p) in (if (open) run else run.take(1)).withIndex()) item(key = p.e.id) {
+                        if (j == 0) HorizontalDivider(color = Vault.Edge)
+                        justDismissed[p.e.id]?.let { d -> return@item PutAway(d.label) { social.undoDismiss(p.e.id) } }
+                        if (p.e.id in dismissed) return@item
+                        NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
+                            saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") },
+                            onShare = { FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) }) {
+                            PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+                        }
                     }
-                }
-                if (run.size > 1) item(key = "more:" + first.e.id) {
-                    Text(if (open) "Show less" else "${people[first.e.pubkey]?.shown ?: shortNpub(first.e.pubkey)} +${run.size - 1} more", color = Vault.Accent,
-                        style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp))
-                            .clickable { unfolded[first.e.id] = !open; FeedLog.act(first.e.id, if (open) "fold" else "unfold") }.padding(10.dp))
+                    if (run.size > 1) item(key = "more:" + first.e.id) {
+                        Text(if (open) "Show less" else "${people[first.e.pubkey]?.shown ?: shortNpub(first.e.pubkey)} +${run.size - 1} more", color = Vault.Accent,
+                            style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp))
+                                .clickable { unfolded[first.e.id] = !open; FeedLog.act(first.e.id, if (open) "fold" else "unfold") }.padding(10.dp))
+                    }
                 }
             }
-            // Beyond your people: three, each saying why, then a plain end.
+            personRuns(runsOf(lead), earlier = false)
+            // Today's news.
+            item(key = "today") { TodayBlock(feed.stories.take(4), social, nav, justDismissed) }
+            // Beyond your people: three, each saying why.
             val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
             if (outside.isNotEmpty()) {
-                item(key = "beyond") {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
-                        Text("Beyond your people", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp))
-                        HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
-                    }
-                }
+                item(key = "beyond") { SectionLine("Beyond your people") }
                 items(outside, key = { "b:" + it.e.id }) { p ->
                     justDismissed[p.e.id]?.let { d -> return@items PutAway(d.label) { social.undoDismiss(p.e.id) } }
                     NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
@@ -788,6 +796,11 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
                     }
                     HorizontalDivider(color = Vault.Edge)
                 }
+            }
+            // The rest of your people: new ones past the first ten, then (the Earlier line) what you'd seen. Then a plain end.
+            if (rest.isNotEmpty()) {
+                item(key = "morepeople") { SectionLine(if (rest.any { mark > 0 && it.e.createdAt > mark }) "More from your people" else "Earlier") }
+                personRuns(runsOf(rest), earlier = rest.any { mark > 0 && it.e.createdAt > mark })
             }
             if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
                 // The end: a plain mark (not a marble to collect), nothing more.
@@ -933,6 +946,17 @@ private fun TodayRow(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav, read
             if (menu) StoryMenu(c, social) { menu = false }
         }
     }
+}
+
+/** Feed 3: what's new from your people, at most this many posts, before the news and beyond (the rest follow them). */
+private const val LEAD = 10
+
+/** A quiet label between Feed 3's parts. */
+@Composable
+private fun SectionLine(label: String) = Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
+    Text(label, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp))
+    HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
 }
 
 /** A thin line where you'd got to last time. */
