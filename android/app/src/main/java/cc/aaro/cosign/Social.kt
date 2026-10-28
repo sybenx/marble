@@ -315,7 +315,7 @@ data class Notices(val list: List<Notice> = emptyList(), val loading: Boolean = 
 
 /** A search's results; [split]: someone you follow named in it, and [byAuthor], their posts with the other words (first). */
 data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap(),
-                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList())
+                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
 data class Held(val what: String, val event: Event)
@@ -572,7 +572,26 @@ class Social private constructor(private val phone: Phone, context: Context) {
         step("counts ${followers.size}")
         val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now, interests.digestWeight()) }
         if (debuggable) Startup.mark("feed quick asked ${got.size}, passed ${passes.size}, follows ${follows.size}, counted ${followers.size}, picked ${picks.size}")
-        Calm.diversify(picks, max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
+        Calm.diversify(withoutSpam(picks.sortedByDescending { it.score }.take(30), follows), max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
+    }
+
+    /** Posts that look like spam, by id, and why (cued wherever they show; see [Spam]). */
+    val spam = MutableStateFlow<Map<String, cc.aaro.cosign.spam.Spam.Why>>(emptyMap())
+
+    /**
+     * Picks without manufactured engagement (what hot lists are full of): a stranger's goes, a follow's is only cued.
+     * [got]: the picks' reactions and reposts, if already fetched; else they're asked for (two seconds at most).
+     */
+    private suspend fun withoutSpam(picks: List<Pick>, follows: Set<String>, got: List<Event>? = null): List<Pick> {
+        if (picks.isEmpty()) return picks
+        val all = got ?: kotlinx.coroutines.withTimeoutOrNull(2000) {
+            Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"), mapOf("kinds" to listOf(7, 6, 16), "#e" to picks.map { it.e.id }, "limit" to 3000), 2000)
+        } ?: emptyList()
+        val why = picks.mapNotNull { p -> (cc.aaro.cosign.spam.Spam.inflated(p.e.id, all) ?: cc.aaro.cosign.spam.Spam.advert(p.e))?.let { p.e.id to it } }.toMap()
+        if (why.isEmpty()) return picks
+        spam.update { it + why }
+        if (debuggable) Startup.mark("feed spam ${why.size}")
+        return picks.filter { it.e.id !in why || it.e.pubkey in follows || it.e.pubkey == me }
     }
 
     /** The relays a topic's posts are looked for on: those that search, and the big ones for its hashtags. */
@@ -635,15 +654,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val first = rank(emptyMap()).take(200)
         Startup.mark("feed first pass ${first.size}")
         val fans = HashMap<String, MutableSet<String>>()
-        first.map { it.e.id }.chunked(150).map { ids -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol", "wss://syb.lol"), mapOf("kinds" to listOf(7, 6, 9735), "#e" to ids, "limit" to 5000), 8000) } }
-            .awaitAll().flatten().forEach { r ->
+        val reactions = first.map { it.e.id }.chunked(150).map { ids -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol", "wss://syb.lol"), mapOf("kinds" to listOf(7, 6, 9735), "#e" to ids, "limit" to 5000), 8000) } }
+            .awaitAll().flatten().distinctBy { it.id }
+        reactions.forEach { r ->
                 val target = r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) ?: return@forEach
                 val who = if (r.kind == 9735) (try { (Json.parse(r.tags.firstOrNull { it.size > 1 && it[0] == "description" }?.get(1) ?: "") as? Map<*, *>)?.get("pubkey") as? String } catch (_: Exception) { null }) ?: return@forEach else r.pubkey
                 fans.getOrPut(target) { HashSet() } += who
             }
         Startup.mark("feed fans ${fans.size}")
         inputs = Inputs(passes, standing, fans, follows, perAuthor)
-        val picks = Calm.collapse(Calm.diversify(rank(fans)), ::nameOf)
+        val picks = Calm.collapse(Calm.diversify(withoutSpam(rank(fans), follows, reactions)), ::nameOf)
         remember(picks.map { it.e })
         People.want(picks.map { it.e.pubkey })
         Startup.mark("feed ranked ${picks.size}")
@@ -1476,6 +1496,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 if (author == null || author == s.author) s else s.copy(author = author, others = (listOf(s.author) + s.others).filter { it != author })
             }
             val byAuthor = java.util.Collections.synchronizedList(ArrayList<Event>())
+            val caught = ConcurrentHashMap<String, cc.aaro.cosign.spam.Spam.Why>()
             var first: String? = null
             fun show(loading: Boolean) {
                 if (searchGen.get() != gen) return
@@ -1483,7 +1504,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
                 val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
-                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs)
+                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught))
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
             fun add(pk: String, name: String?, rank: Int = 9) { hits.putIfAbsent(pk, Hit(pk, name, rank * 1000 + order.getAndIncrement(), follow = pk in mine)) }
@@ -1557,10 +1578,32 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 show(true); mark("friends of friends")
             }
             relayJobs.joinAll()
+            // Likely spam out of the ranking (strangers only): manufactured likes, or an author who writes like spam.
+            if (!notes.isEmpty()) kotlinx.coroutines.withTimeoutOrNull(6000) { searchSpam(synchronized(notes) { notes.distinctBy { it.id }.toList() }, mine, caught) { show(true) } }
             toEnrich.close(); enricher.join(); redraw.cancel()
             People.want(hits.keys.toList())
             show(false); mark("done")
         }
+    }
+
+    /** Search's posts through the spam checks; what's caught goes into [into]'s spam (shown apart, and cued). */
+    private suspend fun searchSpam(posts: List<Event>, mine: Set<String>, caught: MutableMap<String, cc.aaro.cosign.spam.Spam.Why>, changed: () -> Unit) = kotlinx.coroutines.coroutineScope {
+        val strangers = posts.filter { it.pubkey != me && it.pubkey !in mine }.sortedByDescending { it.createdAt }.take(40)
+        if (strangers.isEmpty()) return@coroutineScope
+        fun publish() { spam.update { it + caught }; changed() }
+        val likes = async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"), mapOf("kinds" to listOf(7, 6, 16), "#e" to strangers.map { it.id }, "limit" to 3000), 4000) }
+        val authors = strangers.map { it.pubkey }.distinct().take(25)
+        val notes = async { Fetch.query(SearchRelays.FAST + "wss://relay.primal.net", mapOf("kinds" to listOf(1), "authors" to authors, "limit" to 250), 4000) }
+        val got = likes.await()
+        strangers.forEach { p -> (cc.aaro.cosign.spam.Spam.inflated(p.id, got) ?: cc.aaro.cosign.spam.Spam.advert(p))?.let { caught[p.id] = it } }
+        val byAuthor = notes.await().groupBy { it.pubkey }
+        kotlinx.coroutines.withContext(Dispatchers.Default) {
+            for (pk in authors) {
+                val score = cc.aaro.cosign.spam.Spam.author(CosignApp.instance, pk, byAuthor[pk] ?: strangers.filter { it.pubkey == pk }) ?: continue
+                if (score >= cc.aaro.cosign.spam.Spam.AUTHOR_LINE) strangers.filter { it.pubkey == pk }.forEach { caught.putIfAbsent(it.id, cc.aaro.cosign.spam.Spam.authorWhy(score)) }
+            }
+        }
+        if (caught.isNotEmpty()) publish()
     }
 
     /** Follower counts and NIP-05 checks for people a search just found, filled into [hits] as they come. */
@@ -1685,7 +1728,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
             engagement.update { m -> m + (root.id to (m[root.id] ?: Engagement()).copy(countedReplies = r, countedLikes = l)) }
         }
         val replies = posts.drop(1).groupBy { parentOf(it) ?: root.id }.mapValues { it.value.size }
+        // A stranger's post, opened: does its author write like spam?
+        if (root.pubkey != me && follows.value?.contains(root.pubkey) != true) launch { checkAuthor(root) }
         val got = posts.map { it.id }.chunked(100).map { ids -> async { Fetch.query(relays, mapOf("kinds" to listOf(7, 6, 16, 9735), "#e" to ids), 6000) } }.awaitAll().flatten().distinctBy { it.id }
+        (cc.aaro.cosign.spam.Spam.inflated(root.id, got) ?: cc.aaro.cosign.spam.Spam.advert(root).takeIf { root.pubkey != me && follows.value?.contains(root.pubkey) != true })
+            ?.let { w -> spam.update { it + (root.id to w) } }
         val byTarget = got.groupBy { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }
         engagement.update { m ->
             m + posts.associate { p ->
@@ -1695,6 +1742,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 p.id to (m[p.id] ?: Engagement()).copy(replies = replies[p.id] ?: 0, likes = likes.size, reposts = rs.count { it.kind == 6 || it.kind == 16 }, zaps = rs.count { it.kind == 9735 }, emojis = emojis)
             }
         }
+    }
+
+    /** [e]'s author's latest posts, through the spam check; flagged: [e] says so. */
+    private suspend fun checkAuthor(e: Event) {
+        val notes = Fetch.query((outboxOf(e.pubkey) + POST_RELAYS).distinct().take(6), mapOf("kinds" to listOf(1), "authors" to listOf(e.pubkey), "limit" to 10), 5000)
+        val score = kotlinx.coroutines.withContext(Dispatchers.Default) { cc.aaro.cosign.spam.Spam.author(CosignApp.instance, e.pubkey, notes) } ?: return
+        if (score >= cc.aaro.cosign.spam.Spam.AUTHOR_LINE) spam.update { it + (e.id to cc.aaro.cosign.spam.Spam.authorWhy(score)) }
     }
 
     // --- A pasted link: the post or person, and what points at them ------------------------------

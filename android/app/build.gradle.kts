@@ -13,7 +13,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 39
-        versionName = "0.12.19-3p36"
+        versionName = "0.12.19-3p37"
         // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -69,4 +69,10 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.19.0")
+}
+
+// Unit tests on Java 21: Wisp's spam classifier matches emoji by Unicode property (\p{IsEmoji_Presentation}),
+// which Android's regex has and Java 17's doesn't.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }

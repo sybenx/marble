@@ -1644,6 +1644,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (indent == 0 && parentOf(n) != null) {
                 Text("Replying to ${to?.let { people[it]?.shown ?: shortNpub(it) } ?: "a note"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             }
+            // Likely spam (manufactured likes, or an author who posts like it): said plainly, the reason a tap away.
+            nav.social.spam.collectAsState().value[n.id]?.let { SpamCue(it) }
             // A content warning (NIP-36): the text, card and pictures wait for a tap.
             val warning = remember(n.id) { Body.warning(n) }
             var unveiled by remember(n.id) { mutableStateOf(false) }
@@ -1732,6 +1734,21 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
         Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept" else "Keep", tint = if (kept) Vault.Accent else Vault.Muted,
             modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = keep).padding(10.dp))
     }
+}
+
+/** "Looks like spam", on a post that does: quiet, honest, and why on a tap. It's never hidden from you once you're here. */
+@Composable
+private fun SpamCue(why: cc.aaro.cosign.spam.Spam.Why) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Why") { open = true }.padding(vertical = 2.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(Glyphs.warn, null, tint = Vault.AmberText, modifier = Modifier.size(14.dp))
+        Text("Looks like spam · ${why.short}", color = Vault.AmberText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 5.dp))
+    }
+    if (open) AlertDialog({ open = false }, confirmButton = { TextButton({ open = false }) { Text("OK") } },
+        title = { Text("Looks like spam") },
+        text = { Text(why.long + "\n\nMarble leaves posts like this out of search and Following. People you follow are never hidden, only marked.", color = Vault.Muted) },
+        containerColor = Vault.Surface)
 }
 
 /** A post quoted in another: its author and first words in a small box; a tap shows it whole, another opens it. */
@@ -3156,6 +3173,7 @@ private fun LaterLink(n: Int, onClick: () -> Unit) = Row(
 private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>, liked: Set<String>, social: Social, nav: Nav, peopleOnly: Boolean,
                           showPeople: Boolean = true, top: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null) {
     if (f == null && top == null) return Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+    var showSpam by remember(f?.query) { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         top?.invoke(this)
         if (f == null) { item(key = "wait") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }; return@LazyColumn }
@@ -3204,15 +3222,27 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 }
             }
         }
-        if (!peopleOnly && f.notes.isNotEmpty()) {
+        // Likely spam: out of the ranking, at the end behind a quiet line (and marked, if shown).
+        val (spammy, clean) = f.notes.partition { it.id in f.spam }
+        if (!peopleOnly && clean.isNotEmpty()) {
             item(key = "nh") { Heading("Posts") }
             val lead = if (loose) 3 else 0
-            items(f.notes.take(lead), key = { it.id }) { n ->
+            items(clean.take(lead), key = { it.id }) { n ->
                 NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                 HorizontalDivider(color = Vault.Edge)
             }
             if (loose) authorSection()
-            items(f.notes.drop(lead), key = { it.id }) { n ->
+            items(clean.drop(lead), key = { it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+        }
+        if (!peopleOnly && spammy.isNotEmpty()) {
+            item(key = "sh") {
+                Text(if (showSpam) "Hide the ${spammy.size} that look like spam" else "${spammy.size} more that look like spam · Show", color = Vault.Muted,
+                    style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 12.dp, top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable { showSpam = !showSpam }.padding(8.dp))
+            }
+            if (showSpam) items(spammy, key = { "s" + it.id }) { n ->
                 NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                 HorizontalDivider(color = Vault.Edge)
             }
