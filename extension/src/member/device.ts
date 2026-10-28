@@ -66,6 +66,8 @@ export class Device {
   private vouched = new Map<string, number>();
   /** A phone that scanned this browser's invite asks to join: the page showing the invite asks you. */
   onJoinRequest: (r: { pk: string; name: string; relays: string[] }) => void = () => {};
+  /** Another device removed this browser from the key (once). */
+  onRemoved: () => void = () => {};
   private requests = new Set<string>();
   private pinger: ReturnType<typeof setInterval>;
 
@@ -259,7 +261,13 @@ export class Device {
     if (m.type === 'refresh_plan') { this.follow(m.plan as RefreshPlan); return true; }
     if (m.type === 'refresh_committed') { this.committed(m); return true; }
     if (m.type === 'refresh_part') { this.refresh?.take(m, from); return true; }
-    if (m.type === 'removed') { this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() }; this.save(this.st); return true; }
+    if (m.type === 'removed') {
+      const first = !this.st.removed;
+      this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() };
+      this.save(this.st);
+      if (first) this.onRemoved();
+      return true;
+    }
     return false;
   }
 

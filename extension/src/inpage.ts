@@ -22,6 +22,9 @@ function call(method: string, params: unknown = {}): Promise<any> {
 }
 
 const nostr = {
+  // Marble's promise to sites: it never opens a window or a card without a click on the page (a request with none,
+  // from a site it hasn't let in, gets `not-connected:`), so a site may ask quietly which account this is on load.
+  __marble: true,
   getPublicKey: () => call('getPublicKey'),
   signEvent: (event: object) => call('signEvent', { event }),
   getRelays: () => call('getRelays'),

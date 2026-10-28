@@ -1,3 +1,4 @@
+// @ts-nocheck (a test script, typed loosely)
 // A site you once said Not now to (or whose window you closed): a click on its Sign in asks again; a request
 // with no click is still refused quietly; the toolbar badge counts what waits. Brave (or any Chromium), a
 // throwaway account made here that publishes nothing, and marble.syb.lol's Sign in.

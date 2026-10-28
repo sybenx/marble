@@ -92,6 +92,7 @@ function deviceFor(m: MemberState): Device {
     device?.close();
     device = new Device(m, st => { void saveMember(st).then(changed); });
     device.onJoinRequest = r => { for (const p of safetyPorts) p.postMessage({ type: 'join_request', ...r }); };
+    device.onRemoved = () => void tellTabs(); // every open site signs out: this browser can't sign for any of them now
   }
   return device;
 }
@@ -116,7 +117,7 @@ async function memberNip07(m: MemberState, origin: string, tabId: number | undef
   const d = deviceFor(m);
   const { sites } = await load();
   if (!sites[origin]) {
-    if (!gesture && (await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
   }
   const grant = await memberGrant(d, origin);
@@ -271,7 +272,7 @@ async function pendingNip07(p: Pending, origin: string, tabId: number | undefine
   void tryDeal();
   const { sites } = await load();
   if (!sites[origin]) {
-    if (!gesture && (await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
     await pendingGrant(origin);
   }
@@ -343,6 +344,15 @@ async function signOutLocally() {
   await savePairing(undefined);
   await saveSites({});
   changed();
+  tellTabs();
+}
+
+// Open pages of a site (or of every site) hear at once that they're signed out, as a `marble:signedout` event on the
+// page, rather than at their next request: a site removed here or on your phone, or Marble signed out here.
+async function tellTabs(origin?: string) {
+  try {
+    for (const t of await api.tabs.query({})) if (t.id !== undefined) api.tabs.sendMessage(t.id, { type: 'signedout', origin }).catch(() => {});
+  } catch { /* no tabs to tell */ }
 }
 
 /** Make sure `origin` has a grant. Returns the key it signs with. */
@@ -377,6 +387,7 @@ async function forgetSite(origin: string, tellServer: boolean) {
   delete sites[origin];
   await saveSites(sites);
   changed();
+  tellTabs(origin);
   const m = await loadMember();
   if (tellServer && m && s.sk) deviceFor(m).forget(getPublicKey(hexToBytes(s.sk)));
   else if (tellServer && pairing && s.sk) {
@@ -418,9 +429,11 @@ function paint() {
 
 /**
  * A site's request. [gesture]: it came straight from a click or a key on the page (the content script's own
- * view of it, which the page can't fake). A site you said "Not now" to is refused quietly, unless you've just
- * clicked its Sign in: then it asks again.
+ * view of it, which the page can't fake). Nothing opens without one: a site this browser hasn't let in, or any site
+ * while Marble isn't signed in here, gets `not-connected:` at once (a site reads it as signed out), and only a
+ * click (its Sign in) brings up the window or the card, even after "Not now".
  */
+const notConnected = (origin: string) => new Error(`not-connected: ${host(origin)} isn’t connected to Marble in this browser. Sign in on the site to connect it.`);
 async function nip07(origin: string, tabId: number | undefined, method: string, params: any, gesture = false): Promise<unknown> {
   const member = await loadMember();
   if (member) return memberNip07(member, origin, tabId, method, params, gesture);
@@ -429,7 +442,7 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
   let { pairing, sites } = await load();
 
   if (!pairing) {
-    if (!gesture && (await notNow()).includes(origin)) throw new Error('Not signed in.');
+    if (!gesture) throw new Error('not-connected: Not signed in to Marble in this browser.');
     startPairing(); // the code is ready by the time you tap Sign in with Marble
     await ask(tabId, origin, 'pair');
     // Signed in by phone (a pairing), or made an account here (a member).
@@ -440,7 +453,7 @@ async function nip07(origin: string, tabId: number | undefined, method: string, 
     ({ pairing, sites } = await load());
     if (!pairing) throw new Error('Not signed in.');
   } else if (!sites[origin]) {
-    if (!gesture && (await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
   }
 

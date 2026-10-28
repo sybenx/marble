@@ -108,6 +108,8 @@ window.addEventListener('message', e => {
 });
 
 api.runtime.onMessage.addListener((msg: any) => {
+  // this site was removed, or Marble signed out here: the page hears it at once (it signs itself out)
+  if (msg?.type === 'signedout') { if (!msg.origin || msg.origin === location.origin) window.dispatchEvent(new CustomEvent('marble:signedout')); return; }
   if (msg?.type !== 'card') return;
   if (msg.url) showCard(msg.id, msg.url);
   else if (msg.id === shownId) hideCard();
