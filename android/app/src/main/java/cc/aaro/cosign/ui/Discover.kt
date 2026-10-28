@@ -1666,13 +1666,13 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Text("Translated from ${Translate.name(t.from) ?: "another language"} · " + if (original) "Show translation" else "Show original",
                     color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp).clickable { original = !original })
             }
-            // In a list, one picture, no taller than it is wide; a thread shows them all, whole.
+            // In a list, one picture, no taller than it is wide (and how many more); a thread shows them all, whole.
             val full = maxLines == Int.MAX_VALUE
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
             if (!veiled) card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
-            if (card == null && !veiled) body.media.take(if (full) 4 else 1).forEach { m ->
+            if (card == null && !veiled) body.media.take(if (full) Int.MAX_VALUE else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
                     // Animated if it's a GIF or WebP; a still of it, or a quiet "Open", if it can't be shown.
@@ -2130,7 +2130,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 if (cc.aaro.cosign.core.isHex32(v)) Part.Quote(v)
                 else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.cosign.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
             }
-            return Body(tidy, images.take(4), mentions, q)
+            return Body(tidy, images, mentions, q)
         }
     }
 }
