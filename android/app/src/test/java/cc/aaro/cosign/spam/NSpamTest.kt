@@ -25,8 +25,9 @@ class NSpamTest {
     @Test fun zapBait() {
         val post = event("/spam/zap-bait/post.json")
         val why = Spam.inflated(post.id, events("/spam/zap-bait/engagement.json"))
-        assertNotNull(why)
-        assertTrue(why!!.long, why.long.startsWith("101 of its 102 likes"))
+        assertEquals("Its likes look bought", why?.short)
+        // Never the numbers or the rule (they'd show the way around it).
+        assertTrue(why!!.long.none { it.isDigit() })
         val s = score(events("/spam/zap-bait/author-notes.json"))
         println("zap-bait author scores $s")
         assertTrue("its author's writing isn't what gives it away ($s)", s < Spam.AUTHOR_LINE)
@@ -46,7 +47,7 @@ class NSpamTest {
             val pk = "%064x".format(i)
             listOf(Event(pk, 1000L + i, 7, listOf(listOf("e", post)), "+")) + if (i <= 12) listOf(Event(pk, 1030L + i, 6, listOf(listOf("e", post)), "")) else emptyList()
         }
-        assertEquals("Its likes look arranged", Spam.inflated(post, got)?.short)
+        assertEquals("Its likes look bought", Spam.inflated(post, got)?.short)
     }
 
     /** The casino-review farm ("A note about Golden…"): one templated post per fresh account. */
@@ -57,6 +58,14 @@ class NSpamTest {
         posts.zip(scores).filter { it.second < Spam.AUTHOR_LINE }.forEach { (e, sc) -> println("casino missed %.2f %s: %s".format(sc, e.id.take(12), e.content.take(300).replace("\n", " "))) }
         // Nearly all caught by the author check alone (a one-post account's single post is all it has to go on).
         assertTrue(scores.count { it >= Spam.AUTHOR_LINE } * 10 >= posts.size * 9)
+    }
+
+    /** Diamonds' sports digest (000002ac…): betting-market links on beta.predyx.com, each with the poster's referral code. */
+    @Test fun bettingReferralLinks() {
+        assertEquals("Links to a betting site", Spam.advert(event("/spam/betting-links/post.json"))?.short)
+        fun note(text: String) = Event("1".repeat(64), 0, 1, emptyList(), text)
+        // Talking about a market (no referral mark, one link) is fine.
+        assertNull(Spam.advert(note("Polymarket has the election at 60% https://polymarket.com/event/x")))
     }
 
     @Test fun casinoAdverts() {

@@ -13,8 +13,16 @@ import cc.aaro.cosign.core.Event
  * Beyond; shown anyway (opened by its link), it says so, with the reason a tap away.
  */
 object Spam {
-    /** Why something looks like spam: [short] on the post, [long] when you tap it. */
+    /**
+     * Why something looks like spam, in a broad, plain category only: never a score, a threshold or the rule itself
+     * (that would teach spammers the way around it). [short] on the post, [long] when you tap it.
+     */
     data class Why(val short: String, val long: String)
+
+    private val BOUGHT = Why("Its likes look bought", "Its likes look bought or arranged, not given by people who found it.")
+    private val ADVERT = Why("A gambling advert", "It reads like an advert for a betting or casino site, posted from an account made for it.")
+    private val BETTING = Why("Links to a betting site", "It sends people to a betting site, with a link that pays whoever posted it.")
+    private val WRITING = Why("Its author posts spam", "This account's posts look like spam, and nobody you follow follows it.")
 
     const val MIN_REACTIONS = 10
     const val COORDINATED_MIN_REACTORS = 15
@@ -31,13 +39,13 @@ object Spam {
         val total = counts.values.sum()
         val most = counts.values.maxOrNull() ?: 0
         if (total >= MIN_REACTIONS && most * 2 > total)
-            return Why("Its likes come from one account", "$most of its $total likes come from a single account: that's how a post is pushed up the trending lists, not people liking it.")
+            return BOUGHT
         val reactedAt = reactions.groupBy { it.pubkey }.mapValues { (_, l) -> l.minOf { it.createdAt } }
         if (reactedAt.size < COORDINATED_MIN_REACTORS) return null
         val repostedAt = reposts.groupBy { it.pubkey }.mapValues { (_, l) -> l.minOf { it.createdAt } }
         val paired = reactedAt.count { (pk, at) -> repostedAt[pk]?.let { kotlin.math.abs(it - at) <= PAIR_WINDOW_SECS } == true }
         if (paired * 2 >= reactedAt.size)
-            return Why("Its likes look arranged", "$paired of the ${reactedAt.size} accounts that liked it also reposted it within two minutes: a ring pushing it up, not people finding it.")
+            return BOUGHT
         return null
     }
 
@@ -46,13 +54,25 @@ object Spam {
     private val OPENER = Regex("^\\s*(a note about|una nota su|une note sur|uma nota sobre|una nota sobre|eine notiz (über|zu)|een notitie over)\\b", RegexOption.IGNORE_CASE)
     private val GAMBLING = Regex("\\b(casino|casinò|cassino|kasino|kasyno|казино|betting|bookmaker|sportsbook|slots?|free spins|freispiele|giri gratis|tiradas gratis|welcome bonus|bonus di benvenuto|bono de bienvenida|bônus de boas-vindas|jackpot|roulette|blackjack|scratchcards?|wagering)\\b", RegexOption.IGNORE_CASE)
 
-    /** A casino advert, by its words: the farm's opener and a gambling word, or three gambling words and a link. */
+    // Betting and casino sites (a known list holds up even when it's known), and referral links' marks.
+    private val BETTING_SITES = Regex("(^|\\.)(predyx\\.com|polymarket\\.com|kalshi\\.com|stake\\.com|stake\\.us|bc\\.game|roobet\\.com|rollbit\\.com|bet365\\.com|draftkings\\.com|fanduel\\.com|1xbet\\.com|betway\\.com|sportsbet\\.io|cloudbet\\.com|nitrogensports\\.eu|duelbits\\.com|shuffle\\.com|gamdom\\.com|bitstarz\\.com|7bitcasino\\.com|mystake\\.com|thunderpick\\.io)$")
+    private val REFERRAL = Regex("[?&](ref|r|aff|affiliate|referral|refcode|invite|code|btag|promo)=", RegexOption.IGNORE_CASE)
+    private val LINK = Regex("https?://([^/\\s?#]+)[^\\s]*", RegexOption.IGNORE_CASE)
+
+    /** Links to betting sites that pay the poster (a referral mark), or many of them. */
+    fun bettingLinks(e: Event): Why? {
+        val bets = LINK.findAll(e.content).filter { BETTING_SITES.containsMatchIn(it.groupValues[1].lowercase().removePrefix("www.")) }.map { it.value }.toList()
+        return if (bets.any { REFERRAL.containsMatchIn(it) } || bets.size >= 3) BETTING else null
+    }
+
+    /** A gambling advert: links to betting sites that pay the poster; the farm's opener and a gambling word; or three gambling words and a link. */
     fun advert(e: Event): Why? {
+        bettingLinks(e)?.let { return it }
         val head = e.content.take(1500)
         val terms = GAMBLING.findAll(head).map { it.value.lowercase() }.toSet()
         if (terms.isEmpty()) return null
         if (OPENER.containsMatchIn(head) || (terms.size >= 3 && "https://" in head))
-            return Why("Reads like a casino advert", "It's written like the casino adverts posted from throwaway accounts (\"A note about…\", ${terms.take(3).joinToString(", ")}).")
+            return ADVERT
         return null
     }
 
@@ -77,6 +97,10 @@ object Spam {
     /** Kept already (no work): [pk]'s score, if known. */
     fun known(pk: String): Float? = scores.get(pk)?.first
 
-    fun authorWhy(score: Float) = Why("Its author posts like spam",
-        "This account's latest posts read like spam to the same check Wisp uses (it scores ${"%.2f".format(score)}; 0.7 or more counts).")
+    @Suppress("UNUSED_PARAMETER") fun authorWhy(score: Float) = WRITING
+
+    // "Not spam": you said so, on this phone; their posts aren't marked again.
+    private val prefs get() = cc.aaro.cosign.CosignApp.instance.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE)
+    fun notSpam(pk: String) = pk in (prefs.getStringSet("notSpam", null) ?: emptySet())
+    fun markNotSpam(pk: String) = prefs.edit().putStringSet("notSpam", (prefs.getStringSet("notSpam", null) ?: emptySet()) + pk).apply()
 }
