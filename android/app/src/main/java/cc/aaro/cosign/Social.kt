@@ -202,6 +202,10 @@ sealed class Ref {
     var relays: List<String> = emptyList()
     data class Profile(val pubkey: String) : Ref()
     data class Note(val id: String) : Ref()
+    /** An addressable event (NIP-19 naddr): kind, author and d tag; its newest version is the one. */
+    data class Addr(val kind: Int, val pubkey: String, val d: String) : Ref() {
+        val naddr get() = naddr(d, pubkey, kind)
+    }
 
     companion object {
         fun parse(input: String): Ref? {
@@ -215,11 +219,25 @@ sealed class Ref {
                 "note" -> if (data.size == 32) Note(data.toHex()) else null
                 "nprofile" -> tlv(data)?.let { Profile(it).apply { relays = hints(data) } }
                 "nevent" -> tlv(data)?.let { Note(it).apply { relays = hints(data) } }
+                "naddr" -> addr(data)?.apply { relays = hints(data) }
                 else -> null
             }
         }
 
-        private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1)[02-9ac-hj-np-z]+")
+        private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+")
+
+        /** An naddr's TLV: 0 the d tag, 2 the author, 3 the kind (4 bytes, big-endian). */
+        private fun addr(b: ByteArray): Addr? {
+            var d: String? = null; var author: String? = null; var kind: Int? = null; var i = 0
+            while (i + 2 <= b.size) {
+                val t = b[i].toInt() and 0xff; val l = b[i + 1].toInt() and 0xff
+                if (i + 2 + l > b.size) break
+                val v = b.copyOfRange(i + 2, i + 2 + l)
+                when (t) { 0 -> d = String(v); 2 -> if (l == 32) author = v.toHex(); 3 -> if (l == 4) kind = java.nio.ByteBuffer.wrap(v).int }
+                i += 2 + l
+            }
+            return if (d != null && author != null && kind != null) Addr(kind, author, d) else null
+        }
 
         /** The relays under type 1 of a NIP-19 TLV (wss:// ones, at most four). */
         private fun hints(b: ByteArray): List<String> {
@@ -1708,6 +1726,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** A post by id, for a repost that only points at it: asked for when that repost comes on screen. */
+    /** The newest version of an addressable event (a quoted naddr), from its hints and the usual relays. */
+    suspend fun fetchAddr(a: Ref.Addr): Event? =
+        Fetch.query((a.relays + POST_RELAYS + Sources.GENERAL).distinct().take(8), mapOf("kinds" to listOf(a.kind), "authors" to listOf(a.pubkey), "#d" to listOf(a.d), "limit" to 2), 6000)
+            .filter { it.kind == a.kind && it.pubkey == a.pubkey && it.verify() }.maxByOrNull { it.createdAt }?.also { remember(listOf(it)) }
+
     suspend fun fetchNote(id: String): Event? {
         note(id)?.let { return it }
         val got = kotlinx.coroutines.coroutineScope {

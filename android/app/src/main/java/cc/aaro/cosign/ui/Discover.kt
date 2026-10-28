@@ -1627,6 +1627,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             }
             // A quoted post, under it: small (name and its first words), a tap shows it whole, another opens it.
             body.parts.firstNotNullOfOrNull { it as? Body.Part.Quote }?.let { QuoteBox(it.id, people, nav) }
+            body.parts.firstNotNullOfOrNull { it as? Body.Part.QuoteAddr }?.let { AddrBox(it.a, people, nav) }
             tr?.let { t ->
                 Text("Translated from ${Translate.name(t.from) ?: "another language"} · " + if (original) "Show translation" else "Show original",
                     color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp).clickable { original = !original })
@@ -1709,6 +1710,42 @@ private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
     }
 }
 
+/**
+ * A quoted addressable event (naddr) under a post: who made it, and what it is in words (its text, its title or name,
+ * or its NIP-31 "alt" for a kind Marble doesn't draw, such as a 3D object). A tap opens a post or article in Marble,
+ * anything else on its marble.syb.lol page.
+ */
+@Composable
+private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
+    val context = LocalContext.current
+    var e by remember(a) { mutableStateOf<Event?>(null) }
+    var looked by remember(a) { mutableStateOf(false) }
+    LaunchedEffect(a) { e = nav.social.fetchAddr(a); looked = true; People.want(listOf(a.pubkey)) }
+    val ev = e
+    if (ev == null && !looked) return
+    val what = ev?.let { x ->
+        when (x.kind) {
+            1 -> x.content.trim()
+            30023 -> x.firstTag("title") ?: x.firstTag("summary") ?: "An article"
+            else -> x.firstTag("alt") ?: x.firstTag("title") ?: x.firstTag("name") ?: "Something made in another app"
+        }
+    } ?: "Something made in another app"
+    val inMarble = ev != null && (ev.kind == 1 || ev.kind == 30023)
+    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
+        .clickable(onClickLabel = "Open it") { if (inMarble) nav.thread(ev!!.id) else openInBrowser(context, "https://marble.syb.lol/" + a.naddr) }
+        .padding(horizontal = 12.dp, vertical = 9.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(people[a.pubkey], a.pubkey, 18)
+            Text(people[a.pubkey]?.shown ?: shortNpub(a.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
+            ev?.let { Text(" · " + since(it.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+        }
+        Text(what, color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp))
+        if (!inMarble) Text("Open ›", color = Vault.Accent, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
 /** Under a post: "12 replies · 3 reposts · 68 likes" (what the relays counted, or found, whichever is more). */
 @Composable
 private fun Totals(e: Social.Engagement) {
@@ -1758,6 +1795,8 @@ private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
                 }
             }
         }
+        // A pasted address of something (an article, a 3D object…): its box, which opens it.
+        is Ref.Addr -> Box(Modifier.padding(16.dp)) { AddrBox(ref, people, nav) }
         is Ref.Profile -> {
             var posts by remember(ref) { mutableStateOf<List<Event>?>(null) }
             LaunchedEffect(ref) { People.want(listOf(ref.pubkey)); social.profileNow(ref.pubkey); posts = social.mentionsOf(ref.pubkey, ref.relays) }
@@ -1888,6 +1927,8 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
         data class Link(val url: String) : Part()
         data class Mention(val pubkey: String) : Part()
         data class Quote(val id: String) : Part()
+        /** A quoted addressable event (naddr): an article, a 3D object, a listing… shown in a box under the text. */
+        data class QuoteAddr(val a: Ref.Addr) : Part()
         data class Tag(val tag: String) : Part()
     }
     sealed class Media
@@ -1904,12 +1945,14 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
                 ?: withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
             is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
             is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
+            // (Shown in its own box under the text.)
+            is Part.QuoteAddr -> {}
             is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
         }
     }.let { if (it.text.isBlank()) AnnotatedString("") else it }
 
     companion object {
-        private val TOKEN = Regex("(https?://[^\\s<>\"]+)|nostr:((?:npub|nprofile|note|nevent)1[02-9ac-hj-np-z]+)|(?<=^|\\s)#([\\p{L}\\p{N}_]{1,40})")
+        private val TOKEN = Regex("(https?://[^\\s<>\"]+)|nostr:((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)|(?<=^|\\s)#([\\p{L}\\p{N}_]{1,40})")
         private val IMAGE = Regex("\\.(jpe?g|png|gif|webp|avif)(\\?.*)?$", RegexOption.IGNORE_CASE)
         private val VIDEO = Regex("\\.(mp4|webm|mov|m4v|m3u8)(\\?.*)?$", RegexOption.IGNORE_CASE)
         private val BREAKS = Regex("[ \\t]*\\n[ \\t\\n]*\\n[ \\t\\n]*")
@@ -1940,6 +1983,7 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
                     ref != null -> when (val r = Ref.parse(ref)) {
                         is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }
                         is Ref.Note -> parts += Part.Quote(r.id)
+                        is Ref.Addr -> parts += Part.QuoteAddr(r)
                         null -> parts += Part.Plain(m.value)
                     }
                     tag != null -> parts += Part.Tag(tag)
