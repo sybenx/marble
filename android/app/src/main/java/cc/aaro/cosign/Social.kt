@@ -121,6 +121,20 @@ fun marbleRef(url: String): Ref? {
 fun marblePost(url: String): String? = (marbleRef(url) as? Ref.Note)?.id
 
 /** Folded news stories ("seen, but keep it"): small rows in Following, kept across restarts. Not a ranking signal. */
+/**
+ * A post's text for one line (a kept post in Notes): a mention becomes @their name, and a quoted post or article
+ * "↪ quoted" / "↪ an article", never the raw nostr:… string. [name]: someone's name, if known.
+ */
+fun readable(text: String, name: (String) -> String? = { null }): String = MENTION.replace(text) { m ->
+    when (val r = Ref.parse(m.value)) {
+        is Ref.Profile -> "@" + (name(r.pubkey) ?: "someone")
+        is Ref.Note -> "↪ quoted"
+        is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted"
+        null -> m.value
+    }
+}
+private val MENTION = Regex("nostr:(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+", RegexOption.IGNORE_CASE)
+
 object FoldedStories {
     private fun prefs() = CosignApp.instance.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE)
     val ids = kotlinx.coroutines.flow.MutableStateFlow(try { prefs().getStringSet("folded", emptySet())!!.toSet() } catch (_: Exception) { emptySet() })

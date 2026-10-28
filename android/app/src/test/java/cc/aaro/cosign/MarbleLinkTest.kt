@@ -2,6 +2,7 @@ package cc.aaro.cosign
 
 import cc.aaro.cosign.core.Bech32
 import cc.aaro.cosign.core.Event
+import cc.aaro.cosign.core.hexToBytes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,5 +36,13 @@ class MarbleLinkTest {
         assertEquals("05e4649832dfb8d1bfa81ea7cbf1c92c4f1cd5052bfc8d5465ba744aa6fa5eb8", r.pubkey)
         assertEquals("86994561-1907-402d-b26c-bfc8c3adf1d3", r.d)
         assertEquals(r, Ref.parse(r.naddr))   // and back
+    }
+
+    @Test fun aKeptLineNeverShowsTheRawString() {
+        val pk = "05e46498" + "0".repeat(56)
+        val npub = Bech32.encode("npub", pk.hexToBytes())
+        assertEquals("hi @Ann, see ↪ quoted", readable("hi nostr:$npub, see nostr:${naddr("x", pk, 33331)}") { if (it == pk) "Ann" else null })
+        assertEquals("↪ an article and @someone", readable("nostr:${naddr("y", pk, 30023)} and nostr:$npub"))
+        assertEquals("nostr:nothing", readable("nostr:nothing"))
     }
 }

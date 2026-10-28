@@ -1740,7 +1740,10 @@ private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).weight(1f, fill = false))
             ev?.let { Text(" · " + since(it.createdAt), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
         }
-        Text(what, color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+        // An article: its card (picture, title, summary), as an article shows in the feed.
+        if (ev?.kind == 30023) Box(Modifier.padding(top = 6.dp)) {
+            LinkCard(Preview(ev.firstTag("title") ?: "An article", ev.firstTag("image")?.takeIf { it.startsWith("https://") }, ev.firstTag("summary") ?: "", "Article")) { nav.thread(ev.id) }
+        } else Text(what, color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 4.dp))
         if (!inMarble) Text("Open ›", color = Vault.Accent, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
     }
@@ -1945,8 +1948,8 @@ private class Body(val parts: List<Part>, val media: List<Media>, val mentions: 
                 ?: withLink(LinkAnnotation.Url(p.url, style)) { append(p.url.removePrefix("https://").let { if (it.length > 40) it.take(38) + "…" else it }) }
             is Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append("@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))) }
             is Part.Quote -> if (p != parts.firstOrNull { it is Part.Quote }) withLink(LinkAnnotation.Clickable(p.id, style) { nav.thread(p.id) }) { append("↪ quoted note") }
-            // (Shown in its own box under the text.)
-            is Part.QuoteAddr -> {}
+            // The first is shown in its own box under the text; any more, as a short link (never the raw string).
+            is Part.QuoteAddr -> if (p != parts.firstOrNull { it is Part.QuoteAddr }) withLink(LinkAnnotation.Url("https://marble.syb.lol/" + p.a.naddr, style)) { append(if (p.a.kind == 30023) "↪ an article" else "↪ quoted") }
             is Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, style) { nav.search("#" + p.tag) }) { append("#" + p.tag) }
         }
     }.let { if (it.text.isBlank()) AnnotatedString("") else it }
@@ -2702,7 +2705,7 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
-            item.quote?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
+            item.quote?.let { Text(cc.aaro.cosign.readable(it) { pk -> People.known.value[pk]?.name }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
             val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
             Text(listOfNotNull(site, if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)).joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
         }
