@@ -12,7 +12,7 @@ import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./ac
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
-import { cue, spamOf, inflated, mark as markSpam, setTrusted } from "./spam.js";
+import { cue, spamOf, inflated, mark as markSpam, setTrusted, setVouched } from "./spam.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -181,11 +181,26 @@ function recue() {
   for (const el of document.querySelectorAll(".spam-slot")) { const e = events.get(el.dataset.spam); if (e) el.innerHTML = cue(e); }
 }
 // who's never marked: you and the people you follow (signed out: nobody)
+// and who the people you follow follow (their lists, once a visit): vouched for, so nothing's guessed from their words
 function trustNow() {
   const me = currentMe();
-  if (!me) { setTrusted(new Set()); return recue(); }
-  myFollows().then((f) => { if (currentMe() === me) { setTrusted(new Set([me, ...f])); recue(); } });
+  if (!me) { setTrusted(new Set()); setVouched(new Set()); return spamChanged(); }
+  setVouched(null);
+  myFollows().then(async (f) => {
+    if (currentMe() !== me) return;
+    setTrusted(new Set([me, ...f]));
+    spamChanged();
+    const pks = [...f], lists = [];
+    for (let i = 0; i < pks.length; i += 300) lists.push(req(relays(FAST, INDEXERS), { kinds: [3], authors: pks.slice(i, i + 300) }, { timeout: 5000, settle: 1200 }));
+    const newest = new Map();
+    for (const e of (await Promise.all(lists)).flat()) if (!newest.has(e.pubkey) || newest.get(e.pubkey).created_at < e.created_at) newest.set(e.pubkey, e);
+    if (currentMe() !== me) return;
+    setVouched(new Set([...newest.values()].flatMap((e) => e.tags.filter((t) => t[0] === "p" && isHex64(t[1] || "")).map((t) => t[1]))));
+    spamChanged();
+  });
 }
+const spamChanged = () => dispatchEvent(new Event("marble:spam"));
+addEventListener("marble:spam", recue);
 // Manufactured likes on strangers' posts (Wisp's rule): their reactions and reposts, ten posts to a request.
 async function checkLikes(list, signal) {
   const ids = list.filter((e) => !spamOf(e)).map((e) => e.id).slice(0, 30);
@@ -962,7 +977,10 @@ async function showSearch(q, signal) {
     soon(drawMain);
     checkLikes(list.map((x) => x.e), signal).then((any) => { if (any && !signal.aborted) soon(drawMain); });
   });
-  myFollows().then(() => soon(drawMain)); // (who's never marked as spam: known now)
+  // (who's never marked as spam, or said not to be: known now)
+  const respam = () => soon(drawMain);
+  addEventListener("marble:spam", respam);
+  signal.addEventListener("abort", () => removeEventListener("marble:spam", respam));
   if (!tagOnly) stories(words).then((list) => {
     got.stories = list;
     soon(drawMain);
