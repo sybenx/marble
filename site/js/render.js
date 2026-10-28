@@ -1,6 +1,6 @@
 // Turning a post's text into the page: everything escaped first, then links, pictures, videos, mentions
 // of people (their names filled in when known), quoted posts (loaded after), #tags and custom emoji.
-import { decode, npub, nevent, pathFor } from "./ids.js";
+import { decode, npub, nevent, naddr, pathFor } from "./ids.js";
 import { profiles, wantProfile } from "./data.js";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -73,6 +73,11 @@ export function content(e, { quotes = true } = {}) {
     }
   }
   out += esc(text.slice(last));
+  // quoted only by a q tag (NIP-18), nothing in the text: its card, after the text
+  const q = quotes && !quoted.length ? (e.tags || []).find((t) => t[0] === "q" && t[1]) : null;
+  const qRef = q && (/^[0-9a-f]{64}$/.test(q[1]) ? nevent(q[1], { relays: q[2] ? [q[2]] : [] })
+    : /^\d+:[0-9a-f]{64}:/.test(q[1]) ? naddr({ kind: +q[1].split(":")[0], pubkey: q[1].split(":")[1], identifier: q[1].split(":").slice(2).join(":"), relays: q[2] ? [q[2]] : [] }) : null);
+  if (qRef) out += `\n<span class="quote-slot" data-quote="${esc(qRef)}"></span>`;
   out = out.trim().replace(/\n{3,}/g, "\n\n").replace(/\n/g, "<br>")
     .replace(/(?:<br>)+(<span class="quote-slot")/g, "$1").replace(/(<\/span>)(?:<br>)+(?=<span class="quote-slot"|$)/g, "$1")
     .replace(/(?:<br>\s*)+$/, "");

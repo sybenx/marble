@@ -2,7 +2,7 @@
 // /a/ an article, /?q= a search). One page; links change the view without reloading, and going back
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./ids.js";
-import { req, warm, foundOn, FAST, connectTimes, verify } from "./pool.js";
+import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf } from "./data.js";
 import { searchPeople, SEARCH_RELAYS } from "./search.js";
 import { goodPosts, stories, yours, prepareMine } from "./find.js";
@@ -207,13 +207,46 @@ onProfile((pk) => {
 // line about it (never its content: often JSON or code), and a way to open it. data-card and data-ref say which (tests).
 const SHORT_TEXT = new Set([1, 1111, 1244]);
 const refOf = (q) => (q.kind >= 30000 && q.kind < 40000 ? `${q.kind}:${q.pubkey}:${(q.tags.find((t) => t[0] === "d") || [])[1] || ""}` : q.id);
-const aboutLine = (q) => ["alt", "title", "name"].map((k) => (q.tags.find((t) => t[0] === k) || [])[1]).find((x) => x?.trim()) || "Something made in another app";
+const tag = (q, k) => (q.tags.find((t) => t[0] === k) || [])[1];
+const aboutLine = (q) => ["alt", "title", "name"].map((k) => tag(q, k)?.trim()).find(Boolean)?.slice(0, 200)
+  || `Something made in another app${tag(q, "client") ? ` · ${tag(q, "client")}` : ""}`;
+
+// Where "Open" goes for something made in another app (content-rules.md §3): the handler its client tag names; a
+// NIP-89 handler published or recommended by you, someone you follow or its author (never a stranger's: a handler is a
+// redirect anyone can publish); the client's own site when its name is a web address; else its page here.
+async function openTarget(q, entity) {
+  const typed = q.kind >= 30000 && q.kind < 40000 ? "naddr" : "nevent";
+  const link = (h) => {
+    if (!h || !h.tags.some((t) => t[0] === "k" && t[1] === String(q.kind))) return null;
+    const webs = h.tags.filter((t) => t[0] === "web" && /^https:\/\//.test(t[1] || ""));
+    return (webs.find((t) => t[2] === typed) || webs.find((t) => !t[2]))?.[1].replace("<bech32>", entity) || null;
+  };
+  const handler = (a, hint) => { const [k, pk, ...d] = String(a).split(":"); return k === "31990" && isHex64(pk) ? findAddress({ kind: 31990, pubkey: pk, identifier: d.join(":"), relays: hint ? [hint] : [] }) : null; };
+  const client = q.tags.find((t) => t[0] === "client");
+  let url = client?.[2] ? link(await handler(client[2], client[3])) : null;
+  if (!url) {
+    const trusted = [...new Set([currentMe(), q.pubkey, ...(currentMe() ? await myFollows() : [])].filter(Boolean))].slice(0, 500);
+    const got = await req(relays(FAST, INDEXERS), [{ kinds: [31990], "#k": [String(q.kind)], authors: trusted }, { kinds: [31989], "#d": [String(q.kind)], authors: trusted }], { timeout: 2500, settle: 600 });
+    url = got.filter((h) => h.kind === 31990).map(link).find(Boolean) || null;
+    for (const a of got.filter((r) => r.kind === 31989).flatMap((r) => r.tags.filter((t) => t[0] === "a"))) { if (url) break; url = link(await handler(a[1], a[2])); }
+  }
+  if (!url && client && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(client[1])) url = `https://${client[1].toLowerCase()}`;
+  return url ? { url, label: `Open on ${new URL(url).hostname.replace(/^www\./, "")} ›` } : { url: `/${entity}`, label: "Open ›" };
+}
+function resolveOpen(root, q, entity) {
+  const a = root.querySelector(".open-other");
+  if (!a) return;
+  openTarget(q, entity).catch(() => null).then((t) => {
+    if (t) { a.href = t.url; a.textContent = t.label; if (/^https?:/.test(t.url)) { a.target = "_blank"; a.rel = "noopener noreferrer"; } }
+    a.dataset.open = "ready";
+  });
+}
 function quoteCard(q, entity) {
   const kind = q.kind === 30023 ? "article" : SHORT_TEXT.has(q.kind) || q.kind === 6 ? "note" : "other";
   if (kind !== "other") return card(q, { compact: true, context: false }).replace("<article ", `<article data-card="${kind}" data-ref="${esc(refOf(q))}" `);
   keep(q);
   return `<article class="card compact other" data-card="other" data-ref="${esc(refOf(q))}" data-href="/${esc(entity)}">
-    ${who(q.pubkey, q)}<p class="about-line">${esc(aboutLine(q))}</p><a class="open-other" href="/${esc(entity)}">Open ›</a></article>`;
+    ${who(q.pubkey, q)}<p class="about-line">${esc(aboutLine(q))}</p><a class="open-other" href="/${esc(entity)}" data-open="pending">Open ›</a></article>`;
 }
 
 function fillLater(root = pageEl) {
@@ -225,6 +258,7 @@ function fillLater(root = pageEl) {
     slot.innerHTML = `<span class="quote loading"></span>`;
     (d.type === "address" ? findAddress(d) : findEvent(d.id, { relays: d.relays, author: d.pubkey, timeout: 5000 })).then((q) => {
       slot.innerHTML = q ? quoteCard(q, slot.dataset.quote) : `<a class="quote missing" href="/${esc(slot.dataset.quote)}">Couldn't load this post</a>`;
+      if (q) resolveOpen(slot, q, slot.dataset.quote);
       fillLater(slot);
     });
   }
@@ -516,7 +550,13 @@ function showOther(e) {
     ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: (e.tags.find((t) => t[0] === "d") || [])[1] || "" }) : nevent(e.id, { author: e.pubkey });
   pageEl.innerHTML = `<div class="thread"><article class="card main other" data-id="${e.id}">${who(e.pubkey, e, { big: true })}
     <p class="about-line">${esc(aboutLine(e))}</p>
-    <p><a class="link" href="https://njump.me/${entity}" target="_blank" rel="noopener noreferrer">Open it elsewhere ›</a></p></article></div>`;
+    <p><a class="link open-other" href="https://njump.me/${entity}" target="_blank" rel="noopener noreferrer" data-open="pending">Open it elsewhere ›</a></p></article></div>`;
+  // where it's made to be seen, if that's known; else a general viewer
+  openTarget(e, entity).catch(() => null).then((t) => {
+    const a = pageEl.querySelector(".open-other");
+    if (a && t && t.label !== "Open ›") { a.href = t.url; a.textContent = t.label; }
+    if (a) a.dataset.open = "ready";
+  });
 }
 
 // ── An article ───────────────────────────────────────────────────────────────────────────────────────
