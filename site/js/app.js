@@ -1229,7 +1229,7 @@ document.addEventListener("click", (ev) => {
     return;
   }
   const img = ev.target.closest(".media img, .prose img, .cover");
-  if (img) { ev.preventDefault(); return zoom(img.src); }
+  if (img) { ev.preventDefault(); return zoom(img); }
   const a = ev.target.closest("a[href]");
   if (a) {
     const url = new URL(a.href, location.href);
@@ -1242,12 +1242,25 @@ document.addEventListener("click", (ev) => {
   if (c && !ev.target.closest("button, video, details summary, .who") && !getSelection().toString()) go(c.dataset.href);
 });
 
+// A picture, large; with ← and → through the rest of the post's pictures (its gallery, or the article's).
 const dialog = $("#zoom");
-function zoom(src) {
-  dialog.querySelector("img").src = src;
+let shown = [], at = 0;
+function zoom(img) {
+  const set = img.closest(".media, .prose, .article") || img.parentElement;
+  shown = [...set.querySelectorAll(".media img, .prose img, img.cover, :scope > img")].filter((x) => !x.closest(".quote-slot") || x.closest(".quote-slot") === img.closest(".quote-slot"));
+  if (!shown.includes(img)) shown = [img];
+  show(shown.indexOf(img));
   dialog.showModal();
 }
+function show(i) {
+  at = Math.max(0, Math.min(shown.length - 1, i));
+  dialog.querySelector("img").src = shown[at].src;
+  dialog.setAttribute("aria-label", shown.length > 1 ? `Picture ${at + 1} of ${shown.length}` : "Picture");
+}
 dialog.addEventListener("click", () => dialog.close());
+dialog.addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") { ev.preventDefault(); show(at + (ev.key === "ArrowRight" ? 1 : -1)); }
+});
 
 // ── Signed in ────────────────────────────────────────────────────────────────────────────────────────
 
