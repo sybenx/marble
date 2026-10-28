@@ -20,8 +20,11 @@ class ContentFixturesTest {
     private class Got(val inline: List<Pair<String, String>>, val cards: List<Card>, val media: List<String>, val warning: String?, val visible: String)
 
     private fun draw(e: Event, related: List<Event>): Got {
-        // As NoteCard does: an article's body isn't drawn in a list (its card is); everything else is.
-        val body = Body.of(e, if (e.kind == 30023) "" else e.content)
+        // An article, as the reader draws it (its Markdown); anything else as a post in a list.
+        if (e.kind == 30023) Markdown.tokens(Markdown.parse(e)).let { (inline, media, seen) ->
+            return Got(inline, emptyList(), media.map { (k, u) -> "$k $u" }, Body.warning(e), seen)
+        }
+        val body = Body.of(e)
         val (inline, seen) = body.tokens()
         val cards = listOfNotNull(when (val c = body.card) {
             is Body.Part.Quote -> related.firstOrNull { it.id == c.id }?.let { q -> Card(OtherApps.card(q.kind), q.id, cardText(q), open(q, related)) }
@@ -89,8 +92,7 @@ class ContentFixturesTest {
         val report = "Android: ${files.size - failed.size}/${files.size} pass" + failed.joinToString("") { "\n  FAIL $it" }
         println(report)
         File(System.getProperty("java.io.tmpdir"), "marble-content-fixtures-android.txt").writeText(report + "\n")
-        // Known, until Android draws an article's body (Markdown, content-rules §7): 26.
-        val known = setOf("26-longform-markdown.json")
+        val known = emptySet<String>()
         assertTrue(report, failed.all { it.substringBefore('\n') in known })
     }
 }

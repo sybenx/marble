@@ -112,6 +112,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.unit.em
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -1683,42 +1685,52 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (card == null && !veiled && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
-            // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
-            Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
-                // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
-                // Feed 2: no counts in a list (the post itself has them, a tap in).
-                Heart(n, liked, nav.social, onLike, showCounts = full || nav.social.feedVersion.collectAsState().value == 1)
-                Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
-                    modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
-                // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
-                val reposted = n.id in nav.social.reposted.collectAsState().value
-                var asking by remember { mutableStateOf(false) }
-                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-                Box {
-                    Icon(Glyphs.repost, if (reposted) "Reposted" else "Repost", tint = if (reposted) Vault.Accent else Vault.Muted,
-                        modifier = Modifier.size(40.dp).clip(CircleShape).combinedClickable(onLongClickLabel = "Quote it", onLongClick = {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                            FeedLog.act(n.id, "quote"); nav.compose(cc.aaro.cosign.marbleLink(n))
-                        }) { if (!reposted) asking = true }.padding(10.dp))
-                    if (asking) DropdownMenu(true, { asking = false }, containerColor = Vault.Surface) {
-                        DropdownMenuItem({ Column {
-                            Text("Repost", color = Vault.Text, fontWeight = FontWeight.SemiBold)
-                            Text("Everyone who follows you sees it", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
-                        } }, { asking = false; nav.social.repost(n) })
-                    }
-                }
-                // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
-                // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
-                Spacer(Modifier.weight(1f))
-                val kept = if (onSave != null) saved else cc.aaro.cosign.marbleLink(n).let { link -> nav.social.later.items.collectAsState().value.any { it.url == link && it.deleted == null } }
-                val keep = onSave ?: { nav.social.keepPost(n, author?.shown ?: "A post") }
-                val shareIt = onShare ?: { FeedLog.act(n.id, "share"); share(context, n.content.trim().take(280) + "\n\n" + cc.aaro.cosign.marbleLink(n), null) }
-                // Share: to someone (the phone's share sheet until Messages; then your contacts first).
-                Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = shareIt).padding(11.dp))
-                Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept" else "Keep", tint = if (kept) Vault.Accent else Vault.Muted,
-                    modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = keep).padding(10.dp))
+            PostActions(n, liked, nav, onLike, full, author, onReply, saved, onSave, onShare)
+        }
+    }
+}
+
+
+/** Under a post (and at an article's end): like, reply, repost; then share and keep. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, full: Boolean, author: Person?, onReply: (() -> Unit)? = null,
+                        saved: Boolean = false, onSave: (() -> Unit)? = null, onShare: (() -> Unit)? = null) {
+    val context = LocalContext.current
+    // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
+    Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
+        // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
+        // Feed 2: no counts in a list (the post itself has them, a tap in).
+        Heart(n, liked, nav.social, onLike, showCounts = full || nav.social.feedVersion.collectAsState().value == 1)
+        Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
+        // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
+        val reposted = n.id in nav.social.reposted.collectAsState().value
+        var asking by remember { mutableStateOf(false) }
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+        Box {
+            Icon(Glyphs.repost, if (reposted) "Reposted" else "Repost", tint = if (reposted) Vault.Accent else Vault.Muted,
+                modifier = Modifier.size(40.dp).clip(CircleShape).combinedClickable(onLongClickLabel = "Quote it", onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    FeedLog.act(n.id, "quote"); nav.compose(cc.aaro.cosign.marbleLink(n))
+                }) { if (!reposted) asking = true }.padding(10.dp))
+            if (asking) DropdownMenu(true, { asking = false }, containerColor = Vault.Surface) {
+                DropdownMenuItem({ Column {
+                    Text("Repost", color = Vault.Text, fontWeight = FontWeight.SemiBold)
+                    Text("Everyone who follows you sees it", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                } }, { asking = false; nav.social.repost(n) })
             }
         }
+        // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
+        // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
+        Spacer(Modifier.weight(1f))
+        val kept = if (onSave != null) saved else cc.aaro.cosign.marbleLink(n).let { link -> nav.social.later.items.collectAsState().value.any { it.url == link && it.deleted == null } }
+        val keep = onSave ?: { nav.social.keepPost(n, author?.shown ?: "A post") }
+        val shareIt = onShare ?: { FeedLog.act(n.id, "share"); share(context, n.content.trim().take(280) + "\n\n" + cc.aaro.cosign.marbleLink(n), null) }
+        // Share: to someone (the phone's share sheet until Messages; then your contacts first).
+        Icon(Glyphs.share, "Share", tint = Vault.Muted, modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = shareIt).padding(11.dp))
+        Icon(if (kept) Glyphs.saveOn else Glyphs.save, if (kept) "Kept" else "Keep", tint = if (kept) Vault.Accent else Vault.Muted,
+            modifier = Modifier.offset(x = 18.dp).size(40.dp).clip(CircleShape).clickable(onClick = keep).padding(10.dp))
     }
 }
 
@@ -1984,7 +1996,8 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
     val images get() = media.filterIsInstance<Img>()
     sealed class Part {
         data class Plain(val s: String) : Part()
-        data class Link(val url: String) : Part()
+        /** [text]: what it says, when it says something other than its address (a Markdown link). */
+        data class Link(val url: String, val text: String? = null) : Part()
         data class Mention(val pubkey: String) : Part()
         /** [raw]: the reference as written (note1…, nevent1…), for its short link. */
         data class Quote(val id: String, val raw: String = "") : Part()
@@ -2004,7 +2017,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
     /** What a part shows as, in the text (null: nothing; a card, or an emoji, drawn as its picture). */
     fun label(p: Part, people: Map<String, Person>): String? = when (p) {
         is Part.Plain -> p.s
-        is Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r ->
+        is Part.Link -> p.text ?: cc.aaro.cosign.inAppRef(p.url)?.let { r ->
             when (r) { is Ref.Note -> "↪ a post"; is Ref.Profile -> "@" + (people[r.pubkey]?.shown ?: shortNpub(r.pubkey)); is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" }
         } ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it }
         is Part.Mention -> "@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))
@@ -2062,7 +2075,8 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         private val VIDEO = Regex("\\.(mp4|webm|mov|m4v|m3u8)(\\?.*)?$", RegexOption.IGNORE_CASE)
         private val BREAKS = Regex("[ \\t]*\\n[ \\t\\n]*\\n[ \\t\\n]*")
 
-        fun of(e: Event, content: String = e.content): Body {
+        /** [raw]: a piece of a longer text (an article's): as it is, not trimmed or tidied, and no q-tag card. */
+        fun of(e: Event, content: String = e.content, raw: Boolean = false): Body {
             // NIP-92 imeta (and NIP-71 video events): each file's shape, type, picture and length.
             val meta = e.tags.filter { it.isNotEmpty() && it[0] == "imeta" }.mapNotNull { t ->
                 val f = t.drop(1).associate { it.substringBefore(' ') to it.substringAfter(' ') }
@@ -2075,7 +2089,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             val emojis = e.tags.filter { it.size > 2 && it[0] == "emoji" && it[2].startsWith("https://") }.associate { it[1] to it[2] }
             val parts = ArrayList<Part>(); val images = ArrayList<Media>(); val mentions = ArrayList<String>()
             var at = 0
-            val text = content.trim()
+            val text = if (raw) content else content.trim()
             for (m in TOKEN.findAll(text)) {
                 if (m.range.first > at) parts += Part.Plain(text.substring(at, m.range.first))
                 val url = m.groups[1]?.value?.trimEnd { it in TRAILING }
@@ -2100,12 +2114,13 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             }
             if (at < text.length) parts += Part.Plain(text.substring(at))
             // A video event (NIP-71) names its file only in imeta; so may any note.
-            for ((url, f) in meta) if (f["m"]?.startsWith("video/") == true && images.none { it is Vid && it.v.url == url }) images += video(url)
+            if (!raw) for ((url, f) in meta) if (f["m"]?.startsWith("video/") == true && images.none { it is Vid && it.v.url == url }) images += video(url)
             // Media links are pulled out of the text: tidy the line breaks they leave behind
             // (the text on either side of one is one stretch now).
             val joined = ArrayList<Part>()
             for (p in parts) { val last = joined.lastOrNull(); if (p is Part.Plain && last is Part.Plain) joined[joined.lastIndex] = Part.Plain(last.s + p.s) else joined += p }
             parts.clear(); parts += joined
+            if (raw) return Body(parts.toList(), images, mentions)
             val tidy = parts.mapIndexed { i, p ->
                 if (p !is Part.Plain) p else Part.Plain(p.s.replace(BREAKS, "\n\n").let { s -> if (i == 0) s.trimStart() else s }.let { s -> if (i == parts.lastIndex) s.trimEnd() else s })
             }
@@ -2225,17 +2240,26 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     val focus = remember { FocusRequester() }
     var focusNow by remember(id) { mutableStateOf(startReply) }
     val shown = thread
+    val articleBlocks = shown?.firstOrNull { it.second == 0 && it.first.kind == 30023 }?.first?.let { a -> remember(a.id) { a.id to Markdown.parse(a) } }
     Box(Modifier.weight(1f)) {
         when {
             shown == null -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             shown.isEmpty() -> Text("Couldn't find this post.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
-                items(shown, key = { it.first.id }) { (e, depth) ->
-                    NoteCard(e, people, e.id in liked, nav, onLike = { social.like(e) }, indent = minOf(depth, 4), lit = e.id == id && shown.size > 1 && depth > 0,
-                        onReply = { target = e.id; focusNow = true })
-                    if (depth == 0) {
-                        eng[e.id]?.let { Totals(it) }
-                        HorizontalDivider(color = Vault.Edge)
+                for ((e, depth) in shown) {
+                    // An article: the reader (its Markdown, set for reading); then its replies, as under any post.
+                    if (e.kind == 30023 && depth == 0 && e.id == articleBlocks?.first) {
+                        article(e, articleBlocks.second, people, nav, e.id in liked, onLike = { social.like(e) }, onReply = { target = e.id; focusNow = true })
+                        item(key = "a:totals") { eng[e.id]?.let { Totals(it) }; HorizontalDivider(color = Vault.Edge) }
+                        continue
+                    }
+                    item(key = e.id) {
+                        NoteCard(e, people, e.id in liked, nav, onLike = { social.like(e) }, indent = minOf(depth, 4), lit = e.id == id && shown.size > 1 && depth > 0,
+                            onReply = { target = e.id; focusNow = true })
+                        if (depth == 0) {
+                            eng[e.id]?.let { Totals(it) }
+                            HorizontalDivider(color = Vault.Edge)
+                        }
                     }
                 }
                 if (loading) item(key = "loading") {
@@ -2248,6 +2272,158 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     if (parent != null && social.me != null) {
         ReplyBox(parent, people, social, focus, onSent = { thread = social.threadNow(id) ?: thread }, onClear = if (target != id) ({ target = id }) else null)
         LaunchedEffect(focusNow, target) { if (focusNow) { focus.requestFocus(); focusNow = false } }
+    }
+}
+
+// --- An article (kind 30023), to read --------------------------------------------------------
+
+/** An article's text in Literata, for reading: larger, with room between the lines. */
+private val articleStyle @Composable get() = androidx.compose.ui.text.TextStyle(fontFamily = Literata, fontSize = 17.5.sp, lineHeight = 28.sp, color = Vault.Text)
+
+/**
+ * An article, as a reader (the serif mock): its picture, an "Article · 2 min read" label, the title, the summary in italic,
+ * who wrote it and when, a short rule; its Markdown (a drop cap to start; headings in small capitals in the app's sans,
+ * block quotes as pull quotes, pictures edge to edge); an end mark, then like, reply, repost, share and keep.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blocks: List<Markdown.Block>, people: Map<String, Person>, nav: Nav, liked: Boolean,
+                                                                    onLike: () -> Unit, onReply: () -> Unit) {
+    val title = e.firstTag("title")?.trim()?.ifEmpty { null }
+    // (Many start with their title again, as a heading.)
+    val body = blocks.dropWhile { b -> b is Markdown.Block.Heading && title != null && plainOf(b.spans).trim().equals(title, ignoreCase = true) }
+    val firstPara = body.indexOfFirst { it is Markdown.Block.Para }
+    val pictures = body.filterIsInstance<Markdown.Block.Picture>().map { it.url }
+    item(key = "a:head") {
+        Column {
+            e.firstTag("image")?.takeIf { it.startsWith("https://") }?.let { img ->
+                NetImage(img, Modifier.fillMaxWidth().aspectRatio(1.9f).clickable { nav.pictures(listOf(img) + pictures, 0) }, 1080)
+            }
+            Column(Modifier.padding(horizontal = 24.dp)) {
+                Text("Article · ${Markdown.minutes(blocks)} min read".uppercase(), color = Vault.Accent, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp,
+                    letterSpacing = 0.12.em, modifier = Modifier.padding(top = 20.dp))
+                Text(title ?: "An article", fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 35.sp, color = Vault.Text,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+                e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                    Text(it, fontFamily = Literata, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, fontSize = 17.5.sp, lineHeight = 25.sp, color = Vault.Muted,
+                        modifier = Modifier.padding(bottom = 16.dp))
+                }
+                val when_ = (e.firstTag("published_at")?.toLongOrNull() ?: e.createdAt)
+                Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { nav.profile(e.pubkey) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(people[e.pubkey], e.pubkey, 28)
+                    Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp))
+                    Text(" · " + java.text.SimpleDateFormat("d MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(when_ * 1000)), color = Vault.Muted, fontSize = 13.sp)
+                }
+                Box(Modifier.padding(vertical = 18.dp).size(36.dp, 2.dp).clip(RoundedCornerShape(1.dp)).background(Vault.Accent))
+            }
+        }
+    }
+    body.forEachIndexed { i, b ->
+        item(key = "a:$i") {
+            val pad = Modifier.padding(horizontal = 24.dp)
+            when (b) {
+                is Markdown.Block.Para -> {
+                    val (text, inline) = articleText(b.spans, people, nav)
+                    if (i == firstPara) DropCap(text, inline, pad.padding(bottom = 14.dp))
+                    else Text(text, pad.padding(bottom = 14.dp), style = articleStyle, inlineContent = inline)
+                }
+                is Markdown.Block.Heading -> Text(plainOf(b.spans).uppercase(), pad.padding(top = 22.dp, bottom = 8.dp), color = Vault.Text, fontWeight = FontWeight.SemiBold,
+                    fontSize = if (b.level <= 2) 15.sp else 13.5.sp, letterSpacing = 0.06.em)
+                is Markdown.Block.Item -> Row(pad.padding(start = 4.dp, bottom = 4.dp)) {
+                    Text(b.n?.let { "$it." } ?: "•", Modifier.width(22.dp), color = Vault.Accent, style = articleStyle)
+                    val (text, inline) = articleText(b.spans, people, nav)
+                    Text(text, style = articleStyle, inlineContent = inline)
+                }
+                is Markdown.Block.Quote -> Row(pad.padding(vertical = 18.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
+                    Box(Modifier.width(3.dp).fillMaxHeight().background(Vault.Accent))
+                    val (text, inline) = articleText(b.spans, people, nav)
+                    Text(text, Modifier.padding(start = 16.dp), style = articleStyle.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, fontSize = 22.sp, lineHeight = 30.sp),
+                        inlineContent = inline)
+                }
+                is Markdown.Block.Code -> Text(b.text, pad.padding(bottom = 14.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Vault.Surface)
+                    .horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(12.dp), fontFamily = PlexMono, fontSize = 13.5.sp, lineHeight = 20.sp, color = Vault.Text, softWrap = false)
+                is Markdown.Block.Picture -> Column(Modifier.padding(top = 4.dp, bottom = 14.dp)) {
+                    PostImage(b.url, null, Modifier.fillMaxWidth().aspectRatio(1.5f)) { nav.pictures(pictures, pictures.indexOf(b.url).coerceAtLeast(0)) }
+                    if (b.alt.isNotEmpty()) Text(b.alt, Modifier.fillMaxWidth().padding(top = 6.dp, start = 24.dp, end = 24.dp), color = Vault.Muted, fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+                is Markdown.Block.Video -> Box(pad.padding(bottom = 14.dp)) { VideoCard(b.v) }
+                Markdown.Block.Rule -> EndMark()
+            }
+        }
+    }
+    item(key = "a:end") {
+        Column(Modifier.padding(horizontal = 24.dp)) {
+            EndMark()
+            HorizontalDivider(color = Vault.Edge)
+            Box(Modifier.padding(top = 2.dp)) { PostActions(e, liked, nav, onLike, true, people[e.pubkey], onReply) }
+        }
+    }
+}
+
+@Composable
+private fun EndMark() = Text("·   ·   ·", Modifier.fillMaxWidth().padding(vertical = 10.dp), color = Vault.Accent, fontSize = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+
+/** A run of spans as plain words (a heading in small capitals; comparing with the title). */
+private fun plainOf(spans: List<Markdown.Span>) = spans.joinToString("") { (it.part as? Body.Part.Plain)?.s ?: (it.part as? Body.Part.Link)?.text ?: "" }
+
+/** Spans, drawn: bold, italic and code; links, mentions, references (as short links) and #tags tappable; emoji as pictures. */
+@Composable
+private fun articleText(spans: List<Markdown.Span>, people: Map<String, Person>, nav: Nav): Pair<AnnotatedString, Map<String, androidx.compose.foundation.text.InlineTextContent>> {
+    val inline = remember(spans) { Body(spans.map { it.part }, emptyList(), emptyList()).emojiContent() }
+    val text = remember(spans, people.size) {
+        // (No card here: every reference is a short link.)
+        val none = Body(emptyList(), emptyList(), emptyList())
+        val link = TextLinkStyles(SpanStyle(color = Vault.Accent, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
+        buildAnnotatedString {
+            for (sp in spans) withStyle(SpanStyle(fontWeight = if (sp.bold) FontWeight.Bold else null, fontStyle = if (sp.italic) androidx.compose.ui.text.font.FontStyle.Italic else null,
+                fontFamily = if (sp.code) PlexMono else null, background = if (sp.code) Vault.Surface else Color.Unspecified)) {
+                val p = sp.part
+                val shown = none.label(p, people)
+                when (p) {
+                    is Body.Part.Plain -> append(p.s)
+                    is Body.Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, link) { OpenPost.ref.value = r }) { append(shown!!) } }
+                        ?: withLink(LinkAnnotation.Url(p.url, link)) { append(shown!!) }
+                    is Body.Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, link) { nav.profile(p.pubkey) }) { append(shown!!) }
+                    is Body.Part.Quote -> withLink(LinkAnnotation.Clickable(p.id, link) { nav.thread(p.id) }) { append(shown!!) }
+                    is Body.Part.QuoteAddr -> withLink(LinkAnnotation.Clickable(p.a.naddr, link) { OpenPost.ref.value = p.a }) { append(shown!!) }
+                    is Body.Part.Tag -> withLink(LinkAnnotation.Clickable(p.tag, link) { nav.search("#" + p.tag) }) { append(shown!!) }
+                    is Body.Part.Emoji -> appendInlineContent(Body.EMOJI + p.url, ":${p.code}:")
+                }
+            }
+        }
+    }
+    return text to inline
+}
+
+/**
+ * The first paragraph, with a drop cap: its first letter large, in the accent, beside its first two lines (measured,
+ * since Compose can't flow text around it). Not when the first word is one letter ("A swirl…"): that reads oddly.
+ */
+@Composable
+private fun DropCap(text: AnnotatedString, inline: Map<String, androidx.compose.foundation.text.InlineTextContent>, modifier: Modifier) {
+    val style = articleStyle
+    val firstWord = text.text.takeWhile { !it.isWhitespace() }
+    if (firstWord.length < 2 || !text.text[0].isLetter()) return Text(text, modifier, style = style, inlineContent = inline)
+    BoxWithConstraints(modifier) {
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val capStyle = style.copy(fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 54.sp, lineHeight = 56.sp, color = Vault.Accent)
+        val cap = text.text.substring(0, 1)
+        val rest = text.subSequence(1, text.length)
+        val split = remember(text, constraints.maxWidth) {
+            val capW = measurer.measure(cap, capStyle).size.width + with(density) { 8.dp.roundToPx() }
+            val laid = measurer.measure(rest, style, constraints = androidx.compose.ui.unit.Constraints(maxWidth = (constraints.maxWidth - capW).coerceAtLeast(1)))
+            if (laid.lineCount <= 2) rest.length else laid.getLineEnd(1)
+        }
+        Column {
+            Row {
+                Text(cap, Modifier.padding(end = 8.dp), style = capStyle)
+                Text(rest.subSequence(0, split), style = style, inlineContent = inline)
+            }
+            if (split < rest.length) {
+                val after = rest.subSequence(split, rest.length)
+                Text(after.subSequence(after.text.length - after.text.trimStart().length, after.length), style = style, inlineContent = inline)
+            }
+        }
     }
 }
 
