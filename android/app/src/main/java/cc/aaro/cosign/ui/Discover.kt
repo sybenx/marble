@@ -688,12 +688,22 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     // newest first; seen ones stay put until the list is next put together, so nothing vanishes under you).
     val news = remember(all) { social.dismissed.value.let { gone -> cc.aaro.cosign.Calm.stories(all, social.interests, cc.aaro.cosign.core.Clock.now(), window = Long.MAX_VALUE)
         .filter { it.topic == "news" && "t:" + it.id !in gone }.take(40) } }
-    val mixed: List<Any> = remember(shown, news, pane) {
-        if (!pane) shown else buildList { var n = 0; shown.forEachIndexed { i, p -> add(p); if (i % 3 == 2 && n < news.size) add(news[n++]) }; if (shown.isEmpty()) addAll(news.take(10)) }
+    // Feed 3 · Edition: Today, your people in time order (a burst folded), three from beyond, an end. No news between posts.
+    val version by social.feedVersion.collectAsState()
+    val edition = pane && version == 3 && chip == "all"
+    val beyond by social.beyond.collectAsState()
+    val mark by social.editionMark.collectAsState()
+    val unfolded = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    val mixed: List<Any> = remember(shown, news, pane, edition) {
+        if (!pane || edition) shown else buildList { var n = 0; shown.forEachIndexed { i, p -> add(p); if (i % 3 == 2 && n < news.size) add(news[n++]) }; if (shown.isEmpty()) addAll(news.take(10)) }
     }
     // The feed log (when on): each list by its pane and chip, so they can be told apart, and only while this pane is
     // the one on screen (the pager keeps it composed beside Search).
-    val logIds = remember(chip, mixed, stories) { if (chip == "news" || chip == "topics") stories.map { "t:" + it.id } else mixed.map { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id } }
+    val logIds = remember(chip, mixed, stories, edition, beyond, feed.stories) {
+        if (chip == "news" || chip == "topics") stories.map { "t:" + it.id }
+        else if (edition) feed.stories.take(4).map { "t:" + it.id } + shown.map { it.e.id } + beyond.map { it.e.id }
+        else mixed.map { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }
+    }
     if (current) androidx.compose.runtime.key(chip) { LogWatcher(state, if (pane) "following/$chip" else "discover", logIds) }
     LaunchedEffect(chip, stories, current) { if (current && stories.isNotEmpty()) social.logStoryList("following/$chip", stories) }
     if (!pane) Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -734,7 +744,59 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             Text(if (special.isEmpty()) "Popular this week" else "Popular this week · ★ your Special Follow people", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted,
                 modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
         }
-        items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
+        if (edition) {
+            item(key = "today") { TodayBlock(feed.stories.take(4), social, nav, justDismissed) }
+            // Your people: strictly by time. Several in a row from one person fold ("Jack +5 more"); a line where you'd got to.
+            val runs = ArrayList<List<cc.aaro.cosign.Pick>>()
+            for (p in shown) if (runs.lastOrNull()?.first()?.e?.pubkey == p.e.pubkey) runs[runs.lastIndex] = runs.last() + p else runs += listOf(p)
+            var lined = false
+            for ((i, run) in runs.withIndex()) {
+                val first = run.first()
+                if (!lined && mark > 0 && i > 0 && first.e.createdAt <= mark) { lined = true; item(key = "earlier") { EarlierLine() } }
+                val open = unfolded[first.e.id] == true
+                for ((j, p) in (if (open) run else run.take(1)).withIndex()) item(key = p.e.id) {
+                    if (j == 0) HorizontalDivider(color = Vault.Edge)
+                    justDismissed[p.e.id]?.let { d -> return@item PutAway(d.label) { social.undoDismiss(p.e.id) } }
+                    if (p.e.id in dismissed) return@item
+                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
+                        saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") },
+                        onShare = { FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) }) {
+                        PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+                    }
+                }
+                if (run.size > 1) item(key = "more:" + first.e.id) {
+                    Text(if (open) "Show less" else "${people[first.e.pubkey]?.shown ?: shortNpub(first.e.pubkey)} +${run.size - 1} more", color = Vault.Accent,
+                        style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp))
+                            .clickable { unfolded[first.e.id] = !open; FeedLog.act(first.e.id, if (open) "fold" else "unfold") }.padding(10.dp))
+                }
+            }
+            // Beyond your people: three, each saying why, then a plain end.
+            val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
+            if (outside.isNotEmpty()) {
+                item(key = "beyond") {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
+                        Text("Beyond your people", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp))
+                        HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
+                    }
+                }
+                items(outside, key = { "b:" + it.e.id }) { p ->
+                    justDismissed[p.e.id]?.let { d -> return@items PutAway(d.label) { social.undoDismiss(p.e.id) } }
+                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
+                        saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") }) {
+                        PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+                    }
+                    HorizontalDivider(color = Vault.Edge)
+                }
+            }
+            if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
+                // The end: a plain mark (not a marble to collect), nothing more.
+                Box(Modifier.fillMaxWidth().padding(vertical = 28.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(Vault.Line))
+                }
+            }
+        }
+        if (!edition) items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
             HorizontalDivider(color = Vault.Edge)
             val key = if (x is cc.aaro.cosign.TopicCard) "t:" + x.id else (x as cc.aaro.cosign.Pick).e.id
             // Put away just now: a slim row where it was, with Undo (nothing moves up into its place).
@@ -766,7 +828,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     val ids = shown.map { it.e.id }
     if (place.known == null && ids.isNotEmpty()) place.known = ids.toSet()
     val atTop by remember(state) { androidx.compose.runtime.derivedStateOf { state.firstVisibleItemIndex <= 1 } }
-    LaunchedEffect(atTop, ids) { if (atTop) place.known = ids.toSet() }
+    LaunchedEffect(atTop, ids) { if (atTop) { place.known = ids.toSet(); if (edition) shown.maxOfOrNull { it.e.createdAt }?.let(social::editionSeen) } }
     val firstShown by remember(state) { androidx.compose.runtime.derivedStateOf { state.layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String)?.let { k -> cc.aaro.cosign.core.isHex32(k) } == true }?.key as? String } }
     val fresh = remember(ids, firstShown, atTop) {
         val i = ids.indexOf(firstShown)
@@ -783,6 +845,102 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
         .padding(18.dp).size(52.dp).clip(RoundedCornerShape(18.dp)).background(Vault.AccentGround).clickable(onClickLabel = "New public post") { nav.compose() }, contentAlignment = Alignment.Center) {
         Icon(Glyphs.pencil, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
     }
+}
+
+/** A story's ⋯: more or less like it, its topic, its source; share or keep it (as Google Discover's). Each is learned and logged. */
+@Composable
+private fun StoryMenu(c: cc.aaro.cosign.TopicCard, social: Social, onClose: () -> Unit) {
+    val context = LocalContext.current
+
+    val topic = remember(c.id) { social.storyTopic(c) }
+    val topicName = TopicFeeds.name(topic)
+    val followed = topic in social.followedTopics.collectAsState().value
+    val kept = social.later.items.collectAsState().value.any { it.url == c.url && it.deleted == null }
+    DropdownMenu(true, onClose, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { onClose(); social.moreLike(topic, key = "t:" + c.id) })
+        DropdownMenuItem({ Text("Not interested", color = Vault.Text) }, { onClose(); social.notInterested(c) })
+        HorizontalDivider(color = Vault.Edge)
+        DropdownMenuItem({ Text(if (followed) "Stop following $topicName" else "Follow $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            { onClose(); social.followTopic(topic, !followed) })
+        DropdownMenuItem({ Text("Fewer stories about $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { onClose(); social.fewerAbout(topic, "t:" + c.id) })
+        HorizontalDivider(color = Vault.Edge)
+        DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { onClose(); social.hideSource(c) })
+        HorizontalDivider(color = Vault.Edge)
+        DropdownMenuItem({ Text("Share", color = Vault.Text) }, { onClose(); FeedLog.act("t:" + c.id, "share"); share(context, c.url, c.title) })
+        // Save: into your notes (private), as the bookmark on a page does.
+        DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, { onClose(); if (!kept) social.keepStory(c) })
+    }
+}
+
+/**
+ * Feed 3's Today: about four headlines from your topics in one block, compact rows (headline left, small square picture
+ * right). Opened ones go grey; once you've read them all the block is one row. Held: folded; ⋯: the story's menu.
+ */
+@Composable
+private fun TodayBlock(stories: List<cc.aaro.cosign.TopicCard>, social: Social, nav: Nav, justDismissed: Map<String, cc.aaro.cosign.Social.Dismissal>) {
+    if (stories.isEmpty()) return
+    val read = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    fun isRead(c: cc.aaro.cosign.TopicCard) = read[c.id] ?: social.storyRead(c)
+    var open by remember { mutableStateOf(false) }
+    val allRead = stories.all(::isRead)
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Vault.Surface)
+        .border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))) {
+        if (allRead && !open) {
+            Row(Modifier.fillMaxWidth().clickable { open = true }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Today", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                Text("Read · show", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            }
+            return@Column
+        }
+        Text("Today", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp))
+        stories.forEachIndexed { i, c ->
+            if (i > 0) HorizontalDivider(color = Vault.Edge)
+            justDismissed["t:" + c.id]?.let { d -> PutAway(d.label) { social.undoDismiss("t:" + c.id) } }
+                ?: TodayRow(c, social, nav, isRead(c)) { read[c.id] = true }
+        }
+        Text("More stories", color = Vault.Accent, style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp)).clickable { nav.open(Route.Stories) }.padding(10.dp))
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TodayRow(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav, read: Boolean, onRead: () -> Unit) {
+    val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var menu by remember { mutableStateOf(false) }
+    val folded = c.id in cc.aaro.cosign.FoldedStories.ids.collectAsState().value
+    val fold = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); cc.aaro.cosign.FoldedStories.toggle(c.id) }
+    val open = { onRead(); social.opened(c); openInBrowser(context, c.url, "t:" + c.id) }
+    if (folded) return Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = fold, onClick = open).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(c.title, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    }
+    val topic = remember(c.id) { cc.aaro.cosign.TopicFeeds.name(social.storyTopic(c)) }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = fold, onClick = open).padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(SpanStyle(color = Vault.Accent)) { append(topic) }
+                append(" · " + c.sourceName + if (c.publishedAt > 0) " · " + since(c.publishedAt) else "")
+            }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(c.title, color = if (read) Vault.Muted else Vault.Text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        if (c.image != null) NetImage(c.image, Modifier.padding(top = 4.dp).size(56.dp).clip(RoundedCornerShape(10.dp)), 168, ground = Vault.Edge)
+        Box {
+            Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(32.dp).clip(CircleShape).clickable { menu = true }.padding(6.dp))
+            if (menu) StoryMenu(c, social) { menu = false }
+        }
+    }
+}
+
+/** A thin line where you'd got to last time. */
+@Composable
+private fun EarlierLine() = Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
+    Text("Earlier", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp))
+    HorizontalDivider(Modifier.weight(1f), color = Vault.Edge)
 }
 
 /** Something put away in Following: what was done, quietly, and Undo. */
@@ -830,27 +988,7 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
             // ⋯: more or less like this, or nothing more from this source (each learned, and logged).
             Box {
                 Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(32.dp).clip(CircleShape).clickable { menu = true }.padding(6.dp))
-                // As Google Discover's: this story, then its topic, then its source; then share or keep it. Each is learned and logged.
-                if (menu) {
-                    val topic = remember(c.id) { social.storyTopic(c) }
-                    val topicName = TopicFeeds.name(topic)
-                    val followed = topic in social.followedTopics.collectAsState().value
-                    val kept = social.later.items.collectAsState().value.any { it.url == c.url && it.deleted == null }
-                    DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
-                        DropdownMenuItem({ Text("More like this", color = Vault.Text) }, { menu = false; social.moreLike(topic, key = "t:" + c.id) })
-                        DropdownMenuItem({ Text("Not interested", color = Vault.Text) }, { menu = false; social.notInterested(c) })
-                        HorizontalDivider(color = Vault.Edge)
-                        DropdownMenuItem({ Text(if (followed) "Stop following $topicName" else "Follow $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            { menu = false; social.followTopic(topic, !followed) })
-                        DropdownMenuItem({ Text("Fewer stories about $topicName", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.fewerAbout(topic, "t:" + c.id) })
-                        HorizontalDivider(color = Vault.Edge)
-                        DropdownMenuItem({ Text("Hide ${c.sourceName}", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, { menu = false; social.hideSource(c) })
-                        HorizontalDivider(color = Vault.Edge)
-                        DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; FeedLog.act("t:" + c.id, "share"); share(context, c.url, c.title) })
-                        // Save: into your notes (private), as the bookmark on a page does.
-                        DropdownMenuItem({ Text(if (kept) "Saved" else "Save", color = Vault.Text) }, { menu = false; if (!kept) social.keepStory(c) })
-                    }
-                }
+                if (menu) StoryMenu(c, social) { menu = false }
             }
         }
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
@@ -1586,7 +1724,7 @@ private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
 @Composable
 private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav: Nav, onLike: () -> Unit, maxLines: Int = Int.MAX_VALUE, indent: Int = 0, lit: Boolean = false,
                      onReply: (() -> Unit)? = null, pick: Pick? = null, previews: Map<String, Preview> = emptyMap(), saved: Boolean = false, onSave: (() -> Unit)? = null,
-                     onShare: (() -> Unit)? = null, menu: (@Composable () -> Unit)? = null) {
+                     onShare: (() -> Unit)? = null, wide: Boolean = false, menu: (@Composable () -> Unit)? = null) {
     // A repost: the post it shares, under a line saying who shared it.
     if (n.kind == 6) {
         // What it reposts: carried in it, or (only pointed at) fetched once it's on screen.
@@ -1621,17 +1759,21 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Accent)) { append(r.substringBefore(" · ")) }
             if (" · " in r) append(" · " + r.substringAfter(" · "))
         }, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().clickable { nav.thread(n.id) }.padding(start = 68.dp, end = 16.dp, top = 12.dp))
+            modifier = Modifier.fillMaxWidth().clickable { nav.thread(n.id) }.padding(start = if (wide) 16.dp else 68.dp, end = 16.dp, top = 12.dp))
     }
     Row(
         Modifier.fillMaxWidth().background(if (lit) Vault.AccentGround else Color.Transparent)
             .clickable { nav.thread(n.id) }.padding(start = 16.dp + (indent * 14).dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
     ) {
-        Avatar(author, n.pubkey, if (indent > 0) 32 else 40, Modifier.clickable { nav.profile(n.pubkey) })
-        Spacer(Modifier.width(12.dp))
+        // Wide (Feed 3): the picture in the name row, and the post full width under it.
+        if (!wide) {
+            Avatar(author, n.pubkey, if (indent > 0) 32 else 40, Modifier.clickable { nav.profile(n.pubkey) })
+            Spacer(Modifier.width(12.dp))
+        }
         Column(Modifier.weight(1f)) {
             Box(Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(end = 32.dp).align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
+                    if (wide) { Avatar(author, n.pubkey, 36, Modifier.clickable { nav.profile(n.pubkey) }); Spacer(Modifier.width(10.dp)) }
                     Text(author?.shown ?: shortNpub(n.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).clickable { nav.profile(n.pubkey) })
                     Spacer(Modifier.width(4.dp))

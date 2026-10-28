@@ -21,7 +21,7 @@ object FeedLog {
     /** The format of a line: it changes only when a field's meaning does. */
     const val V = 1
     /** Which ranking put the lists in order, on every list logged: change it whenever Calm's ranking does. */
-    /** Which feed made what's logged: "following1" (Feed 1) or "following2" (Feed 2); set by Social from the switch. */
+    /** Which feed made what's logged: "following1", "following2" or "following3" (Feed 1, 2, 3); set by Social from the switch, and on every event. */
     @Volatile var RANKER = "following2"
 
     val on = MutableStateFlow(false)
@@ -76,7 +76,8 @@ object FeedLog {
         if (!on.value) return
         val out = files ?: return
         val t = System.currentTimeMillis()
-        val text = line(t, session, name, f.asList())
+        // Which feed was on, on every line, so the feeds can be compared.
+        val text = line(t, session, name, if (f.any { it.first == "rv" }) f.asList() else f.asList() + ("rv" to RANKER))
         io.execute { try { out.append(text, t); bytes.value += text.length + 1 } catch (_: Exception) {} }
     }
 
@@ -170,4 +171,10 @@ class LogFiles(val dir: File, private val cap: Long = 30L shl 20, private val da
     fun zip(out: OutputStream) = ZipOutputStream(out).use { z ->
         for (f in list()) { z.putNextEntry(ZipEntry("feedlog/" + f.name)); f.inputStream().use { it.copyTo(z) }; z.closeEntry() }
     }
+}
+
+/** The feeds' names, to tell them apart (Account › Advanced; the feed log says "following1" and so on). */
+object FeedNames {
+    fun of(v: Int) = "Feed $v · " + short(v).substringAfter(" · ")
+    fun short(v: Int) = when (v) { 1 -> "1 · Original"; 2 -> "2 · Mixed"; else -> "3 · Edition" }
 }

@@ -452,6 +452,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
         feed.update { it.copy(loading = true, failed = false) }
         if (force) FeedLog.ev("pull", "screen" to "discover")
+        if (force || f.posts.isEmpty()) editionVisit()
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         if (force) lookedAt = 0
@@ -680,6 +681,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
      */
     private suspend fun popularPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
         val now = Clock.now()
+        if (feedVersion.value == 3) return@coroutineScope editionPosts(skip, now)
         // Following: what the people you follow posted in the last two days (their own posts, not replies).
         val pop = async { followingPosts(now) }
         val theirs = async { specialPosts(now) }
@@ -693,8 +695,80 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
+    // --- Feed 3 · Edition ---------------------------------------------------------------------------
+
+    /**
+     * Feed 3's people: everyone you follow, their own posts of the last two days, strictly newest first (no lift, no
+     * cap: a burst folds on screen instead). Special Follow people are marked, not moved. Nothing here is ranked.
+     */
+    private suspend fun editionPosts(skip: Set<String>, now: Long): List<Pick> = kotlinx.coroutines.coroutineScope {
+        val sp = async { specialPeople() }
+        val hidden = muted.value
+        val posts = followingPosts(now, cap = Int.MAX_VALUE).filter { e ->
+            e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600 && !snoozedNow(e.pubkey)
+        }
+        val starred = sp.await()
+        scope.launch { beyond.value = try { beyondPosts(now) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; beyond.value } }
+        posts.map { e -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (e.pubkey in starred) "★ Special Follow" else "") }.also {
+            remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
+        }
+    }
+
+    /** Feed 3's end: three posts from outside your follows, each with why it's here. */
+    val beyond = MutableStateFlow<List<Pick>>(emptyList())
+
+    /**
+     * Beyond your people: posts of the last two days that people you follow liked or shared, from people you don't follow.
+     * Trust comes from your people only: no counts, no follower numbers, no hot lists. The more of your people, the
+     * likelier; three at most, one per person; likely spam out. The why says who, and what they did.
+     */
+    private suspend fun beyondPosts(now: Long): List<Pick> {
+        val mine = follows.value.orEmpty()
+        if (mine.isEmpty()) return emptyList()
+        val relays = (readRelays() + POST_RELAYS).distinct().take(6)
+        val acts = mine.toList().chunked(300).map { part ->
+            Fetch.query(relays, mapOf("kinds" to listOf(7, 6), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 800), 6000)
+        }.flatten().distinctBy { it.id }
+        val who = HashMap<String, MutableSet<String>>()
+        for (a in acts) {
+            if (a.kind == 7 && a.content == "-") continue
+            a.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)?.let { who.getOrPut(it) { LinkedHashSet() } += a.pubkey }
+        }
+        val top = who.entries.sortedByDescending { it.value.size }.take(60).map { it.key }
+        if (top.isEmpty()) return emptyList()
+        val hidden = muted.value
+        val evs = Fetch.query((relays + bigRelays).distinct(), mapOf("ids" to top), 6000).distinctBy { it.id }.filter { e ->
+            e.kind == 1 && parentOf(e) == null && e.pubkey !in mine && e.pubkey != me && e.pubkey !in hidden && safe(e) && !mutedText(e.content, e) &&
+                !interests.hidden("hiddenPeople", e.pubkey) && e.createdAt > now - 3 * 86_400L
+        }
+        val clean = withoutSpam(evs.map { Pick(it, "", 0.0, "") }, mine).map { it.e }
+        val chosen = clean.sortedByDescending { who[it.id]?.size ?: 0 }.distinctBy { it.pubkey }.take(3)
+        People.want(chosen.flatMap { who[it.id].orEmpty().take(3) } + chosen.map { it.pubkey })
+        kotlinx.coroutines.delay(800)
+        return chosen.map { e ->
+            val names = who[e.id].orEmpty().mapNotNull { People.known.value[it]?.name?.takeIf { n -> n.isNotBlank() } }.take(2)
+            val did = if (acts.any { it.kind == 6 && it.tags.any { t -> t.size > 1 && t[0] == "e" && t[1] == e.id } }) "shared" else "liked"
+            val reason = when {
+                names.isEmpty() -> "People you follow $did this"
+                (who[e.id]?.size ?: 0) > names.size -> "${names.joinToString(", ")} and others you follow $did this"
+                else -> "${names.joinToString(" and ")} $did this"
+            }
+            Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, reason)
+        }.also { remember(it.map { p -> p.e }) }
+    }
+
+    /** Where you'd got to last time in Feed 3 (the newest post's time then): an "Earlier" line goes there. Kept on this phone. */
+    val editionMark = MutableStateFlow(prefs.getLong("editionMark", 0L))
+    @Volatile private var editionTop = prefs.getLong("editionMark", 0L)
+    /** Seen at the top: remembered for next time (the line on screen now stays where it is). */
+    fun editionSeen(newest: Long) { if (newest > editionTop) { editionTop = newest; prefs.edit().putLong("editionMark", newest).apply() } }
+    /** A new visit (a pull, or the first load): the line moves to where you'd got to. */
+    fun editionVisit() { editionMark.value = editionTop }
+    /** A story in the box, opened already. */
+    fun storyRead(c: TopicCard) = storyOpened(c)
+
     /** What the people you follow posted in the last two days, their own posts (not replies), from their relays and the big ones. */
-    private suspend fun followingPosts(now: Long): List<Event> {
+    private suspend fun followingPosts(now: Long, cap: Int = 4): List<Event> {
         knowFollows()
         val who = follows.value.orEmpty().toList()
         if (who.isEmpty()) return emptyList()
@@ -702,7 +776,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         return who.chunked(400).map { part ->
             Fetch.query(relays, mapOf("kinds" to listOf(1), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 300), 8000)
         }.flatten().filter { parentOf(it) == null }.distinctBy { it.id }.sortedByDescending { it.createdAt }
-            .let { l -> val each = HashMap<String, Int>(); l.filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= 4 } }.take(300)
+            .let { l -> val each = HashMap<String, Int>(); l.filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= cap } }.take(if (cap == 4) 300 else 600)
     }
 
     /** What you like, lightly, in Discover's popular posts: up to a couple of hours earlier for your strongest topics, a little later for your weakest. */
@@ -1366,13 +1440,20 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * Which feed Following is: 1, as it was on 27 Oct (branch feed-1: reaction counts beside the heart), or 2 (no counts
      * in lists; they're a tap in, on the post). A hidden switch in Account › Advanced, so the two can be compared.
      */
-    val feedVersion = MutableStateFlow(prefs.getInt("feedVersion", 2)).also { FeedLog.RANKER = if (it.value == 1) "following1" else "following2" }
+    // The user asked to try Feed 3 (27 Oct): this build starts in it, once; the switch takes it back in one tap.
+    val feedVersion = MutableStateFlow(prefs.let { p ->
+        if (!p.getBoolean("feed3Tried", false)) p.edit().putInt("feedVersion", 3).putBoolean("feed3Tried", true).apply()
+        p.getInt("feedVersion", 2)
+    }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {
         if (v == feedVersion.value) return
+        val was = feedVersion.value
         feedVersion.value = v
         prefs.edit().putInt("feedVersion", v).apply()
-        FeedLog.RANKER = if (v == 1) "following1" else "following2"
+        FeedLog.RANKER = "following$v"
         FeedLog.ev("feedVersion", "v" to v)
+        // Into or out of Feed 3 (a different list): start over.
+        if (v == 3 || was == 3) { feed.update { it.copy(posts = emptyList()) }; loadFeed(force = true) }
     }
 
     /** A post's own link (what keeping it in Notes keeps, and what Share sends): its marble.syb.lol link. */
