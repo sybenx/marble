@@ -1520,8 +1520,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 }
             }
             if (split != null) {
+                val words = SearchRank.norm(split.rest).split(' ').filter { it.isNotEmpty() }
+                fun has(e: Event, all: Boolean) = SearchRank.norm(e.content + " " + (e.firstTag("title") ?: "")).let { c -> if (all) words.all { it in c } else words.any { it in c } }
+                // (From a search relay, at least one of the words: one that ignores search would send everything.)
                 fun theirs(got: List<Event>, how: String) {
-                    val ok = got.filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) }
+                    val ok = got.filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) && has(it, how == "latest") }
                     remember(ok); byAuthor += ok.filter { safe(it) }
                     show(true); mark("theirs ($how): ${ok.size}")
                 }
@@ -1530,11 +1533,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 // past any limit); the others don't know sort:new.
                 relayJobs += launch { theirs(Fetch.query(SearchRelays.FAST, f + ("search" to split.rest + " sort:new"), 6000), "newest") }
                 relayJobs += launch { theirs(Fetch.query(SearchRelays.SLOW + Sources.extra.value, f + ("search" to split.rest), 4000), "search") }
-                // And their latest posts, looked through here: what no search has indexed yet.
+                // And their latest posts (where they write, and the big relays), looked through here: what no search has indexed yet.
                 relayJobs += launch {
-                    val words = SearchRank.norm(split.rest).split(' ').filter { it.isNotEmpty() }
-                    val got = Fetch.query(bigRelays, mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000)
-                    theirs(got.filter { e -> SearchRank.norm(e.content + " " + (e.firstTag("title") ?: "")).let { c -> words.all { it in c } } }, "latest")
+                    theirs(Fetch.query((outboxOf(split.author) + bigRelays).map { it.trimEnd('/') }.distinct(), mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000), "latest")
                 }
             }
             // Posts: the fast relays together, the slow ones on their own.
