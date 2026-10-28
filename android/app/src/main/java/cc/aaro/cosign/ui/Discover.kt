@@ -945,7 +945,8 @@ private fun SectionMore(label: String, onClick: () -> Unit) {
 private fun CompactPost(p: cc.aaro.cosign.Pick, people: Map<String, Person>, nav: Nav, why: String? = null) {
     val n = p.e
     val body = remember(n.id) { Body.of(n) }
-    val words = remember(n.id, people.size) { cc.aaro.cosign.readable(body.parts.filterIsInstance<Body.Part.Plain>().joinToString("") { it.s }.ifBlank { n.content }) { people[it]?.shown } }
+    // Its words as the post shows them (@names, #tags, short links, "↪ quoted"), pictures left out.
+    val words = remember(n.id, people.size) { body.parts.joinToString("") { body.label(it, people) ?: "" }.ifBlank { cc.aaro.cosign.readable(n.content) { people[it]?.shown } } }
     val picture = body.images.firstOrNull()
     val spam = nav.social.spam.collectAsState().value[n.id]
     HorizontalDivider(color = Vault.Edge)
