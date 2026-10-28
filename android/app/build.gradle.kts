@@ -13,7 +13,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 39
-        versionName = "0.12.19-3p29"
+        versionName = "0.12.19-3p30"
         // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -60,9 +60,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.unifiedpush.android:connector:3.0.10")
     implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.19.0")
-    // Videos in notes: the player and HLS only (its own controls are Compose; no media3-ui, no session).
+    // Videos in notes, as Wisp plays them: the player, HLS, its stock controls (media3-ui), fetched with our OkHttp.
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

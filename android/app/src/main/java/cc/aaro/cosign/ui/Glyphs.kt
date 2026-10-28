@@ -37,5 +37,12 @@ object Glyphs {
     val saveOn = line("saveOn", SAVE, fill = true)
     /** Enter (return): keep what's typed as a note, and search it. */
     val enter = line("enter", "M19 5v7a3 3 0 0 1-3 3H6M10 11l-4 4 4 4")
+    /** A video's sound: on, and off (muted). */
+    val soundOn = line("soundOn", "M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12")
+    val soundOff = line("soundOff", "M4 9v6h4l5 4V5L8 9H4zM17 9l5 6M22 9l-5 6")
+    /** Save to the phone (Downloads). */
+    val download = line("download", "M12 4v11M7 10l5 5 5-5M5 20h14")
+    /** Full screen. */
+    val fullscreen = line("fullscreen", "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5")
     val warn = line("warn", "M12 3 2 20h20L12 3zM12 10v4M12 17h.01")
 }
