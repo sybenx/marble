@@ -148,7 +148,7 @@ export async function pull({ force = false } = {}) {
   const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 }))
     .filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return false; // (signed out or in as someone else meanwhile)
-  if (!got) { if (dirty) changed(); return false; }
+  if (!got) { if (dirty) setTimeout(send, 0); return false; } // (nothing there yet: yours goes now)
   let theirs;
   try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return false; }
   if (me !== who) return false;

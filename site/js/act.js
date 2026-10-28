@@ -23,8 +23,10 @@ export function toast(text, { stay = false } = {}) {
 
 /** While something waits on you approving it elsewhere, say where, after a moment. */
 async function approving(promise) {
-  const t = setTimeout(() => toast(method() === "phone" ? "Approve it on your phone…" : "Approve it in your extension…", { stay: true }), 700);
-  try { return await promise; } finally { clearTimeout(t); toast(""); }
+  let asked = false;
+  const t = setTimeout(() => { asked = true; toast(method() === "phone" ? "Approve it on your phone…" : "Approve it in your extension…", { stay: true }); }, 700);
+  // (only its own message goes: one said meanwhile, like "Signed out", stays)
+  try { return await promise; } finally { clearTimeout(t); if (asked && current()) toast(""); }
 }
 
 // ── Signing in ───────────────────────────────────────────────────────────────────────────────────────
@@ -330,6 +332,8 @@ async function react(b, content) {
   } catch (err) {
     if (before) { mine.set(id, before); mineAt.set(id, beforeAt); } else { mine.delete(id); mineAt.delete(id); }
     paintHearts(document);
+    // (signed out meanwhile, somewhere else: that's what to say, and it was said)
+    if (!current()) return toast("Signed out");
     toast(/refus|reject|denied|cancel/i.test(String(err?.message)) ? "Not sent: you said no." : "Couldn't send your reaction. Try again.");
   }
 }
@@ -418,7 +422,7 @@ export async function sendReply(to, content, tags) {
   if (!canAct()) throw new Error("");
   let ev;
   try { ev = await approving(sign({ kind: 1, content, tags })); }
-  catch (err) { throw new Error(/refus|reject|denied|cancel/i.test(String(err?.message)) ? "Not sent: you said no." : "Couldn't sign your reply. Try again."); }
+  catch (err) { throw new Error(!current() ? "Signed out" : /refus|reject|denied|cancel/i.test(String(err?.message)) ? "Not sent: you said no." : "Couldn't sign your reply. Try again."); }
   const theirs = await Promise.race([outbox(to.pubkey).then((o) => o.read.slice(0, 3)), new Promise((r) => setTimeout(() => r([]), 1500))]);
   const sent = await publish(relays(await myWriteRelays(), theirs, ALSO), ev);
   if (!sent.ok.length) throw new Error("Couldn't send your reply. Try again.");
