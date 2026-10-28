@@ -184,11 +184,13 @@ private sealed class Route {
     data object Shelf : Route()
     /** A new post; [link]: a story to post with a comment. */
     data class Compose(val link: String = "") : Route()
+    /** Feed 3: one section's whole list, full-size posts ("special", "people" or "beyond"). */
+    data class Section(val which: String) : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -198,6 +200,7 @@ private sealed class Route {
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
             s.startsWith("results:") -> Results(s.removePrefix("results:"))
             s.startsWith("pp:") -> PeoplePosts(s.removePrefix("pp:"))
+            s.startsWith("section:") -> Section(s.removePrefix("section:"))
             s == "later" -> Later
             s == "searches" -> Searches
             s == "marbles" -> Shelf
@@ -328,6 +331,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             is Route.Compose -> ComposeScreen(top.link, social, nav)
             is Route.Results -> ResultsScreen(top.q, social, nav)
             is Route.PeoplePosts -> PeoplePostsScreen(top.q, social, nav)
+            is Route.Section -> SectionScreen(top.which, social, nav)
             Route.Later -> LaterScreen(social, nav)
             Route.Searches -> SearchesScreen(social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
@@ -747,73 +751,33 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
                 modifier = Modifier.padding(start = 18.dp, top = 8.dp, bottom = 10.dp))
         }
         if (edition) {
-            // The user's order (28 Oct): the people you care about, then the news, then beyond; without burying the last two.
-            // What's new since you last looked comes first (your Special Follow people first, then everyone by time), up to
-            // ten posts; then Today's news; then three from beyond; then the rest of your people, by time, the "Earlier"
-            // line where you'd got to (like Instagram's "all caught up"). Nothing is ranked: new or not, Special or not, time.
-            val fresh = shown.filter { mark <= 0 || it.e.createdAt > mark }
-            val (starNew, otherNew) = fresh.partition { it.reason.startsWith("★") }
-            val newLead = starNew + otherNew.take((LEAD - starNew.size).coerceAtLeast(0))
-            // Fewer than ten new: your people's latest fill the top all the same (the Earlier line where you'd got to), so
-            // the news never comes first.
-            val seenBefore = shown.filter { mark > 0 && it.e.createdAt <= mark }
-            val lead = newLead + seenBefore.take((LEAD - newLead.size).coerceAtLeast(0))
-            val leadIds = lead.map { it.e.id }.toSet()
-            val rest = shown.filter { it.e.id !in leadIds }
-            fun runsOf(l: List<cc.aaro.cosign.Pick>) = ArrayList<List<cc.aaro.cosign.Pick>>().also { runs ->
-                for (p in l) if (runs.lastOrNull()?.first()?.e?.pubkey == p.e.pubkey) runs[runs.lastIndex] = runs.last() + p else runs += listOf(p)
-            }
-            // A person's posts in a row fold ("Jack +5 more"); a tap opens them. One Earlier line, where you'd got to.
-            var lined = false
-            fun personRuns(runs: List<List<cc.aaro.cosign.Pick>>, top: Boolean) {
-                for ((i, run) in runs.withIndex()) {
-                    val first = run.first()
-                    if (!lined && mark > 0 && first.e.createdAt <= mark && (i > 0 || !top)) { lined = true; item(key = "earlier") { EarlierLine() } }
-                    val open = unfolded[first.e.id] == true
-                    for ((j, p) in (if (open) run else run.take(1)).withIndex()) item(key = p.e.id) {
-                        if (j == 0) HorizontalDivider(color = Vault.Edge)
-                        justDismissed[p.e.id]?.let { d -> return@item PutAway(d.label) { social.undoDismiss(p.e.id) } }
-                        if (p.e.id in dismissed) return@item
-                        NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
-                            saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") },
-                            onShare = { FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) }) {
-                            PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
-                        }
-                    }
-                    if (run.size > 1) item(key = "more:" + first.e.id) {
-                        Text(if (open) "Show less" else "${people[first.e.pubkey]?.shown ?: shortNpub(first.e.pubkey)} +${run.size - 1} more", color = Vault.Accent,
-                            style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp))
-                                .clickable { unfolded[first.e.id] = !open; FeedLog.act(first.e.id, if (open) "fold" else "unfold") }.padding(10.dp))
-                    }
-                }
-            }
-            personRuns(runsOf(lead), top = true)
-            // Today's news.
-            item(key = "today") { TodayBlock(feed.stories.take(4), social, nav, justDismissed) }
-            // Beyond your people: three, each saying why.
+            // Feed 3 · Edition (the user's design, 28 Oct): three short sections, each a few compact rows of one fixed height
+            // (pictures can't push the page down) and a More that opens the section's whole list, full-size. Special Follow,
+            // then Today's news, then your people (newest first) with beyond your people at its end. Nothing is reordered.
+            val starred = shown.filter { it.reason.startsWith("★") }
+            val others = shown.filter { !it.reason.startsWith("★") }
             val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
-            if (outside.isNotEmpty()) {
-                item(key = "beyond") { SectionLine("Beyond your people") }
-                items(outside, key = { "b:" + it.e.id }) { p ->
-                    justDismissed[p.e.id]?.let { d -> return@items PutAway(d.label) { social.undoDismiss(p.e.id) } }
-                    NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 8, pick = p, previews = previews, wide = true,
-                        saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") }) {
-                        PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+            if (starred.isNotEmpty()) item(key = "s:special") {
+                val fresh = starred.count { mark > 0 && it.e.createdAt > mark }
+                SectionCard("Special Follow", if (fresh > 0) "$fresh new" else null) {
+                    starred.take(3).forEach { p -> CompactPost(p, people, nav) }
+                    if (starred.size > 3) SectionMore("More from Special Follow (${starred.size - 3})") { nav.open(Route.Section("special")) }
+                }
+            }
+            if (feed.stories.isNotEmpty()) item(key = "s:today") { TodayBlock(feed.stories.take(3), social, nav, justDismissed) }
+            if (others.isNotEmpty() || outside.isNotEmpty()) item(key = "s:people") {
+                SectionCard("Your people", "newest first") {
+                    others.take(3).forEach { p -> CompactPost(p, people, nav) }
+                    if (others.size > 3) SectionMore("More from your people (${others.size - 3})") { nav.open(Route.Section("people")) }
+                    if (outside.isNotEmpty()) {
+                        Text("BEYOND YOUR PEOPLE", color = Vault.Muted, style = MaterialTheme.typography.labelSmall, letterSpacing = 0.08.em,
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, bottom = 2.dp))
+                        outside.take(2).forEach { p -> CompactPost(p, people, nav, why = p.reason) }
+                        if (outside.size > 2) SectionMore("More beyond (${outside.size - 2})") { nav.open(Route.Section("beyond")) }
                     }
-                    HorizontalDivider(color = Vault.Edge)
                 }
             }
-            // The rest of your people: new ones past the first ten, then (the Earlier line) what you'd seen. Then a plain end.
-            if (rest.isNotEmpty()) {
-                item(key = "morepeople") { SectionLine("More from your people") }
-                personRuns(runsOf(rest), top = false)
-            }
-            if (shown.isNotEmpty() && !feed.loading) item(key = "end") {
-                // The end: a plain mark (not a marble to collect), nothing more.
-                Box(Modifier.fillMaxWidth().padding(vertical = 28.dp), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(7.dp).clip(CircleShape).background(Vault.Line))
-                }
-            }
+            if (shown.isEmpty() && !feed.loading) item(key = "s:none") { Text("Nothing from your people in the last two days.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         }
         if (!edition) items(mixed, key = { if (it is cc.aaro.cosign.TopicCard) "t:" + it.id else (it as cc.aaro.cosign.Pick).e.id }) { x ->
             HorizontalDivider(color = Vault.Edge)
@@ -902,7 +866,7 @@ private fun TodayBlock(stories: List<cc.aaro.cosign.TopicCard>, social: Social, 
     fun isRead(c: cc.aaro.cosign.TopicCard) = read[c.id] ?: social.storyRead(c)
     var open by remember { mutableStateOf(false) }
     val allRead = stories.all(::isRead)
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Vault.Surface)
+    Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Vault.Surface)
         .border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))) {
         if (allRead && !open) {
             Row(Modifier.fillMaxWidth().clickable { open = true }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -911,14 +875,13 @@ private fun TodayBlock(stories: List<cc.aaro.cosign.TopicCard>, social: Social, 
             }
             return@Column
         }
-        Text("Today", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp))
+        Text("Today", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 14.dp, top = 11.dp, bottom = 6.dp))
         stories.forEachIndexed { i, c ->
-            if (i > 0) HorizontalDivider(color = Vault.Edge)
+            HorizontalDivider(color = Vault.Edge)
             justDismissed["t:" + c.id]?.let { d -> PutAway(d.label) { social.undoDismiss("t:" + c.id) } }
                 ?: TodayRow(c, social, nav, isRead(c)) { read[c.id] = true }
         }
-        Text("More stories", color = Vault.Accent, style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(start = 6.dp, bottom = 6.dp).clip(RoundedCornerShape(10.dp)).clickable { nav.open(Route.Stories) }.padding(10.dp))
+        SectionMore("More stories") { nav.open(Route.Stories) }
     }
 }
 
@@ -954,8 +917,91 @@ private fun TodayRow(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav, read
     }
 }
 
-/** Feed 3: what's new from your people, at most this many posts, before the news and beyond (the rest follow them). */
-private const val LEAD = 10
+
+/** One of Feed 3's sections: a title (a quiet note on the right), its rows, its More. Plain (only Today's news is boxed). */
+@Composable
+private fun SectionCard(title: String, note: String?, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) =
+    Column(Modifier.padding(top = 10.dp).fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            note?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelMedium) }
+        }
+        content()
+    }
+
+/** A section's More: its whole list. */
+@Composable
+private fun SectionMore(label: String, onClick: () -> Unit) {
+    HorizontalDivider(color = Vault.Edge)
+    Text("$label ›", color = Vault.Accent, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp))
+}
+
+/**
+ * A post as one compact row of a fixed height: picture, name and time, two lines of its words, a small square of its
+ * first picture. A tap opens it whole. [why]: beyond your people, why it's here.
+ */
+@Composable
+private fun CompactPost(p: cc.aaro.cosign.Pick, people: Map<String, Person>, nav: Nav, why: String? = null) {
+    val n = p.e
+    val body = remember(n.id) { Body.of(n) }
+    val words = remember(n.id, people.size) { cc.aaro.cosign.readable(body.parts.filterIsInstance<Body.Part.Plain>().joinToString("") { it.s }.ifBlank { n.content }) { people[it]?.shown } }
+    val picture = body.images.firstOrNull()
+    val spam = nav.social.spam.collectAsState().value[n.id]
+    HorizontalDivider(color = Vault.Edge)
+    Row(Modifier.fillMaxWidth().clickable { nav.thread(n.id) }.padding(start = 16.dp, end = 16.dp, top = 9.dp, bottom = 10.dp)) {
+        Avatar(people[n.pubkey], n.pubkey, 28, Modifier.padding(top = if (why != null) 16.dp else 2.dp).clickable { nav.profile(n.pubkey) })
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            why?.takeIf { it.isNotEmpty() }?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                if (p.reason.startsWith("★")) append("★ ")
+                withStyle(SpanStyle(color = Vault.Text, fontWeight = FontWeight.SemiBold)) { append(people[n.pubkey]?.shown ?: shortNpub(n.pubkey)) }
+                append(" · " + since(n.createdAt))
+                if (spam != null) withStyle(SpanStyle(color = Vault.AmberText)) { append(" · Looks like spam") }
+            }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(words.trim().replace(Regex("\\s+"), " "), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp))
+        }
+        if (picture != null) {
+            Spacer(Modifier.width(10.dp))
+            NetImage(picture.url, Modifier.padding(top = 2.dp).size(48.dp).clip(RoundedCornerShape(9.dp)), 144, ground = Vault.Edge)
+        }
+    }
+}
+
+/** A Feed 3 section's whole list, newest first, full-size posts (what its More opens). */
+@Composable
+private fun SectionScreen(which: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar(when (which) { "special" -> "Special Follow"; "beyond" -> "Beyond your people"; else -> "Your people" }, nav)
+    val feed by social.feed.collectAsState()
+    val beyond by social.beyond.collectAsState()
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    val previews by social.previews.collectAsState()
+    val muted by social.muted.collectAsState()
+    val dismissed by social.dismissed.collectAsState()
+    val keptUrls = social.later.items.collectAsState().value.filter { it.deleted == null }.mapNotNull { it.url }.toSet()
+    val context = LocalContext.current
+    val list = when (which) {
+        "special" -> feed.posts.filter { it.reason.startsWith("★") }
+        "beyond" -> beyond
+        else -> feed.posts.filter { !it.reason.startsWith("★") }
+    }.filter { it.e.pubkey !in muted && it.e.id !in dismissed }
+    val state = rememberLazyListState()
+    LogWatcher(state, "following/$which", list.map { it.e.id })
+    LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (list.isEmpty()) item(key = "none") { Text("Nothing here just now.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        items(list, key = { it.e.id }) { p ->
+            HorizontalDivider(color = Vault.Edge)
+            NoteCard(p.e, people, p.e.id in liked, nav, onLike = { social.like(p.e) }, maxLines = 12, pick = p, previews = previews, wide = true,
+                saved = social.postLink(p.e) in keptUrls, onSave = { social.keepPost(p.e, people[p.e.pubkey]?.shown ?: "A post") },
+                onShare = { FeedLog.act(p.e.id, "share"); share(context, p.e.content.trim().take(280) + "\n\n" + social.postLink(p.e), null) }) {
+                PostMenu(p, people[p.e.pubkey]?.shown ?: shortNpub(p.e.pubkey), social)
+            }
+        }
+    }
+}
 
 /** A quiet label between Feed 3's parts. */
 @Composable
