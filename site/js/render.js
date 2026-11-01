@@ -1,6 +1,6 @@
 // Turning a post's text into the page: everything escaped first, then links, pictures, videos, mentions
 // of people (their names filled in when known), quoted posts (loaded after), #tags and custom emoji.
-import { decode, npub, nevent, pathFor } from "./ids.js";
+import { decode, npub, nevent, naddr, pathFor } from "./ids.js";
 import { profiles, wantProfile } from "./data.js";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -11,7 +11,7 @@ const TOKEN = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])|(?:nostr:|@)?\b((?:npu
 
 export function name(pk) {
   const p = profiles.get(pk);
-  return (p?.display_name || p?.name || "").trim() || npub(pk).slice(0, 12) + "…";
+  return String(p?.display_name || p?.name || "").trim() || npub(pk).slice(0, 12) + "…";
 }
 
 export function avatar(pk, size = 40) {
@@ -56,12 +56,15 @@ export function content(e, { quotes = true } = {}) {
       if (d.type === "profile") {
         wantProfile(d.pubkey, d.relays);
         out += `<a class="mention" href="${pathFor(m[2].toLowerCase(), d)}" data-name="${d.pubkey}">@${esc(name(d.pubkey))}</a>`;
-      } else if (quotes && (d.type === "event" || d.type === "address") && quoted.length < 3) {
+      } else if (quotes && (d.type === "event" || d.type === "address") && !quoted.length) {
+        // the first post or thing it points to: a card (content-rules.md §3); any later one, a short link
         quoted.push(m[2].toLowerCase());
         out += `<span class="quote-slot" data-quote="${esc(m[2].toLowerCase())}"></span>`;
       } else {
-        out += `<a href="${pathFor(m[2].toLowerCase(), d)}">${d.type === "address" ? "an article" : "a post"}</a>`;
+        out += shortLink(m[2].toLowerCase(), d);
       }
+    } else if (m[4] && !/\p{L}/u.test(m[4])) {
+      out += esc(m[0]); // (a tag has a letter: "#1" is just text)
     } else if (m[4]) {
       out += `${esc(m[3])}<a class="tag" href="/?q=${encodeURIComponent("#" + m[4])}">#${esc(m[4])}</a>`;
     } else if (m[5]) {
@@ -70,12 +73,21 @@ export function content(e, { quotes = true } = {}) {
     }
   }
   out += esc(text.slice(last));
+  // quoted only by a q tag (NIP-18), nothing in the text: its card, after the text
+  const q = quotes && !quoted.length ? (e.tags || []).find((t) => t[0] === "q" && t[1]) : null;
+  const qRef = q && (/^[0-9a-f]{64}$/.test(q[1]) ? nevent(q[1], { relays: q[2] ? [q[2]] : [] })
+    : /^\d+:[0-9a-f]{64}:/.test(q[1]) ? naddr({ kind: +q[1].split(":")[0], pubkey: q[1].split(":")[1], identifier: q[1].split(":").slice(2).join(":"), relays: q[2] ? [q[2]] : [] }) : null);
+  if (qRef) out += `\n<span class="quote-slot" data-quote="${esc(qRef)}"></span>`;
   out = out.trim().replace(/\n{3,}/g, "\n\n").replace(/\n/g, "<br>")
     .replace(/(?:<br>)+(<span class="quote-slot")/g, "$1").replace(/(<\/span>)(?:<br>)+(?=<span class="quote-slot"|$)/g, "$1")
     .replace(/(?:<br>\s*)+$/, "");
   if (gallery.length) out += `<div class="media${gallery.length > 1 ? " grid" : ""}">${gallery.join("")}</div>`;
   return out;
 }
+
+/** A post or thing a post points to, beyond the first (which is a card): "↪ quoted", or "↪ an article". */
+export const shortLink = (entity, d) =>
+  `<a class="ref" data-shortlink="${esc(entity)}" href="/${esc(entity)}">↪ ${d.type === "address" && d.kind === 30023 ? "an article" : "quoted"}</a>`;
 
 // Long-form pieces (kind 30023) are Markdown: a small, careful subset, everything escaped first.
 export function markdown(src) {
@@ -87,7 +99,7 @@ export function markdown(src) {
       const d = decode(ent);
       if (!d) return ent;
       if (d.type === "profile") { wantProfile(d.pubkey); return `<a class="mention" href="${pathFor(ent, d)}" data-name="${d.pubkey}">@${esc(name(d.pubkey))}</a>`; }
-      return `<a href="${pathFor(ent, d)}">${d.type === "address" ? "an article" : "a post"}</a>`;
+      return shortLink(ent, d);
     })
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -149,6 +161,7 @@ export function ago(ts) {
 }
 export const fullDate = (ts) => new Date(ts * 1000).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
 
-/** The link to a post on this site, with where it was found and who wrote it, so it opens fast elsewhere too. */
-export const postPath = (e, found = []) => `/e/${nevent(e.id, { relays: found, author: e.pubkey })}`;
-export const personPath = (pk) => `/p/${npub(pk)}`;
+/** The link to a post on this site, with where it was found and who wrote it, so it opens fast elsewhere too; it's
+ *  also the link to share (marble.syb.lol/nevent1…, and /npub1… for a person). */
+export const postPath = (e, found = []) => `/${nevent(e.id, { relays: found, author: e.pubkey })}`;
+export const personPath = (pk) => `/${npub(pk)}`;

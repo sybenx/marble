@@ -38,7 +38,7 @@ export function testRelay() {
 
 export function normalize(url) {
   try {
-    let u = (url || "").trim();
+    let u = String(url || "").trim();
     if (!/^wss?:\/\//i.test(u)) return null;
     const p = new URL(u);
     const local = p.hostname === "localhost" || /^(127\.|10\.|192\.168\.)/.test(p.hostname);
@@ -59,6 +59,13 @@ export function relays(...lists) {
 
 const sockets = new Map(); // url → Relay
 const down = new Set(); // relays that failed to connect this visit
+// A phone drops a background page's connections, and whatever it tries meanwhile fails: back on screen (or back
+// online), every relay gets another chance.
+if (typeof document !== "undefined") {
+  const again = () => { if (document.visibilityState === "visible") down.clear(); };
+  document.addEventListener("visibilitychange", again);
+  addEventListener("online", again);
+}
 let nextId = 0;
 
 class Relay {
@@ -138,7 +145,8 @@ export function warm(urls) {
  */
 export function req(urls, filters, { timeout = 5000, onEvent = null, signal = null, stopOnFirst = false, settle = 0, unsigned = false } = {}) {
   filters = Array.isArray(filters) ? filters : [filters];
-  const list = relays(urls);
+  const local = testRelay();
+  const list = relays(urls, local && !unsigned ? [local] : []); // testing on localhost: the local relay is read too
   return new Promise((resolve) => {
     const id = `m${(nextId++).toString(36)}`;
     const events = new Map();

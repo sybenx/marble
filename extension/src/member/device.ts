@@ -47,6 +47,15 @@ const rid = () => bytesToHex(randomBytes(8));
 /** An answer that ends the round: the user must decide, or the server refuses outright. */
 const FINAL = /^(needs-approval|refused|revoked):/;
 
+/** What a server is told when it asks this browser to help read something. */
+export const NOT_FOR_SERVERS = 'not-allowed: your devices read your messages, your servers don’t';
+/**
+ * Who may ask a device for a piece of a decryption: another of the user's devices, and
+ * nobody else. The same rule the Android library keeps (Helping.helps), in one place so a
+ * test can hold it still.
+ */
+export const readsWithUs = (role?: string) => role === 'phone' || role === 'device';
+
 export class Device {
   private box: Mailbox;
   private waiting = new Map<string, (r: any) => void>();
@@ -225,11 +234,16 @@ export class Device {
         const zs = partialAll(this.st.group, this.st.shares, round.nonces, m.msg, [...(m.commits ?? [m.commit]), ...round.commits]);
         reply({ ok: true, commits: round.commits, zs, commit: round.commits[0], z: zs[0][1] });
       });
-    } else if (m.type === 'ecdh_req' && Date.now() / 1000 - sentAt < 30) {
-      void F.load().then(() => {
-        const points = this.st.shares.map(s => F.ecdhPartial(s.idx, s.secret, m.participants, m.peerX));
-        this.box.send(from, { type: 'ecdh_res', id: m.id, ok: true, points, point: points[0] });
-      });
+    } else if (m.type === 'ecdh_req') {
+      // **Your devices read your messages; your servers don't.** This branch only ever runs
+      // for a server (see above), and a server asking for a piece of a decryption is a
+      // server coordinating one, which COSIGN.md §5.6 forbids outright. It used to answer:
+      // this browser handed over three points' worth of ECDH partials to any server that
+      // asked, for any peer it named, with no grant checked and nothing shown to you. One
+      // breached server, with its own share, then had the secret that opens everything this
+      // account encrypts to itself — app data, notes — and a conversation key for every peer
+      // it cared to name. The phone has refused this for a while; this is the same rule.
+      this.box.send(from, { type: 'ecdh_res', id: m.id, ok: false, reason: NOT_FOR_SERVERS });
     }
   }
 

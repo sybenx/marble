@@ -47,6 +47,15 @@ function flushProfiles() {
   if (wanted.size) flushTimer = setTimeout(flushProfiles, 30);
 }
 
+/** Many people's profiles at once (say, everyone you follow), resolving once they're in (or after a short wait). */
+export async function profilesOf(pks, wait = 2500) {
+  const need = pks.filter((pk) => !profiles.has(pk) && !asked.has(pk));
+  need.forEach((pk) => asked.add(pk));
+  const parts = [];
+  for (let i = 0; i < need.length; i += 300) parts.push(req(relays(FAST, INDEXERS), { kinds: [0], authors: need.slice(i, i + 300) }, { timeout: wait, settle: 800, onEvent: keep }));
+  await Promise.all(parts);
+}
+
 /**
  * Someone's profile: what's known, or the first answer (null if nobody has it). The others keep coming
  * for a moment, and a newer one is announced through onProfile.
@@ -154,11 +163,11 @@ export async function postsBy(pk, { until, limit = 30, hints = [], onEvent = nul
 }
 
 /** name@domain → pubkey (and the places it says to look), or null. */
-export async function resolveNip05(address) {
+export async function resolveNip05(address, timeout = 4000) {
   const [name, domain] = address.includes("@") ? address.split("@") : ["_", address];
   try {
     const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 4000);
+    setTimeout(() => ctrl.abort(), timeout);
     const r = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`, { signal: ctrl.signal, redirect: "error" });
     const data = await r.json();
     const names = data?.names || {};

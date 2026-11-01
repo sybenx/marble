@@ -118,5 +118,5 @@ export function parseInput(raw) {
 /** The page for an address: /e/…, /p/… or /a/…. */
 export function pathFor(entity, decoded = decode(entity)) {
   if (!decoded) return null;
-  return `/${{ event: "e", profile: "p", address: "a" }[decoded.type]}/${entity}`;
+  return `/${entity}`;
 }

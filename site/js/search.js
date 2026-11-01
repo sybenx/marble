@@ -4,9 +4,10 @@
 // their .well-known, people you follow first. Ranking is search-rank.js, unchanged. One difference: the
 // first people found show at once, not 150 ms later (later updates are still batched).
 import { rankProfiles, matchesQuery, verifyNip05, parseProfile, isBridged } from "./search-rank.js";
-import { req, FAST } from "./pool.js";
+import { req, relays, FAST } from "./pool.js";
 
-export const SEARCH_RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol"];
+// Ditto's (relay.ditto.pub, syb.lol) and two more search relays, as the phone asks (results show as they arrive)
+export const SEARCH_RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol", "wss://search.nos.today", "wss://search.nostrarchives.com"];
 const PRIMAL = ["wss://cache2.primal.net/v1", "wss://cache1.primal.net/v1"];
 const RELAY_WAIT = 2500, ENRICH_WAIT = 2500, LATE_WAIT = 6000;
 const FOLLOWER_COUNTS = 10000133; // Primal's kind for {pubkey: followers}
@@ -97,10 +98,33 @@ export async function followerCounts(pubkeys) {
 }
 
 /** Posts matching words, from both search relays, newest first. A #tag asks the fast relays for that tag instead. */
-export async function searchPosts(query, { limit = 40, authors = null, signal = null } = {}) {
+export async function searchPosts(query, { limit = 40, authors = null, kinds = [1], signal = null } = {}) {
   const tag = /^#([\p{L}\p{N}_-]+)$/u.exec(query.trim());
-  const filter = tag ? { kinds: [1], "#t": [tag[1].toLowerCase()], limit } : { kinds: [1], search: query, limit };
+  const filter = tag ? { kinds, "#t": [tag[1].toLowerCase()], limit } : { kinds, search: query, limit };
   if (authors) filter.authors = authors;
   const got = await req(tag ? FAST : SEARCH_RELAYS, filter, { timeout: 5000, settle: 800, signal });
   return got.sort((a, b) => b.created_at - a.created_at);
+}
+
+// Ditto's servers take "sort:new" (newest first); the others don't, and get the words as they are.
+const NEWEST_FIRST = ["wss://relay.ditto.pub", "wss://syb.lol"];
+
+/**
+ * One person's posts about some words, newest first, as the phone finds them: Ditto's servers newest first (by
+ * relevance, a post from this morning can be past the first hundred), the other search servers as they are, and the
+ * person's latest 200 posts that have every word (what no search server has yet). hints: where they post.
+ */
+export async function postsAbout(pk, words, { hints = [], signal = null } = {}) {
+  const ws = words.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = (e) => `${e.content || ""} ${(e.tags.find((t) => t[0] === "title") || [])[1] || ""}`.toLowerCase();
+  const base = { kinds: [1, 30023], authors: [pk] }, o = { timeout: 5000, settle: 800, signal };
+  // (a word at least, from the search servers: one that ignores the search would send everything)
+  const some = (e) => ws.some((w) => text(e).includes(w)), every = (e) => ws.every((w) => text(e).includes(w));
+  const lists = await Promise.all([
+    req(NEWEST_FIRST, { ...base, search: `${words} sort:new`, limit: 40 }, o).then((l) => l.filter(some)),
+    req(SEARCH_RELAYS.filter((u) => !NEWEST_FIRST.includes(u)), { ...base, search: words, limit: 40 }, o).then((l) => l.filter(some)),
+    req(relays(hints, FAST), { ...base, limit: 200 }, o).then((l) => l.filter(every)),
+  ]);
+  const seen = new Set();
+  return lists.flat().filter((e) => !seen.has(e.id) && seen.add(e.id)).sort((a, b) => b.created_at - a.created_at);
 }
