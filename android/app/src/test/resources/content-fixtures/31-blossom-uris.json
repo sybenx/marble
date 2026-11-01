@@ -1,0 +1,39 @@
+{
+  "name": "blossom-uris",
+  "rule": "§4 §5",
+  "why": "Blossom links (BUD-10): a picture shows as media, found through its xs servers, then the as author's server list (kind 10063); any other file is a short link that opens once found. The blossom: text itself never shows.",
+  "source": "synthetic",
+  "event": {
+    "kind": 1,
+    "created_at": 1793500000,
+    "tags": [],
+    "content": "Photo from the trip blossom:b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553.jpg?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=48211\nand the slides: blossom:9a6f2b2a3c3e5a0e4d7b1c8f6e2d4a9b0c1e3f5a7b9d2c4e6f8a0b1c3d5e7f90.pdf?xs=https://cdn.satellite.earth&xs=blossom.band.",
+    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+    "id": "16c6c507d5f90f9bdd742820e460c0d1e5a3bf5f42ba465843b38d473f5477f4"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "Photo from the trip"
+      },
+      {
+        "text": "and the slides:"
+      },
+      {
+        "link": "blossom:9a6f2b2a3c3e5a0e4d7b1c8f6e2d4a9b0c1e3f5a7b9d2c4e6f8a0b1c3d5e7f90.pdf?xs=https://cdn.satellite.earth&xs=blossom.band"
+      }
+    ],
+    "cards": [],
+    "media": [
+      {
+        "image": "blossom:b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553.jpg?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=48211"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "blossom:"
+    ]
+  }
+}

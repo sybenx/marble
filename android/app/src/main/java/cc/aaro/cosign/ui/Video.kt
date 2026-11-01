@@ -129,7 +129,10 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
-    val url = v.url
+    // A Blossom link: played from wherever it's found.
+    val url = androidx.compose.runtime.produceState(v.url.takeIf { !it.startsWith("blossom:") }, v.url) {
+        if (v.url.startsWith("blossom:")) value = cc.aaro.cosign.Blossom.resolve(v.url)
+    }.value ?: v.url
     var ratio by remember(url) { mutableFloatStateOf(v.ratio) }
     val muted by Videos.muted
     var showControls by remember { mutableStateOf(false) }

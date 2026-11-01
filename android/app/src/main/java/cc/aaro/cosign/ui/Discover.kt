@@ -2304,7 +2304,9 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         // Links first (anything inside one is the link's), then references (with or without nostr:, not inside a word),
         // #tags (with a letter: #1 is text) and :emoji: (only those the post defines; others stay text).
         private val TOKEN = Regex("(https?://[^\\s<>\"]+)|(?<![\\p{L}\\p{N}_/:])(?:nostr:)?((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]+)" +
-            "|(?<=^|[\\s(])#((?=[\\p{N}_]*\\p{L})[\\p{L}\\p{N}_]{1,80})|:([A-Za-z0-9_+-]{1,60}):")
+            "|(?<=^|[\\s(])#((?=[\\p{N}_]*\\p{L})[\\p{L}\\p{N}_]{1,80})|:([A-Za-z0-9_+-]{1,60}):" +
+            // A Blossom link (BUD-10): a picture or video shows as one; any other file, a short link.
+            "|(blossom:[0-9a-fA-F]{64}\\.[A-Za-z0-9]{1,10}(?:\\?[^\\s<>\"]*)?)")
         private const val TRAILING = ".,;:!?)]}'\""
 
         /** A NIP-36 content warning: its reason ("": none given); null: none. */
@@ -2336,6 +2338,8 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 val ref = m.groups[2]?.value
                 val tag = m.groups[3]?.value
                 val emoji = m.groups[4]?.value
+                val blossom = m.groups[5]?.value?.trimEnd { it in TRAILING }?.let { cc.aaro.cosign.Blossom.parse(it) }
+                if (blossom != null) at = m.range.first + blossom.raw.length
                 when {
                     url != null && isVideo(url) -> images += video(url)
                     url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
@@ -2348,6 +2352,11 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                     }
                     tag != null -> parts += Part.Tag(tag)
                     emoji != null -> parts += emojis[emoji]?.let { Part.Emoji(emoji, it) } ?: Part.Plain(m.value)
+                    blossom != null -> when {
+                        blossom.isVideo -> images += video(blossom.raw)
+                        blossom.isImage -> images += Img(blossom.raw, ratioOf(blossom.raw) ?: 1.5f, null)
+                        else -> parts += Part.Link(blossom.raw, "a .${blossom.ext} file")
+                    }
                 }
             }
             if (at < text.length) parts += Part.Plain(text.substring(at))
@@ -2373,13 +2382,22 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
     }
 }
 
+/** A Blossom file, opened in the browser once it's found (Marble says so if it isn't). */
+private fun openBlossom(raw: String) = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+    val app = CosignApp.instance
+    val url = cc.aaro.cosign.Blossom.resolve(raw)
+    if (url == null) android.widget.Toast.makeText(app, "Couldn't find that file", android.widget.Toast.LENGTH_SHORT).show()
+    else try { app.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+}
+
 /** The text, drawn: links, mentions, #tags and short links tappable; custom emoji as pictures ([Body.emojiContent]). */
 private fun Body.annotated(people: Map<String, Person>, nav: Nav): AnnotatedString = buildAnnotatedString {
     val style = TextLinkStyles(SpanStyle(color = Vault.Accent))
     for (p in parts) { val shown = label(p, people); when (p) {
         is Body.Part.Plain -> append(p.s)
         // A marble.syb.lol link to a post: that post, here; any other link, in your browser.
-        is Body.Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, style) { OpenPost.ref.value = r }) { append(shown!!) } }
+        is Body.Part.Link -> if (p.url.startsWith("blossom:")) withLink(LinkAnnotation.Clickable(p.url, style) { openBlossom(p.url) }) { append(shown!!) }
+            else cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, style) { OpenPost.ref.value = r }) { append(shown!!) } }
             ?: withLink(LinkAnnotation.Url(p.url, style)) { append(shown!!) }
         is Body.Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, style) { nav.profile(p.pubkey) }) { append(shown!!) }
         // The first is shown in its own box under the text; any more, as a short link (never the raw string).
@@ -2618,7 +2636,8 @@ private fun articleText(spans: List<Markdown.Span>, people: Map<String, Person>,
                 val shown = none.label(p, people)
                 when (p) {
                     is Body.Part.Plain -> append(p.s)
-                    is Body.Part.Link -> cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, link) { OpenPost.ref.value = r }) { append(shown!!) } }
+                    is Body.Part.Link -> if (p.url.startsWith("blossom:")) withLink(LinkAnnotation.Clickable(p.url, link) { openBlossom(p.url) }) { append(shown!!) }
+                        else cc.aaro.cosign.inAppRef(p.url)?.let { r -> withLink(LinkAnnotation.Clickable(p.url, link) { OpenPost.ref.value = r }) { append(shown!!) } }
                         ?: withLink(LinkAnnotation.Url(p.url, link)) { append(shown!!) }
                     is Body.Part.Mention -> withLink(LinkAnnotation.Clickable(p.pubkey, link) { nav.profile(p.pubkey) }) { append(shown!!) }
                     is Body.Part.Quote -> withLink(LinkAnnotation.Clickable(p.id, link) { nav.thread(p.id) }) { append(shown!!) }

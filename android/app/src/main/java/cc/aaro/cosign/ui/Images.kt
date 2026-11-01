@@ -49,6 +49,8 @@ object Images {
     suspend fun load(url: String, px: Int): ImageBitmap? {
         val key = "$px $url"
         memory.get(key)?.let { return it }
+        // A Blossom link: found where its hints say, then loaded (and kept) under its own name.
+        if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { load(it, px) }?.also { memory.put(key, it) }
         if (!url.startsWith("https://") || synchronized(failed) { url in failed }) return null
         return gate.withPermit {
             withContext(Dispatchers.IO) {
@@ -74,6 +76,7 @@ object Images {
  * keep only its first frame, which for a drawing being drawn is a blank page). Null if it can't be had or decoded.
  */
 suspend fun Images.animated(url: String): android.graphics.drawable.Drawable? {
+    if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { animated(it) }
     if (!url.startsWith("https://")) return null
     return withContext(Dispatchers.IO) {
         try {
