@@ -1,15 +1,16 @@
 {
   "name": "blossom-uris",
   "rule": "§4 §5",
-  "why": "Blossom links (BUD-10): a picture shows as media, found through its xs servers, then the as author's server list (kind 10063); any other file is a short link that opens once found. The blossom: text itself never shows.",
+  "why": "Blossom links (BUD-10): a picture shows as media, found through its xs servers, then the as author's server list (kind 10063); any other file is a short link that opens once found. The blossom: text itself never shows. (The picture is a real PNG on blossom.primal.net, 2618323 bytes: it shows.)",
   "source": "synthetic",
   "event": {
     "kind": 1,
     "created_at": 1793500000,
     "tags": [],
-    "content": "Photo from the trip blossom:b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553.jpg?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=48211\nand the slides: blossom:9a6f2b2a3c3e5a0e4d7b1c8f6e2d4a9b0c1e3f5a7b9d2c4e6f8a0b1c3d5e7f90.pdf?xs=https://cdn.satellite.earth&xs=blossom.band.",
-    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
-    "id": "16c6c507d5f90f9bdd742820e460c0d1e5a3bf5f42ba465843b38d473f5477f4"
+    "content": "Photo from the trip blossom:57c93553137af98d39922e3091b840a8ef87fdfe7ba1cb60da808c16ffe89051.png?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=2618323\nand the slides: blossom:9a6f2b2a3c3e5a0e4d7b1c8f6e2d4a9b0c1e3f5a7b9d2c4e6f8a0b1c3d5e7f90.pdf?xs=https://cdn.satellite.earth&xs=blossom.band.",
+    "pubkey": "31798d163e9fd05cca7dbf694150583ba65c0d7467427728eb2caf531f4f82c0",
+    "id": "cd8b13bd1b08b11396b48ae6d1c132f8f342c88d7c74b79817d29df66610d8ab",
+    "sig": "97ffd13b0ca4f8f67a2919636518e948ffdac6f3d2dd2d04e411a9cd5e258beaf4ee4ceb48af10aba504d58f48b6938802d41916ede1728e9f2581d5619c3fcd"
   },
   "related": [],
   "expect": {
@@ -27,7 +28,7 @@
     "cards": [],
     "media": [
       {
-        "image": "blossom:b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553.jpg?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=48211"
+        "image": "blossom:57c93553137af98d39922e3091b840a8ef87fdfe7ba1cb60da808c16ffe89051.png?xs=blossom.primal.net&as=142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9&sz=2618323"
       }
     ],
     "warning": null,
