@@ -245,7 +245,7 @@ function previewOf(e) {
 const aboutOf = (e) => ["alt", "title", "name"].map((k) => text((e.tags.find((t) => t[0] === k) || [])[1]).trim()).find(Boolean) || "Something made in another app";
 // The text for a preview: no links to other posts or people, no addresses.
 const REF = /(?:nostr:)?\b(?:note|nevent|naddr)1[02-9ac-hj-np-z]{6,}/gi;
-const plain = (s) => text(s).replace(/https?:\/\/\S+/g, "").replace(/nostr:\S+/g, "").replace(REF, "").replace(/\s+/g, " ").trim();
+const plain = (s) => text(s).replace(/https?:\/\/\S+|blossom:\S+/g, "").replace(/nostr:\S+/g, "").replace(REF, "").replace(/\s+/g, " ").trim();
 // The post's text, as the page will show it (roughly): pictures as pictures, links as links, mentions of people and
 // posts without the code they're written in.
 function paragraphs(e) {

@@ -2,12 +2,13 @@
 // of people (their names filled in when known), quoted posts (loaded after), #tags and custom emoji.
 import { decode, npub, nevent, naddr, pathFor } from "./ids.js";
 import { profiles, wantProfile } from "./data.js";
+import { parseBlossom } from "./blossom.js";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 const IMAGE = /\.(jpe?g|png|gif|webp|avif|svg)(\?.*)?$/i;
 const VIDEO = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
-const TOKEN = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])|(?:nostr:|@)?\b((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\b|(^|[\s(])#([\p{L}\p{N}_]{1,60})|:([\w-]{1,40}):/giu;
+const TOKEN = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])|(?:nostr:|@)?\b((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\b|(^|[\s(])#([\p{L}\p{N}_]{1,60})|:([\w-]{1,40}):|(blossom:[0-9a-f]{64}\.[a-z0-9]{1,8}(?:\?[^\s<>"']*[^\s<>"'.,;:!?)\]}])?)/giu;
 
 export function name(pk) {
   const p = profiles.get(pk);
@@ -50,6 +51,13 @@ export function content(e, { quotes = true } = {}) {
       if (IMAGE.test(url) || type.startsWith("image/")) { gallery.push(`<img src="${esc(url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`); continue; }
       if (VIDEO.test(url) || type.startsWith("video/")) { gallery.push(`<video src="${esc(url)}" controls preload="none" playsinline></video>`); continue; }
       out += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60))}${url.length > 70 ? "…" : ""}</a>`;
+    } else if (m[6]) {
+      // a Blossom link (BUD-10): a picture or video among the media, any other file a short link; found later (blossom.js)
+      const b = parseBlossom(m[6]);
+      if (!b) { out += esc(m[0]); continue; }
+      if (b.kind === "image") { gallery.push(`<img data-blossom="${esc(m[6])}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`); continue; }
+      if (b.kind === "video") { gallery.push(`<video data-blossom="${esc(m[6])}" controls preload="none" playsinline></video>`); continue; }
+      out += `<a class="blossom-file finding" data-blossom="${esc(m[6])}">a .${esc(b.ext)} file</a>`;
     } else if (m[2]) {
       const d = decode(m[2]);
       if (!d) { out += esc(m[0]); continue; }

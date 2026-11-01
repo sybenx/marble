@@ -28,7 +28,7 @@ export function queryRe(q) {
 
 const tag = (e, k) => (e.tags.find((t) => t[0] === k) || [])[1] || "";
 const plain = (e) => (e.kind === 30023 ? [tag(e, "title"), tag(e, "summary"), e.content.slice(0, 3000)].join("\n") : e.content)
-  .replace(/nostr:\S+/g, " ").replace(/https?:\/\/\S+/g, " ");
+  .replace(/nostr:\S+/g, " ").replace(/https?:\/\/\S+|blossom:\S+/g, " ");
 const realText = (e) => plain(e).replace(/#\w+/g, "").replace(/\s+/g, " ").trim();
 const isReply = (e) => e.kind === 1 && e.tags.some((t) => t[0] === "e" && t[3] !== "mention");
 const BOTNAME = /\bbot\b|bot$|🤖/i;
