@@ -62,6 +62,9 @@ dependencies {
     implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.19.0")
     // Videos in notes, as Wisp plays them: the player, HLS, its stock controls (media3-ui), fetched with our OkHttp.
     implementation("androidx.media3:media3-exoplayer:1.5.1")
+    // Translating posts on the phone: which language (language ID), and the translation (models downloaded once per language).
+    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("com.google.mlkit:translate:17.0.3")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
@@ -69,6 +72,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("net.sf.kxml:kxml2:2.3.0")
+    // Only to measure language guessing on real posts (LanguagesTest); not in the app (80 MB).
+    testImplementation("com.github.pemistahl:lingua:1.2.2")
     testImplementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.19.0")
 }
 

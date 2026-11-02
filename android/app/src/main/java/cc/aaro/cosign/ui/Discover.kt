@@ -152,6 +152,7 @@ import cc.aaro.cosign.Social
 import cc.aaro.cosign.FeedLog
 import cc.aaro.cosign.Startup
 import cc.aaro.cosign.Translate
+import cc.aaro.cosign.OnDevice
 import cc.aaro.cosign.Ui
 import cc.aaro.cosign.appName
 import cc.aaro.qrst.core.Event
@@ -1827,6 +1828,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     // Translated by your LibreTranslate, if it was in another language; the original a tap away.
     val translations by nav.social.translations.collectAsState()
     val tr = translations[n.id]?.takeIf { it.from != null }
+    val offer = nav.social.offers.collectAsState().value[n.id]
     var original by remember(n.id) { mutableStateOf(false) }
     // A link with a preview shows as a card instead of in the text; an article as a card of its own.
     val link = remember(n.id) { if (pick != null) Calm.link(n) else null }
@@ -1879,6 +1881,12 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Surface).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
             val text = remember(body, people.size) { body.annotated(people, nav) }
             val emoji = remember(body) { body.emojiContent() }
+            // Translated (on the phone), at the top where a long post starts: the original a tap away, in place.
+            if (!veiled && n.kind == 1) LaunchedEffect(n.id) { nav.social.lookAt(n) }
+            tr?.let { t ->
+                Text("Translated from ${OnDevice.name(t.from ?: "")} · " + if (original) "Show translation" else "Show original",
+                    color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 2.dp).clickable { original = !original })
+            } ?: offer?.let { o -> TranslateOffer(n, o, nav.social) }
             if (!veiled && text.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis, inlineContent = emoji)
@@ -1888,10 +1896,6 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 is Body.Part.Quote -> QuoteBox(c.id, people, nav)
                 is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
                 else -> {}
-            }
-            tr?.let { t ->
-                Text("Translated from ${Translate.name(t.from) ?: "another language"} · " + if (original) "Show translation" else "Show original",
-                    color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp).clickable { original = !original })
             }
             // In a list, one picture, no taller than it is wide (and how many more); a thread shows them all, whole.
             val full = maxLines == Int.MAX_VALUE
@@ -3840,4 +3844,22 @@ private fun PollCard(p: cc.aaro.cosign.Polls.Poll, social: Social) {
 private fun untilWords(s: Long): String = when {
     s >= 2 * 86_400 -> "in ${s / 86_400} days"; s >= 86_400 -> "tomorrow"; s >= 2 * 3600 -> "in ${s / 3600} hours"; s >= 3600 -> "in an hour"
     else -> "in ${maxOf(1, s / 60)} minutes"
+}
+
+/**
+ * Not in a language you read, not translated yet: "Translate from Spanish" (one tap, downloading Spanish once), or,
+ * when the language isn't clear, "Translate from…" with the likeliest few and Other; the pick is remembered for
+ * this person.
+ */
+@Composable
+private fun TranslateOffer(n: Event, o: Social.Offer, social: Social) = Box {
+    var open by remember { mutableStateOf(false) }
+    var other by remember { mutableStateOf(false) }
+    val from = o.from
+    Text(if (from != null) "Translate from ${OnDevice.name(from)}" else "Translate from…", color = Vault.Accent, style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(top = 2.dp).clickable { if (from != null) social.translateFrom(n, from, remember = false) else open = true })
+    if (open) DropdownMenu(true, { open = false; other = false }, containerColor = Vault.Surface) {
+        for (l in if (other) OnDevice.all() else o.likeliest) DropdownMenuItem({ Text(OnDevice.name(l), color = Vault.Text) }, { open = false; other = false; social.translateFrom(n, l, remember = true) })
+        if (!other) DropdownMenuItem({ Text("Other…", color = Vault.Muted) }, { other = true })
+    }
 }

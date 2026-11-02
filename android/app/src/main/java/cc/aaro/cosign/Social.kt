@@ -839,7 +839,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
+            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
             pullKept()
@@ -1056,7 +1056,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
-    init { NewsSources.load(CosignApp.instance); NewsSources.changed = { newsChanged() } }
+    init { NewsSources.load(CosignApp.instance); NewsSources.changed = { newsChanged() }; OnDevice.load() }
     /** What you searched, on this phone only (not synced), 30 days. */
     val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
@@ -2521,6 +2521,59 @@ class Social private constructor(private val phone: Phone, context: Context) {
     data class Translated(val text: String, val from: String?)
     val translations = MutableStateFlow<Map<String, Translated>>(emptyMap())
     private val translationsFile = File(context.cacheDir, "translations-" + (phone.ui.value.member?.group?.groupX?.take(16) ?: phone.slot) + ".json")
+
+    // --- Translating on the phone (OnDevice, PostLanguage) ------------------------------------------
+
+    /** A post not in a language you read, not translated yet: from [from] once its language is downloaded, or ask which of [likeliest]. */
+    data class Offer(val from: String?, val likeliest: List<String>)
+    val offers = MutableStateFlow<Map<String, Offer>>(emptyMap())
+    private val looked = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** The language you picked for someone's posts when the guess was unsure. */
+    private val authorLang by lazy { HashMap<String, String>().apply {
+        prefs.getString("authorLang", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { put(it, o.getString(it)) } } catch (_: Exception) {} }
+    } }
+
+    /** A post on screen: translated at once if it isn't in a language you read and its language is on the phone; else offered. */
+    fun lookAt(e: Event) {
+        if (e.id in translations.value || !looked.add(e.id) || e.pubkey == me) return
+        scope.launch(Dispatchers.Default) {
+            try {
+                val text = e.content
+                val cleaned = PostLanguage.clean(text)
+                val known = PostLanguage.tagged(e) ?: synchronized(authorLang) { authorLang[e.pubkey] }
+                val guess = if (known != null) PostLanguage.Guess(known, listOf(known)) else if (!PostLanguage.guessable(cleaned)) return@launch
+                    else PostLanguage.decide(OnDevice.candidates(cleaned))
+                val reads = OnDevice.reads()
+                val from = guess.lang
+                if (from == null) {
+                    // Unsure, and maybe in a language you read: offered only when none of the likeliest is yours.
+                    val likely = guess.likeliest.filter { OnDevice.supported(it) }
+                    if (likely.isNotEmpty() && likely.none { it in reads }) offers.update { it + (e.id to Offer(null, likely)) }
+                    return@launch
+                }
+                if (from in reads || !OnDevice.supported(from)) return@launch
+                val out = OnDevice.translate(text, from, download = false)
+                if (out != null) keepTranslation(e.id, Translated(out, from)) else offers.update { it + (e.id to Offer(from, listOf(from))) }
+            } catch (x: Exception) { if (x is kotlinx.coroutines.CancellationException) throw x }
+        }
+    }
+
+    /** Translate [e] from [from] (downloading that language once, if needed); [pickedFor]: remember it for this author. */
+    fun translateFrom(e: Event, from: String, remember: Boolean) {
+        if (remember) synchronized(authorLang) { authorLang[e.pubkey] = from; prefs.edit().putString("authorLang", org.json.JSONObject(authorLang as Map<*, *>).toString()).apply() }
+        offers.update { it + (e.id to Offer(from, listOf(from))) }
+        scope.launch {
+            val out = OnDevice.translate(e.content, from, download = true)
+            if (out != null) { keepTranslation(e.id, Translated(out, from)); offers.update { it - e.id } }
+            else message.value = "Couldn't translate that right now."
+        }
+    }
+
+    private fun keepTranslation(id: String, t: Translated) {
+        translations.update { (it + (id to t)).entries.toList().takeLast(500).associate { e -> e.key to e.value } }
+        offers.update { it - id }
+        try { translationsFile.writeText(Json.stringify(translations.value.mapValues { (_, v) -> mapOf("text" to v.text, "from" to v.from) })) } catch (_: Exception) {}
+    }
 
     private fun loadTranslations() {
         val m = try { Json.parse(translationsFile.readText()) as? Map<*, *> } catch (_: Exception) { null } ?: return

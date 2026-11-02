@@ -609,6 +609,33 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
         }
 
+        // Translation: posts in a language you don't read are translated on this phone; these you read are left as they are.
+        item { Heading("Languages you read") }
+        item {
+            val added by cc.aaro.cosign.OnDevice.added.collectAsState()
+            var adding by remember { mutableStateOf(false) }
+            val phoneLangs = remember { val l = android.os.LocaleList.getDefault(); (0 until l.size()).map { l[it].language }.distinct() }
+            Column {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (l in phoneLangs) Text(cc.aaro.cosign.OnDevice.name(l), color = Vault.Text, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp)).padding(horizontal = 10.dp, vertical = 7.dp))
+                    for (l in added.filter { it !in phoneLangs }) Text(cc.aaro.cosign.OnDevice.name(l) + "  ×", color = Vault.Text, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))
+                            .clickable { cc.aaro.cosign.OnDevice.setAdded(added - l) }.padding(horizontal = 10.dp, vertical = 7.dp))
+                    Box {
+                        Text("+ Add", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { adding = true }.padding(horizontal = 10.dp, vertical = 7.dp))
+                        if (adding) androidx.compose.material3.DropdownMenu(true, { adding = false }, containerColor = Vault.Surface) {
+                            for (l in cc.aaro.cosign.OnDevice.all().filter { it !in added && it !in phoneLangs })
+                                androidx.compose.material3.DropdownMenuItem({ Text(cc.aaro.cosign.OnDevice.name(l), color = Vault.Text) }, { adding = false; cc.aaro.cosign.OnDevice.setAdded(added + l) })
+                        }
+                    }
+                }
+                Text("Posts in other languages are translated on this phone, at the top of the post, with the original a tap away. A language is downloaded once, the first time.",
+                    color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+
         // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
         item { Heading("Search") }
         item {
