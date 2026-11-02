@@ -138,6 +138,7 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     var showControls by remember { mutableStateOf(false) }
     var userPaused by remember(url) { mutableStateOf(false) }
     var buffering by remember { mutableStateOf(false) }
+    var ended by remember(url) { mutableStateOf(false) }
     var wanted by remember(url) { mutableStateOf(false) }
     var playOnCreate by remember(url) { mutableStateOf(false) }
     var resumeAt by remember(url) { mutableLongStateOf(0L) }
@@ -153,13 +154,17 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
             setMediaItem(MediaItem.fromUri(Uri.parse(url))); prepare()
             volume = if (Videos.muted.value) 0f else 1f
             playWhenReady = false
-            repeatMode = Player.REPEAT_MODE_ONE
+            // Played once, as Jumble does: at the end it stays on its last frame, with Replay.
+            repeatMode = Player.REPEAT_MODE_OFF
         }
         if (resumeAt > 0) player.seekTo(resumeAt)
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(s: VideoSize) { if (s.width > 0 && s.height > 0) ratio = s.width * s.pixelWidthHeightRatio / s.height }
             override fun onIsPlayingChanged(playing: Boolean) { if (!playing && player.playbackState == Player.STATE_READY) userPaused = true }
-            override fun onPlaybackStateChanged(state: Int) { buffering = state == Player.STATE_BUFFERING }
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_ENDED) { ended = true; if (Videos.active.value == url) Videos.active.value = null }
+            }
         }
         player.addListener(listener)
         if (playOnCreate) { playOnCreate = false; Videos.active.value = url; player.play() }
@@ -181,7 +186,7 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
                 val seen = ((b.bottom.coerceAtMost(view.height.toFloat()) - b.top.coerceAtLeast(0f)).coerceAtLeast(0f)) / b.height.coerceAtLeast(1f)
                 val p = exo
                 when {
-                    seen > 0.5f -> if (!userPaused && (Videos.active.value == null || Videos.active.value == url)) {
+                    seen > 0.5f -> if (!userPaused && !ended && (Videos.active.value == null || Videos.active.value == url)) {
                         if (p == null) wanted = true else if (!p.isPlaying) { Videos.active.value = url; p.play() }
                     }
                     seen <= 0f -> { if (wanted) wanted = false; userPaused = false }
@@ -209,6 +214,10 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
                 }, Modifier.fillMaxSize(), update = { it.player = p })
                 if (buffering) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color.White.copy(alpha = 0.7f), strokeWidth = 2.dp)
+                }
+                // Ended: the last frame stays, and Replay plays it from the start.
+                if (ended) Box(Modifier.fillMaxSize().clickable { ended = false; userPaused = false; Videos.active.value = url; p.seekTo(0); p.play() }, contentAlignment = Alignment.Center) {
+                    Icon(Glyphs.replay, "Replay", tint = Color.White, modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(14.dp))
                 }
                 AnimatedVisibility(showControls, Modifier.align(Alignment.TopEnd), enter = fadeIn(), exit = fadeOut()) {
                     Row(Modifier.padding(8.dp)) {
@@ -241,7 +250,7 @@ fun VideoFullScreen() {
             ?: return@DisposableEffect onDispose { Videos.full.value = null }
         val exo = Videos.player(activity).apply {
             setMediaItem(MediaItem.fromUri(Uri.parse(url))); prepare(); seekTo(from)
-            playWhenReady = true; repeatMode = Player.REPEAT_MODE_ONE
+            playWhenReady = true; repeatMode = Player.REPEAT_MODE_OFF
         }
         val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.setCancelable(true)

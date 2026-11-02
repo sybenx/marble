@@ -40,6 +40,8 @@ object Glyphs {
     /** A video's sound: on, and off (muted). */
     val soundOn = line("soundOn", "M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12")
     val soundOff = line("soundOff", "M4 9v6h4l5 4V5L8 9H4zM17 9l5 6M22 9l-5 6")
+    /** Replay: a circle arrow, back to the start. */
+    val replay = line("replay", "M3 12a9 9 0 1 0 3-6.7M3 4v5h5")
     /** Save to the phone (Downloads). */
     val download = line("download", "M12 4v11M7 10l5 5 5-5M5 20h14")
     /** Full screen. */
