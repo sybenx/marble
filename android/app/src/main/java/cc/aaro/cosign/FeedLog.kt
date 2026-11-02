@@ -1,7 +1,7 @@
 package cc.aaro.cosign
 
 import android.content.Context
-import cc.aaro.cosign.core.Json
+import cc.aaro.qrst.core.Json
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.io.OutputStream

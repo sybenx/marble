@@ -1,7 +1,7 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.isHex32
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.isHex32
 
 /**
  * Something made in an app Marble doesn't draw (a 3D object, say): what it is in words, and where "Open" goes.

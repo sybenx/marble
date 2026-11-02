@@ -154,8 +154,8 @@ import cc.aaro.cosign.Startup
 import cc.aaro.cosign.Translate
 import cc.aaro.cosign.Ui
 import cc.aaro.cosign.appName
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.hexToBytes
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.hexToBytes
 import cc.aaro.cosign.parentOf
 import cc.aaro.cosign.shortNpub
 import kotlinx.coroutines.delay
@@ -817,7 +817,7 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
     if (place.known == null && ids.isNotEmpty()) place.known = ids.toSet()
     val atTop by remember(state) { androidx.compose.runtime.derivedStateOf { state.firstVisibleItemIndex <= 1 } }
     LaunchedEffect(atTop, ids) { if (atTop) { place.known = ids.toSet(); if (edition) shown.maxOfOrNull { it.e.createdAt }?.let(social::editionSeen) } }
-    val firstShown by remember(state) { androidx.compose.runtime.derivedStateOf { state.layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String)?.let { k -> cc.aaro.cosign.core.isHex32(k) } == true }?.key as? String } }
+    val firstShown by remember(state) { androidx.compose.runtime.derivedStateOf { state.layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String)?.let { k -> cc.aaro.qrst.core.isHex32(k) } == true }?.key as? String } }
     val fresh = remember(ids, firstShown, atTop) {
         val i = ids.indexOf(firstShown)
         if (atTop || i <= 0) 0 else ids.take(i).count { it !in (place.known ?: emptySet()) }
@@ -1117,7 +1117,7 @@ private fun SeenWatcher(state: LazyListState, social: Social, keys: (String) -> 
         val top = info.viewportStartOffset; val bottom = info.viewportEndOffset
         val now = android.os.SystemClock.uptimeMillis()
         val showing = info.visibleItemsInfo.mapNotNull { v ->
-            val k = (v.key as? String)?.takeIf { it == "stories" || it.startsWith("t:") || cc.aaro.cosign.core.isHex32(it) } ?: return@mapNotNull null
+            val k = (v.key as? String)?.takeIf { it == "stories" || it.startsWith("t:") || cc.aaro.qrst.core.isHex32(it) } ?: return@mapNotNull null
             val shown = minOf(v.offset + v.size, bottom) - maxOf(v.offset, top)
             k.takeIf { v.size > 0 && shown >= 0.6f * minOf(v.size, bottom - top) }
         }.toSet()
@@ -1984,7 +1984,7 @@ private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
     var looked by remember(id) { mutableStateOf(false) }
     var open by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) { q = nav.social.fetchQuoted(id); looked = true; q?.let { People.want(listOf(it.pubkey)) } }
-    val e = q ?: return if (looked) NotFound("https://marble.syb.lol/" + cc.aaro.cosign.core.Bech32.encode("note", id.hexToBytes())) else Unit
+    val e = q ?: return if (looked) NotFound("https://marble.syb.lol/" + cc.aaro.qrst.core.Bech32.encode("note", id.hexToBytes())) else Unit
     if (e.kind != 1) return OtherBox(e, e.pubkey, people, nav)
     Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
         .clickable(onClickLabel = if (open) "Open it" else "Show it whole") { if (open) nav.thread(e.id) else open = true }.padding(horizontal = 12.dp, vertical = 9.dp)) {
@@ -2379,8 +2379,8 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             // Quoted by q tag only (nothing in the text): its first.
             val q = e.tags.firstOrNull { it.size > 1 && it[0] == "q" }?.let { t ->
                 val v = t[1].lowercase()
-                if (cc.aaro.cosign.core.isHex32(v)) Part.Quote(v)
-                else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.cosign.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
+                if (cc.aaro.qrst.core.isHex32(v)) Part.Quote(v)
+                else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.qrst.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
             }
             return Body(tidy, images, mentions, q)
         }
@@ -2803,7 +2803,7 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                 Spacer(Modifier.height(10.dp))
                 val context = LocalContext.current
                 Text(shortNpub(pk), fontFamily = PlexMono, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable {
-                    context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("Account ID", cc.aaro.cosign.core.Nip19.npub(pk)))
+                    context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("Account ID", cc.aaro.qrst.core.Nip19.npub(pk)))
                     social.message.value = "Copied their account ID"
                 })
                 p?.about?.let { Spacer(Modifier.height(10.dp)); Text(it, color = Vault.Text, style = MaterialTheme.typography.bodyMedium) }

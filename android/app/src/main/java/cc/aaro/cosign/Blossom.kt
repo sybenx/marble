@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.isHex32
+import cc.aaro.qrst.core.isHex32
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -79,12 +79,12 @@ object Blossom {
 
     /** BUD-02 auth (kind 24242), signed by [seed]'s key: [verb] the file [sha]. */
     private fun auth(verb: String, sha: String, seed: ByteArray): String {
-        val secret = if (cc.aaro.cosign.core.Secp.isValidSecret(seed)) seed else java.security.MessageDigest.getInstance("SHA-256").digest(seed)
-        val pk = cc.aaro.cosign.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
+        val secret = if (cc.aaro.qrst.core.Secp.isValidSecret(seed)) seed else java.security.MessageDigest.getInstance("SHA-256").digest(seed)
+        val pk = cc.aaro.qrst.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
         val now = System.currentTimeMillis() / 1000
-        val e = cc.aaro.cosign.core.Event(pk, now, 24242, listOf(listOf("t", verb), listOf("x", sha), listOf("expiration", (now + 300).toString())), "Notes").withId()
+        val e = cc.aaro.qrst.core.Event(pk, now, 24242, listOf(listOf("t", verb), listOf("x", sha), listOf("expiration", (now + 300).toString())), "Notes").withId()
         val aux = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        val sig = cc.aaro.cosign.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, aux).joinToString("") { "%02x".format(it) }
+        val sig = cc.aaro.qrst.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, aux).joinToString("") { "%02x".format(it) }
         return "Nostr " + android.util.Base64.encodeToString(e.copy(sig = sig).toJson().toByteArray(), android.util.Base64.NO_WRAP)
     }
 

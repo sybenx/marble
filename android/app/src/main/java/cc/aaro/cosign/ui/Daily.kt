@@ -1,7 +1,7 @@
 package cc.aaro.cosign.ui
 
 import android.content.Context
-import cc.aaro.cosign.core.Json
+import cc.aaro.qrst.core.Json
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +42,7 @@ object Daily {
         issuerKey?.let { return it }
         val base = issuer ?: return null
         val o = try { org.json.JSONObject(get("$base/today")?.decodeToString() ?: return null) } catch (_: Exception) { return null }
-        return o.optString("issuer").takeIf { cc.aaro.cosign.core.isHex32(it) }?.also { issuerKey = it }
+        return o.optString("issuer").takeIf { cc.aaro.qrst.core.isHex32(it) }?.also { issuerKey = it }
     }
     /** The key the pipeline sends its owner tomorrow's marble from (the manifest's preview_bot). */
     @Volatile var previewBot: String? = null
@@ -81,9 +81,9 @@ object Daily {
         asked = System.currentTimeMillis(); askedFor = date
         val text = get(manifest)?.decodeToString() ?: return debug(context, "no list from $manifest")
         val m = Json.parse(text) as? Map<*, *> ?: return debug(context, "list unreadable")
-        (m["preview_bot"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { previewBot = it }
+        (m["preview_bot"] as? String)?.takeIf { cc.aaro.qrst.core.isHex32(it) }?.let { previewBot = it }
         (m["issuer"] as? String)?.takeIf { it.startsWith("https://") || manifest != DEFAULT }?.let { issuer = it.trimEnd('/') }
-        (m["issuer_pubkey"] as? String)?.takeIf { cc.aaro.cosign.core.isHex32(it) }?.let { issuerKey = it }
+        (m["issuer_pubkey"] as? String)?.takeIf { cc.aaro.qrst.core.isHex32(it) }?.let { issuerKey = it }
         if (have) return
         val days = m["days"] as? List<*> ?: return
         rememberNights(context, days)

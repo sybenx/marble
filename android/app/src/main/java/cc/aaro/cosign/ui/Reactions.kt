@@ -49,7 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 import kotlinx.coroutines.withTimeoutOrNull
 
 // The heart under a post, as on Marble Web. A tap likes it. A long press opens a row of emojis above it (your

@@ -1,14 +1,14 @@
 package cc.aaro.cosign
 
 import android.content.Context
-import cc.aaro.cosign.core.Bech32
+import cc.aaro.qrst.core.Bech32
 import cc.aaro.cosign.core.Clock
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.Json
-import cc.aaro.cosign.core.Nip19
-import cc.aaro.cosign.core.isHex32
-import cc.aaro.cosign.core.toHex
-import cc.aaro.cosign.core.hexToBytes
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
+import cc.aaro.qrst.core.Nip19
+import cc.aaro.qrst.core.isHex32
+import cc.aaro.qrst.core.toHex
+import cc.aaro.qrst.core.hexToBytes
 import cc.aaro.cosign.net.Conn
 import cc.aaro.cosign.net.Fetch
 import cc.aaro.cosign.notes.NotesNet
@@ -1110,10 +1110,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val text = toSelf(content, encrypt = true) ?: return false
             val r = java.security.SecureRandom()
             var secret = ByteArray(32).also(r::nextBytes)
-            while (!cc.aaro.cosign.core.Secp.isValidSecret(secret)) r.nextBytes(secret)
-            val pk = cc.aaro.cosign.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
+            while (!cc.aaro.qrst.core.Secp.isValidSecret(secret)) r.nextBytes(secret)
+            val pk = cc.aaro.qrst.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
             val e = Event(pk, Clock.now(), 21078, listOf(listOf("w", w)), text).withId()
-            val sig = cc.aaro.cosign.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, ByteArray(32).also(r::nextBytes))
+            val sig = cc.aaro.qrst.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, ByteArray(32).also(r::nextBytes))
             secret.fill(0)
             return Fetch.publish(live(), e.copy(sig = sig.joinToString("") { "%02x".format(it) })) > 0
         }
@@ -2166,7 +2166,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return null
         val quoted = Ref.parse(link.substringAfterLast('/').substringBefore('?')) as? Ref.Note
         val tail = when {
-            quoted != null -> "nostr:" + cc.aaro.cosign.core.Bech32.encode("note", quoted.id.hexToBytes())
+            quoted != null -> "nostr:" + cc.aaro.qrst.core.Bech32.encode("note", quoted.id.hexToBytes())
             else -> link.trim()
         }
         val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
@@ -2184,7 +2184,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val tags = buildList {
             add(listOf("e", root, "", "root"))
             if (root != parent.id) add(listOf("e", parent.id, "", "reply"))
-            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.cosign.core.isHex32(it) }
+            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
                 .forEach { add(listOf("p", it)) }
         }
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null

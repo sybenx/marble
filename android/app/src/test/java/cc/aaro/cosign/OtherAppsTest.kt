@@ -1,7 +1,7 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.Json
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

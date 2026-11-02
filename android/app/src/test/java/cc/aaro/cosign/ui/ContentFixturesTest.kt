@@ -2,8 +2,8 @@ package cc.aaro.cosign.ui
 
 import cc.aaro.cosign.OtherApps
 import cc.aaro.cosign.Ref
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.Json
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
 import cc.aaro.cosign.readable
 import org.junit.Assert.assertTrue
 import org.junit.Test
