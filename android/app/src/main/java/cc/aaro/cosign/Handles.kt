@@ -1,7 +1,7 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Json
-import cc.aaro.cosign.core.isHex32
+import cc.aaro.qrst.core.Json
+import cc.aaro.qrst.core.isHex32
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async

@@ -1,6 +1,6 @@
 package cc.aaro.cosign.spam
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 
 /**
  * Likely spam, as Wisp finds it (github.com/barrydeen/wisp, MIT), shared with Marble Web and discover

@@ -1,6 +1,6 @@
 package cc.aaro.cosign.ui
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 
 /**
  * An article's Markdown (kind 30023), a careful subset (content-rules §7): headings, paragraphs, lists, block quotes,

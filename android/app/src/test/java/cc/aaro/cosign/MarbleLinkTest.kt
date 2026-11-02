@@ -1,8 +1,8 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Bech32
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.hexToBytes
+import cc.aaro.qrst.core.Bech32
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.hexToBytes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

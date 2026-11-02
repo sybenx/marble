@@ -1,7 +1,7 @@
 package cc.aaro.cosign
 
 import android.content.SharedPreferences
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
