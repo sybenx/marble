@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.min

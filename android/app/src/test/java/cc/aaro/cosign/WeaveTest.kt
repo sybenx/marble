@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
