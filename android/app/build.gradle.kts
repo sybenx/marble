@@ -4,6 +4,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release: phones and tablets only (arm64). The x86_64 copies are for the emulator (debug builds keep them), and ML
+// Kit's translator alone is ~17 MB each.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { it.packaging.jniLibs.excludes.add("lib/x86_64/**") }
+}
+
 android {
     namespace = "cc.aaro.cosign"
     compileSdk = 35
