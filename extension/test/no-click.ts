@@ -3,7 +3,10 @@
 // 1 and 5). Brave (or any Chromium), a throwaway account made here that publishes nothing, and Marble Web's site/
 // served on :8787 (`node serve.mjs <marble-web>/site 8787`).
 //
-//   node build.mjs chrome && [BROWSER=<path>] [SITE=<url>] node --experimental-transform-types test/no-click.ts
+// NO_ACTIVATION=1: as a browser without navigator.userActivation (Safari before 16.4) would, from the clicks and keys
+// the browser itself saw (the content script's isTrusted fallback, dev flag `devNoUserActivation`).
+//
+//   node build.mjs chrome && [NO_ACTIVATION=1] [BROWSER=<path>] [SITE=<url>] node --experimental-transform-types test/no-click.ts
 import { chromium } from 'playwright-core';
 const ext = new URL('../dist/chrome', import.meta.url).pathname;
 const exe = process.env.BROWSER ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
@@ -23,6 +26,7 @@ if (!sw) { log('no service worker: extension not loaded'); await ctx.close(); pr
 const id = new URL(sw.url()).host; log(`extension ${id}`);
 const pop = await ctx.newPage(); await pop.goto(`chrome-extension://${id}/popup.html`);
 await pop.evaluate(() => chrome.storage.local.set({ devNoPublish: true }));
+if (process.env.NO_ACTIVATION) { await pop.evaluate(() => chrome.storage.local.set({ devNoUserActivation: true })); log('without userActivation: clicks the browser saw'); }
 
 const site = await ctx.newPage();
 const win = () => ctx.pages().find(p => p.url().includes('/card.html'));
@@ -31,13 +35,20 @@ const card = () => site.evaluate(() => [...document.documentElement.children].so
 const badge = () => ctx.serviceWorkers()[0].evaluate(() => chrome.action.getBadgeText({})).catch(e => '?' + e.message);
 // A request with no click: a site asking on load or in the background. Playwright's evaluate counts as a click for
 // 5 s (the browser's user activation), so the request goes once that has passed, and says if it hadn't.
-const quiet = () => site.evaluate(() => new Promise(res => setTimeout(() => {
+// [fake]: from the page's own click handler, on a click and a key the page made up (not trusted, not an activation).
+const quiet = (fake = false) => site.evaluate(fake => new Promise(res => setTimeout(() => {
   if (navigator.userActivation?.isActive) return res('error: test bug, the page still counts as clicked');
-  Promise.race([
+  const go = () => Promise.race([
     window.nostr.getPublicKey().then(pk => 'pk ' + pk, e => 'error: ' + e.message),
     new Promise(r => setTimeout(() => r('still waiting after 5 s'), 5000)),
   ]).then(res);
-}, 5500)));
+  if (!fake) return go();
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const b = document.createElement('button'); document.body.append(b);
+  b.addEventListener('click', go, { once: true });
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  b.remove();
+}, 5500)), fake);
 const me = () => site.evaluate(() => { try { return JSON.parse(localStorage.getItem('marble.me'))?.pubkey ?? null; } catch { return null; } });
 async function nothingOpened(label) {
   await wait(2000);
@@ -66,6 +77,17 @@ r = await quiet();
 log(`2 site not let in, no click: ${r}`);
 check(/^error: not-connected:/.test(r), '2 not-connected at once');
 await nothingOpened('2');
+r = await quiet(true);
+log(`2b a click and a key the page made up: ${r}`);
+check(/^error: not-connected:/.test(r), '2b a made-up click: not-connected at once');
+await nothingOpened('2b');
+if (process.env.NO_ACTIVATION) {
+  // Playwright's evaluate is an activation with no click event: userActivation would count it, the fallback doesn't
+  // (shows the fallback is what decides here).
+  r = await site.evaluate(() => Promise.race([window.nostr.getPublicKey().then(pk => 'pk ' + pk, e => 'error: ' + e.message), new Promise(r => setTimeout(() => r('still waiting after 5 s'), 5000))]));
+  check(/^error: not-connected:/.test(r), `2c an activation with no click the browser saw: ${r.slice(0, 26)}`);
+  await nothingOpened('2c');
+}
 
 // 3. A click on the site's Sign in: the window opens, and Allow lets it in.
 await site.click('button.sign-in');

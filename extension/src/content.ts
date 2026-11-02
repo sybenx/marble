@@ -13,13 +13,21 @@ s.onload = () => s.remove();
 
 const target = () => (location.origin === 'null' ? '*' : location.origin);
 
+// A browser without navigator.userActivation (Safari before 16.4): a click or key the browser itself saw in the last
+// 5 s. The page can't fake one (what it dispatches isn't trusted), nor hide one: this listens first, in capture.
+let tapped = 0;
+for (const t of ['click', 'keydown']) window.addEventListener(t, e => { if (e.isTrusted) tapped = Date.now(); }, true);
+let noActivation = !(navigator as any).userActivation;
+api.storage.local.get('devNoUserActivation').then((r: any) => { if (r.devNoUserActivation) noActivation = true; }).catch(() => {}); // tests
+const gesture = () => noActivation ? Date.now() - tapped < 5000 : !!(navigator as any).userActivation.isActive;
+
 window.addEventListener('message', e => {
   if (e.source !== window || e.data?.[TAG] !== 'req') return;
   const { id, method, params } = e.data;
   // `narrow`: a phone-sized screen, where approvals stay on the page (no windows there).
   // `gesture`: the page was just clicked or typed in (seen from here, where the page can't fake it): a
   // Sign in you clicked asks again even if you once said Not now.
-  api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow(), gesture: !!(navigator as any).userActivation?.isActive })
+  api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow(), gesture: gesture() })
     .then((r: any) => window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Marble.' }) }, target()))
     .catch((err: Error) => window.postMessage({ [TAG]: 'res', id, error: err?.message ?? 'Marble isn’t answering. Reload the page.' }, target()));
 });

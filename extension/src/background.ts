@@ -58,7 +58,8 @@ async function load(): Promise<{ pairing?: Pairing; sites: Sites }> {
 const savePairing = (p: Pairing | undefined) => p ? api.storage.local.set({ pairing: p }) : api.storage.local.remove('pairing');
 const saveSites = (s: Sites) => api.storage.local.set({ sites: s });
 
-/** Sites you said "Not now" to, until the browser closes. */
+/** Sites you said "Not now" to, until the browser closes. It no longer decides anything (a request with no click is
+ * refused anyway, and a click asks again); the popup's state still lists it. */
 async function notNow(): Promise<string[]> {
   try { return ((await api.storage.session.get('notNow')) as { notNow?: string[] }).notNow ?? []; } catch { return memNotNow; }
 }
@@ -348,7 +349,8 @@ async function signOutLocally() {
 }
 
 // Open pages of a site (or of every site) hear at once that they're signed out, as a `marble:signedout` event on the
-// page, rather than at their next request: a site removed here or on your phone, or Marble signed out here.
+// page, rather than at their next request: a site removed here or on your phone, or Marble signed out here. Every tab
+// gets the origin, which is fine: content scripts are walled off from the page, and each one keeps to its own origin.
 async function tellTabs(origin?: string) {
   try {
     for (const t of await api.tabs.query({})) if (t.id !== undefined) api.tabs.sendMessage(t.id, { type: 'signedout', origin }).catch(() => {});
