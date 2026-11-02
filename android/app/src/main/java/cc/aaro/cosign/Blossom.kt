@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 /**
  * Blossom links (BUD-10): `blossom:<sha256>.<ext>?xs=server&as=<pubkey>&sz=<bytes>`, a file by its hash with hints
@@ -70,4 +71,48 @@ object Blossom {
         .filter { it.pubkey == pk && it.kind == 10063 }.maxByOrNull { it.createdAt }
         ?.tags?.filter { it.size > 1 && it[0] == "server" && (it[1].startsWith("https://") || it[1].startsWith("http://")) }?.map { it[1] }.orEmpty()
         .also { serverLists[pk] = it }
+
+    // --- Your own files (notes sync, option I): uploaded and deleted with a key of their own, never your account's. ---
+
+    /** The servers notes files go to: your list (BUD-03), else blossom.syb.lol. */
+    suspend fun mine(me: String): List<String> = serversOf(me).ifEmpty { listOf("https://blossom.syb.lol") }.map { it.trimEnd('/') }.take(3)
+
+    /** BUD-02 auth (kind 24242), signed by [seed]'s key: [verb] the file [sha]. */
+    private fun auth(verb: String, sha: String, seed: ByteArray): String {
+        val secret = if (cc.aaro.cosign.core.Secp.isValidSecret(seed)) seed else java.security.MessageDigest.getInstance("SHA-256").digest(seed)
+        val pk = cc.aaro.cosign.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
+        val now = System.currentTimeMillis() / 1000
+        val e = cc.aaro.cosign.core.Event(pk, now, 24242, listOf(listOf("t", verb), listOf("x", sha), listOf("expiration", (now + 300).toString())), "Notes").withId()
+        val aux = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val sig = cc.aaro.cosign.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, aux).joinToString("") { "%02x".format(it) }
+        return "Nostr " + android.util.Base64.encodeToString(e.copy(sig = sig).toJson().toByteArray(), android.util.Base64.NO_WRAP)
+    }
+
+    /** Uploaded to each of [servers]; the ones that took it with the right hash. */
+    suspend fun upload(servers: List<String>, bytes: ByteArray, sha: String, seed: ByteArray): List<String> = withContext(Dispatchers.IO) {
+        val body = okhttp3.RequestBody.create("application/octet-stream".toMediaTypeOrNull(), bytes)
+        servers.filter { s ->
+            try {
+                upHttp.newCall(okhttp3.Request.Builder().url("$s/upload").put(body).header("Authorization", auth("upload", sha, seed)).build()).execute().use { r ->
+                    r.isSuccessful && (r.body?.string()?.let { org.json.JSONObject(it).optString("sha256") } ?: "") == sha
+                }
+            } catch (_: Exception) { false }
+        }
+    }
+
+    /** The file [sha] from the first of [servers] that has it whole. */
+    suspend fun fetch(servers: List<String>, sha: String): ByteArray? = withContext(Dispatchers.IO) {
+        for (s in servers) try {
+            upHttp.newCall(okhttp3.Request.Builder().url("${s.trimEnd('/')}/$sha").build()).execute().use { r ->
+                val b = r.body?.bytes()
+                if (r.isSuccessful && b != null && java.security.MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) } == sha) return@withContext b
+            }
+        } catch (_: Exception) {}
+        null
+    }
+
+    suspend fun delete(servers: List<String>, sha: String, seed: ByteArray) = withContext(Dispatchers.IO) {
+        for (s in servers) try { upHttp.newCall(okhttp3.Request.Builder().url("${s.trimEnd('/')}/$sha").delete().header("Authorization", auth("delete", sha, seed)).build()).execute().close() } catch (_: Exception) {}
+    }
+    private val upHttp by lazy { Fetch.http.newBuilder().callTimeout(60, TimeUnit.SECONDS).build() }
 }

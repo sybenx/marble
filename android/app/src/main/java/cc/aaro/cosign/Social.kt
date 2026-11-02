@@ -1090,6 +1090,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
             return Fetch.publish(to, signed) > 0
         }
+        override suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? { val me = me ?: return null; return Blossom.fetch((servers + Blossom.mine(me)).distinct(), sha256) }
+        override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> { val me = me ?: return emptyList(); return Blossom.upload(Blossom.mine(me), bytes, sha256, seed) }
+        override suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) = Blossom.delete(servers, sha256, seed)
     }
     private val notesSync by lazy {
         NotesSync(notesNet, object : NotesStore {

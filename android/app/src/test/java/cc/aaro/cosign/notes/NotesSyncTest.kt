@@ -19,6 +19,8 @@ class NotesSyncTest {
         val held = HashMap<String, Ev>()
         var reads = 0
         var down = false
+        var blossom = true
+        val blobs = HashMap<String, ByteArray>()
         private var n = 0
         val net = object : NotesNet {
             override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
@@ -28,6 +30,12 @@ class NotesSyncTest {
                     .filter { e -> (until == null || e.at <= until) && (since == null || e.at >= since) }
                     .sortedByDescending { it.at }.take(limit).map { Stored(it.id, it.d, it.at, it.content) }
             }
+            override suspend fun fetchBlob(sha256: String, servers: List<String>) = if (down) null else blobs[sha256]
+            override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> {
+                if (down || !blossom) return emptyList()
+                blobs[sha256] = bytes; return listOf("https://blossom.test")
+            }
+            override suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) { blobs.remove(sha256) }
             override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
                 if (down) return false
                 val e = Ev("%08d".format(++n), d, w, createdAt, content)
@@ -169,5 +177,46 @@ class NotesSyncTest {
         assertFalse(again.sync.pending)
         again.add("b", "two"); again.flush()
         assertEquals(mapOf("a" to "one", "b" to "two"), Device(relay).also { it.pull() }.shown())
+    }
+
+    private fun big(d: Device, n: Int = 600) = (0 until n).forEach { d.add("n$it", "a long note, number $it: " + "words ".repeat(60)) }
+
+    @Test fun anImportGoesAsOneFile() {
+        val relay = Relay()
+        val mac = Device(relay); big(mac); mac.flush()
+        assertEquals(1, relay.blobs.size)
+        assertTrue("no packs, only the file", relay.held.values.none { it.w != null })
+        val phone = Device(relay); phone.pull()
+        assertEquals(600, phone.shown().size)
+        // A later edit goes in a pack and wins over the file.
+        clock += 100
+        phone.edit("n5") { it.copy(text = "changed", updated = clock) }
+        phone.edit("n6") { it.copy(text = "", deleted = clock, updated = clock) }
+        phone.flush()
+        assertTrue("only the two edited packs (and their splits)", relay.held.values.count { it.w != null } in 1..8)
+        val fresh = Device(relay); fresh.pull()
+        assertEquals("changed", fresh.shown()["n5"]); assertNull(fresh.shown()["n6"]); assertEquals(599, fresh.shown().size)
+        // The phone took the file without sending everything again.
+        assertFalse(phone.sync.pending)
+    }
+
+    @Test fun withoutBlossomAnImportGoesInPacks() {
+        val relay = Relay().also { it.blossom = false }
+        val mac = Device(relay); big(mac); mac.flush()
+        assertTrue(relay.blobs.isEmpty())
+        assertEquals(600, Device(relay).also { it.pull() }.shown().size)
+    }
+
+    @Test fun aSecondImportKeepsTheFirst() {
+        val relay = Relay()
+        val mac = Device(relay); big(mac); mac.flush()
+        val phone = Device(relay); phone.pull()
+        (0 until 600).forEach { phone.add("m$it", "another long note, $it: " + "more ".repeat(60)) }
+        clock += 100; phone.flush()
+        assertEquals(2, relay.blobs.size)
+        assertEquals(1200, Device(relay).also { it.pull() }.shown().size)
+        // The first file goes 30 days later.
+        clock += 31 * 86_400L; phone.add("x", "x"); phone.flush()
+        assertEquals(1, relay.blobs.size)
     }
 }

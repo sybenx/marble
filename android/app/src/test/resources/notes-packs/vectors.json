@@ -47,6 +47,22 @@
     "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
     "checkpointD": "08438c8ca156cc02ea0ebfb91ca5fc87"
   },
+  "baseD": "4944a69c5ce2a8e0e94fb329412aa81b",
+  "blossom": {
+    "seed": "07f8057230279017e3f05005717b6cc9c148d8f69248e1b0b908b40b6afb2593",
+    "forSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "kBlossom": "ea3c15c812ffb361daba4fbbc5be3a62ddeaae93cae48c928e17f07a42df5383"
+  },
+  "sealed": {
+    "size": 32796,
+    "sha256": "745825c586d9b10aed7b9e766dcdf364a05e7a03dea94b39dc8ba769668ada84",
+    "tagHex": "aa00a3f9c1b8fd4339d82eca56a0763b",
+    "id": "base",
+    "body": "{\"v\":3}",
+    "nonce": "6465666768696a6b6c6d6e6f",
+    "updated": 1234,
+    "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
   "merge": [
     {
       "mine": {

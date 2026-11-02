@@ -15,6 +15,11 @@ interface NotesNet {
     suspend fun read(tag: String, values: List<String>, until: Long? = null, since: Long? = null, limit: Int = 500): List<Stored>?
     /** [d], and [w] for packs (so they page together). True: a relay took it. */
     suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean
+    /** A Blossom blob from the first of [servers] that has it, checked against [sha256]. Null: none had it. */
+    suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? = null
+    /** Uploaded, the auth signed by a key from [seed] (never the account's, §7). The servers that took it. */
+    suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> = emptyList()
+    suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) {}
 }
 
 /** Where this device keeps the keys and the vault's own state between runs. */
@@ -79,6 +84,7 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
                 if (key.kid == vault.layout.kid) { if (vault.apply(incoming, device).halted) halted = true }
                 else Vault(layout).also { if (it.apply(incoming, device).halted) halted = true else vault.adopt(it) }
             }
+            base()
             net.read("d", listOf(vault.layout.checkpointD))?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
             store.put(PULLED, now().toString())
         }
@@ -90,6 +96,9 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
     suspend fun flush(held: List<LaterItem>): List<LaterItem>? = lock.withLock {
         took(held)
         keys(create = vault.notes.isNotEmpty() || vault.markers.isNotEmpty())?.also(::rekey) ?: return null
+        // An import's worth of changes: one file and its pointer, not a signature per pack (option I).
+        if (vault.dirty.sumOf { p -> vault.notes.values.filter { vault.layout.owner(it.id, vault.retired) == p }.sumOf { it.toJson().toString().length } } > BASE_AT * Layout.LIMIT / 2) writeBase()
+        cleanUp()
         val w = vault.layout.w
         val written = Cycle.flush(vault, now(), read = { d -> net.read("d", listOf(d)).orEmpty().map { Vault.Incoming(it.d, it.createdAt, it.content) } },
             write = { d, at, content -> net.write(d, w, at, content) }, device = device)
@@ -106,6 +115,52 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (vault.layout.kid == p.kid) return
         val old = vault
         vault = Vault(Layout(p.kid, p.k.unhex())).also { it.adopt(old) }
+    }
+
+    /** The base file (option I) under the packs: fetched when its pointer names one not taken yet. */
+    private suspend fun base() {
+        val got = net.read("d", listOf(vault.layout.baseD))?.maxByOrNull { it.createdAt } ?: return
+        val p = BasePointer.parse(got.content) ?: return
+        if (p.kid != vault.layout.kid || p.sha256 == store.get(BASE)) return
+        val file = net.fetchBlob(p.sha256, p.servers) ?: return
+        if (sha256(file).hex() != p.sha256 || file.size.toLong() != p.size) return
+        val body = Sealed.open(file, BaseFile.ID, p.updated, p.key.unhex()) ?: return
+        val (notes, markers) = BaseFile.parse(body, vault.layout.kid) ?: return
+        vault.under(notes, markers)
+        store.put(BASE, p.sha256)
+    }
+
+    /** Everything held, as one file on Blossom with a pointer to it; the packs then only carry later changes. */
+    private suspend fun writeBase() {
+        val l = vault.layout
+        val there = net.read("d", listOf(l.baseD)) ?: return
+        val old = there.maxByOrNull { it.createdAt }
+        // Another device's base not taken here yet: packs as usual, rather than write over it.
+        val oldPointer = old?.let { BasePointer.parse(it.content) }
+        if (old != null && oldPointer?.sha256 != store.get(BASE)) return
+        val r = java.security.SecureRandom()
+        val key = ByteArray(32).also(r::nextBytes)
+        val updated = maxOf(now(), (old?.createdAt ?: 0) + 1)
+        val file = Sealed.seal(BaseFile.body(vault), BaseFile.ID, updated, key, ByteArray(12).also(r::nextBytes))
+        val sha = sha256(file).hex()
+        val servers = net.uploadBlob(file, sha, hkdf(l.blossom, sha))
+        if (servers.isEmpty()) return
+        val pointer = BasePointer(sha, file.size.toLong(), key.hex(), servers, updated, l.kid).toJson()
+        if (!net.write(l.baseD, null, updated, pointer)) return
+        if (net.read("d", listOf(l.baseD))?.maxByOrNull { it.createdAt }?.content != pointer) return
+        store.put(BASE, sha)
+        vault.dirty.clear()
+        // The file it replaces goes in 30 days (§7).
+        if (oldPointer != null) store.put(OLD_BASES, JSONArray(oldBases() + JSONObject().put("sha256", oldPointer.sha256).put("servers", JSONArray(oldPointer.servers)).put("at", now())).toString())
+    }
+
+    private fun oldBases(): List<JSONObject> = try { JSONArray(store.get(OLD_BASES) ?: "[]").let { a -> (0 until a.length()).map { a.getJSONObject(it) } } } catch (_: Exception) { emptyList() }
+
+    private suspend fun cleanUp() {
+        val (due, later) = oldBases().partition { now() - it.optLong("at") > 30 * 86_400L }
+        if (due.isEmpty()) return
+        for (o in due) o.optJSONArray("servers")?.let { a -> net.deleteBlob(o.getString("sha256"), (0 until a.length()).map { a.getString(it) }, hkdf(vault.layout.blossom, o.getString("sha256"))) }
+        store.put(OLD_BASES, JSONArray(later).toString())
     }
 
     /** Later's items into the vault: what changed here since the last sync. */
@@ -197,7 +252,10 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
     companion object {
         const val OLD = "marble/later"
         const val CUT = 500
+        /** About this many pack signatures in one flush, and it goes as a base file instead. */
+        const val BASE_AT = 24
         private const val KEYS = "notesKeys"; private const val VAULT = "notesVault"; private const val V1 = "notesV1"; private const val PULLED = "notesPulled"
+        private const val BASE = "notesBase"; private const val OLD_BASES = "notesOldBases"
         /** Before there are keys: a vault only for merging (never written, never saved). */
         private val LOCAL = Layout("local", ByteArray(32))
     }

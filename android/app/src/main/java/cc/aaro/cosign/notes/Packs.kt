@@ -29,6 +29,10 @@ class Layout(val kid: String, val key: ByteArray) {
     val w: String get() = hmac(key, "notes").hex().take(16)
     /** The checkpoint's opaque `d`. */
     val checkpointD: String get() = hmac(key, "checkpoint").hex().take(32)
+    /** The base pointer's `d` (option I). */
+    val baseD: String get() = hmac(key, "base").hex().take(32)
+    /** The key Blossom uploads are signed with comes from this (§7): HKDF(K_tag, "blossom"). */
+    val blossom: ByteArray get() = hkdf(key, "blossom")
     /** The live pack [id] belongs in, given the packs that have split ([retired]). */
     fun owner(id: String, retired: Set<String>): String {
         val s = slot(id)

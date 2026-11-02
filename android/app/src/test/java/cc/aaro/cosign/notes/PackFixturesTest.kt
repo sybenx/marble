@@ -46,7 +46,13 @@ class PackFixturesTest {
             accept("another key's pack", l.d(owner), Pack(owner, "k2", listOf(milk)).toJson(), false),
             accept("a split pack", l.d(owner), Pack(owner, "k1", retired = true).toJson(), true),
         ))
+        val fileKey = ByteArray(32) { it.toByte() }; val nonce = ByteArray(12) { (it + 100).toByte() }
+        val file = Sealed.seal("{\"v\":3}".toByteArray(), BaseFile.ID, 1234, fileKey, nonce)
+        val sealed = JSONObject().put("key", fileKey.hex()).put("nonce", nonce.hex()).put("id", BaseFile.ID).put("updated", 1234).put("body", "{\"v\":3}")
+            .put("size", file.size).put("sha256", sha256(file).hex()).put("tagHex", file.copyOfRange(file.size - 16, file.size).hex())
+        val blossom = JSONObject().put("kBlossom", l.blossom.hex()).put("forSha256", "00".repeat(32)).put("seed", hkdf(l.blossom, "00".repeat(32)).hex())
         return JSONObject().put("spec", "~/igloo/marble-notes-sync-v3.md (option A)").put("layout", layout).put("merge", merges).put("accept", accepts)
+            .put("baseD", l.baseD).put("sealed", sealed).put("blossom", blossom)
     }
 
     /** Each acceptance case against a fresh vault. */
