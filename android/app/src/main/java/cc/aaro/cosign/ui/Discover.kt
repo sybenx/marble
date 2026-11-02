@@ -2501,13 +2501,28 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     val focus = remember { FocusRequester() }
     var focusNow by remember(id) { mutableStateOf(startReply) }
     val shown = thread
+    var showAllReplies by remember(id) { mutableStateOf(false) }
+    // Read so the replies fold again when the circle is known or changes.
+    social.circleAt.collectAsState().value
     val articleBlocks = shown?.firstOrNull { it.second == 0 && it.first.kind == 30023 }?.first?.let { a -> remember(a.id) { a.id to Markdown.parse(a) } }
     Box(Modifier.weight(1f)) {
         when {
             shown == null -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             shown.isEmpty() -> Text("Couldn't find this post.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
+                // Under your own post: replies from outside your circle (and what answers them) fold into one line.
+                val root = shown.firstOrNull { it.second == 0 }?.first
+                val folded = if (root?.pubkey != social.me || showAllReplies) emptySet() else {
+                    val out = HashSet<String>(); var under = Int.MAX_VALUE
+                    for ((e, depth) in shown) {
+                        if (depth <= under) under = Int.MAX_VALUE
+                        if (depth > 0 && under == Int.MAX_VALUE && e.id != id && !social.inCircle(e.pubkey)) under = depth
+                        if (under != Int.MAX_VALUE) out += e.id
+                    }
+                    out
+                }
                 for ((e, depth) in shown) {
+                    if (e.id in folded) continue
                     // An article: the reader (its Markdown, set for reading); then its replies, as under any post.
                     if (e.kind == 30023 && depth == 0 && e.id == articleBlocks?.first) {
                         article(e, articleBlocks.second, people, nav, e.id in liked, onLike = { social.like(e) }, onReply = { target = e.id; focusNow = true })
@@ -2522,6 +2537,10 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
                             HorizontalDivider(color = Vault.Edge)
                         }
                     }
+                }
+                if (folded.isNotEmpty()) item(key = "more-replies") {
+                    Text("More replies", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(start = 12.dp, top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable { showAllReplies = true }.padding(8.dp))
                 }
                 if (loading) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
@@ -3428,6 +3447,9 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                           showPeople: Boolean = true, top: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null) {
     if (f == null && top == null) return Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
     var showSpam by remember(f?.query) { mutableStateOf(false) }
+    var showFurther by remember(f?.query) { mutableStateOf(false) }
+    // Read so the lists below filter again when the circle is known or changes.
+    social.circleAt.collectAsState().value
     val marked by social.spam.collectAsState()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         top?.invoke(this)
@@ -3478,7 +3500,9 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
             }
         }
         // Likely spam: out of the ranking, at the end behind a quiet line (and marked, if shown).
-        val (spammy, clean) = f.notes.partition { it.id in f.spam && it.id in marked }
+        val (spammy, all) = f.notes.partition { it.id in f.spam && it.id in marked }
+        // Your circle's posts first; the world's after them, folded (Circle).
+        val (clean, further) = all.partition { social.inCircle(it.pubkey) }
         if (!peopleOnly && clean.isNotEmpty()) {
             item(key = "nh") { Heading("Posts") }
             val lead = if (loose) 3 else 0
@@ -3488,6 +3512,17 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
             }
             if (loose) authorSection()
             items(clean.drop(lead), key = { it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+        }
+        if (!peopleOnly && further.isNotEmpty()) {
+            item(key = "fh") {
+                if (clean.isEmpty()) Heading("Posts")
+                if (!showFurther) Text("More posts", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(start = 12.dp, top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable { showFurther = true }.padding(8.dp))
+            }
+            if (showFurther) items(further, key = { "f" + it.id }) { n ->
                 NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                 HorizontalDivider(color = Vault.Edge)
             }

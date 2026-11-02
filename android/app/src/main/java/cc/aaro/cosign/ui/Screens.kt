@@ -593,6 +593,15 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                     Text("Special Follow", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     Text(if (special.isEmpty()) "›" else "${special.size} ›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                 }
+                val circle by social.circleOn.collectAsState()
+                Row(Modifier.fillMaxWidth().clickable { social.setCircleOn(!circle) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Only your circle", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                        Text("People you follow, and people at least two of them follow. Others stay out of Following, come after them in search, and fold under your posts. Worked out on this phone.",
+                            color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.Switch(circle, { social.setCircleOn(it) })
+                }
                 Row(Modifier.fillMaxWidth().clickable(onClick = onNews).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("News sources", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)

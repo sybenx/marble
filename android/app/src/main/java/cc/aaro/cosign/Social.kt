@@ -21,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -747,7 +748,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
             e.kind == 1 && parentOf(e) == null && e.pubkey !in mine && e.pubkey != me && e.pubkey !in hidden && safe(e) && !mutedText(e.content, e) &&
                 !interests.hidden("hiddenPeople", e.pubkey) && e.createdAt > now - 3 * 86_400L
         }
-        val clean = withoutSpam(evs.map { Pick(it, "", 0.0, "") }, mine).map { it.e }
+        circleCounts()
+        val clean = withoutSpam(evs.filter { inCircle(it.pubkey) }.map { Pick(it, "", 0.0, "") }, mine).map { it.e }
         val chosen = clean.sortedByDescending { who[it.id]?.size ?: 0 }.distinctBy { it.pubkey }.take(3)
         People.want(chosen.flatMap { who[it.id].orEmpty().take(3) } + chosen.map { it.pubkey })
         kotlinx.coroutines.delay(800)
@@ -837,7 +839,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
+            restored.await(); afterPaint(); knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
             pullKept()
@@ -1809,17 +1811,52 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private val searchGen = java.util.concurrent.atomic.AtomicInteger()
     private val debuggable = CosignApp.instance.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-    @Volatile private var fofCache: Map<String, Int>? = null
-    /** For each person, how many of the people you follow follow them (from up to 300 follow lists). */
-    private suspend fun friendsOfFriends(): Map<String, Int> {
-        fofCache?.let { return it }
-        val mine = follows.value?.toList()?.take(300) ?: return emptyMap()
-        if (mine.isEmpty()) return emptyMap()
-        val lists = mine.chunked(100).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(3), "authors" to part), 6000) } }.awaitAll().flatten()
-        val count = HashMap<String, Int>()
-        lists.filter { it.kind == 3 }.groupBy { it.pubkey }.values.map { l -> l.maxBy { it.createdAt } }
-            .forEach { l -> l.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }.distinct().forEach { count[it] = (count[it] ?: 0) + 1 } }
-        return count.also { fofCache = it }
+    /** For each person, how many of the people you follow follow them (the circle's counts, Circle). */
+    private suspend fun friendsOfFriends(): Map<String, Int> = circleCounts()
+
+    // --- The trust filter: your circle (Circle) -----------------------------------------------
+
+    /** Account › Only your circle: on by default. */
+    val circleOn = MutableStateFlow(prefs.getBoolean("circleOn", true))
+    fun setCircleOn(on: Boolean) { circleOn.value = on; prefs.edit().putBoolean("circleOn", on).apply() }
+    /** Bumped when the circle changes, so screens filter again. */
+    val circleAt = MutableStateFlow(0L)
+    @Volatile private var counts: Map<String, Int>? = null
+    private val circleFile get() = File(CosignApp.instance.cacheDir, "circle-" + (me?.take(16) ?: "none") + ".json")
+    private val circleLock = kotlinx.coroutines.sync.Mutex()
+
+    /** The counts: from this phone's copy (a day at most, and for the same follows), else from your follows' lists. */
+    private suspend fun circleCounts(): Map<String, Int> = circleLock.withLock {
+        counts?.let { return@withLock it }
+        val mine = follows.value ?: return@withLock emptyMap()
+        if (mine.isEmpty()) return@withLock emptyMap()
+        val f = circleFile
+        try {
+            if (f.exists() && System.currentTimeMillis() - f.lastModified() < 86_400_000L) {
+                val o = org.json.JSONObject(f.readText())
+                if (o.optInt("follows") == mine.size) {
+                    val c = o.getJSONObject("counts"); val m = HashMap<String, Int>()
+                    c.keys().forEach { m[it] = c.getInt(it) }
+                    counts = m; circleAt.value = System.currentTimeMillis(); return@withLock m
+                }
+            }
+        } catch (_: Exception) {}
+        val lists = mine.toList().take(1000).chunked(150).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(3), "authors" to part), 8000) } }.awaitAll().flatten()
+        val m = Circle.counts(lists, mine)
+        // Only the people the circle takes in are kept (2 or more), to keep the copy small.
+        try { f.writeText(org.json.JSONObject().put("follows", mine.size).put("counts", org.json.JSONObject(m.filterValues { it >= Circle.AT } as Map<*, *>)).toString()) } catch (_: Exception) {}
+        counts = m; circleAt.value = System.currentTimeMillis()
+        m
+    }
+
+    /** Worked out in the background (screens filter once it's ready; until then nothing is hidden). */
+    fun knowCircle() { if (counts == null) scope.launch { try { circleCounts() } catch (_: Exception) {} } }
+
+    /** Whether [pk] is in your circle; true while it's not known yet, or with the filter off. */
+    fun inCircle(pk: String): Boolean {
+        if (!circleOn.value) return true
+        val c = counts ?: return true
+        return Circle.has(pk, me, follows.value.orEmpty(), c) { cc.aaro.cosign.spam.Spam.notSpam(it) }
     }
 
     fun clearSearch() { searching?.cancel(); searchGen.incrementAndGet(); found.value = null }
@@ -1936,6 +1973,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         cc.aaro.cosign.spam.Spam.markNotSpam(e.pubkey)
         FeedLog.act(e.id, "notSpam", "author" to e.pubkey, "why" to (spam.value[e.id]?.short ?: ""))
         spam.update { m -> m.filterKeys { id -> note(id)?.pubkey != e.pubkey && id != e.id } }
+        circleAt.value = System.currentTimeMillis()
     }
 
     /** [e]'s author's latest posts, through the spam check; flagged: [e] says so. */
