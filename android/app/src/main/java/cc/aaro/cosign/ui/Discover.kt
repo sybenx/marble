@@ -3484,7 +3484,23 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 HorizontalDivider(color = Vault.Edge)
             }
         }
-        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty()) item(key = "none") { Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty()) item(key = "none") {
+            Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+            // Only here: one row to try your engine instead.
+            val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
+            Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface)
+                .border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.web(f.query) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
+                    Text(engine.label.take(1), color = Vault.Accent, style = MaterialTheme.typography.labelLarge)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text("Search the web", color = Vault.Text, style = MaterialTheme.typography.titleSmall)
+                    Text("with ${engine.label}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
 }
 
