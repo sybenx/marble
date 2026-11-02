@@ -114,7 +114,7 @@ class LaterTest {
         // In the account's copy as an item like any other, with its url (no new field for Marble desktop).
         val back = Later.fromJson(l.json()).first { it.id == a.id }
         assertEquals("https://example.com/a", back.url)
-        assertTrue(back.extra.isEmpty())
+        assertTrue((back.extra - "f" - "base").isEmpty())
     }
 
     @Test fun pageTitledOnceThePageSays() {
@@ -136,7 +136,7 @@ class LaterTest {
         assertEquals("the paperback with the green cover, not the anniversary one", back.quote)
         assertEquals("Signal", back.from)
         // Known now, so not carried twice as an unknown field.
-        assertTrue(back.extra.isEmpty())
+        assertTrue((back.extra - "f" - "base").isEmpty())
         // A shared link kept again comes back, with the new words.
         val b = l.keep("for the trip", url = "https://example.com/x")!!
         assertEquals(b.id, l.keep("for the trip, really", url = "https://example.com/x")!!.id)

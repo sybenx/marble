@@ -71,6 +71,9 @@ data class Note(
         base?.let { put("base", it) }; body?.let { put("body", it) }
     }
 
+    /** The same note, as written (JSON values inside compare by content, not by object). */
+    fun same(o: Note) = this == o || toJson().toString() == o.toJson().toString()
+
     companion object {
         val FIELDS = listOf("text", "done", "deleted", "url", "quote")
         private val KNOWN = setOf("id", "text", "created", "updated", "f", "done", "deleted", "url", "quote", "from", "base", "body")
@@ -189,6 +192,25 @@ class Vault(val layout: Layout) {
     /** The newest checkpoint taken. */
     var checkpoint: Checkpoint? = null
 
+    /**
+     * A note as this device holds it now (Later's copy), merged in like a pulled one: true if that changed anything
+     * (its pack then goes out). [device]: for a conflict copy's "from".
+     */
+    fun take(n: Note, device: String = "another device"): Boolean {
+        if (n.id in markers) return false
+        val have = notes[n.id]
+        if (have != null && have.same(n)) return false
+        var changed = false
+        for (o in if (have == null) listOf(n) else Merge.notes(have, n, device)) {
+            if (o.id in markers) continue
+            if (o.deleted != null) { markers[o.id] = Marker(o.id, o.deleted); notes.remove(o.id) }
+            else if (notes[o.id]?.same(o) == true) continue
+            else notes[o.id] = o
+            dirty += layout.owner(o.id, retired); changed = true
+        }
+        return changed
+    }
+
     /** A change made on this device. */
     fun put(n: Note) {
         if (n.id in markers) return
@@ -274,7 +296,7 @@ object Cycle {
      * `created_at = max(now, newest seen + 1)` ([write]), and read it back; if another device's copy is there instead,
      * merge again and write again (three tries). Returns how many packs were written.
      */
-    fun flush(v: Vault, now: Long, read: (String) -> List<Vault.Incoming>, write: (d: String, createdAt: Long, content: String) -> Unit,
+    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>, write: suspend (d: String, createdAt: Long, content: String) -> Unit,
               device: String = "another device"): Int {
         var written = 0
         val todo = ArrayDeque(v.dirty.toList())
@@ -297,14 +319,65 @@ object Cycle {
                     v.seen[d] = at
                     // Read back: the newest copy should be ours.
                     val back = read(d).maxByOrNull { it.createdAt }
-                    if (back != null && (back.createdAt > at || (back.createdAt == at && back.content != content))) clean = false
+                    if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
                 }
                 v.dirty.removeAll(packs.map { it.prefix }.toSet())
                 if (clean) break
+                // Not ours on the relays after three tries (or none answered): it goes out again next flush.
+                if (attempt == 2) v.dirty += prefix
             }
             // What merging just made (a conflict's copy in another pack) goes in this flush too.
             v.dirty.filter { it !in done }.forEach { todo.addLast(it) }
         }
         return written
     }
+}
+
+/**
+ * The pack keys (K_tag), random, kept in a small event encrypted to yourself (option A: not derived). Two devices that
+ * both made one before seeing the other's keep both: the list only ever grows (union), packs under any are read, and new
+ * writes use the oldest ([primary]), so notes under the other move over as they're written.
+ */
+data class Keys(val keys: List<Key>) {
+    data class Key(val kid: String, val k: String, val created: Long)
+    val primary: Key? get() = keys.minWithOrNull(compareBy<Key> { it.created }.thenBy { it.kid })
+    fun union(o: Keys) = Keys((keys + o.keys).distinctBy { it.kid }.sortedBy { it.created })
+    fun toJson(): String = JSONObject().put("v", 1).put("keys", JSONArray(keys.map { JSONObject().put("kid", it.kid).put("k", it.k).put("created", it.created) })).toString()
+    companion object {
+        const val D = "marble/notes/keys"
+        fun parse(json: String?): Keys? = try {
+            val a = JSONObject(json ?: return null).optJSONArray("keys") ?: return null
+            Keys((0 until a.length()).mapNotNull { i -> a.optJSONObject(i)?.let { o ->
+                val k = o.optString("k"); if (k.length != 64 || !k.all { it in "0123456789abcdef" }) null else Key(o.optString("kid").ifEmpty { k.take(8) }, k, o.optLong("created"))
+            } })
+        } catch (_: Exception) { null }
+        fun fresh(now: Long): Keys {
+            val r = java.security.SecureRandom()
+            val k = ByteArray(32).also(r::nextBytes).hex()
+            return Keys(listOf(Key("k" + ByteArray(4).also(r::nextBytes).hex(), k, now)))
+        }
+    }
+}
+
+/** Notes another vault holds (packs under another key), merged in here and so rewritten under this one. */
+fun Vault.adopt(other: Vault) {
+    for (m in other.markers.values) take(Note(m.id, "", m.deleted, m.deleted, deleted = m.deleted))
+    for (n in other.notes.values) take(n)
+}
+
+/** What this device keeps between runs (its notes are Later's items; this is the rest). */
+fun Vault.state(): String = JSONObject()
+    .put("markers", JSONArray(markers.values.map { it.toJson() }))
+    .put("retired", JSONArray(retired.toList())).put("dirty", JSONArray(dirty.toList()))
+    .put("seen", JSONObject().apply { seen.forEach { (k, v) -> put(k, v) } })
+    .put("checkpoint", checkpoint?.toJson()).toString()
+
+fun Vault.restore(json: String?, held: List<Note>) {
+    held.forEach { notes[it.id] = it }
+    val o = try { JSONObject(json ?: return) } catch (_: Exception) { return }
+    o.optJSONArray("markers")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(Marker::of) }.forEach { markers[it.id] = it; notes.remove(it.id) } }
+    o.optJSONArray("retired")?.let { a -> (0 until a.length()).forEach { retired += a.optString(it) } }
+    o.optJSONArray("dirty")?.let { a -> (0 until a.length()).forEach { dirty += a.optString(it) } }
+    o.optJSONObject("seen")?.let { s -> s.keys().forEach { seen[it] = s.optLong(it) } }
+    o.optString("checkpoint").takeIf { it.isNotEmpty() && it != "null" }?.let(Checkpoint::parse)?.let { checkpoint = it }
 }

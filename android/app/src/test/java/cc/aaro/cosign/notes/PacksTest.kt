@@ -1,5 +1,6 @@
 package cc.aaro.cosign.notes
 
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,7 +25,7 @@ class PacksTest {
     }
 
     private fun note(id: String, text: String, t: Long = 1000) = Note(id, text, t, t, f = mapOf("text" to t))
-    private fun flush(v: Vault, r: Relay, now: Long, device: String = "the tablet") = Cycle.flush(v, now, r::read, r::write, device)
+    private fun flush(v: Vault, r: Relay, now: Long, device: String = "the tablet") = runBlocking { Cycle.flush(v, now, { r.read(it) }, { d, a, c -> r.write(d, a, c) }, device) }
     private fun pullAll(v: Vault, r: Relay) = v.apply(r.held.values.toList())
 
     /** Two ids that land in the same pack, for the collision tests. */

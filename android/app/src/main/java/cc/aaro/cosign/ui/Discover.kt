@@ -247,7 +247,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // recreating Marble, as the screens are.
     var awaySince by androidx.compose.runtime.saveable.rememberSaveable { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime(); FeedLog.ev("away") }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { awaySince = android.os.SystemClock.elapsedRealtime(); FeedLog.ev("away"); social.left() }
     // Read on open and when you come back to it; nothing in between.
     // Home: the main page, at the top, its search box showing, the feed as it was (the swirl in any screen's bar, or back after a while).
     val home: () -> Unit = {

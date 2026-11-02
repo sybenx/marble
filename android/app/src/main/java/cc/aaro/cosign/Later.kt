@@ -108,8 +108,25 @@ class Later(private val prefs: android.content.SharedPreferences) {
     fun unsave(item: LaterItem) = remove(item)
 
     private fun put(item: LaterItem) {
-        items.update { l -> (l.filter { it.id != item.id } + item).sortedByDescending { it.created } }
+        // Each changed field's time, and what an edit started from, ride along for notes sync (cc.aaro.cosign.notes).
+        items.update { l -> (l.filter { it.id != item.id } + cc.aaro.cosign.notes.LaterNotes.touched(l.firstOrNull { it.id == item.id }, item)).sortedByDescending { it.created } }
         store(); changed()
+    }
+
+    /**
+     * What a sync made of [before] ([after]), taken in: an item changed here while the sync ran stays as it is now (it
+     * goes out next time).
+     */
+    fun synced(before: List<LaterItem>, after: List<LaterItem>) {
+        val was = before.associateBy { it.id }
+        var kept = false
+        items.update { cur ->
+            val local = cur.filter { was[it.id] != it }
+            kept = local.isNotEmpty()
+            (after.filter { a -> local.none { it.id == a.id } } + local).sortedByDescending { it.created }
+        }
+        store()
+        if (kept) changed()
     }
 
     /** A page opened from a search or a saved item: kept 30 days, newest first, at most 500. */
@@ -155,6 +172,7 @@ class Later(private val prefs: android.content.SharedPreferences) {
         private fun words(s: String) = s.trim().replace(Regex("\\s+"), " ")
         fun same(a: String, b: String) = words(a).equals(words(b), ignoreCase = true)
         private fun newId() = java.security.SecureRandom().let { r -> ByteArray(8).also(r::nextBytes) }.joinToString("") { "%02x".format(it) }
+        fun itemJson(i: LaterItem) = i.toJson()
         private fun LaterItem.toJson() = org.json.JSONObject().apply {
             extra.forEach { (k, v) -> put(k, v) }
             put("id", id); put("text", text); put("created", created); put("updated", updated)

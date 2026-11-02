@@ -11,6 +11,10 @@ import cc.aaro.cosign.core.toHex
 import cc.aaro.cosign.core.hexToBytes
 import cc.aaro.cosign.net.Conn
 import cc.aaro.cosign.net.Fetch
+import cc.aaro.cosign.notes.NotesNet
+import cc.aaro.cosign.notes.NotesStore
+import cc.aaro.cosign.notes.NotesSync
+import cc.aaro.cosign.notes.Stored
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1045,8 +1049,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     // --- Later: what you saved from the search box ------------------------------------------------
     //
-    // Your account's copy (kind 30078, d=marble/later, NIP-44 to yourself), read once a start and written half a
-    // minute after the last change (read again and merged first, so another device's saves are never lost).
+    // Your account's notes (notes sync v3, cc.aaro.cosign.notes): packs of kind 30078, NIP-44 to yourself, read on
+    // start and on coming back, and written at most every 3 minutes after a change, and on leaving. The old single
+    // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
     /** What you searched, on this phone only (not synced), 30 days. */
@@ -1055,8 +1060,42 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private fun laterChanged() {
         if (Sources.viewAs != null) return
+        if (laterSending?.isActive == true) return
+        laterSending = scope.launch { delay(180_000); sendLater() }
+    }
+
+    /** Leaving Marble: what's waiting goes now. */
+    fun left() {
+        if (laterSending?.isActive != true) return
         laterSending?.cancel()
-        laterSending = scope.launch { delay(30_000); sendLater() }
+        laterSending = scope.launch { sendLater() }
+    }
+
+    private val notesNet = object : NotesNet {
+        override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
+            val me = me ?: return null
+            val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+            if (relays.isEmpty()) return null
+            val f = mutableMapOf<String, Any>("kinds" to listOf(30078), "authors" to listOf(me), "#$tag" to values, "limit" to limit)
+            until?.let { f["until"] = it }; since?.let { f["since"] = it }
+            return Fetch.query(relays, f, 8000).filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
+                .map { Stored(it.id, it.firstTag("d") ?: "", it.createdAt, toSelf(it.content, encrypt = false)) }
+        }
+        override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
+            val me = me ?: return false
+            val text = toSelf(content, encrypt = true) ?: return false.also { if (debuggable) android.util.Log.i("CosignSync", "notes not sent: couldn't encrypt") }
+            val signed = try { phone.signOwn(Event(me, createdAt, 30078, listOfNotNull(listOf("d", d), w?.let { listOf("w", it) }), text).withId()) } catch (e: Exception) {
+                if (debuggable) android.util.Log.i("CosignSync", "notes not sent: ${e.javaClass.simpleName}"); return false
+            }
+            val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
+            return Fetch.publish(to, signed) > 0
+        }
+    }
+    private val notesSync by lazy {
+        NotesSync(notesNet, object : NotesStore {
+            override fun get(k: String) = prefs.getString(k, null)
+            override fun put(k: String, v: String) = prefs.edit().putString(k, v).apply()
+        }, Clock::now, later.items.value)
     }
 
     /**
@@ -1122,26 +1161,23 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
     private suspend fun pullLater(sending: Boolean = false) {
         laterPulledAt = System.currentTimeMillis()
-        val me = me ?: return
-        if (Sources.viewAs != null) return
-        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(Later.TAG), "limit" to 4), 6000)
-            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
-        // This phone has things the account's copy hasn't (or there's no copy yet): send them.
-        val ahead = if (got == null) later.items.value.isNotEmpty() else later.merge(toSelf(got.content, encrypt = false) ?: return)
-        if (ahead && !sending) laterChanged()
+        if (me == null || Sources.viewAs != null) return
+        // Everything once a day; otherwise what's new since the last pull.
+        val full = System.currentTimeMillis() - prefs.getLong("notesFull", 0) > 86_400_000L
+        val before = later.items.value
+        val after = notesSync.pull(before, full) ?: return
+        if (full) prefs.edit().putLong("notesFull", System.currentTimeMillis()).apply()
+        later.synced(before, after)
+        if (debuggable) android.util.Log.i("CosignSync", "notes pulled: ${after.size}${if (notesSync.halted) ", stopped (too many removals)" else ""}${if (notesSync.partial) ", not all pages" else ""}")
+        if (notesSync.pending && !sending) laterChanged()
     }
 
     private suspend fun sendLater() {
-        val me = me ?: return
-        pullLater(sending = true)
-        val text = toSelf(later.json(), encrypt = true) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "later not sent: couldn't encrypt") }
-        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", Later.TAG)), text).withId()) } catch (e: Exception) {
-            if (debuggable) android.util.Log.i("CosignSync", "later not sent: ${e.javaClass.simpleName}"); return
-        }
-        val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
-        val n = Fetch.publish(to, signed)
-        if (debuggable) android.util.Log.i("CosignSync", "later sent: ${later.items.value.size} items to $n of ${to.size} relays")
+        if (me == null || Sources.viewAs != null) return
+        val before = later.items.value
+        val after = notesSync.flush(before) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "notes not sent") }
+        later.synced(before, after)
+        if (debuggable) android.util.Log.i("CosignSync", "notes sent: ${after.size}${if (notesSync.pending) ", some still waiting" else ""}")
     }
 
     // --- Your marbles: the ones you kept -------------------------------------------------------
