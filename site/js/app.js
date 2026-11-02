@@ -12,6 +12,7 @@ import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./ac
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
+import { fillBlossom } from "./blossom.js";
 import { cue, spamOf, inflated, mark as markSpam, setTrusted, setVouched } from "./spam.js";
 import { esc, name, avatar, content, markdown, ago, fullDate, postPath, personPath } from "./render.js";
 
@@ -298,6 +299,7 @@ function quoteCard(q, entity) {
 
 function fillLater(root = pageEl) {
   markReactions(root);
+  fillBlossom(root);
   for (const slot of root.querySelectorAll(".quote-slot:not([data-filled])")) {
     slot.dataset.filled = "1";
     const d = decode(slot.dataset.quote);
@@ -1021,7 +1023,7 @@ function storyResult(i) {
 
 function yourLine(x) {
   const e = x.e;
-  const text = (e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : e.content || "").replace(/nostr:\S+|https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  const text = (e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : e.content || "").replace(/nostr:\S+|https?:\/\/\S+|blossom:\S+/g, "").replace(/\s+/g, " ").trim();
   return `<a class="it" href="${postPath(e)}"><span class="k">${esc(x.why)} · ${agoLong(e.created_at)}${x.why !== "You wrote" ? ` · <span data-name="${e.pubkey}">${esc(name(e.pubkey))}</span>` : ""}</span><span class="t">${esc(text.slice(0, 200))}</span></a>`;
 }
 
