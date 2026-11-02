@@ -433,7 +433,8 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         val most = with(d) { (minOf(screenH / 3f, w - 48f) - 72f).coerceAtLeast(130f).dp.toPx() }
         val grow = with(d) { Stretch.band(pull, 0f, most).toDp().value }
         val m = 72f + grow
-        val keptMax = if (maxHeight < 700.dp) 2 else 3
+        // A phone on its side has room for none; a tall screen, four.
+        val keptMax = when { maxHeight < 520.dp -> 0; maxHeight < 700.dp -> 3; else -> 4 }
         val waiting = ui.asks.size + ui.batchAsks.size
         val fresh = notices.list.count { it.event.createdAt > seen }
         // Everything centred on the box: the marble and the name above it, what you kept below.
@@ -457,8 +458,10 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 // Enter searches (the box opens for typing).
                 GoChip(null)
             }
-            // Your notes, just under the box (your searches are at the foot of Notes).
-            Row(Modifier.widthIn(max = 600.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            // Your latest notes just under the box, then Notes (your searches are at the foot of Notes).
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                KeptLately(laterItems, social, nav, keptMax)
+                Spacer(Modifier.height(6.dp))
                 val notes = laterItems.count { it.deleted == null && it.done == null }
                 HomePill(Glyphs.save, if (notes > 0) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
             }
@@ -472,7 +475,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
             layout(c.maxWidth, c.maxHeight) {
                 top.place((c.maxWidth - top.width) / 2, boxY - gap - top.height)
                 box.place((c.maxWidth - box.width) / 2, boxY)
-                kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 10.dp.roundToPx())
+                kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 6.dp.roundToPx())
             }
         }
         // What needs you (an approval, say), and a passing error, under the panes' bar.
@@ -618,30 +621,22 @@ private fun DiscoverLip(posts: Int, special: Int, modifier: Modifier, onOpen: ()
     }
 }
 
-/** On home: the last two things you kept, in your own hand, and Later. */
+/** On home, above Notes: the latest things you kept and haven't ticked done, in your own hand (as before the panes). */
 @Composable
-private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav, max: Int = 2) {
+private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, nav: Nav, max: Int) {
     val open = items.filter { it.deleted == null && it.done == null }
-    val pages by social.later.pages.collectAsState()
+    if (open.isEmpty()) return
     val context = LocalContext.current
-    // Nothing saved right now: Later is still a tap away, for the pages you opened.
-    if (open.isEmpty()) {
-        if (pages.isNotEmpty() || items.any { it.deleted == null }) Text("Later ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp).clickable { nav.open(Route.Later) }.padding(vertical = 6.dp))
-        return
-    }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)) {
-        Text("KEPT LATELY", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
+    Column(Modifier.padding(horizontal = 24.dp).widthIn(max = 600.dp).fillMaxWidth()) {
         for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable { social.later.done(item, true) })
+            Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable(onClickLabel = "Done") { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
             item.url?.let { SiteIcon(it, 16); Spacer(Modifier.width(8.dp)) }
             Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
         }
-        Text("Later · ${open.size} ›", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clickable { nav.open(Route.Later) }.padding(vertical = 6.dp))
     }
 }
 
