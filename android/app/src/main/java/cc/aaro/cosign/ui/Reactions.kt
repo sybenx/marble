@@ -8,6 +8,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,10 +56,9 @@ import androidx.compose.ui.window.PopupProperties
 import cc.aaro.qrst.core.Event
 import kotlinx.coroutines.withTimeoutOrNull
 
-// The heart under a post, as on Marble Web. A tap likes it. A long press opens a row of emojis above it (your
-// most-used, then the usual six): slide to one and let go, or let go and tap one; + opens them all. On a post
-// you've reacted to, a tap opens the row too, and a new pick changes your reaction. The heart then shows your
-// emoji (a ❤️ shows as the filled heart), and beside it, what others chose.
+// Reactions under a post, as Jumble's: ☺+ (or your own emoji), and how many reacted. A tap opens the picker (your
+// recent ones, then 👍 ❤️ 😂 🥲 👀 🫡 🫂, then search and every emoji); a long press opens the quick row above it:
+// slide to one and let go. A new pick changes your reaction. An opened post shows each emoji people used, and how many.
 
 private val ITEM = 36.dp
 private val LIFT = 60.dp
@@ -92,8 +95,8 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
                     var up = false
                     // The tap is the heart's: consumed, so the post under it doesn't open too.
                     val quick = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { up = waitForUpOrCancellation()?.also { it.consume() } != null; true } != null
-                    // A tap: a like; on a post you've reacted to, the row, to change it.
-                    if (quick) { if (up) { if (liked) { choices = social.topEmojis(); hover = -1; open = true } else onLike() }; return@awaitEachGesture }
+                    // A tap: the picker.
+                    if (quick) { if (up) all = true; return@awaitEachGesture }
                     // Held: the row opens, and follows the finger.
                     choices = social.topEmojis(); open = true; hover = -1
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -114,8 +117,9 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
                     }
                 }
             }, contentAlignment = Alignment.Center) {
-            if (chosen != null && chosen != "❤️") Text(chosen, fontSize = 19.sp)
-            else Icon(if (liked) Glyphs.heartOn else Glyphs.heart, null, tint = if (liked) Vault.Amber else Vault.Muted, modifier = Modifier.padding(10.dp))
+            if (chosen != null) Text(chosen, fontSize = 19.sp)
+            else if (liked) Icon(Glyphs.heartOn, null, tint = Vault.Amber, modifier = Modifier.padding(10.dp))
+            else Box { Icon(Glyphs.smile, null, tint = Vault.Muted, modifier = Modifier.padding(10.dp)); Text("+", color = Vault.Muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 5.dp)) }
         }
         if (open) Popup(offset = with(px) { IntOffset(rowLeft(choices.size).toInt(), -LIFT.roundToPx()) }, onDismissRequest = { open = false; hover = -1 },
             properties = PopupProperties(focusable = true)) {
@@ -133,17 +137,60 @@ fun Heart(n: Event, liked: Boolean, social: cc.aaro.cosign.Social, onLike: () ->
             }
         }
     }
-    // What others reacted with: the top few emojis, and how many liked it in all.
-    if (showCounts) counts[n.id]?.let { e ->
-        val top = e.emojis.map { it.first }.filter { it != "+" && !it.startsWith(":") && it.length <= 8 }.take(3)
-        val total = e.likeTotal
-        if (total > 0) Text((if (top.isEmpty()) "" else top.joinToString("") + " ") + total, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp))
+    // How many reacted, beside it (counted for posts in a list as they come on screen).
+    LaunchedEffect(n.id) { social.wantCounts(n.id) }
+    if (showCounts) counts[n.id]?.likeTotal?.takeIf { it > 0 }?.let { total ->
+        Text(total.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp))
     }
-    if (all) Dialog({ all = false }) {
-        Column(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).padding(vertical = 12.dp)) {
-            Text("React with", color = Vault.Text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-            LazyVerticalGrid(GridCells.Adaptive(48.dp), Modifier.fillMaxWidth().heightIn(max = 420.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                items(EMOJIS) { e -> Box(Modifier.size(48.dp).clip(CircleShape).clickable { all = false; social.react(n, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 26.sp) } }
+    if (all) Dialog({ all = false }) { Picker(social.topEmojis()) { e -> all = false; social.react(n, e) } }
+}
+
+/** The picker: your recent ones and Jumble's usual set, a search (by the emoji's name), then every emoji. */
+@Composable
+private fun Picker(top: List<String>, onPick: (String) -> Unit) {
+    var q by remember { mutableStateOf("") }
+    val shown = remember(q) {
+        if (q.isBlank()) EMOJIS else EMOJIS.filter { e -> nameOf(e).contains(q.trim(), ignoreCase = true) }
+    }
+    Column(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).padding(vertical = 12.dp)) {
+        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (e in top) Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Ground).clickable { onPick(e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 22.sp) }
+        }
+        androidx.compose.material3.OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), singleLine = true,
+            placeholder = { Text("Search emoji", color = Vault.Muted) }, shape = RoundedCornerShape(20.dp))
+        LazyVerticalGrid(GridCells.Adaptive(44.dp), Modifier.fillMaxWidth().heightIn(max = 360.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+            items(shown) { e -> Box(Modifier.size(44.dp).clip(CircleShape).clickable { onPick(e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 24.sp) } }
+        }
+    }
+}
+
+/** An emoji's Unicode name ("smiling face with heart-eyes"), for the search. */
+private fun nameOf(e: String): String = try {
+    e.codePoints().toArray().filter { it > 0x2000 && it != 0xFE0F && it != 0x200D }.joinToString(" ") { Character.getName(it) ?: "" }
+} catch (_: Exception) { "" }
+
+/**
+ * Under an opened post: each emoji people reacted with, and how many, most used first (yours marked). A tap adds
+ * the same reaction.
+ */
+@Composable
+fun ReactionChips(n: Event, social: cc.aaro.cosign.Social) {
+    val counts by social.engagement.collectAsState()
+    val mine by social.reactions.collectAsState()
+    val liked by social.liked.collectAsState()
+    val list = counts[n.id]?.emojis?.filter { (e, _) -> e != "-" && !e.startsWith(":") && e.length <= 8 }?.map { (e, c) -> (if (e == "+") "❤️" else e) to c }
+        ?.groupBy({ it.first }, { it.second })?.map { it.key to it.value.sum() }?.sortedByDescending { it.second } ?: return
+    if (list.isEmpty()) return
+    val my = mine[n.id] ?: if (n.id in liked) "❤️" else null
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for ((e, c) in list.take(12)) {
+            val me = e == my
+            Row(Modifier.clip(RoundedCornerShape(14.dp)).background(if (me) Vault.AccentGround else Vault.Surface).border(1.dp, if (me) Vault.AccentEdge else Vault.Edge, RoundedCornerShape(14.dp))
+                .clickable(enabled = !me) { social.react(n, e) }.padding(horizontal = 9.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(e, fontSize = 15.sp)
+                Spacer(Modifier.width(5.dp))
+                Text(c.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
             }
         }
     }

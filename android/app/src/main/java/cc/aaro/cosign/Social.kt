@@ -2280,7 +2280,38 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
-    fun topEmojis(): List<String> = USUAL_EMOJIS
+    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key }.take(3) + USUAL_EMOJIS).distinct().take(7)
+
+    // Counts under posts in a list (reactions with counts, as Jumble): each post on screen asks, and they're fetched together.
+    private val wantCounts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+    private val counted = java.util.Collections.synchronizedSet(HashSet<String>())
+    @Volatile private var countBatch: kotlinx.coroutines.Job? = null
+    fun wantCounts(id: String) {
+        if (id in counted || !wantCounts.add(id)) return
+        if (countBatch?.isActive == true) return
+        countBatch = scope.launch {
+            delay(600)
+            val ids = synchronized(wantCounts) { wantCounts.toList().also { wantCounts.clear() } }.filter { counted.add(it) }
+            if (ids.isEmpty()) return@launch
+            val got = ids.chunked(100).map { part -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"),
+                mapOf("kinds" to listOf(1, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
+            val byTarget = HashMap<String, MutableList<Event>>()
+            for (r in got) {
+                val target = if (r.kind == 1) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
+                if (target != null && target in ids) byTarget.getOrPut(target) { ArrayList() } += r
+            }
+            engagement.update { m ->
+                m + ids.associateWith { id ->
+                    val rs = byTarget[id].orEmpty()
+                    val likes = rs.filter { it.kind == 7 && it.content != "-" }.distinctBy { it.pubkey }
+                    val emojis = likes.groupingBy { it.content.ifBlank { "+" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key to it.value }
+                    val had = m[id] ?: Engagement()
+                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 }), likes = maxOf(had.likes, likes.size),
+                        reposts = maxOf(had.reposts, rs.count { it.kind == 6 || it.kind == 16 }), emojis = if (likes.size >= had.likes) emojis else had.emojis)
+                }
+            }
+        }
+    }
 
     /** The posts you reposted from here (this phone), so the button shows it. */
     val reposted = MutableStateFlow(prefs.getStringSet("reposted", emptySet())!!.toSet())
@@ -2319,7 +2350,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     // The usual six, the ones you use: like, love, haha, sad, eyes, the monocle. (Others' 😮 or 😡 still show as they are.)
-    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "😢", "👀", "🧐")
+    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "🥲", "👀", "🫡", "🫂")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }

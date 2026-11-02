@@ -1927,9 +1927,11 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
     Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
         // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
         // Feed 2: no counts in a list (the post itself has them, a tap in).
-        Heart(n, liked, nav.social, onLike, showCounts = full || nav.social.feedVersion.collectAsState().value == 1)
+        Heart(n, liked, nav.social, onLike, showCounts = true)
+        val eng = nav.social.engagement.collectAsState().value[n.id]
         Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
             modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
+        eng?.replyTotal?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
         // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
         val reposted = n.id in nav.social.reposted.collectAsState().value
         var asking by remember { mutableStateOf(false) }
@@ -1947,6 +1949,7 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
                 } }, { asking = false; nav.social.repost(n) })
             }
         }
+        eng?.reposts?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
         // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
         // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
         Spacer(Modifier.weight(1f))
@@ -2533,6 +2536,7 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
                         NoteCard(e, people, e.id in liked, nav, onLike = { social.like(e) }, indent = minOf(depth, 4), lit = e.id == id && shown.size > 1 && depth > 0,
                             onReply = { target = e.id; focusNow = true })
                         if (depth == 0) {
+                            ReactionChips(e, social)
                             eng[e.id]?.let { Totals(it) }
                             HorizontalDivider(color = Vault.Edge)
                         }
