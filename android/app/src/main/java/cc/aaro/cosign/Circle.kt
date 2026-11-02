@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 
 /**
  * Your circle, for the trust filter: you, the people you follow, anyone at least [AT] of them follow, and anyone you
