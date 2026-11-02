@@ -9,7 +9,7 @@ import cc.aaro.qrst.core.isHex32
  */
 object OtherApps {
     /** Kinds Marble shows itself: a post and an article. */
-    fun drawn(kind: Int) = kind == 1 || kind == 30023
+    fun drawn(kind: Int) = kind == 1 || kind == 30023 || kind == Polls.POLL
 
     /** Its NIP-31 alt, else its title, else its name, else "Something made in another app" (and which, if it says). */
     fun what(e: Event): String = listOf("alt", "title", "name").firstNotNullOfOrNull { e.firstTag(it)?.trim()?.takeIf { s -> s.isNotEmpty() } }?.take(200)

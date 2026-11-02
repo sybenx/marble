@@ -782,7 +782,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (who.isEmpty()) return emptyList()
         val relays = (readRelays() + POST_RELAYS + bigRelays).distinct().take(8)
         return who.chunked(400).map { part ->
-            Fetch.query(relays, mapOf("kinds" to listOf(1), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 300), 8000)
+            Fetch.query(relays, mapOf("kinds" to listOf(1, Polls.POLL), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 300), 8000)
         }.flatten().filter { parentOf(it) == null }.distinctBy { it.id }.sortedByDescending { it.createdAt }
             .let { l -> val each = HashMap<String, Int>(); l.filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= cap } }.take(if (cap == 4) 300 else 600)
     }
@@ -2378,6 +2378,31 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
                 act(Event(me, at, 3, tags, list?.content ?: "").withId())
             } finally { busy.update { it - pk } }
+        }
+    }
+
+    // --- Polls (NIP-88, Polls) ------------------------------------------------------------------
+
+    /** The votes counted for each poll (by its id), as last fetched; and what you chose. */
+    val polls = MutableStateFlow<Map<String, Polls.Tally>>(emptyMap())
+
+    suspend fun pollVotes(p: Polls.Poll) {
+        val relays = (p.relays.take(4) + POST_RELAYS + readRelays().take(3)).distinct()
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(Polls.VOTE), "#e" to listOf(p.id), "limit" to 2000), 6000).distinctBy { it.id }.filter { it.verify() }
+        polls.update { it + (p.id to Polls.tally(p, got)) }
+    }
+
+    /** Your vote: to the poll's relays (where it asks votes to go) and yours. Public, like a reply. */
+    fun vote(p: Polls.Poll, options: List<String>) {
+        val me = me ?: return
+        if (options.isEmpty()) return
+        scope.launch {
+            val ev = Event(me, Clock.now(), Polls.VOTE, Polls.voteTags(p, options), "").withId()
+            if (actEvent(ev, relays = (p.relays.take(4) + writeRelays()).distinct()) != null) {
+                polls.update { m -> val t = m[p.id]; val choices = (t?.choices ?: emptyMap()) + (me to options)
+                    val counts = HashMap<String, Int>(); choices.values.flatten().forEach { counts[it] = (counts[it] ?: 0) + 1 }
+                    m + (p.id to Polls.Tally(counts, choices.size, choices)) }
+            }
         }
     }
 

@@ -1909,6 +1909,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                     is Body.Vid -> VideoCard(m.v)
                 }
             }
+            if (n.kind == cc.aaro.cosign.Polls.POLL) cc.aaro.cosign.Polls.of(n)?.let { PollCard(it, nav.social) }
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (card == null && !veiled && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
@@ -3791,4 +3792,52 @@ private fun NewsSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMa
         }
         item { Spacer(Modifier.height(24.dp)) }
     }
+}
+
+/**
+ * A poll (NIP-88): before you vote, choose (one, or several when it says) and Vote; after, or once it's ended, each
+ * option's share, yours ticked, the most chosen in bold. Under it: one or several, when it ends, how many voted.
+ */
+@Composable
+private fun PollCard(p: cc.aaro.cosign.Polls.Poll, social: Social) {
+    val tallies by social.polls.collectAsState()
+    LaunchedEffect(p.id) { social.pollVotes(p) }
+    val t = tallies[p.id]
+    val me = social.me
+    val now = System.currentTimeMillis() / 1000
+    val mine = t?.choices?.get(me).orEmpty()
+    val showResults = mine.isNotEmpty() || p.ended(now) || me == null
+    var picked by remember(p.id) { mutableStateOf(emptySet<String>()) }
+    val top = t?.counts?.values?.maxOrNull() ?: 0
+    Column(Modifier.padding(top = 8.dp).fillMaxWidth()) {
+        for ((id, label) in p.options) {
+            val share = t?.share(id) ?: 0f
+            val chosen = id in picked
+            Box(Modifier.padding(vertical = 3.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .border(1.dp, if (chosen) Vault.Accent else if (id in mine) Vault.AccentEdge else Vault.Line, RoundedCornerShape(10.dp))
+                .clickable(enabled = !showResults) { picked = if (p.multiple) (if (chosen) picked - id else picked + id) else setOf(id) }) {
+                if (showResults) Box(Modifier.matchParentSize().fillMaxWidth(share.coerceIn(0f, 1f)).background(Vault.AccentGround))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val mark = when { showResults && id in mine -> "✓ "; showResults -> ""; p.multiple -> if (chosen) "☑ " else "☐ "; else -> if (chosen) "● " else "○ " }
+                    Text(mark + label, color = Vault.Text, style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (showResults && top > 0 && (t?.counts?.get(id) ?: 0) == top) FontWeight.SemiBold else null, modifier = Modifier.weight(1f))
+                    if (showResults) Text("${(share * 100).toInt()}%", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            val ends = p.endsAt
+            Text(listOfNotNull(if (p.multiple) "Pick any" else "Pick one", when { ends == null -> null; p.ended(now) -> "ended"; else -> "ends ${untilWords(ends - now)}" }).joinToString(" · ").replaceFirstChar { it.uppercase() },
+                color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            t?.let { Text("${it.voters} ${if (it.voters == 1) "vote" else "votes"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall) }
+        }
+        if (!showResults) Button({ social.vote(p, picked.toList()) }, Modifier.padding(top = 8.dp).fillMaxWidth(), enabled = picked.isNotEmpty(),
+            colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Vote") }
+    }
+}
+
+/** "in 2 days", "in 3 hours", "in 20 minutes". */
+private fun untilWords(s: Long): String = when {
+    s >= 2 * 86_400 -> "in ${s / 86_400} days"; s >= 86_400 -> "tomorrow"; s >= 2 * 3600 -> "in ${s / 3600} hours"; s >= 3600 -> "in an hour"
+    else -> "in ${maxOf(1, s / 60)} minutes"
 }
