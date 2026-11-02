@@ -2381,6 +2381,42 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
+    // --- Pinned posts (kind 10001): first on a profile; yours pinned and unpinned from a post's ⋯ ---------
+
+    /** Your pinned posts' ids, as last read or written (the profile's Unpin and the menu's label follow it). */
+    val myPins = MutableStateFlow<List<String>>(prefs.getString("myPins", null)?.split(',')?.filter { it.length == 64 } ?: emptyList())
+
+    /** [pk]'s pinned posts, newest pin first (their newest list; the posts from their relays and the big ones). */
+    suspend fun pinnedOf(pk: String): List<Event> {
+        val relays = (outboxOf(pk).take(4) + POST_RELAYS + readRelays().take(4)).distinct()
+        val list = Fetch.query((relays + Sources.PROFILES.take(2)).distinct(), mapOf("kinds" to listOf(10001), "authors" to listOf(pk), "limit" to 3), 6000)
+            .filter { it.pubkey == pk && it.kind == 10001 }.maxByOrNull { it.createdAt } ?: return emptyList()
+        val ids = list.tags.filter { it.size > 1 && it[0] == "e" && it[1].length == 64 }.map { it[1] }.distinct().reversed()
+        if (pk == me) { myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply() }
+        if (ids.isEmpty()) return emptyList()
+        val got = Fetch.query(relays, mapOf("ids" to ids.take(20)), 6000).filter { it.pubkey == pk }.associateBy { it.id }
+        return ids.mapNotNull { got[it] }.also { remember(it) }
+    }
+
+    /** Your post [e] pinned to your profile (or not): from your newest list anywhere, the rest kept as it is. */
+    fun pin(e: Event, on: Boolean) {
+        val me = me ?: return
+        if (e.pubkey != me) return
+        scope.launch {
+            val list = newest(10001, null, fetch = true)
+            val old = list?.tags ?: emptyList()
+            val has = old.any { it.size > 1 && it[0] == "e" && it[1] == e.id }
+            if (has == on) return@launch
+            val tags = if (on) old + listOf(listOf("e", e.id)) else old.filterNot { it.size > 1 && it[0] == "e" && it[1] == e.id }
+            val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
+            if (act(Event(me, at, 10001, tags, list?.content ?: "").withId())) {
+                val ids = tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
+                myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply()
+                message.value = if (on) "Pinned to your profile" else "Unpinned"
+            }
+        }
+    }
+
     /**
      * [pk] into (or out of) your Special Follow list (kind 10010, the one Jumble keeps): started from your newest list
      * anywhere, its other people and private part kept as they are.

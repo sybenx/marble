@@ -1862,6 +1862,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                     PostTime(n, nav.social)
                 }
                 if (n.pubkey != nav.social.me) Box(Modifier.align(Alignment.CenterEnd)) { menu?.invoke() ?: NoteMenu(n, author?.shown ?: shortNpub(n.pubkey), nav.social) }
+                else if (n.kind == 1) Box(Modifier.align(Alignment.CenterEnd)) { OwnNoteMenu(n, nav.social) }
             }
             val to = remember(n.id) { n.tags.lastOrNull { it.size > 1 && it[0] == "p" }?.get(1) }
             LaunchedEffect(n.id) { People.want(body.mentions + listOfNotNull(to)) }
@@ -2192,6 +2193,20 @@ private fun ComposeScreen(link: String, social: Social, nav: Nav) = Column(Modif
     val quoted = remember(link) { cc.aaro.cosign.marblePost(link) }
     if (quoted != null) Box(Modifier.padding(horizontal = 16.dp)) { QuoteBox(quoted, People.known.collectAsState().value, nav) }
     else preview?.let { p -> Box(Modifier.padding(horizontal = 16.dp)) { LinkCard(p) {} } }
+}
+
+/** "⋯" on your own post: copy its link, or pin it to your profile (or unpin it). */
+@Composable
+private fun OwnNoteMenu(n: Event, social: Social) = Box {
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    val pins by social.myPins.collectAsState()
+    Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted, modifier = Modifier.size(28.dp).clip(CircleShape).clickable { open = true }.padding(5.dp))
+    if (open) DropdownMenu(true, { open = false }, containerColor = Vault.Surface) {
+        DropdownMenuItem({ Text("Copy link", color = Vault.Text) }, { open = false; FeedLog.act(n.id, "copyLink"); copy(context, social, webLink(social, n), "Link copied") })
+        val on = n.id in pins
+        DropdownMenuItem({ Text(if (on) "📌 Unpin from profile" else "📌 Pin to profile", color = Vault.Text) }, { open = false; social.pin(n, !on) })
+    }
 }
 
 /** "⋯": not interested in this note, or mute its author (on this phone and in your mute list). */
@@ -2759,6 +2774,8 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
     val busy by social.busy.collectAsState()
     val p = people[pk]
     LaunchedEffect(pk) { social.profileNow(pk) }
+    var pinned by remember(pk) { mutableStateOf<List<Event>>(emptyList()) }
+    LaunchedEffect(pk) { pinned = try { social.pinnedOf(pk) } catch (_: Exception) { emptyList() } }
     // Not found anywhere after a proper look: say so, with another try, rather than an empty profile.
     var tries by remember(pk) { mutableStateOf(0) }
     var missing by remember(pk) { mutableStateOf(false) }
@@ -2843,6 +2860,16 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
             notes.isNullOrEmpty() && !settled -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
             notes.isNullOrEmpty() -> item(key = "none") { Text("No posts yet.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
             else -> {
+                // Pinned first, marked; on your own profile the mark unpins.
+                items(pinned, key = { "pin" + it.id }) { n ->
+                    val mine = pk == social.me
+                    Row(Modifier.padding(start = 16.dp, top = 10.dp).then(if (mine) Modifier.clip(RoundedCornerShape(8.dp)).clickable { social.pin(n, false); pinned = pinned.filter { it.id != n.id } } else Modifier)
+                        .padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("📌 " + if (mine) "Pinned · Unpin" else "Pinned", color = Vault.Accent, style = MaterialTheme.typography.labelMedium)
+                    }
+                    NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                    HorizontalDivider(color = Vault.Edge)
+                }
                 items(notes!!, key = { it.id }) { n ->
                     NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
                     HorizontalDivider(color = Vault.Edge)
