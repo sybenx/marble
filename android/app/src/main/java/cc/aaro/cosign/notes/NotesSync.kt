@@ -193,10 +193,12 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
             if (!net.shout(w, JSONObject().put("t", "want").put("r", rid).toString())) return false
             val got = ArrayList<Vault.Incoming>()
             var done: JSONObject? = null
+            var heard = false
             while (done == null) {
-                val m = kotlinx.coroutines.withTimeoutOrNull(if (got.isEmpty()) firstMs else stallMs) { inbox.receive() } ?: return false
+                val m = kotlinx.coroutines.withTimeoutOrNull(if (heard) stallMs else firstMs) { inbox.receive() } ?: return false
                 val o = try { JSONObject(m) } catch (_: Exception) { continue }
                 if (o.optString("r") != rid) continue
+                heard = true
                 when (o.optString("t")) {
                     "pack" -> got += Vault.Incoming(o.optString("d"), o.optLong("at"), o.optJSONObject("pack")?.toString())
                     "done" -> done = o
@@ -225,6 +227,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
     }
 
     private suspend fun answer(w: String, rid: String, held: List<LaterItem>) {
+        // At once, so the asker waits for the rest rather than going to the relays.
+        if (!net.shout(w, JSONObject().put("t", "hi").put("r", rid).toString())) return
         // What's held now, as packs (not split here: that's the next flush's), with each one's time on the relays.
         val (packs, done) = lock.withLock {
             took(held)

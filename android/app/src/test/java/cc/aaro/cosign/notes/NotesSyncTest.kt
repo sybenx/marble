@@ -268,7 +268,7 @@ class NotesSyncTest {
     @Test fun aLostMessageFallsBackToPaging() {
         val relay = Relay()
         val phone = Device(relay); (0 until 50).forEach { phone.add("n$it", "note $it") }; phone.flush()
-        relay.drop = 3
+        relay.drop = 4
         val tablet = Device(relay)
         catchUp(phone, tablet)
         assertEquals(phone.shown(), tablet.shown())
