@@ -1,0 +1,284 @@
+{
+  "layout": {
+    "hashOf": {
+      "text": "milk",
+      "hash": "8825e76530f8"
+    },
+    "slots": [
+      {
+        "bits": "0101000101100111",
+        "id": "a",
+        "pack": "0101",
+        "packAfterItsPackSplit": "01010"
+      },
+      {
+        "bits": "1100011110110001",
+        "id": "note-1",
+        "pack": "1100",
+        "packAfterItsPackSplit": "11000"
+      },
+      {
+        "bits": "0111010111011110",
+        "id": "0123456789abcdef",
+        "pack": "0111",
+        "packAfterItsPackSplit": "01110"
+      }
+    ],
+    "d": [
+      {
+        "d": "ae168a5ff582653a0c4c3ad449f313dd",
+        "prefix": "0000"
+      },
+      {
+        "d": "bd0213054e189920f44821bb81c2a072",
+        "prefix": "0101"
+      },
+      {
+        "d": "f7a51b61a09c87cd286bbead91639106",
+        "prefix": "1111"
+      },
+      {
+        "d": "aea9c87d83df6c00191e1e3f7e3d91b6",
+        "prefix": "00001"
+      }
+    ],
+    "kid": "k1",
+    "w": "53ecf36184f2aff2",
+    "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "checkpointD": "08438c8ca156cc02ea0ebfb91ca5fc87"
+  },
+  "merge": [
+    {
+      "mine": {
+        "created": 1000,
+        "f": {
+          "text": 1000,
+          "done": 2000
+        },
+        "id": "n",
+        "text": "milk",
+        "updated": 2000,
+        "done": 2000
+      },
+      "theirs": {
+        "created": 1000,
+        "f": {"text": 2001},
+        "id": "n",
+        "text": "oat milk",
+        "updated": 2001,
+        "base": "8825e76530f8"
+      },
+      "name": "a tick and an edit: both kept",
+      "device": "the tablet",
+      "out": [{
+        "created": 1000,
+        "f": {
+          "deleted": 1000,
+          "quote": 1000,
+          "text": 2001,
+          "done": 2000,
+          "url": 1000
+        },
+        "id": "n",
+        "text": "oat milk",
+        "updated": 2001,
+        "done": 2000,
+        "base": "8825e76530f8"
+      }]
+    },
+    {
+      "mine": {
+        "created": 1000,
+        "f": {"text": 2000},
+        "id": "n",
+        "text": "oat milk",
+        "updated": 2000,
+        "base": "8825e76530f8"
+      },
+      "theirs": {
+        "created": 1000,
+        "f": {"text": 2001},
+        "id": "n",
+        "text": "almond milk",
+        "updated": 2001,
+        "base": "8825e76530f8"
+      },
+      "name": "two edits from the same start: a copy",
+      "device": "the tablet",
+      "out": [
+        {
+          "created": 1000,
+          "f": {
+            "deleted": 1000,
+            "quote": 1000,
+            "text": 2001,
+            "done": 1000,
+            "url": 1000
+          },
+          "id": "n",
+          "text": "almond milk",
+          "updated": 2001,
+          "base": "8825e76530f8"
+        },
+        {
+          "created": 1000,
+          "f": {"text": 2000},
+          "from": "the tablet",
+          "id": "fcccc3d95d1b0fc86dd29958b18ca431",
+          "text": "oat milk",
+          "updated": 2000
+        }
+      ]
+    },
+    {
+      "mine": {
+        "created": 1000,
+        "f": {"text": 2000},
+        "id": "n",
+        "text": "oat milk",
+        "updated": 2000,
+        "base": "8825e76530f8"
+      },
+      "theirs": {
+        "created": 1000,
+        "f": {"text": 2001},
+        "id": "n",
+        "text": "oat milk, 2",
+        "updated": 2001,
+        "base": "c0dc195721ec"
+      },
+      "name": "an edit of an edit: no copy",
+      "device": "the tablet",
+      "out": [{
+        "created": 1000,
+        "f": {
+          "deleted": 1000,
+          "quote": 1000,
+          "text": 2001,
+          "done": 1000,
+          "url": 1000
+        },
+        "id": "n",
+        "text": "oat milk, 2",
+        "updated": 2001,
+        "base": "c0dc195721ec"
+      }]
+    },
+    {
+      "mine": {
+        "created": 1000,
+        "f": {
+          "deleted": 3000,
+          "text": 1000
+        },
+        "id": "n",
+        "text": "milk",
+        "updated": 3000
+      },
+      "theirs": {
+        "created": 1000,
+        "f": {"text": 9000},
+        "id": "n",
+        "text": "edited later",
+        "updated": 9000,
+        "base": "8825e76530f8"
+      },
+      "name": "removed: the earliest removal holds",
+      "device": "the tablet",
+      "out": [{
+        "created": 1000,
+        "f": {
+          "deleted": 3000,
+          "quote": 1000,
+          "text": 9000,
+          "done": 1000,
+          "url": 1000
+        },
+        "id": "n",
+        "text": "edited later",
+        "updated": 9000,
+        "base": "8825e76530f8"
+      }]
+    }
+  ],
+  "spec": "~/igloo/marble-notes-sync-v3.md (option A)",
+  "accept": [
+    {
+      "d": "00b868f5d1d9ee262ddf55502d2f7a21",
+      "taken": true,
+      "name": "a pack in its place",
+      "content": {
+        "v": 3,
+        "prefix": "1011",
+        "kid": "k1",
+        "markers": [],
+        "items": [{
+          "created": 1000,
+          "f": {"text": 1000},
+          "id": "n",
+          "text": "milk",
+          "updated": 1000
+        }]
+      }
+    },
+    {
+      "d": "ae168a5ff582653a0c4c3ad449f313dd",
+      "taken": false,
+      "name": "a note in another pack's place",
+      "content": {
+        "v": 3,
+        "prefix": "0000",
+        "kid": "k1",
+        "markers": [],
+        "items": [{
+          "created": 1000,
+          "f": {"text": 1000},
+          "id": "n",
+          "text": "milk",
+          "updated": 1000
+        }]
+      }
+    },
+    {
+      "d": "ae168a5ff582653a0c4c3ad449f313dd",
+      "taken": false,
+      "name": "a prefix that doesn't name its d",
+      "content": {
+        "v": 3,
+        "prefix": "0001",
+        "kid": "k1",
+        "markers": [],
+        "items": []
+      }
+    },
+    {
+      "d": "00b868f5d1d9ee262ddf55502d2f7a21",
+      "taken": false,
+      "name": "another key's pack",
+      "content": {
+        "v": 3,
+        "prefix": "1011",
+        "kid": "k2",
+        "markers": [],
+        "items": [{
+          "created": 1000,
+          "f": {"text": 1000},
+          "id": "n",
+          "text": "milk",
+          "updated": 1000
+        }]
+      }
+    },
+    {
+      "d": "00b868f5d1d9ee262ddf55502d2f7a21",
+      "taken": true,
+      "name": "a split pack",
+      "content": {
+        "v": 3,
+        "prefix": "1011",
+        "kid": "k1",
+        "retired": true
+      }
+    }
+  ]
+}
