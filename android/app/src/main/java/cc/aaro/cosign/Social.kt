@@ -837,7 +837,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater()
+            restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
             pullKept()
@@ -1054,6 +1054,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
+    init { NewsSources.load(CosignApp.instance); NewsSources.changed = { newsChanged() } }
     /** What you searched, on this phone only (not synced), 30 days. */
     val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
@@ -1336,6 +1337,37 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val own = phone.ui.value.member?.let { m -> m.group.members.firstOrNull { it.idx == m.idx } }?.let(::deviceKey)
         if (own != null && own !in merged) nameDevice(own, readableDeviceName(CosignApp.instance))
         else if (merged != theirs) sendDeviceNames()
+    }
+
+    // --- News sources (Account › News sources): kept on your account like device names ------
+
+    private var newsSending: kotlinx.coroutines.Job? = null
+    private fun newsChanged() {
+        if (Sources.viewAs != null) return
+        // What's shown changes at once; the account's copy half a minute after the last change.
+        scope.launch { allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value } }
+        newsSending?.cancel()
+        newsSending = scope.launch { delay(30_000); sendNews() }
+    }
+
+    private suspend fun pullNews(): Boolean {
+        val me = me ?: return false
+        if (Sources.viewAs != null) return false
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(NewsSources.TAG), "limit" to 4), 6000)
+            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        val before = NewsSources.json()
+        val ahead = if (got == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.take(toSelf(got.content, encrypt = false) ?: return false)
+        if (NewsSources.json() != before) allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
+        return ahead
+    }
+
+    private suspend fun sendNews() {
+        val me = me ?: return
+        if (pullNews().not() && NewsSources.own.value.isEmpty() && NewsSources.off.value.isEmpty()) return
+        val text = toSelf(NewsSources.json(), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
+        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
     }
 
     private suspend fun sendDeviceNames() {
@@ -2276,6 +2308,38 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
                 val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
                 act(Event(me, at, 3, tags, list?.content ?: "").withId())
+            } finally { busy.update { it - pk } }
+        }
+    }
+
+    /**
+     * [pk] into (or out of) your Special Follow list (kind 10010, the one Jumble keeps): started from your newest list
+     * anywhere, its other people and private part kept as they are.
+     */
+    fun special(pk: String, on: Boolean) {
+        val me = me ?: return
+        if (pk in busy.value || pk == me) return
+        busy.update { it + pk }
+        scope.launch {
+            try {
+                val list = newest(10010, null, fetch = true)
+                if (list == null && !on) return@launch
+                val old = list?.tags ?: emptyList()
+                val public = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
+                // Someone kept privately: taken out of the private part (which only you can read).
+                val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
+                    ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
+                val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
+                if (on == (public || inPrivate)) return@launch
+                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
+                val content = if (!on && inPrivate) toSelf(Json.stringify(private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }), encrypt = true) ?: return@launch
+                    else list?.content ?: ""
+                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
+                if (act(Event(me, at, 10010, tags, content).withId())) {
+                    special.update { if (on) it + pk else it - pk }
+                    specialAt = System.currentTimeMillis()
+                    prefs.edit().putStringSet("special", special.value).apply()
+                }
             } finally { busy.update { it - pk } }
         }
     }

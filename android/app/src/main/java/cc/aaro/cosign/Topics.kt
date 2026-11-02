@@ -72,8 +72,10 @@ object TopicFeeds {
     /** The phone's copy was fetched in the last 30 minutes. */
     fun fresh(context: Context) = File(context.cacheDir, "topic-feeds.json").let { it.exists() && System.currentTimeMillis() - it.lastModified() < 30 * 60_000L }
 
-    /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site. */
-    suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = withContext(Dispatchers.IO) {
+    /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site; as your news sources say. */
+    suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = NewsSources.mix(context, loadSite(context, cachedOnly), cachedOnly)
+
+    private suspend fun loadSite(context: Context, cachedOnly: Boolean): List<TopicCard> = withContext(Dispatchers.IO) {
         val file = File(context.cacheDir, "topic-feeds.json")
         val fresh = System.currentTimeMillis() - file.lastModified() < 30 * 60_000L
         if (file.exists() && (fresh || cachedOnly)) parse(file.readText())?.let { return@withContext it }

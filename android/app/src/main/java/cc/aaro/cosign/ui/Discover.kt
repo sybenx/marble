@@ -186,11 +186,15 @@ private sealed class Route {
     data class Compose(val link: String = "") : Route()
     /** Feed 3: one section's whole list, full-size posts ("special", "people" or "beyond"). */
     data class Section(val which: String) : Route()
+    /** Account › Special Follow: the people on your list. */
+    data object SpecialList : Route()
+    /** Account › News sources: your own feeds, and Marble's (each can be removed). */
+    data object News : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -204,6 +208,8 @@ private sealed class Route {
             s == "later" -> Later
             s == "searches" -> Searches
             s == "marbles" -> Shelf
+            s == "special" -> SpecialList
+            s == "news" -> News
             else -> null
         }
     }
@@ -322,7 +328,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // A screen on top: its own ground, and every touch is its (none reaches the panes under it).
     if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
-            Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back)
+            Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back,
+                onSpecial = { nav.open(Route.SpecialList) }, onNews = { nav.open(Route.News) })
             Route.Bell -> BellScreen(phone, ui, social, nav)
             Route.Search -> SearchScreen(social, nav)
             Route.Stories -> StoriesScreen(social, nav)
@@ -335,6 +342,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             is Route.Section -> SectionScreen(top.which, social, nav)
             Route.Later -> LaterScreen(social, nav)
             Route.Searches -> SearchesScreen(social, nav)
+            Route.SpecialList -> SpecialListScreen(social, nav)
+            Route.News -> NewsSourcesScreen(social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
     } }
@@ -2791,7 +2800,16 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                     pk in busy || follows == null -> OutlinedButton({}, Modifier.height(44.dp), enabled = false, border = BorderStroke(1.dp, Vault.Line)) {
                         CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp)
                     }
-                    pk in follows!! -> OutlinedButton({ social.follow(pk, false) }, Modifier.height(44.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Following · Unfollow", color = Vault.Text) }
+                    pk in follows!! -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton({ social.follow(pk, false) }, Modifier.height(44.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Following · Unfollow", color = Vault.Text) }
+                        // ★: on your Special Follow list (first in Following), or not; tapped again, off.
+                        val special by social.special.collectAsState()
+                        val on = pk in special
+                        OutlinedButton({ social.special(pk, !on) }, Modifier.height(44.dp), border = BorderStroke(1.dp, if (on) Vault.Accent else Vault.Line),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (on) Vault.AccentGround else androidx.compose.ui.graphics.Color.Transparent)) {
+                            Text(if (on) "★ Special Follow" else "☆ Special Follow", color = if (on) Vault.Accent else Vault.Text)
+                        }
+                    }
                     else -> Button({ social.follow(pk, true) }, Modifier.height(44.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Follow") }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -3593,5 +3611,118 @@ private fun NoticeRow(n: Notice, people: Map<String, Person>, fresh: Boolean, so
             if (text.isNotBlank()) Text(text, color = if (n.type == Notice.Type.REPLY || n.type == Notice.Type.MENTION) Vault.Text else Vault.Muted,
                 style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/** Account › Special Follow: who's on your list (first in Following), each with × to take them off. Added from a profile (★). */
+@Composable
+private fun SpecialListScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Special Follow", nav)
+    val special by social.special.collectAsState()
+    val people by People.known.collectAsState()
+    val busy by social.busy.collectAsState()
+    LaunchedEffect(special) { People.want(special.toList()) }
+    val list = special.sortedBy { (people[it]?.shown ?: "~" + it).lowercase() }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Text("Their posts come first in Following. Add someone from their profile (★).", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
+        items(list, key = { it }) { pk ->
+            val p = people[pk]
+            Row(Modifier.fillMaxWidth().clickable { nav.profile(pk) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(p, pk, 40)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(p?.shown ?: "Someone", color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    p?.nip05?.let { Text(it.removePrefix("_@"), color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+                if (pk in busy) CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp)
+                else IconButton({ social.special(pk, false) }) { Icon(Icons.Filled.Close, "Take off Special Follow", tint = Vault.Muted) }
+            }
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        item { Text(if (list.isEmpty()) "No one yet." else "${list.size} ${if (list.size == 1) "person" else "people"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(20.dp)) }
+    }
+}
+
+/**
+ * Account › News sources: your own feeds (a site or its RSS address; Marble finds the feed and asks its topic), and
+ * Marble's sources, each with Remove (and Add back). Synced with your account.
+ */
+@Composable
+private fun NewsSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("News sources", nav)
+    val own by cc.aaro.cosign.NewsSources.own.collectAsState()
+    val off by cc.aaro.cosign.NewsSources.off.collectAsState()
+    val marble by cc.aaro.cosign.NewsSources.marble.collectAsState()
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var finding by remember { mutableStateOf(false) }
+    var found by remember { mutableStateOf<cc.aaro.cosign.OwnFeed?>(null) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { if (marble.isEmpty()) cc.aaro.cosign.TopicFeeds.load(context, cachedOnly = true) }
+    fun topicsOf(ids: Set<String>) = ids.joinToString(" · ") { cc.aaro.cosign.TopicFeeds.name(it) }
+    @Composable fun SourceRow(name: String, sub: String, gone: Boolean, action: String, onAction: () -> Unit) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(if (gone) Vault.Edge else Vault.AccentGround), contentAlignment = Alignment.Center) {
+                Text(name.take(1).uppercase(), color = if (gone) Vault.Muted else Vault.Accent, style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, color = if (gone) Vault.Muted else Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sub, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            TextButton(onAction) { Text(action, color = if (gone) Vault.Muted else Vault.AmberText) }
+        }
+        HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Heading("Your feeds") }
+        items(own.filter { !it.gone }, key = { "own" + it.url }) { f ->
+            SourceRow(f.name, "${f.site} · ${cc.aaro.cosign.TopicFeeds.name(f.topic)}", false, "Remove") { cc.aaro.cosign.NewsSources.remove(f.url) }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(typed, { typed = it; problem = null; found = null }, Modifier.weight(1f), singleLine = true,
+                    placeholder = { Text("Add a feed: a site or its RSS address", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri))
+                Spacer(Modifier.width(8.dp))
+                Button({
+                    finding = true; problem = null
+                    scope.launch { found = cc.aaro.cosign.NewsSources.find(typed); finding = false; if (found == null) problem = "Couldn't find a feed there." }
+                }, enabled = typed.isNotBlank() && !finding, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    if (finding) CircularProgressIndicator(Modifier.size(16.dp), color = Vault.Ground, strokeWidth = 2.dp) else Text("Add")
+                }
+            }
+            problem?.let { Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+            // Found: its name, and which topic it belongs to.
+            found?.let { f ->
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+                    Text("${f.name} (${f.site}). Which topic?", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (t in cc.aaro.cosign.TopicFeeds.topics.ifEmpty { listOf(cc.aaro.cosign.Topic("news", "General news")) }) {
+                            Text(cc.aaro.cosign.TopicFeeds.name(t.id), color = Vault.Text, style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))
+                                    .clickable { cc.aaro.cosign.NewsSources.add(f.copy(topic = t.id, at = System.currentTimeMillis() / 1000)); found = null; typed = "" }
+                                    .padding(horizontal = 10.dp, vertical = 7.dp))
+                        }
+                    }
+                }
+            }
+            Text("Marble finds the site's feed, shows its name, and asks which topic it belongs to. Fetched on this phone; synced with your account.",
+                color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        }
+        item { Heading("Marble's sources") }
+        // Ones you took out stay listed, at the end, with Add back.
+        val all = (marble.keys + off.filterValues { it.first }.keys).distinct()
+            .sortedWith(compareBy<String> { off[it]?.first == true }.thenBy { (marble[it]?.first ?: it).lowercase() })
+        items(all, key = { "m$it" }) { id ->
+            val gone = off[id]?.first == true
+            val name = marble[id]?.first?.ifEmpty { null } ?: id
+            SourceRow(name, if (gone) "Removed" else topicsOf(marble[id]?.second ?: emptySet()), gone, if (gone) "Add back" else "Remove") {
+                cc.aaro.cosign.NewsSources.setOff(id, !gone)
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }

@@ -504,7 +504,8 @@ internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit) {
+internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit,
+                           onSpecial: () -> Unit = {}, onNews: () -> Unit = {}) {
     val m = ui.member!!
     var leaving by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
@@ -581,6 +582,22 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
             SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
+        }
+
+        // Following: your Special Follow list and where the news comes from.
+        item { Heading("Following") }
+        item {
+            val special by social.special.collectAsState()
+            Column {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onSpecial).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Special Follow", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(if (special.isEmpty()) "›" else "${special.size} ›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+                Row(Modifier.fillMaxWidth().clickable(onClick = onNews).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("News sources", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
 
         // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
