@@ -1064,8 +1064,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
         laterSending = scope.launch { delay(180_000); sendLater() }
     }
 
+    private var answering: kotlinx.coroutines.Job? = null
+    /** Marble open: another of your devices setting up can catch up from this one (notes sync, option D). */
+    fun answerDevices() {
+        if (me == null || Sources.viewAs != null || answering?.isActive == true) return
+        answering = scope.launch { notesSync.serve { later.items.value } }
+    }
+
     /** Leaving Marble: what's waiting goes now. */
     fun left() {
+        answering?.cancel()
         if (laterSending?.isActive != true) return
         laterSending?.cancel()
         laterSending = scope.launch { sendLater() }
@@ -1093,6 +1101,23 @@ class Social private constructor(private val phone: Phone, context: Context) {
         override suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? { val me = me ?: return null; return Blossom.fetch((servers + Blossom.mine(me)).distinct(), sha256) }
         override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> { val me = me ?: return emptyList(); return Blossom.upload(Blossom.mine(me), bytes, sha256, seed) }
         override suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) = Blossom.delete(servers, sha256, seed)
+        // Catch-up between your devices: kind 21078 (ephemeral), signed by a key made for the one message.
+        private fun live() = if (Sources.localOnly) Sources.extra.value else writeRelays().take(4)
+        override suspend fun shout(w: String, content: String): Boolean {
+            val text = toSelf(content, encrypt = true) ?: return false
+            val r = java.security.SecureRandom()
+            var secret = ByteArray(32).also(r::nextBytes)
+            while (!cc.aaro.cosign.core.Secp.isValidSecret(secret)) r.nextBytes(secret)
+            val pk = cc.aaro.cosign.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
+            val e = Event(pk, Clock.now(), 21078, listOf(listOf("w", w)), text).withId()
+            val sig = cc.aaro.cosign.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, ByteArray(32).also(r::nextBytes))
+            secret.fill(0)
+            return Fetch.publish(live(), e.copy(sig = sig.joinToString("") { "%02x".format(it) })) > 0
+        }
+        override fun hear(w: String, onMessage: (String) -> Unit): AutoCloseable? {
+            if (me == null) return null
+            return Fetch.listen(live(), mapOf("kinds" to listOf(21078), "#w" to listOf(w), "since" to Clock.now() - 5)) { e -> toSelf(e.content, encrypt = false)?.let(onMessage) }
+        }
     }
     private val notesSync by lazy {
         NotesSync(notesNet, object : NotesStore {

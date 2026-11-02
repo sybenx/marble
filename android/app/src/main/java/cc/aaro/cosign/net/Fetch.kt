@@ -99,6 +99,29 @@ object Fetch {
         out.toMap()
     }
 
+    /**
+     * A live subscription: each new event matching [filter] on any of [relays], once, checked, to [onEvent], until
+     * closed. Used while a screen or a catch-up needs it, not kept open in the background.
+     */
+    fun listen(relays: Collection<String>, filter: Map<String, Any>, onEvent: (Event) -> Unit): AutoCloseable {
+        val seen = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+        val sub = "l" + java.lang.Long.toString((Math.random() * 1e12).toLong(), 36)
+        val req = Json.stringify(listOf("REQ", sub, filter))
+        val sockets = relays.distinct().mapNotNull { url ->
+            try {
+                http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(req) }
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        val msg = Json.parse(text) as? List<*> ?: return
+                        if (msg.getOrNull(0) == "EVENT" && msg.getOrNull(1) == sub)
+                            Event.fromMap(msg.getOrNull(2))?.let { e -> if (e.verify() && seen.add(e.id)) onEvent(e) }
+                    }
+                })
+            } catch (_: Exception) { null }
+        }
+        return AutoCloseable { sockets.forEach { it.close(1000, null) } }
+    }
+
     /** Send [event] to [relays]; how many took it. */
     suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = runInterruptible(Dispatchers.IO) {
         val urls = relays.distinct()

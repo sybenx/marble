@@ -29,6 +29,8 @@ class Layout(val kid: String, val key: ByteArray) {
     val w: String get() = hmac(key, "notes").hex().take(16)
     /** The checkpoint's opaque `d`. */
     val checkpointD: String get() = hmac(key, "checkpoint").hex().take(32)
+    /** Device-to-device catch-up's tag (option D). */
+    val catchupW: String get() = hmac(key, "catchup").hex().take(16)
     /** The base pointer's `d` (option I). */
     val baseD: String get() = hmac(key, "base").hex().take(32)
     /** The key Blossom uploads are signed with comes from this (§7): HKDF(K_tag, "blossom"). */

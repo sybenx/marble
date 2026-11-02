@@ -1,6 +1,7 @@
 package cc.aaro.cosign.notes
 
 import cc.aaro.cosign.LaterItem
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -20,12 +21,17 @@ class NotesSyncTest {
         var reads = 0
         var down = false
         var blossom = true
+        val ears = HashMap<String, MutableList<(String) -> Unit>>()
+        /** Lose this many-th ephemeral message (0: none). */
+        var drop = 0
+        private var shouts = 0
+        var pageReads = 0
         val blobs = HashMap<String, ByteArray>()
         private var n = 0
         val net = object : NotesNet {
             override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
                 if (down) return null
-                reads++
+                reads++; if (tag == "w") pageReads++
                 return held.values.filter { if (tag == "d") it.d in values else it.w in values }
                     .filter { e -> (until == null || e.at <= until) && (since == null || e.at >= since) }
                     .sortedByDescending { it.at }.take(limit).map { Stored(it.id, it.d, it.at, it.content) }
@@ -36,6 +42,15 @@ class NotesSyncTest {
                 blobs[sha256] = bytes; return listOf("https://blossom.test")
             }
             override suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) { blobs.remove(sha256) }
+            override suspend fun shout(w: String, content: String): Boolean {
+                if (down) return false
+                if (drop > 0 && ++shouts == drop) return true
+                ears[w]?.toList()?.forEach { it(content) }; return true
+            }
+            override fun hear(w: String, onMessage: (String) -> Unit): AutoCloseable? {
+                if (down) return null
+                ears.getOrPut(w) { mutableListOf() }.add(onMessage); return AutoCloseable { ears[w]?.remove(onMessage) }
+            }
             override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
                 if (down) return false
                 val e = Ev("%08d".format(++n), d, w, createdAt, content)
@@ -49,7 +64,7 @@ class NotesSyncTest {
 
     /** A device: its Later items, its store, and the sync between them. */
     inner class Device(val relay: Relay, var items: List<LaterItem> = emptyList(), val store: Store = Store()) {
-        val sync = NotesSync(relay.net, store, { clock }, items)
+        val sync = NotesSync(relay.net, store, { clock }, items, answerWithinMs = 100)
         fun pull(full: Boolean = true) = runBlocking { sync.pull(items, full) }?.also { items = it }
         fun flush() = runBlocking { sync.flush(items) }?.also { items = it }
         fun edit(id: String, f: (LaterItem) -> LaterItem) { val was = items.first { it.id == id }; items = items.map { if (it.id == id) LaterNotes.touched(was, f(it)) else it } }
@@ -218,5 +233,55 @@ class NotesSyncTest {
         // The first file goes 30 days later.
         clock += 31 * 86_400L; phone.add("x", "x"); phone.flush()
         assertEquals(1, relay.blobs.size)
+    }
+
+    /** [newcomer] pulls for the first time while [open] answers. */
+    private fun catchUp(open: Device, newcomer: Device) = runBlocking {
+        val answering = launch { open.sync.serve { open.items } }
+        kotlinx.coroutines.yield()
+        newcomer.items = newcomer.sync.pull(newcomer.items, full = true)!!
+        answering.cancel()
+    }
+
+    @Test fun aNewDeviceCatchesUpFromAnOpenOne() {
+        val relay = Relay()
+        val phone = Device(relay); (0 until 50).forEach { phone.add("n$it", "note $it") }; phone.flush()
+        phone.add("unsent", "not on the relays yet")
+        val tablet = Device(relay)
+        catchUp(phone, tablet)
+        assertEquals(phone.shown(), tablet.shown())
+        assertEquals("no paging", 0, relay.pageReads)
+        assertFalse(tablet.sync.syncing)
+        // Later pulls carry on as usual.
+        clock += 10; phone.edit("n1") { it.copy(text = "edited", updated = clock) }; phone.flush()
+        tablet.pull(); assertEquals("edited", tablet.shown()["n1"])
+    }
+
+    @Test fun withNoDeviceOpenItPages() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "one"); phone.flush()
+        val tablet = Device(relay); tablet.pull()
+        assertEquals(mapOf("a" to "one"), tablet.shown())
+        assertTrue(relay.pageReads > 0)
+    }
+
+    @Test fun aLostMessageFallsBackToPaging() {
+        val relay = Relay()
+        val phone = Device(relay); (0 until 50).forEach { phone.add("n$it", "note $it") }; phone.flush()
+        relay.drop = 3
+        val tablet = Device(relay)
+        catchUp(phone, tablet)
+        assertEquals(phone.shown(), tablet.shown())
+        assertTrue(relay.pageReads > 0)
+    }
+
+    @Test fun catchingUpBringsTheImportFileToo() {
+        val relay = Relay()
+        val mac = Device(relay); big(mac); mac.flush()
+        val phone = Device(relay); phone.pull()
+        val tablet = Device(relay)
+        catchUp(phone, tablet)
+        assertEquals(600, tablet.shown().size)
+        assertEquals(0, relay.pageReads - 1)
     }
 }

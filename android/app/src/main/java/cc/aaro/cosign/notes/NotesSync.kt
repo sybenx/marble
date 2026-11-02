@@ -20,6 +20,10 @@ interface NotesNet {
     /** Uploaded, the auth signed by a key from [seed] (never the account's, §7). The servers that took it. */
     suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> = emptyList()
     suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) {}
+    /** Ephemeral (not kept by relays), tagged [w], encrypted to yourself and signed by a throwaway key (option D). */
+    suspend fun shout(w: String, content: String): Boolean = false
+    /** Ephemeral events tagged [w] from now on, decrypted, to [onMessage] until closed. Null: can't listen. */
+    fun hear(w: String, onMessage: (String) -> Unit): AutoCloseable? = null
 }
 
 /** Where this device keeps the keys and the vault's own state between runs. */
@@ -31,7 +35,7 @@ interface NotesStore { fun get(k: String): String?; fun put(k: String, v: String
  * an older Marble and a newer one see the same notes. One pull or flush at a time.
  */
 class NotesSync(private val net: NotesNet, private val store: NotesStore, private val now: () -> Long,
-                held: List<LaterItem>, private val device: String = "another device") {
+                held: List<LaterItem>, private val device: String = "another device", private val answerWithinMs: Long = 3_000) {
     private val lock = Mutex()
     var keys: Keys? = Keys.parse(store.get(KEYS)); private set
     /** The vault under the primary key (or, before there are keys, one only for merging, never written). */
@@ -75,7 +79,9 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         v1?.maxByOrNull { it.createdAt }?.content?.let(::fromV1)
         halted = false; partial = false
         if (k != null) {
-            for (key in k.keys) {
+            // A device that has never pulled: from another device that's open, if one answers (option D); else pages.
+            val caughtUp = store.get(PULLED) == null && catchUp()
+            if (!caughtUp) for (key in k.keys) {
                 val layout = Layout(key.kid, key.k.unhex())
                 val got = page(layout.w, since) ?: continue
                 // Per pack, its newest copy (a tie: the lower id, as relays keep).
@@ -84,8 +90,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
                 if (key.kid == vault.layout.kid) { if (vault.apply(incoming, device).halted) halted = true }
                 else Vault(layout).also { if (it.apply(incoming, device).halted) halted = true else vault.adopt(it) }
             }
-            base()
-            net.read("d", listOf(vault.layout.checkpointD))?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
+            if (!caughtUp) base()
+            if (!caughtUp) net.read("d", listOf(vault.layout.checkpointD))?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
             store.put(PULLED, now().toString())
         }
         save()
@@ -118,16 +124,15 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
     }
 
     /** The base file (option I) under the packs: fetched when its pointer names one not taken yet. */
-    private suspend fun base() {
-        val got = net.read("d", listOf(vault.layout.baseD))?.maxByOrNull { it.createdAt } ?: return
-        val p = BasePointer.parse(got.content) ?: return
+    private suspend fun base(given: BasePointer? = null) {
+        val p = given ?: BasePointer.parse(net.read("d", listOf(vault.layout.baseD))?.maxByOrNull { it.createdAt }?.content) ?: return
         if (p.kid != vault.layout.kid || p.sha256 == store.get(BASE)) return
         val file = net.fetchBlob(p.sha256, p.servers) ?: return
         if (sha256(file).hex() != p.sha256 || file.size.toLong() != p.size) return
         val body = Sealed.open(file, BaseFile.ID, p.updated, p.key.unhex()) ?: return
         val (notes, markers) = BaseFile.parse(body, vault.layout.kid) ?: return
         vault.under(notes, markers)
-        store.put(BASE, p.sha256)
+        store.put(BASE, p.sha256); store.put(BASE_POINTER, p.toJson())
     }
 
     /** Everything held, as one file on Blossom with a pointer to it; the packs then only carry later changes. */
@@ -148,7 +153,7 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         val pointer = BasePointer(sha, file.size.toLong(), key.hex(), servers, updated, l.kid).toJson()
         if (!net.write(l.baseD, null, updated, pointer)) return
         if (net.read("d", listOf(l.baseD))?.maxByOrNull { it.createdAt }?.content != pointer) return
-        store.put(BASE, sha)
+        store.put(BASE, sha); store.put(BASE_POINTER, pointer)
         vault.dirty.clear()
         // The file it replaces goes in 30 days (§7).
         if (oldPointer != null) store.put(OLD_BASES, JSONArray(oldBases() + JSONObject().put("sha256", oldPointer.sha256).put("servers", JSONArray(oldPointer.servers)).put("at", now())).toString())
@@ -161,6 +166,80 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (due.isEmpty()) return
         for (o in due) o.optJSONArray("servers")?.let { a -> net.deleteBlob(o.getString("sha256"), (0 until a.length()).map { a.getString(it) }, hkdf(vault.layout.blossom, o.getString("sha256"))) }
         store.put(OLD_BASES, JSONArray(later).toString())
+    }
+
+    // --- Option D: device to device ---------------------------------------------------------------
+    //
+    // A device that has never pulled asks (`want`, with a request id); an open device answers with every pack it holds
+    // (`pack`: d, created_at, the pack), then `done` with the checkpoint of what it sent and its base pointer. Ephemeral
+    // events, encrypted to yourself: nothing is stored, and nothing goes through your account's signature.
+
+    private val basePointer: BasePointer? get() = BasePointer.parse(store.get(BASE_POINTER))
+
+    /** Request ids this device sent (it doesn't answer itself). */
+    private val asked = HashSet<String>()
+
+    /**
+     * Ask an open device for everything. True: it answered in full and what it sent matches its checkpoint. No answer
+     * within [firstMs] (no device open), or a stall of [stallMs] between messages: false, and the caller pages.
+     */
+    private suspend fun catchUp(firstMs: Long = answerWithinMs, stallMs: Long = 20_000): Boolean {
+        val w = vault.layout.catchupW
+        val rid = ByteArray(8).also(java.security.SecureRandom()::nextBytes).hex()
+        val inbox = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val sub = net.hear(w) { inbox.trySend(it) } ?: return false
+        try {
+            asked += rid
+            if (!net.shout(w, JSONObject().put("t", "want").put("r", rid).toString())) return false
+            val got = ArrayList<Vault.Incoming>()
+            var done: JSONObject? = null
+            while (done == null) {
+                val m = kotlinx.coroutines.withTimeoutOrNull(if (got.isEmpty()) firstMs else stallMs) { inbox.receive() } ?: return false
+                val o = try { JSONObject(m) } catch (_: Exception) { continue }
+                if (o.optString("r") != rid) continue
+                when (o.optString("t")) {
+                    "pack" -> got += Vault.Incoming(o.optString("d"), o.optLong("at"), o.optJSONObject("pack")?.toString())
+                    "done" -> done = o
+                }
+            }
+            if (got.size != done.optInt("n", -1)) return false
+            if (vault.apply(got, device).halted) { halted = true; return false }
+            done.optJSONObject("base")?.let { base(BasePointer.parse(it.toString())) }
+            done.optString("checkpoint").takeIf { it.isNotEmpty() }?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
+            return vault.complete()
+        } finally { sub.close() }
+    }
+
+    /** While Marble is open: answer another device's request, with what [held] (Later's items) has then. Runs until cancelled. */
+    suspend fun serve(held: () -> List<LaterItem>) {
+        val w = lock.withLock { keys?.primary?.let { rekey(keys!!); vault.layout.catchupW } } ?: return
+        val inbox = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val sub = net.hear(w) { inbox.trySend(it) } ?: return
+        try {
+            for (m in inbox) {
+                val o = try { JSONObject(m) } catch (_: Exception) { continue }
+                val rid = o.optString("r")
+                if (o.optString("t") == "want" && rid.isNotEmpty() && rid !in asked) answer(w, rid, held())
+            }
+        } finally { sub.close() }
+    }
+
+    private suspend fun answer(w: String, rid: String, held: List<LaterItem>) {
+        // What's held now, as packs (not split here: that's the next flush's), with each one's time on the relays.
+        val (packs, done) = lock.withLock {
+            took(held)
+            val l = vault.layout
+            val live = l.live(vault.retired).map { p -> Pack(p, l.kid, vault.notes.values.filter { l.owner(it.id, vault.retired) == p }, vault.markers.values.filter { l.owner(it.id, vault.retired) == p }) }
+                .filter { it.items.isNotEmpty() || it.markers.isNotEmpty() }
+            val all = live + vault.retired.map { Pack(it, l.kid, retired = true) }
+            val at = all.associate { l.d(it.prefix) to (vault.seen[l.d(it.prefix)] ?: 0L) }
+            val c = Checkpoint(vault.checkpoint?.seq ?: 0, all.size, vault.notes.size, Checkpoint.hashOf(at))
+            all.map { Triple(l.d(it.prefix), at[l.d(it.prefix)]!!, it.toJson()) } to
+                JSONObject().put("t", "done").put("r", rid).put("n", all.size).put("checkpoint", c.toJson())
+                    .apply { store.get(BASE)?.let { sha -> basePointer?.takeIf { it.sha256 == sha }?.let { put("base", JSONObject(it.toJson())) } } }
+        }
+        for ((d, at, pack) in packs) if (!net.shout(w, JSONObject().put("t", "pack").put("r", rid).put("d", d).put("at", at).put("pack", JSONObject(pack)).toString())) return
+        net.shout(w, done.toString())
     }
 
     /** Later's items into the vault: what changed here since the last sync. */
@@ -255,7 +334,7 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         /** About this many pack signatures in one flush, and it goes as a base file instead. */
         const val BASE_AT = 24
         private const val KEYS = "notesKeys"; private const val VAULT = "notesVault"; private const val V1 = "notesV1"; private const val PULLED = "notesPulled"
-        private const val BASE = "notesBase"; private const val OLD_BASES = "notesOldBases"
+        private const val BASE = "notesBase"; private const val BASE_POINTER = "notesBasePointer"; private const val OLD_BASES = "notesOldBases"
         /** Before there are keys: a vault only for merging (never written, never saved). */
         private val LOCAL = Layout("local", ByteArray(32))
     }

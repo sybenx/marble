@@ -267,6 +267,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         // Back after a while: home (Search), and Following brought up to date without moving what you were reading.
         if (away) { home(); social.returned(fetchAfter = Away.after * 2) } else social.loadFeed()
         social.refreshLater()
+        social.answerDevices()
         social.knowMe()
         // Your profile and follows on the relays your relay list names (when that list changed, or never had them).
         social.spreadIdentity()
