@@ -635,6 +635,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                     color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
             }
         }
+        item { TranslateSetting() }
 
         // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
         item { Heading("Search") }
@@ -710,7 +711,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 if (ui.relaysUp == 0) Text("No relay connection. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
             if (m.group.threshold >= 4) item { TextButton({ phone.chooseServer() }, contentPadding = PaddingValues(0.dp)) { Text("Add a server", color = Vault.Accent) } }
-            item { TranslateSetting() }
             item { TakeOutEntry(phone, onScan) }
             item { Heading("On this phone") }
             items(ui.log.take(20)) { LogLine(it) }
@@ -827,9 +827,9 @@ private fun TranslateSetting() {
     var typed by remember(url) { mutableStateOf(url) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     Column(Modifier.padding(top = 6.dp)) {
-        Text("Use your own LibreTranslate server", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
-        Muted(if (url.isEmpty()) "Off: notes in other languages are left out of Discover. Set your LibreTranslate server to translate them instead."
-            else "Notes in other languages are translated by your server. If it's down or slow, they're left out.")
+        Text("Your own translation server (optional)", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
+        Muted(if (url.isEmpty()) "A LibreTranslate address, if you run one: posts are then translated by it, and by this phone whenever it doesn't answer."
+            else "Posts are translated by your server, and by this phone whenever it doesn't answer.")
         Spacer(Modifier.height(8.dp))
         androidx.compose.material3.OutlinedTextField(typed, { typed = it }, Modifier.fillMaxWidth(), singleLine = true,
             placeholder = { Text("https://translate.example.com", color = Vault.Muted) },
@@ -845,7 +845,7 @@ private fun TranslateSetting() {
             }
         }
         status?.let { Muted(it) }
-        Muted("Your LibreTranslate, over https.")
+        Muted("Over https. The address and key stay on this phone.")
     }
 }
 

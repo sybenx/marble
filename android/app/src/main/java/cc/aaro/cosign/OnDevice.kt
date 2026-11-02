@@ -59,6 +59,11 @@ object OnDevice {
 
     /** [text] from [from] into your language; null if it can't (or the model isn't there and [download] is false). */
     suspend fun translate(text: String, from: String, download: Boolean): String? {
+        // Your own server first, if you set one (Translate); the phone if it's off or doesn't answer.
+        if (Translate.on && from != target()) {
+            val (protectedText, kept) = PostLanguage.protect(text)
+            Translate.one(protectedText, from, target())?.let { return PostLanguage.restore(it, kept) }
+        }
         val src = TranslateLanguage.fromLanguageTag(from) ?: return null
         val dst = TranslateLanguage.fromLanguageTag(target()) ?: return null
         if (src == dst) return null

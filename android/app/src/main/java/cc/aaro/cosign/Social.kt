@@ -2542,7 +2542,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val cleaned = PostLanguage.clean(text)
                 val known = PostLanguage.tagged(e) ?: synchronized(authorLang) { authorLang[e.pubkey] }
                 val guess = if (known != null) PostLanguage.Guess(known, listOf(known)) else if (!PostLanguage.guessable(cleaned)) return@launch
-                    else PostLanguage.decide(OnDevice.candidates(cleaned))
+                    else PostLanguage.decide(OnDevice.candidates(cleaned)).let { g ->
+                        // Unsure: your server's opinion, if you set one, settles it when it's confident.
+                        if (g.lang != null) g else Translate.detect(cleaned)?.firstOrNull()?.takeIf { it.second >= 0.8f }?.let { PostLanguage.Guess(it.first, listOf(it.first)) } ?: g
+                    }
                 val reads = OnDevice.reads()
                 val from = guess.lang
                 if (from == null) {
@@ -2551,7 +2554,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     if (likely.isNotEmpty() && likely.none { it in reads }) offers.update { it + (e.id to Offer(null, likely)) }
                     return@launch
                 }
-                if (from in reads || !OnDevice.supported(from)) return@launch
+                if (from in reads || (!OnDevice.supported(from) && !Translate.on)) return@launch
                 val out = OnDevice.translate(text, from, download = false)
                 if (out != null) keepTranslation(e.id, Translated(out, from)) else offers.update { it + (e.id to Offer(from, listOf(from))) }
             } catch (x: Exception) { if (x is kotlinx.coroutines.CancellationException) throw x }
