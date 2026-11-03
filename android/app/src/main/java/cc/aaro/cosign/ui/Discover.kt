@@ -2296,7 +2296,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
      * The link that gets a preview card (one per post, the first): a web link on its own line, or at the post's end.
      * One in the middle of a sentence stays a link.
      */
-    val previewLink: Part.Link? = parts.withIndex().firstOrNull { (i, p) ->
+    val previewLink: Part.Link? = if (media.isNotEmpty()) null else parts.withIndex().firstOrNull { (i, p) ->
         p is Part.Link && p.text == null && !p.url.startsWith("blossom:") && cc.aaro.cosign.inAppRef(p.url) == null && run {
             val before = (parts.getOrNull(i - 1) as? Part.Plain)?.s
             val after = parts.drop(i + 1)
@@ -2329,7 +2329,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             val shown = label(p, people)
             when (p) {
                 is Part.Plain -> out += "text" to p.s
-                is Part.Link -> out += "link" to p.url
+                is Part.Link -> out += "link" to linkToken(p.url)
                 is Part.Mention -> out += "mention" to p.pubkey
                 is Part.Tag -> out += "hashtag" to p.tag
                 is Part.Emoji -> out += "emoji" to p.code
@@ -2355,6 +2355,9 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
     }
 
     companion object {
+        /** A link as the fixtures' token: its address, and "|/<ref>" when it opens here (a viewer's link to a post or person). */
+        fun linkToken(url: String): String = if (cc.aaro.cosign.inAppRef(url) == null || url.startsWith("nostr:")) url
+            else url + "|/" + url.trimEnd('/').substringAfterLast('/').substringBefore('?')
         const val EMOJI = "emoji:"
         // Links first (anything inside one is the link's), then references (with or without nostr:, not inside a word),
         // #tags (with a letter: #1 is text) and :emoji: (only those the post defines; others stay text).

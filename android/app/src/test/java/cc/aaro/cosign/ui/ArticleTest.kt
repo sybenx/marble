@@ -24,9 +24,9 @@ class ArticleTest {
         // Every row is as wide as the header, and the article is there to its end (its last row's last link).
         assertTrue(t.rows.all { it.size == 4 })
         val lastLink = Regex("https://njump\\.me/nevent1[0-9a-z]+").findAll(a.content).last().value
-        assertTrue(Markdown.tokens(blocks).first.any { it.first == "link" && it.second == lastLink })
+        assertTrue(Markdown.tokens(blocks).first.any { it.first == "link" && it.second.substringBefore("|") == lastLink })
         // Links in cells stay links (njump ones open in Marble).
-        assertTrue(Markdown.tokens(blocks).first.any { it.first == "link" && it.second.startsWith("https://njump.me/nevent1") })
+        assertTrue(Markdown.tokens(blocks).first.any { it.first == "link" && it.second.startsWith("https://njump.me/nevent1") && it.second.contains("|/nevent1") })
         // The leading # title is there to be dropped (the reader drops a heading equal to the title).
         val h = blocks.first() as Markdown.Block.Heading
         assertEquals(a.firstTag("title"), h.spans.joinToString("") { (it.part as? Body.Part.Plain)?.s ?: "" }.trim())

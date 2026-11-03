@@ -168,7 +168,7 @@ internal object Markdown {
             for (sp in spansOf(b)) {
                 val p = sp.part
                 inline += when (p) {
-                    is Body.Part.Plain -> "text" to p.s; is Body.Part.Link -> "link" to p.url; is Body.Part.Mention -> "mention" to p.pubkey
+                    is Body.Part.Plain -> "text" to p.s; is Body.Part.Link -> "link" to Body.linkToken(p.url); is Body.Part.Mention -> "mention" to p.pubkey
                     is Body.Part.Tag -> "hashtag" to p.tag; is Body.Part.Emoji -> "emoji" to p.code
                     is Body.Part.Quote -> "shortlink" to p.raw; is Body.Part.QuoteAddr -> "shortlink" to p.raw
                 }
