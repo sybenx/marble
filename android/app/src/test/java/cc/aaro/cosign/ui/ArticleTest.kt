@@ -33,4 +33,37 @@ class ArticleTest {
     }
 
     @Test fun readTime() = assertTrue(Markdown.minutes(Markdown.parse(event("article.json"))) in 2..6)
+
+    @Test fun thePost() {
+        val b = Body.of(event("post.json"))
+        // The quoted test note is the card; the article gets its own card; the 10 closing mentions become chips.
+        assertTrue(b.card is Body.Part.Quote)
+        assertEquals(30023, b.article?.a?.kind)
+        assertEquals(10, b.trailing.size)
+        assertTrue(b.parts.none { it is Body.Part.Mention })
+        assertEquals(null, b.previewLink)
+        val (tokens, seen) = b.tokens()
+        assertTrue(tokens.none { it.first == "shortlink" })
+        assertTrue("no ↪ in the text", "↪" !in seen)
+    }
+
+    @Test fun articleCardLine() {
+        // Its summary is its title, so the line is the first real sentence: the table's first row, as text.
+        val line = Markdown.line(event("article.json"))
+        assertTrue(line, line.startsWith("Client · Platform or version") || line.startsWith("Amethyst"))
+    }
+
+    @Test fun onePreviewOnlyForALinkOnItsOwnLineOrAtTheEnd() {
+        fun ev(t: String) = Event("a", 1, 1, emptyList(), t)
+        assertEquals("https://example.com/a", Body.of(ev("Read this:\nhttps://example.com/a\nso good")).previewLink?.url)
+        assertEquals("https://example.com/b", Body.of(ev("Read this https://example.com/b")).previewLink?.url)
+        assertEquals(null, Body.of(ev("See https://example.com/c for more")).previewLink)
+        assertEquals(null, Body.of(ev("nothing\nhttps://njump.me/npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m")).previewLink)
+    }
+
+    @Test fun twoMentionsStayInTheText() {
+        val pk = "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
+        val b = Body.of(Event("a", 1, 1, emptyList(), "thanks nostr:$pk nostr:$pk"))
+        assertTrue(b.trailing.isEmpty())
+    }
 }

@@ -822,6 +822,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
             .filter { parentOf(it) == null }
     }
 
+    /** One link's preview (a post's own link card), fetched once while Marble runs. */
+    private val previewAsked = java.util.Collections.synchronizedSet(HashSet<String>())
+    fun wantPreview(url: String) {
+        if (url in previews.value || !previewAsked.add(url)) return
+        scope.launch { Preview.fetch(url)?.let { p -> previews.update { it + (url to p) }; Preview.save(CosignApp.instance, previews.value) } }
+    }
+
     /** Link previews for these posts' links, in the background, kept on this phone. */
     private fun loadPreviews(posts: List<Event>) = scope.launch {
         afterPaint()

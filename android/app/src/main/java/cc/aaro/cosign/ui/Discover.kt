@@ -1831,7 +1831,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     val offer = nav.social.offers.collectAsState().value[n.id]
     var original by remember(n.id) { mutableStateOf(false) }
     // A link with a preview shows as a card instead of in the text; an article as a card of its own.
-    val link = remember(n.id) { if (pick != null) Calm.link(n) else null }
+    val link = remember(n.id) { if (pick != null) Calm.link(n) else if (n.kind == 1) Body.of(n).previewLink?.url else null }
+    if (link != null && pick == null) LaunchedEffect(link) { nav.social.wantPreview(link) }
     val card = if (n.kind == 30023) remember(n.id) { Preview(n.firstTag("title") ?: "Article", n.firstTag("image"), n.firstTag("summary") ?: "", "Article") } else link?.let { previews[it] }
     val body = remember(n.id, tr, original, card != null) {
         val text = if (tr != null && !original) tr.text else if (n.kind == 30023) "" else n.content
@@ -1892,17 +1893,21 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis, inlineContent = emoji)
             }
             // What it refers to first, under it (a post, an article, something from another app); any later one is a short link.
+            // A closing run of mentions: one line of small chips (+N opens the rest).
+            if (!veiled && body.trailing.isNotEmpty()) MentionChips(body.trailing, people, nav)
             if (!veiled) when (val c = body.card) {
                 is Body.Part.Quote -> QuoteBox(c.id, people, nav)
                 is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
                 else -> {}
             }
+            if (!veiled) body.article?.let { AddrBox(it.a, people, nav) }
             // In a list, one picture, no taller than it is wide (and how many more); a thread shows them all, whole.
             val full = maxLines == Int.MAX_VALUE
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            if (!veiled) card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
+            if (!veiled && n.kind == 30023) ArticleCard(n, people, nav, author = false)
+            else if (!veiled) card?.let { c -> LinkCard(c, link) { if (link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
             if (card == null && !veiled) body.media.take(if (full) Int.MAX_VALUE else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
@@ -2037,6 +2042,7 @@ private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
  */
 @Composable
 private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav: Nav, page: String? = null) {
+    if (e?.kind == 30023) return ArticleCard(e, people, nav)
     val context = LocalContext.current
     val inMarble = e != null && OtherApps.drawn(e.kind)
     var target by remember(e?.id) { mutableStateOf(page) }
@@ -2056,9 +2062,7 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
         }
         when {
             // An article: its card (picture, title, summary), as an article shows in the feed.
-            e?.kind == 30023 -> Box(Modifier.padding(top = 6.dp)) {
-                LinkCard(Preview(e.firstTag("title") ?: "An article", e.firstTag("image")?.takeIf { it.startsWith("https://") }, e.firstTag("summary") ?: "", "Article")) { nav.thread(e.id) }
-            }
+
             else -> Text(if (e == null) "Couldn't load this post" else if (e.kind == 1) cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown } else OtherApps.what(e),
                 color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp))
@@ -2071,8 +2075,8 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
 @Composable
 private fun Totals(e: Social.Engagement) {
     fun n(v: Long, one: String, many: String) = "$v ${if (v == 1L) one else many}"
-    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") }, n(e.likeTotal, "like", "likes"),
-        e.zaps.takeIf { it > 0 }?.let { n(it.toLong(), "zap", "zaps") })
+    // (No zaps: showing payments is put off.)
+    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") }, n(e.likeTotal, "like", "likes"))
     Text(parts.joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp))
 }
 
@@ -2150,12 +2154,15 @@ private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
 
 /** A link's preview: the page's picture, its site, title and a line of summary. */
 @Composable
-private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
+private fun LinkCard(c: Preview, url: String? = null, onOpen: () -> Unit) = Column(
     Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).background(Vault.Surface).clickable(onClick = onOpen),
 ) {
     c.image?.let { NetImage(it, Modifier.fillMaxWidth().heightIn(max = 190.dp).aspectRatio(1.91f).background(Vault.Edge), 1080) }
     Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
-        if (c.site.isNotEmpty()) Text(c.site, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (c.site.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+            url?.let { SiteIcon(it, 14); Spacer(Modifier.width(6.dp)) }
+            Text(c.site, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
         if (c.summary.isNotEmpty()) Text(c.summary, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
     }
@@ -2258,7 +2265,9 @@ private fun ReportDialog(name: String, onClose: () -> Unit, onReport: (String) -
  * A note's text, cut up: pictures apart, mentions and #tags made tappable. The rules are shared with Marble Web and
  * Astral (marble-content-fixtures: content-rules.md); ContentFixturesTest runs its fixtures against [tokens].
  */
-internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>, private val quoted: Part? = null) {
+internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>, private val quoted: Part? = null,
+                    /** A run of three or more mentions closing the post: shown as one line of small chips, not in the text. */
+                    val trailing: List<String> = emptyList()) {
     val images get() = media.filterIsInstance<Img>()
     sealed class Part {
         data class Plain(val s: String) : Part()
@@ -2280,6 +2289,23 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
      */
     val card: Part? = parts.firstOrNull { it is Part.Quote || it is Part.QuoteAddr } ?: quoted
 
+    /** An article it refers to (kind 30023), when that isn't [card] already: a card too, as articles always get. */
+    val article: Part.QuoteAddr? = parts.firstOrNull { it is Part.QuoteAddr && it.a.kind == 30023 && it !== card } as Part.QuoteAddr?
+
+    /**
+     * The link that gets a preview card (one per post, the first): a web link on its own line, or at the post's end.
+     * One in the middle of a sentence stays a link.
+     */
+    val previewLink: Part.Link? = parts.withIndex().firstOrNull { (i, p) ->
+        p is Part.Link && p.text == null && !p.url.startsWith("blossom:") && cc.aaro.cosign.inAppRef(p.url) == null && run {
+            val before = (parts.getOrNull(i - 1) as? Part.Plain)?.s
+            val after = parts.drop(i + 1)
+            val ownLine = (i == 0 || before?.trimEnd(' ', '\t')?.let { it.isEmpty() || it.endsWith("\n") } == true) &&
+                (after.isEmpty() || (after.first() as? Part.Plain)?.s?.trimStart(' ', '\t')?.let { it.isEmpty() || it.startsWith("\n") } == true)
+            ownLine || after.all { it is Part.Plain && it.s.isBlank() }
+        }
+    }?.value as Part.Link?
+
     /** What a part shows as, in the text (null: nothing; a card, or an emoji, drawn as its picture). */
     fun label(p: Part, people: Map<String, Person>): String? = when (p) {
         is Part.Plain -> p.s
@@ -2288,7 +2314,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         } ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it }
         is Part.Mention -> "@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))
         is Part.Quote -> if (p === card) null else "↪ quoted"
-        is Part.QuoteAddr -> if (p === card) null else if (p.a.kind == 30023) "↪ an article" else "↪ quoted"
+        is Part.QuoteAddr -> if (p === card || p === article) null else if (p.a.kind == 30023) "↪ an article" else "↪ quoted"
         is Part.Tag -> "#" + p.tag
         is Part.Emoji -> null
     }
@@ -2308,10 +2334,11 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 is Part.Tag -> out += "hashtag" to p.tag
                 is Part.Emoji -> out += "emoji" to p.code
                 is Part.Quote -> if (p !== card) out += "shortlink" to p.raw
-                is Part.QuoteAddr -> if (p !== card) out += "shortlink" to p.raw
+                is Part.QuoteAddr -> if (p !== card && p !== article) out += "shortlink" to p.raw
             }
             if (p !is Part.Link && shown != null) seen.append(shown)
         }
+        for (pk in trailing) { out += "mention" to pk; seen.append("@" + (people[pk]?.shown ?: shortNpub(pk))) }
         return out to seen.toString()
     }
     sealed class Media
@@ -2404,6 +2431,18 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 val v = t[1].lowercase()
                 if (cc.aaro.qrst.core.isHex32(v)) Part.Quote(v)
                 else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.qrst.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
+            }
+            // A run of 3+ mentions closing the post (only spaces and line breaks between them): out of the text, into chips.
+            var cut = tidy.size
+            val run = ArrayList<String>()
+            while (cut > 0) {
+                val p = tidy[cut - 1]
+                if (p is Part.Mention) { run.add(0, p.pubkey); cut-- } else if (p is Part.Plain && p.s.isBlank()) cut-- else break
+            }
+            if (run.size >= 3) {
+                val kept = tidy.take(cut).toMutableList()
+                (kept.lastOrNull() as? Part.Plain)?.let { kept[kept.lastIndex] = Part.Plain(it.s.trimEnd()) }
+                return Body(kept, images, mentions, q, run)
             }
             return Body(tidy, images, mentions, q)
         }
@@ -3887,5 +3926,55 @@ private fun ArticleTable(t: Markdown.Block.Table, people: Map<String, Person>, n
             }
             if (r < t.rows.size) HorizontalDivider(color = Vault.Edge)
         }
+    }
+}
+
+/**
+ * An article (kind 30023), as a card: its picture if it has one (16:9, from the top; none, no box), its title, the
+ * line under it (Markdown.line), and who wrote it, how long it takes to read, and when if it's older than a week.
+ * A tap opens the reader.
+ */
+@Composable
+private fun ArticleCard(e: Event, people: Map<String, Person>, nav: Nav, author: Boolean = true) {
+    val line = remember(e.id) { Markdown.line(e) }
+    val minutes = remember(e.id) { Markdown.minutes(Markdown.parse(e)) }
+    LaunchedEffect(e.pubkey) { People.want(listOf(e.pubkey)) }
+    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).background(Vault.Surface)
+        .clickable(onClickLabel = "Read it") { nav.thread(e.id) }) {
+        e.firstTag("image")?.trim()?.takeIf { it.startsWith("https://") }?.let {
+            NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Vault.Edge), 1080, ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
+        Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
+            Text(e.firstTag("title")?.trim()?.ifEmpty { null } ?: "Untitled", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (line.isNotEmpty()) Text(line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (author) {
+                    Avatar(people[e.pubkey], e.pubkey, 18)
+                    Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 6.dp).weight(1f, fill = false))
+                    Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                }
+                val at = e.firstTag("published_at")?.toLongOrNull() ?: e.createdAt
+                val old = System.currentTimeMillis() / 1000 - at > 7 * 86_400L
+                Text("$minutes min read" + if (old) " · " + java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(at * 1000)) else "",
+                    color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** A closing run of mentions: small muted chips on one wrapped line, the first four and "+N" (a tap shows the rest). */
+@Composable
+private fun MentionChips(who: List<String>, people: Map<String, Person>, nav: Nav) {
+    var all by remember(who) { mutableStateOf(false) }
+    LaunchedEffect(who) { People.want(who) }
+    val shown = if (all) who else who.take(4)
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        @Composable fun Chip(text: String, onClick: () -> Unit) = Text(text, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+            modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Vault.Surface).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 3.dp))
+        for (pk in shown) Chip("@" + (people[pk]?.shown ?: shortNpub(pk))) { nav.profile(pk) }
+        if (!all && who.size > 4) Chip("+${who.size - 4}") { all = true }
     }
 }

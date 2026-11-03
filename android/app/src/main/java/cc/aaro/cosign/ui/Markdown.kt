@@ -186,4 +186,28 @@ internal object Markdown {
         is Block.Table -> (listOf(b.header) + b.rows).flatMap { r -> r.flatMap { it + Span(Body.Part.Plain(" ")) } }
         else -> emptyList()
     }
+
+    /**
+     * The line under an article card's title: its summary when that says something the title doesn't; else its first
+     * real sentence (a leading heading equal to the title skipped, Markdown taken out, a table's first row as text).
+     */
+    fun line(e: Event): String {
+        val title = e.firstTag("title")?.trim().orEmpty()
+        e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() && !it.equals(title, ignoreCase = true) }?.let { return it }
+        fun plain(spans: List<Span>) = spans.joinToString("") { sp -> when (val p = sp.part) { is Body.Part.Plain -> p.s; is Body.Part.Link -> p.text ?: ""; is Body.Part.Tag -> "#" + p.tag; else -> "" } }
+            .replace(Regex("\\s+"), " ").trim()
+        for (b in parse(e)) {
+            val text = when (b) {
+                is Block.Heading -> continue
+                is Block.Para -> plain(b.spans)
+                is Block.Quote -> plain(b.spans)
+                is Block.Item -> plain(b.spans)
+                is Block.Table -> b.rows.firstOrNull()?.map { plain(it) }?.filter { it.isNotEmpty() }?.joinToString(" · ")
+                else -> null
+            }?.takeIf { it.isNotEmpty() } ?: continue
+            val end = Regex("[.!?](\\s|$)").find(text)?.range?.first
+            return (if (end != null && end < 220) text.substring(0, end + 1) else text.take(200)).trim()
+        }
+        return ""
+    }
 }
