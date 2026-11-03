@@ -122,7 +122,11 @@ fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
  * A link that's a post, article or someone, opened in Marble rather than a browser: marble.syb.lol (/nevent1…, /e/…,
  * /p/…, /a/…), njump.me, or nostr:…. Anything else (a real web page): null.
  */
-fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, setOf("marble.syb.lol", "njump.me"))
+fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, VIEWERS)
+
+/** Sites that show a post or a person by its reference: their links open it in Marble instead. */
+private val VIEWERS = setOf("marble.syb.lol", "njump.me", "njump.to", "primal.net", "nostr.at", "nostr.com", "snort.social", "iris.to", "coracle.social",
+    "nostrudel.ninja", "yakihonne.com", "habla.news", "highlighter.com", "jumble.social", "nostter.app")
 
 private fun refIn(url: String, hosts: Set<String>): Ref? {
     val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }

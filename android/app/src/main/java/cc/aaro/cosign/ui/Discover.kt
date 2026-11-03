@@ -2602,11 +2602,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                 NetImage(img, Modifier.fillMaxWidth().aspectRatio(1.9f).clickable { nav.pictures(listOf(img) + pictures, 0) }, 1080)
             }
             Column(Modifier.padding(horizontal = 24.dp)) {
-                Text("Article · ${Markdown.minutes(blocks)} min read".uppercase(), color = Vault.Accent, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp,
-                    letterSpacing = 0.12.em, modifier = Modifier.padding(top = 20.dp))
-                Text(title ?: "An article", fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 35.sp, color = Vault.Text,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
-                e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                Text(title ?: "Untitled", fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 35.sp, color = Vault.Text,
+                    modifier = Modifier.padding(top = 22.dp, bottom = 10.dp))
+                e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() && !it.equals(title, ignoreCase = true) }?.let {
                     Text(it, fontFamily = Literata, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, fontSize = 17.5.sp, lineHeight = 25.sp, color = Vault.Muted,
                         modifier = Modifier.padding(bottom = 16.dp))
                 }
@@ -2616,6 +2614,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                     Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp))
                     Text(" · " + java.text.SimpleDateFormat("d MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(when_ * 1000)), color = Vault.Muted, fontSize = 13.sp)
                 }
+                Text("${Markdown.minutes(blocks)} min read", color = Vault.Muted, fontSize = 13.sp, modifier = Modifier.padding(start = 38.dp, top = 2.dp))
                 Box(Modifier.padding(vertical = 18.dp).size(36.dp, 2.dp).clip(RoundedCornerShape(1.dp)).background(Vault.Accent))
             }
         }
@@ -2651,6 +2650,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                 }
                 is Markdown.Block.Video -> Box(pad.padding(bottom = 14.dp)) { VideoCard(b.v) }
                 Markdown.Block.Rule -> EndMark()
+                is Markdown.Block.Table -> ArticleTable(b, people, nav, Modifier.padding(start = 16.dp, bottom = 16.dp))
             }
         }
     }
@@ -3861,5 +3861,31 @@ private fun TranslateOffer(n: Event, o: Social.Offer, social: Social) = Box {
     if (open) DropdownMenu(true, { open = false; other = false }, containerColor = Vault.Surface) {
         for (l in if (other) OnDevice.all() else o.likeliest) DropdownMenuItem({ Text(OnDevice.name(l), color = Vault.Text) }, { open = false; other = false; social.translateFrom(n, l, remember = true) })
         if (!other) DropdownMenuItem({ Text("Other…", color = Vault.Muted) }, { other = true })
+    }
+}
+
+/**
+ * A table in an article: wider than the screen, it scrolls sideways in its own box, its first column staying put.
+ * Bold, links and emoji in cells work as in the text.
+ */
+@Composable
+private fun ArticleTable(t: Markdown.Block.Table, people: Map<String, Person>, nav: Nav, modifier: Modifier = Modifier) {
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    val cell = articleStyle.copy(fontSize = 14.sp, lineHeight = 19.sp, fontFamily = null)
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp))) {
+        (listOf(t.header) + t.rows).forEachIndexed { r, row ->
+            val head = r == 0
+            Row(Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Min).background(if (head) Vault.Surface else Color.Transparent)) {
+                @Composable fun Cell(spans: List<Markdown.Span>, w: androidx.compose.ui.unit.Dp) {
+                    val (text, inline) = articleText(spans, people, nav)
+                    Text(text, Modifier.width(w).fillMaxHeight().padding(horizontal = 10.dp, vertical = 8.dp), style = if (head) cell.copy(fontWeight = FontWeight.SemiBold) else cell, inlineContent = inline)
+                }
+                // The first column stays put (all rows share one sideways scroll for the rest).
+                Cell(row.firstOrNull() ?: emptyList(), 112.dp)
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Vault.Edge))
+                Row(Modifier.horizontalScroll(scroll)) { row.drop(1).forEach { Cell(it, 210.dp) } }
+            }
+            if (r < t.rows.size) HorizontalDivider(color = Vault.Edge)
+        }
     }
 }
