@@ -59,8 +59,13 @@ function render(s: any) {
   unmount?.(); unmount = undefined;
 
   const npub = npubOf(s.pubkey);
-  $('name').textContent = s.profile?.name ?? `${npub.slice(0, 12)}…${npub.slice(-6)}`;
-  $('npub').textContent = s.profile?.name ? `${npub.slice(0, 12)}…${npub.slice(-6)}` : 'Signed in';
+  const short = `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+  // Where the npub shows (shortened), a click copies all of it.
+  const at = s.profile?.name ? $('npub') : $('name');
+  $('name').textContent = s.profile?.name ?? short;
+  $('npub').textContent = s.profile?.name ? short : 'Signed in';
+  for (const el of [$('name'), $('npub')]) { el.classList.remove('copy'); el.removeAttribute('title'); delete el.dataset.npub; }
+  at.classList.add('copy'); at.title = 'Copy your npub'; at.dataset.npub = npub;
   const av = $('avatar') as HTMLImageElement;
   av.hidden = !s.profile?.picture;
   if (s.profile?.picture) av.src = s.profile.picture;
@@ -112,3 +117,14 @@ $('joinGo').onclick = () => {
 
 $('safePaper').onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'paper' }); window.close(); };
 $('safePhone').onclick = () => { api.runtime.sendMessage({ type: 'open-safety', which: 'phone' }); window.close(); };
+
+// Click your npub: the whole of it is copied; for a moment it reads "Copied".
+for (const id of ['name', 'npub']) $(id).addEventListener('click', async () => {
+  const el = $(id);
+  const full = el.dataset.npub;
+  if (!full || el.dataset.copied) return;
+  try { await navigator.clipboard.writeText(full); } catch { return; }
+  const was = el.textContent;
+  el.dataset.copied = '1'; el.textContent = 'Copied';
+  setTimeout(() => { el.textContent = was; delete el.dataset.copied; }, 1200);
+});

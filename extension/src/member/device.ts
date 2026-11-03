@@ -66,6 +66,8 @@ export class Device {
   private vouched = new Map<string, number>();
   /** A phone that scanned this browser's invite asks to join: the page showing the invite asks you. */
   onJoinRequest: (r: { pk: string; name: string; relays: string[] }) => void = () => {};
+  /** Another device removed this browser from the key (once). */
+  onRemoved: () => void = () => {};
   private requests = new Set<string>();
   private pinger: ReturnType<typeof setInterval>;
 
@@ -205,6 +207,16 @@ export class Device {
     const server = this.st.group.members.find(x => x.role === 'server' && x.pk === from);
     if (!server) return;
     if (m.type === 'repair') return void this.helpRepair(m, from);
+    // Removed from the key: only ever said by a server, which records the removal (group.ts onRemove, onContest). A
+    // device saying another was removed is what remove_member and the contest window are for, not this message, so
+    // one from any other member (or one a hostile server wrote into the list) can't sign every open tab out.
+    if (m.type === 'removed') {
+      const first = !this.st.removed;
+      this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() };
+      this.save(this.st);
+      if (first) this.onRemoved();
+      return;
+    }
     if (m.type === 'backup_made' && this.making && m.id === this.making.id) {
       const { sk, done } = this.making; this.making = null;
       return done(this.paperCode(sk));
@@ -259,7 +271,6 @@ export class Device {
     if (m.type === 'refresh_plan') { this.follow(m.plan as RefreshPlan); return true; }
     if (m.type === 'refresh_committed') { this.committed(m); return true; }
     if (m.type === 'refresh_part') { this.refresh?.take(m, from); return true; }
-    if (m.type === 'removed') { this.st.removed = { by: String(m.by ?? 'another device'), at: Date.now() }; this.save(this.st); return true; }
     return false;
   }
 
