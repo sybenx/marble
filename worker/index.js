@@ -15,6 +15,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/.well-known/assetlinks.json") return assetLinks(env);
+    if (url.pathname === "/api/preview") return preview(url.searchParams.get("url"), ctx);
     const m = SHARED.exec(url.pathname);
     const d = m && decode(m[2]);
     if (!d || !["GET", "HEAD"].includes(request.method)) return env.ASSETS.fetch(request);
@@ -38,6 +39,57 @@ function assetLinks(env) {
   if (!certs.length) return new Response("not set up", { status: 404 });
   const body = [{ relation: ["delegate_permission/common.handle_all_urls"], target: { namespace: "android_app", package_name: "cc.aaro.cosign", sha256_cert_fingerprints: certs } }];
   return new Response(JSON.stringify(body), { headers: { "content-type": "application/json", "cache-control": "public, max-age=3600" } });
+}
+
+// ── A link's preview: its page's OpenGraph title, description, picture, site name and icon ─────────────
+// The page asks here because a browser can't read another site's page. Only public http(s) pages; the first 256 KB of
+// HTML read; kept at the edge for a day (an hour when there's nothing).
+
+const PRIVATE = /^(localhost|.*\.local|.*\.internal|.*\.localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[|::1)/i;
+async function preview(target, ctx) {
+  const json = (body, ttl) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json", "cache-control": `public, max-age=${ttl}`, "access-control-allow-origin": "*" } });
+  let u;
+  try { u = new URL(target); } catch { return json({ error: "not a link" }, 60); }
+  if (!/^https?:$/.test(u.protocol) || PRIVATE.test(u.hostname) || u.port && !["80", "443"].includes(u.port)) return json({ error: "not a public page" }, 60);
+  const key = new Request(`${SITE}/__preview/${encodeURIComponent(u.href)}`);
+  const hit = await caches.default.match(key).catch(() => null);
+  if (hit) return hit;
+  let found = {};
+  try {
+    const res = await fetch(u.href, { headers: { "user-agent": "Mozilla/5.0 (compatible; MarbleBot/1.0; +https://marble.syb.lol)", accept: "text/html" }, redirect: "follow", signal: AbortSignal.timeout(5000) });
+    if (res.ok && /text\/html|application\/xhtml/.test(res.headers.get("content-type") || "")) found = readMeta(await headOf(res, 256 * 1024), new URL(res.url || u.href));
+    else res.body?.cancel();
+  } catch {}
+  const out = json(found, found.title ? 86400 : 3600);
+  ctx.waitUntil(caches.default.put(key, out.clone()).catch(() => {}));
+  return out;
+}
+async function headOf(res, max) {
+  const reader = res.body.getReader(), parts = [];
+  let size = 0;
+  while (size < max) { const { done, value } = await reader.read(); if (done) break; parts.push(value); size += value.length; if (/<\/head>/i.test(new TextDecoder().decode(value))) break; }
+  reader.cancel().catch(() => {});
+  return new TextDecoder().decode(new Uint8Array(parts.flatMap((p) => [...p])).slice(0, max));
+}
+function readMeta(html, base) {
+  const ent = (s) => String(s || "").replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos|#39);/gi, (m, c) => c[0] === "#" ? String.fromCodePoint(parseInt(c.slice(c[1] === "x" || c[1] === "X" ? 2 : 1), c[1] === "x" || c[1] === "X" ? 16 : 10)) : ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" })[c.toLowerCase()] || m).trim();
+  const metas = {};
+  for (const m of html.matchAll(/<meta\s+[^>]*>/gi)) {
+    const attr = (n) => (new RegExp(`\\b${n}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(m[0]) || [])
+      .slice(2).find((x) => x !== undefined);
+    const k = (attr("property") || attr("name") || "").toLowerCase(), v = attr("content");
+    if (k && v != null && !(k in metas)) metas[k] = ent(v);
+  }
+  const abs = (x) => { try { const r = new URL(x, base); return r.protocol === "https:" ? r.href : ""; } catch { return ""; } };
+  const icon = /<link\s+[^>]*rel\s*=\s*["']?(?:shortcut )?icon["']?[^>]*>/i.exec(html)?.[0].match(/href\s*=\s*["']([^"']+)["']/i)?.[1];
+  const title = metas["og:title"] || metas["twitter:title"] || ent(/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1]);
+  return {
+    title: (title || "").slice(0, 200),
+    description: (metas["og:description"] || metas["twitter:description"] || metas.description || "").slice(0, 300),
+    image: abs(metas["og:image"] || metas["og:image:url"] || metas["twitter:image"] || ""),
+    site: (metas["og:site_name"] || "").slice(0, 80),
+    icon: abs(icon || "/favicon.ico"),
+  };
 }
 
 // ── What the link names, from the relays (kept at the edge) ──────────────────────────────────────────

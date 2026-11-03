@@ -163,9 +163,10 @@ function nip05Label(pk, p) {
 function card(e, { compact = false, context = true, why = "", clamp = false } = {}) {
   keep(e);
   if (e.kind === 6) return repostCard(e);
+  if (e.kind === 30023) return articleCard(e, { why });
   const parent = context ? replyTo(e) : null;
   const cw = warning(e);
-  const body = e.kind === 30023 ? articleTeaser(e) : `<div class="text${clamp ? " clamp" : ""}">${content(e)}</div>`;
+  const body = `<div class="text${clamp ? " clamp" : ""}">${content(e)}</div>`;
   return `<article class="card${compact ? " compact" : ""}" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
     ${why ? `<p class="why">${esc(why)}</p>` : ""}
     ${who(e.pubkey, e)}
@@ -225,11 +226,39 @@ function repostCard(e) {
   return "";
 }
 
-function articleTeaser(e) {
-  const tag = (k) => (e.tags.find((t) => t[0] === k) || [])[1] || "";
-  const img = tag("image");
-  return `<div class="teaser">${/^https:\/\//.test(img) ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}
-    <h3>${esc(tag("title") || "Untitled")}</h3>${tag("summary") ? `<p>${esc(tag("summary").slice(0, 240))}</p>` : ""}</div>`;
+// An article (kind 30023), wherever it shows (quoted in a post, in a list): its picture (none when it has none), title, a
+// line about it, and who wrote it, how long it takes to read and, past a week, when. No "article" label.
+const tagOf = (e, k) => (e.tags.find((t) => t[0] === k) || [])[1] || "";
+const sameWords = (a, b) => a.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase() === b.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
+const plainMd = (s) => s.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/nostr:\S+|https?:\/\/\S+/g, "")
+  .replace(/[*_`~]+/g, "").replace(/\s+/g, " ").trim();
+/** About 230 words a minute. */
+const readTime = (e) => `${Math.max(1, Math.round(plainMd(e.content || "").split(" ").filter(Boolean).length / 230))} min read`;
+/** The summary, unless it only repeats the title; else the body's first real sentence (a table's first row, as text). */
+function articleLine(e) {
+  const title = tagOf(e, "title"), summary = tagOf(e, "summary").trim();
+  if (summary && !sameWords(summary, title)) return summary;
+  const lines = String(e.content || "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (!l || /^#{1,6}\s/.test(l) || /^\|?\s*:?-{3,}/.test(l) || /^```|^(-{3,}|\*{3,})$/.test(l)) continue;
+    if (/^\|/.test(l) && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1] || "")) continue; // a table's header row
+    const text = plainMd(/^\|/.test(l) ? l.replace(/^\||\|$/g, "").split("|").map((c) => c.trim()).filter(Boolean).join(" · ") : l.replace(/^>\s*|^[-*+]\s+/, ""));
+    if (text) return (text.match(/^.+?[.!?](?=\s|$)/) || [text])[0];
+  }
+  return "";
+}
+function articleCard(e, { entity = null, why = "" } = {}) {
+  wantProfile(e.pubkey);
+  const img = tagOf(e, "image"), at = Number(tagOf(e, "published_at")) || e.created_at;
+  const href = entity ? `/${entity}` : `/${naddr({ kind: 30023, pubkey: e.pubkey, identifier: tagOf(e, "d"), relays: foundOn(e.id).slice(0, 2) })}`;
+  const line = articleLine(e);
+  return `<article class="card compact art" data-href="${esc(href)}">
+    ${why ? `<p class="why">${esc(why)}</p>` : ""}
+    ${/^https:\/\//.test(img) ? `<img class="art-img" src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+    <div class="art-body"><h3 class="art-title">${esc(tagOf(e, "title") || "Untitled")}</h3>${line ? `<p class="art-line">${esc(line)}</p>` : ""}
+    <p class="art-by">${avatar(e.pubkey, 20)}<span data-name="${e.pubkey}">${esc(name(e.pubkey))}</span><span>· ${readTime(e)}${Date.now() / 1000 - at > 7 * 86400 ? ` · ${esc(ago(at))}` : ""}</span></p></div>
+  </article>`;
 }
 
 // Profiles that arrive later fill in every name, picture and address already on the page.
@@ -289,8 +318,26 @@ function resolveOpen(root, q, entity) {
     a.dataset.open = "ready";
   });
 }
+// A link's preview (its page's OpenGraph title, picture and description), read by marble.syb.lol's Worker (/api/preview);
+// none where it isn't there (or the page has none).
+const previews = new Map();
+function linkPreview(url) {
+  if (!previews.has(url)) previews.set(url, fetch(`/api/preview?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(6000) })
+    .then((r) => (r.ok && /json/.test(r.headers.get("content-type") || "") ? r.json() : null)).then((p) => (p?.title ? p : null)).catch(() => null));
+  return previews.get(url);
+}
+function previewCard(url, p) {
+  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } })();
+  const ok = (u) => /^https:\/\//.test(u || "");
+  return `<a class="card compact art preview" href="${esc(url)}" target="_blank" rel="noopener noreferrer nofollow">
+    ${ok(p.image) ? `<img class="art-img" src="${esc(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+    <span class="art-body"><span class="art-title">${esc(p.title)}</span>${p.description ? `<span class="art-line">${esc(p.description)}</span>` : ""}
+    <span class="art-by">${ok(p.icon) ? `<img class="favicon" src="${esc(p.icon)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc(p.site || host)}</span></span></span></a>`;
+}
+
 function quoteCard(q, entity) {
   const kind = q.kind === 30023 ? "article" : SHORT_TEXT.has(q.kind) || q.kind === 6 ? "note" : "other";
+  if (kind === "article") return articleCard(q, { entity }).replace("<article ", `<article data-card="article" data-ref="${esc(refOf(q))}" `);
   if (kind !== "other") return card(q, { compact: true, context: false }).replace("<article ", `<article data-card="${kind}" data-ref="${esc(refOf(q))}" `);
   keep(q);
   return `<article class="card compact other" data-card="other" data-ref="${esc(refOf(q))}" data-href="/${esc(entity)}">
@@ -300,6 +347,10 @@ function quoteCard(q, entity) {
 function fillLater(root = pageEl) {
   markReactions(root);
   fillBlossom(root);
+  for (const slot of root.querySelectorAll(".link-preview:not([data-filled])")) {
+    slot.dataset.filled = "1";
+    linkPreview(slot.dataset.preview).then((p) => { if (p) slot.innerHTML = previewCard(slot.dataset.preview, p); });
+  }
   for (const slot of root.querySelectorAll(".quote-slot:not([data-filled])")) {
     slot.dataset.filled = "1";
     const d = decode(slot.dataset.quote);
@@ -473,11 +524,11 @@ function kindOf(r, e) {
 }
 
 // "N replies · N reposts · N likes", the same line as the app's (quotes have their own section; zaps only when there are some)
-const totals = ({ replies, reposts, likes, zaps }) => [
+// (no zap counts: showing payments was put off, 2026-11-02)
+const totals = ({ replies, reposts, likes }) => [
   replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
   reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
   likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
-  zaps && `${zaps} ${zaps === 1 ? "zap" : "zaps"}`,
 ].filter(Boolean).join(" · ");
 
 // ── A pasted post or person: it at the top, then what points at it ───────────────────────────────────
@@ -634,8 +685,8 @@ function showArticle(e, signal) {
     ${/^https:\/\//.test(img) ? `<img class="cover" src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : ""}
     <h1>${esc(tag("title") || "Untitled")}</h1>
     ${who(e.pubkey, null, { big: true })}
-    <p class="muted dated">${esc(fullDate(at))}</p>
-    <div class="prose">${markdown(e.content)}</div>
+    <p class="muted dated">${esc(fullDate(at))} · ${readTime(e)}</p>
+    <div class="prose">${markdown(e.content, { title: tag("title") })}</div>
     <div class="meta"><button type="button" class="link" data-copy="${esc(location.href)}">Copy link</button></div>
   </article>
   <section class="replies thread" aria-label="Replies"><h2>Replies</h2><div class="list" id="replies"><p class="muted loading-text">Looking for replies…</p></div></section>`;
@@ -1413,6 +1464,8 @@ function showNotes(signal, tab) {
 
 document.addEventListener("click", (ev) => {
   if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  const more = ev.target.closest("[data-more-mentions]");
+  if (more) { ev.preventDefault(); for (const a of more.parentElement.querySelectorAll("a[hidden]")) a.hidden = false; more.remove(); return; }
   const copy = ev.target.closest("[data-copy]");
   if (copy) {
     navigator.clipboard?.writeText(copy.dataset.copy).then(() => {
