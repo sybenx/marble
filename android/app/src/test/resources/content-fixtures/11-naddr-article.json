@@ -1,0 +1,92 @@
+{
+  "name": "naddr-article",
+  "rule": "§3",
+  "why": "nostr:naddr1… to kind 30023: an article card",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "Está em curso no Brasil um movimento que lembra A Revolta de Atlas.\n\n\n\nnostr:naddr1qvzqqqr4gupzp4wcve6apq2mshr906e4w9mmuwes75tqu9svyp4anr9z4ukl4c0xqqjxxcnpxvuxvce595cngdeh956rgwfs943rxv3395cnjdpsx5ux2vtxv43xx77hjrv ",
+    "created_at": 1793109388,
+    "id": "ac0a351ebaf2cfd92e3c21422aef3d5dea569a8742ce246d86db8cff7536c73d",
+    "kind": 1,
+    "pubkey": "d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6",
+    "sig": "d6c31218a2c91fe38963efdaf2cce06eb4c4ec125b46012374168be5a37401488c58561c303c581b0c24ae176179ad59b5793592c2dd202492671b6537734822",
+    "tags": [
+      [
+        "subject",
+        "Está em curso no Brasil um movimento que lembra A Revolta de Atlas."
+      ],
+      [
+        "a",
+        "30023:d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6:cba38fc4-1477-4490-b321-194058e1febc",
+        "",
+        "mention"
+      ],
+      [
+        "client",
+        ""
+      ],
+      [
+        "p",
+        "d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6",
+        ""
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "Está em curso no Brasil um movimento que lembra A Revolta de Atlas.\n\nQuem efetivamente cria valor, quem abre empresas, gera empregos e carrega o país nas costas, cansou.\n\nUns estão indo embora. Outros simplesmente pararam.\n\nFoi exatamente o que aconteceu na Venezuela depois que os comunistas tomaram conta.\n\nO resultado será um só: pobreza em massa.\n\nAfinal, se o hospedeiro morre, do que vivem os parasitas?\n\n",
+      "created_at": 1793109388,
+      "id": "d05640ac25f7eee7454f976be71572deb19f1bce8daffdb09817cd63b9d6070a",
+      "kind": 30023,
+      "pubkey": "d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6",
+      "sig": "aa65edd535e8be938e6eeade8d479d67b267b1989db99cd9c20b0cb85b53a9a6df9e29c4980c1a2124c3623e7ef75c95193134c2db4de4656090ac7503e47a8d",
+      "tags": [
+        [
+          "r",
+          "https://bro.layer3.press/articles/cba38fc4-1477-4490-b321-194058e1febc"
+        ],
+        [
+          "title",
+          "Está em curso no Brasil um movimento que lembra A Revolta de Atlas."
+        ],
+        [
+          "published_at",
+          "1793109388"
+        ],
+        [
+          "d",
+          "cba38fc4-1477-4490-b321-194058e1febc"
+        ],
+        [
+          "client",
+          ""
+        ],
+        [
+          "p",
+          "d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6",
+          ""
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "Está em curso no Brasil um movimento que lembra A Revolta de Atlas."
+      }
+    ],
+    "cards": [
+      {
+        "card": "article",
+        "ref": "30023:d5d86675d0815b85c657eb357177be3b30f5160e160c206bd98ca2af2dfae1e6:cba38fc4-1477-4490-b321-194058e1febc",
+        "line": "Está em curso no Brasil um movimento que lembra A Revolta de Atlas."
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "naddr1"
+    ]
+  }
+}

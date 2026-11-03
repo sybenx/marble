@@ -62,6 +62,28 @@ class Later(private val prefs: android.content.SharedPreferences) {
         put(item)
         return item
     }
+    /**
+     * Enter in the box: what you typed, kept as a note (as [save] does). Second: whether this Enter made it; a note
+     * you had already isn't new, and only a new one turns into a visit when you open a result.
+     */
+    fun jot(text: String): Pair<LaterItem, Boolean>? {
+        val had = items.value.any { it.url == null && it.deleted == null && same(it.text, text) }
+        return save(text)?.let { it to !had }
+    }
+    /**
+     * Enter on an edit of the same search: the note this search made ([id]) takes the new words, rather than a second
+     * note (only the latest words are synced). Edited into another note's words: this one goes, and that one comes back.
+     * Second, as for [jot]: whether the note is still this search's own.
+     */
+    fun reword(id: String, text: String): Pair<LaterItem, Boolean>? {
+        val t = text.trim().take(500).ifEmpty { return null }
+        val mine = items.value.firstOrNull { it.id == id && it.url == null && it.deleted == null } ?: return jot(t)
+        val other = items.value.firstOrNull { it.id != id && it.url == null && it.deleted == null && same(it.text, t) }
+        if (other != null) { remove(mine); return save(t)?.let { it to false } }
+        val item = mine.copy(text = t, done = null, updated = next(mine))
+        put(item)
+        return item to true
+    }
     /** A page saved from the browser's Save button: by its address (saved again, it comes back rather than doubling). */
     fun savePage(url: String, title: String): LaterItem? {
         val t = title.trim().take(500).ifEmpty { return null }
@@ -86,8 +108,25 @@ class Later(private val prefs: android.content.SharedPreferences) {
     fun unsave(item: LaterItem) = remove(item)
 
     private fun put(item: LaterItem) {
-        items.update { l -> (l.filter { it.id != item.id } + item).sortedByDescending { it.created } }
+        // Each changed field's time, and what an edit started from, ride along for notes sync (cc.aaro.cosign.notes).
+        items.update { l -> (l.filter { it.id != item.id } + cc.aaro.cosign.notes.LaterNotes.touched(l.firstOrNull { it.id == item.id }, item)).sortedByDescending { it.created } }
         store(); changed()
+    }
+
+    /**
+     * What a sync made of [before] ([after]), taken in: an item changed here while the sync ran stays as it is now (it
+     * goes out next time).
+     */
+    fun synced(before: List<LaterItem>, after: List<LaterItem>) {
+        val was = before.associateBy { it.id }
+        var kept = false
+        items.update { cur ->
+            val local = cur.filter { was[it.id] != it }
+            kept = local.isNotEmpty()
+            (after.filter { a -> local.none { it.id == a.id } } + local).sortedByDescending { it.created }
+        }
+        store()
+        if (kept) changed()
     }
 
     /** A page opened from a search or a saved item: kept 30 days, newest first, at most 500. */
@@ -133,6 +172,7 @@ class Later(private val prefs: android.content.SharedPreferences) {
         private fun words(s: String) = s.trim().replace(Regex("\\s+"), " ")
         fun same(a: String, b: String) = words(a).equals(words(b), ignoreCase = true)
         private fun newId() = java.security.SecureRandom().let { r -> ByteArray(8).also(r::nextBytes) }.joinToString("") { "%02x".format(it) }
+        fun itemJson(i: LaterItem) = i.toJson()
         private fun LaterItem.toJson() = org.json.JSONObject().apply {
             extra.forEach { (k, v) -> put(k, v) }
             put("id", id); put("text", text); put("created", created); put("updated", updated)
@@ -169,12 +209,24 @@ enum class Engine(val label: String, val home: String) {
     fun results(q: String, dark: Boolean): String {
         val e = Uri.encode(q)
         return when (this) {
-            DuckDuckGo -> "https://duckduckgo.com/?q=$e&kae=${if (dark) "d" else "-1"}"
+            DuckDuckGo -> "https://duckduckgo.com/?q=$e&kae=${if (dark) "d" else "-1"}&ko=-2"
             Google -> "https://www.google.com/search?q=$e"
             Bing -> "https://www.bing.com/search?q=$e"
             Brave -> "https://search.brave.com/search?q=$e"
             Ecosia -> "https://www.ecosia.org/search?q=$e"
         }
+    }
+
+    /** The search a page of the engine is for (they all take it as q), so Marble's box can follow a change made in the page. */
+    fun query(uri: Uri): String? = if (owns(uri)) try { uri.getQueryParameter("q")?.trim()?.takeIf { it.isNotEmpty() } } catch (_: Exception) { null } else null
+
+    /** The engine's own search box and header on its results page: hidden, so there's one box, Marble's. */
+    val ownBox: String get() = when (this) {
+        DuckDuckGo -> "#header_wrapper, .header-wrap, #header, header"
+        Google -> "#searchform, form[role=search], #tsf, header"
+        Bing -> "#b_header, header"
+        Brave -> "header, #searchform, form[role=search]"
+        Ecosia -> "header, .search-form, form[role=search]"
     }
 
     /** Pages of the engine itself (they open inside Marble); anything else opens in your browser. */

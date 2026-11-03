@@ -81,7 +81,9 @@ private fun Zoomable(url: String, px: Int, onZoom: (Boolean) -> Unit) {
         offset = if (s <= 1f) Offset.Zero else Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
         onZoom(s > 1.01f)
     }
-    val state = rememberTransformableState { zoom, pan, _ -> set((scale * zoom).coerceIn(1f, 5f), offset + pan * scale) }
+    // The picture moves with your finger, exactly (the pan is already in screen pixels: scaling it by the zoom made a
+    // double-tapped picture slide 2.5 times as far as the finger). A pinch keeps the middle of the picture where it was.
+    val state = rememberTransformableState { zoom, pan, _ -> val s = (scale * zoom).coerceIn(1f, 5f); set(s, offset * (s / scale) + pan) }
     Box(
         Modifier.fillMaxSize().onSizeChanged { box = it }
             .pointerInput(url) { detectTapGestures(onDoubleTap = { at -> if (scale > 1f) set(1f, Offset.Zero) else set(2.5f, (Offset(size.width / 2f, size.height / 2f) - at) * 1.5f) }) }
@@ -89,7 +91,14 @@ private fun Zoomable(url: String, px: Int, onZoom: (Boolean) -> Unit) {
             .transformable(state, canPan = { scale > 1f }),
         contentAlignment = Alignment.Center,
     ) {
-        NetImage(url, Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }, px, ContentScale.Fit, "Picture", Color.Transparent) {
+        // A GIF or WebP moves here too (decoded whole; a still decode would keep only its first frame).
+        val moving = androidx.compose.runtime.remember(url) { Regex("\\.(gif|webp)(\\?.*)?$", RegexOption.IGNORE_CASE).containsMatchIn(url) }
+        val anim by androidx.compose.runtime.produceState<android.graphics.drawable.Drawable?>(null, url) { if (moving) value = Images.animated(url) }
+        val layer = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }
+        anim?.let { d ->
+            androidx.compose.ui.viewinterop.AndroidView({ c -> android.widget.ImageView(c).apply { scaleType = android.widget.ImageView.ScaleType.FIT_CENTER } }, layer,
+                update = { it.setImageDrawable(d); (d as? android.graphics.drawable.AnimatedImageDrawable)?.start() })
+        } ?: NetImage(url, layer, px, ContentScale.Fit, "Picture", Color.Transparent) {
             // The feed's copy, while the full one loads.
             NetImage(url, Modifier.fillMaxSize(), 1080, ContentScale.Fit, "Picture", Color.Transparent)
         }

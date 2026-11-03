@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.min
@@ -19,11 +19,11 @@ data class Standing(val follow: Boolean, val trustedBy: Int, val followers: Long
 
 object Calm {
     /**
-     * Discover's posts: [popular] (what people liked this week), newest first, with [special] (people you single out)
+     * Discover's posts: [popular] (what people liked this week), newest first ([lift]: seconds earlier, for what you like), with [special] (people you single out)
      * woven in near the top: every third of the first twelve, then every sixth; two of anyone's at most. True: special.
      */
-    fun weave(popular: List<Event>, special: List<Event>): List<Pair<Event, Boolean>> {
-        val pop = popular.distinctBy { it.id }.sortedByDescending { it.createdAt }
+    fun weave(popular: List<Event>, special: List<Event>, lift: (Event) -> Long = { 0L }): List<Pair<Event, Boolean>> {
+        val pop = popular.distinctBy { it.id }.sortedByDescending { it.createdAt + lift(it) }
         val ids = pop.map { it.id }.toSet()
         val each = HashMap<String, Int>()
         val sp = ArrayDeque(special.distinctBy { it.id }.filter { it.id !in ids }.sortedByDescending { it.createdAt }
@@ -55,6 +55,8 @@ object Calm {
     fun urls(e: Event) = URL.findAll(e.content).map { it.value }.toList()
     /** The first link in a post that isn't a picture or a video: what a preview card shows. */
     fun link(e: Event) = urls(e).firstOrNull { !IMG.containsMatchIn(it) && !VID.containsMatchIn(it) }
+    /** How many pictures and videos a post carries (for the feed log). */
+    fun media(e: Event) = urls(e).count { IMG.containsMatchIn(it) } to videos(e)
     private fun videos(e: Event) = urls(e).count { VID.containsMatchIn(it) } + e.tags.count { it.firstOrNull() == "imeta" && it.any { p -> p.startsWith("m video/") } }
     private fun isReply(e: Event) = e.kind == 1 && e.tags.any { it.size > 1 && it[0] == "e" && it.getOrNull(3) != "mention" }
     /** What a person reads: no links, mentions or hashtags. */
@@ -147,10 +149,15 @@ object Calm {
         return groups.map { g -> g[0].copy(more = g.drop(1).map { name(it.e.pubkey) }) }
     }
 
-    /** How well a story fits you: your interest in its topic (followed first), and how new it is (half as much every 18 hours). */
+    /**
+     * How well a story fits you: your interest in its topic (never below a floor, so no topic goes for good), how much
+     * it's about the things you look into, and how new it is (half as much every 18 hours).
+     */
     fun storyScore(c: TopicCard, interests: Interests, now: Long, shown: Int = 0) =
-        interests.of(c.topic) * interests.sourcePenalty(c.sourceId) * 0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18) *
-            (if (shown >= ROTATE) 0.25 else 1.0)
+        maxOf(interests.of(c.topic), FLOOR) * interests.sourcePenalty(c.sourceId) * (1 + 0.3 * interests.entityFit(c.title)) *
+            0.5.pow((now - c.publishedAt).coerceAtLeast(0) / 3600.0 / 18) * (if (shown >= ROTATE) 0.25 else 1.0)
+    /** The least a topic counts for: little, but still there to be found again. */
+    const val FLOOR = 0.1
 
     /** Shown on this many fresh opens without being tapped: a story makes way for newer ones (it isn't hidden). */
     const val ROTATE = 3
@@ -177,7 +184,31 @@ object Calm {
     }
 
     /** All of today's stories, for "More stories": the topics you follow first, then the best fit. */
-    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> =
-        all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
-            .sortedWith(compareByDescending<TopicCard> { it.topic in interests.followed }.thenByDescending { storyScore(it, interests, now, shown(it.id)) })
+    fun stories(all: List<TopicCard>, interests: Interests, now: Long, shown: (String) -> Int = { 0 }, window: Long = WINDOW): List<TopicCard> {
+        // Each story scored once (a score reads its title and takes a lock; scoring inside the sort's comparisons, again
+        // and again, held up the first draw of Following for seconds).
+        val kept = all.filter { now - it.publishedAt < window && !interests.hidden("hiddenSources", it.sourceId) }
+        val followed = synchronized(interests) { interests.followed.toSet() }
+        val score = kept.associate { it.id to storyScore(it, interests, now, shown(it.id)) }
+        return spread(kept.sortedWith(compareByDescending<TopicCard> { it.topic in followed }.thenByDescending { score[it.id] ?: 0.0 }), interests)
+    }
+
+    /**
+     * The order, shared out: near the top, a topic gets as many stories as it weighs (2, up to 10 for your strongest;
+     * the rest of its stories come further down), and every sixth place is the best from a topic not yet shown, so
+     * what you haven't read about lately can still come up.
+     */
+    fun spread(sorted: List<TopicCard>, interests: Interests, top: Int = 30): List<TopicCard> {
+        val left = sorted.toMutableList()
+        val out = ArrayList<TopicCard>()
+        val count = HashMap<String, Int>()
+        while (out.size < top && left.isNotEmpty()) {
+            val explore = out.size % 6 == 5
+            val pick = (if (explore) left.firstOrNull { it.topic !in count } else null)
+                ?: left.firstOrNull { (count[it.topic] ?: 0) < 2 + (8 * interests.of(it.topic)).toInt() }
+                ?: break
+            left.remove(pick); out += pick; count.merge(pick.topic, 1, Int::plus)
+        }
+        return out + left
+    }
 }

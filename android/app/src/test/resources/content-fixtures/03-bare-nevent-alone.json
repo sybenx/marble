@@ -1,0 +1,86 @@
+{
+  "name": "bare-nevent-alone",
+  "rule": "§1 §3",
+  "why": "a bare nevent1 (no nostr:) as the whole reply: Astral printed it raw",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "d44c381b57ffa829fe5ccb92a63622269a50ec1df68bdb5fb0b03628058eaf03",
+    "pubkey": "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8",
+    "created_at": 1793114333,
+    "kind": 1,
+    "tags": [
+      [
+        "e",
+        "df66d23abb4965963a43215e48cafcd3f4ec16e82ce2020464f4c5d79a0d36cd",
+        "wss://offchain.pub",
+        "root",
+        "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+      ],
+      [
+        "e",
+        "3ffbd4ac8e048c183823e3aa9f94e53f2b4633574cf8f2abbf56d090265f321e",
+        "wss://relay.nos.social",
+        "reply",
+        "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8"
+      ],
+      [
+        "client",
+        "Damus"
+      ]
+    ],
+    "content": ".\n\nnevent1qqszedf6t64x7h908w2968t6l0fppr7qktw9fd6afm4ug0k90l80k9gjs0gse",
+    "sig": "e2713a57fc3200fae32901dcdc1c9fb38a4eee0847c3cea79aec3efffc5fe3ba87ab4984c018ce3c03e5c5623fb7bb5e6a4bd30f4f5595b3354c4862d0a3b977"
+  },
+  "related": [
+    {
+      "id": "2cb53a5eaa6f5caf3b945d1d7afbd2108fc0b2dc54b75d4eebc43ec57fcefb15",
+      "pubkey": "1ea4ae8405ad5c6bd0dc35a0ac83e548c485142538e1e0c54ad40e5bb59a2ae8",
+      "created_at": 1781794202,
+      "kind": 1,
+      "tags": [
+        [
+          "imeta",
+          "url https://image.nostr.build/bd2e5f1ffe41d5bcc9ea0a560881a5b50b9edca356f902a81ff390aaddcda4b3.jpg",
+          "blurhash e8DvTJDh0L-QIU5A4m-:9cxuH?IpNfxaxuD*-:?GxYt7IUkDfRRORj",
+          "dim 3024x4032"
+        ],
+        [
+          "imeta",
+          "url https://image.nostr.build/e86898a9a4d2f5376714705213208a8d6dc8b097c00af6b5901e721230f00eb6.jpg",
+          "blurhash ehOy-DWqoLj[ayI9ofayf6j[?woebHj[ayR*ayayfRay%hWVjtayj@",
+          "dim 1284x2778"
+        ],
+        [
+          "r",
+          "https://image.nostr.build/bd2e5f1ffe41d5bcc9ea0a560881a5b50b9edca356f902a81ff390aaddcda4b3.jpg"
+        ],
+        [
+          "r",
+          "https://image.nostr.build/e86898a9a4d2f5376714705213208a8d6dc8b097c00af6b5901e721230f00eb6.jpg"
+        ]
+      ],
+      "content": "18 june\n\ngood morning.\n\nhttps://image.nostr.build/bd2e5f1ffe41d5bcc9ea0a560881a5b50b9edca356f902a81ff390aaddcda4b3.jpg\nhttps://image.nostr.build/e86898a9a4d2f5376714705213208a8d6dc8b097c00af6b5901e721230f00eb6.jpg",
+      "sig": "25202ca9af1a82aa43f54b19bb8ed709cadaa9ce864f2db7d3b76af8735c585c592db76343a6f7106f34499ac35102333140fa5527b764cab79c095ee96abc25"
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "."
+      }
+    ],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "2cb53a5eaa6f5caf3b945d1d7afbd2108fc0b2dc54b75d4eebc43ec57fcefb15",
+        "line": "18 june"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "nevent1"
+    ]
+  }
+}

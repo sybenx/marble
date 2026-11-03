@@ -42,14 +42,21 @@ object Sites {
         val name = d.removePrefix("www.").substringBefore('.')
         m.putIfAbsent(name, d); m
     }
+    /** One name with a slash after it, or a scheme in front ("xumbrel/", "localhost:8080/admin", "http://nas"): a machine on your own network (MagicDNS). */
+    private val NAME_SLASH = Regex("^(?:(https?)://)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\\d{1,5})?)(/\\S*)?$", RegexOption.IGNORE_CASE)
     private val ADDRESS = Regex("^(?:https?://)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24})(?:[/:?#]\\S*)?$", RegexOption.IGNORE_CASE)
 
-    /** A site to go to for what's typed, and whether it's a sure thing (Enter opens it) or only a likely one. */
+    /**
+     * A site to go to for what's typed, and whether it's a sure thing (Enter opens it) or only a likely one (a row to
+     * tap; Enter searches). Only an address is sure: a dot and an ending, a scheme, or one name and a slash ("xumbrel/").
+     * A bare name ("apple") is never.
+     */
     data class Go(val address: String, val url: String, val sure: Boolean)
 
     fun match(typed: String): Go? {
         val q = typed.trim()
-        if (q.isEmpty() || q.contains(' ')) return null
+        // (Anything with an @ is a handle or an email, never a site.)
+        if (q.isEmpty() || q.contains(' ') || q.contains('@')) return null
         // An address: lemmy.world, example.com/page.
         ADDRESS.matchEntire(q)?.let { m ->
             val host = m.groupValues[1].lowercase()
@@ -57,8 +64,13 @@ object Sites {
             val url = if (q.startsWith("http://", true) || q.startsWith("https://", true)) q else "https://$q"
             return Go(host.removePrefix("www."), url, sure = true)
         }
+        // One name and a slash, or a scheme: opened as typed, or over http (a name on your network rarely has a certificate).
+        NAME_SLASH.matchEntire(q)?.let { m ->
+            if (m.groupValues[1].isNotEmpty()) return Go(m.groupValues[2].lowercase() + m.groupValues[3], q, sure = true)
+            if (m.groupValues[3].isNotEmpty()) return Go(q, "http://$q", sure = true)
+        }
         val name = q.lowercase()
-        BY_NAME[name]?.let { return Go(it, "https://$it", sure = true) }
+        BY_NAME[name]?.let { return Go(it, "https://$it", sure = false) }
         // The start of one (at least three letters): shown, but Enter still searches.
         if (name.length >= 3 && name.all { it.isLetterOrDigit() || it == '-' }) BY_NAME.entries.firstOrNull { it.key.startsWith(name) }?.let { return Go(it.value, "https://${it.value}", sure = false) }
         return null

@@ -1,6 +1,6 @@
 package cc.aaro.cosign
 
-import cc.aaro.cosign.core.Event
+import cc.aaro.qrst.core.Event
 
 // What Discover leaves out by default: notes marked sensitive, and notes in a language this
 // phone isn't set to. Both are cheap and run on every note as it arrives.

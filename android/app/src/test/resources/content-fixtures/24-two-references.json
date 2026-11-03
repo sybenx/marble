@@ -1,0 +1,79 @@
+{
+  "name": "two-references",
+  "rule": "§3",
+  "why": "the first reference is a card, a later one a short link (↪ quoted)",
+  "source": "synthetic",
+  "event": {
+    "kind": 1,
+    "created_at": 1793000006,
+    "tags": [],
+    "content": "Read this nostr:naddr1qvzqqqr4gupzq9p8z4n4ltud58kvf4g7pw0988aq65ham9hdvrd7nxkmzhttqkkeqqr8xamfwfk8xdqhdtm and also nostr:nevent1qgstaajd2hhu6zd4ej6h7u9fzclwxp7ta8r5suhsmrgssywcsw82qnsqyrsquyvts56rs48axsggktdh6wr5fxn34a849vdjqzvfmg97qyatxtq4wrg",
+    "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+    "id": "5281cd5070e62a9cd4d8448c91ead7c0f48dbba68fa9b09b0cacb44e092241ae",
+    "sig": "6702d30b55a36561d5a717f75be75bfd7fff2559186358972e562cdb3811781bd75557cc789548461bb09afa198b2fe538cc62ac3375ff2aa7dca72d12ebcbd5"
+  },
+  "related": [
+    {
+      "kind": 30023,
+      "created_at": 1793000000,
+      "tags": [
+        [
+          "d",
+          "swirls"
+        ],
+        [
+          "title",
+          "On swirls"
+        ],
+        [
+          "summary",
+          "How a swirl gets made."
+        ],
+        [
+          "image",
+          "https://example.com/cover.jpg"
+        ]
+      ],
+      "content": "# On swirls\n\nA swirl starts as **two colours** and a *steady hand*.\n\n## Steps\n\n- Heat the rod\n- Twist it\n\n> Patience is the glass.\n\nMore at [the studio](https://example.com/studio). Thanks nostr:npub1hmmy6400e5ymtn940ac2j937uvruh6w8fpe0pkx3pqga3quw5p8q7tpk24 for the photo:\n\n![a blue swirl](https://example.com/swirl.jpg)\n\nSee also nostr:note14w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4sfreljc.",
+      "pubkey": "142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9",
+      "id": "4e15d135ea8a124b84a589ef3b6cbf2c1b9b67211ac35854eb8bc27f493152d4",
+      "sig": "ef21036be63b4b545ac3f5f4060ad87642dcf59d7142925eade870a01f08ba9406a5261a117e2fa2d98d183ae01439375ca8d854fdfcfd4a07d26b01b5403176"
+    },
+    {
+      "kind": 1,
+      "created_at": 1793000000,
+      "tags": [],
+      "content": "The kiln is hot today.",
+      "pubkey": "bef64d55efcd09b5ccb57f70a9163ee307cbe9c74872f0d8d10811d8838ea04e",
+      "id": "e00e118b85343854fd34108b2db7d387449a71af4f52b1b200989da0be013ab3",
+      "sig": "17ce72fd1f7b7391c4e57537c31bcb3b62d6e07af8d67ed47bc2c316208b5adb91bbc03578fbec5a7a5890d3919fdb0d4e071a34559f5c136a35b321216aa4b7"
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "Read this"
+      },
+      {
+        "text": "and also"
+      },
+      {
+        "shortlink": "nevent1qgstaajd2hhu6zd4ej6h7u9fzclwxp7ta8r5suhsmrgssywcsw82qnsqyrsquyvts56rs48axsggktdh6wr5fxn34a849vdjqzvfmg97qyatxtq4wrg"
+      }
+    ],
+    "cards": [
+      {
+        "card": "article",
+        "ref": "30023:142715675faf8da1ecc4d51e0b9e539fa0d52fdd96ed60dbe99adb15d6b05ad9:swirls",
+        "line": "On swirls"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "naddr1",
+      "nevent1"
+    ]
+  }
+}

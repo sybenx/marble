@@ -1,0 +1,80 @@
+{
+  "name": "quote-by-q-tag-only",
+  "rule": "§3",
+  "why": "a quote with nothing in the text, only a q tag (and an e mention): the card after the text",
+  "source": "wss://relay.damus.io, relay.primal.net, offchain.pub (from Astral)",
+  "event": {
+    "content": "This is like a chart of most mismanaged countries 😂",
+    "created_at": 1793010529,
+    "id": "e442741280cac0297511c01e3e098637c2a10636eb980c8c14f0415cd63b7db0",
+    "kind": 1,
+    "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+    "sig": "381103b1bb79b684698e2150acff23ea4cb5607c10e6a91deee16ef95c49b36764b035cb09a86438d7216904622fb1fd62d27e74a157a93608628a8afd0bebb7",
+    "tags": [
+      [
+        "e",
+        "0269edb365327d8d4e4b31601bc9bb78e2293c545a6ea1832aa23e97e75cb5f6",
+        "wss://relay.damus.io/",
+        "mention",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411"
+      ],
+      [
+        "q",
+        "0269edb365327d8d4e4b31601bc9bb78e2293c545a6ea1832aa23e97e75cb5f6",
+        "wss://relay.damus.io/",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411"
+      ],
+      [
+        "p",
+        "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411"
+      ],
+      [
+        "client",
+        "Halo"
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "Interesting chart from all in pod \n\nLook at the top …\nhttps://media.21media.to/fdfd300ce8938c504013ebcbbcf25ec7978ec982f182193fdf1bb5ee7842b177.jpg",
+      "created_at": 1793009951,
+      "id": "0269edb365327d8d4e4b31601bc9bb78e2293c545a6ea1832aa23e97e75cb5f6",
+      "kind": 1,
+      "pubkey": "1bc70a0148b3f316da33fe3c89f23e3e71ac4ff998027ec712b905cd24f6a411",
+      "sig": "c0c5a84913ea7f317f795cb0ffaee8d805f096c787cb3959343d00d055f4255e911f253ed6e9843ec34a301450dd76e83a1beb45a986517417fa1c6447546e18",
+      "tags": [
+        [
+          "imeta",
+          "url https://media.21media.to/fdfd300ce8938c504013ebcbbcf25ec7978ec982f182193fdf1bb5ee7842b177.jpg",
+          "x fdfd300ce8938c504013ebcbbcf25ec7978ec982f182193fdf1bb5ee7842b177",
+          "m image/jpeg",
+          "size 283559",
+          "dim 1085x1320"
+        ],
+        [
+          "client",
+          "Halo"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "This is like a chart of most mismanaged countries 😂"
+      }
+    ],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "0269edb365327d8d4e4b31601bc9bb78e2293c545a6ea1832aa23e97e75cb5f6",
+        "line": "Interesting chart from all in pod"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

@@ -61,6 +61,17 @@ private fun sans(weight: Int) = Font(
 )
 
 val PlexSans = FontFamily(sans(400), sans(500), sans(600), sans(700))
+/**
+ * Literata (SIL OFL, assets/licenses/literata-OFL.txt), for reading articles: static cuts made from its variable font,
+ * the body at its 14 pt optical size, the title (semibold) at 36 pt, cut down to Latin, Greek, Cyrillic and Vietnamese.
+ */
+val Literata = FontFamily(
+    Font(R.font.literata_regular, FontWeight.Normal),
+    Font(R.font.literata_bold, FontWeight.Bold),
+    Font(R.font.literata_italic, FontWeight.Normal, androidx.compose.ui.text.font.FontStyle.Italic),
+)
+val LiterataTitle = FontFamily(Font(R.font.literata_title, FontWeight.SemiBold))
+
 val PlexMono = FontFamily(
     Font(R.font.ibmplexmono_regular, FontWeight.Normal),
     Font(R.font.ibmplexmono_medium, FontWeight.Medium),

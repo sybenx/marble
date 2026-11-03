@@ -116,6 +116,11 @@ class MainActivity : ComponentActivity() {
             searched?.trim()?.take(200)?.takeIf { it.isNotEmpty() }?.let { cc.aaro.cosign.ui.OpenSearch.query.value = it }
             return
         }
+        // A marble.syb.lol link to a post or someone (an app link): that post or profile, in Marble.
+        if (intent.action == Intent.ACTION_VIEW) intent.dataString?.let(::marbleRef)?.let { r ->
+            when (r) { is Ref.Note -> cc.aaro.cosign.ui.OpenPost.id.value = r.id; is Ref.Profile -> cc.aaro.cosign.ui.DebugOpen.profile.value = r.pubkey; is Ref.Addr -> cc.aaro.cosign.ui.OpenPost.ref.value = r }
+            return
+        }
         if (intent.action == Intent.ACTION_VIEW) intent.dataString?.takeIf { handled.take(it, fresh) }?.let {
             CosignApp.instance.phone.scanned(it)
             linkAt = android.os.SystemClock.uptimeMillis()

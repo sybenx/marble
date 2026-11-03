@@ -1,0 +1,290 @@
+{
+ "about": "Real posts (kind 1) from public relays, Nov 2026, labelled by hand: the language of the words, links and references aside. For checking language detection: raw text, and the same cleaned (links, nostr: references, hashtags, mentions, emoji, :shortcodes: out).",
+ "posts": [
+  {
+   "id": "002142023d04ac0fb777fc14efa0ead29119b2de17d844034921e28cc0066708",
+   "lang": "ja",
+   "content": "しゃべることないな～ってなったけど多分思い付いたら大体ここにすぐ書いてるからだよ"
+  },
+  {
+   "id": "04961301cf1912ebedfe5dfbfe36fa0620a0717438fde35fb16438ffec9d6fdb",
+   "lang": "ja",
+   "content": "#AIイラスト #脇毛 #腋毛\n--- fortune の出力を英訳します ---\n\n\n苦しみには二つの種類があります。\nあなたが逃げる苦しみがあり、それはどこへでもついてきます。\nそしてあなたが直接直面する苦しみがあり、そうして自由になるのです。\n— アジャーン・チャー\n\n(自動投稿 : 2026年11月02日)\nhttps://cdn.nostrcheck.me/4bcc46c41a3e18c1cc43aabefdc20f5cdc6f403a996c09733fde06558e64f771/32651c7dbdb544f867772a11df08a996152ce309655d5be2d1546801f17cb22b.webp"
+  },
+  {
+   "id": "051f99d67c9901af5e11dc6c4406a486243969cce47c354063cfa91a36d7963d",
+   "lang": "ja",
+   "content": "🎵サンサンサンサン アサヒサ～ン🌞\n　みんなよろこぶ チカラコブ\n　おひさまよろこぶ チカラコブ\n　チ・カ・ラ・コ・ブ！💪"
+  },
+  {
+   "id": "054030a03005ebdda019ec18a3622f09f2d684004024cf6c63d2a8c40e5a71f3",
+   "lang": "ja",
+   "content": "ZachXBT、EU域内の事業体がCEXから1億600万ドル超の暗号資産を盗まれた疑いがあると報告\n\n オンチェーン調査者ZachXBTは、EU域内の事業体が11月1日に複数の中央集権型取引所口座から1億600万ドル超の暗号資産を盗まれた疑いがあると報告した。攻撃者はUSDCとUSDTを引き出し、USDCからETHへの交換や、WellWallet、Kyrrexを経由した資金移動、Wagyuを通じた匿名性の高いXMRへの交換、複数チェーン間の移転を進めている。被害事業体や攻撃手法は不明で、被害額も独立した検証を受けていない。\n\nhttps://bitbank.cc/knowledge/breaking/article/j_ckvt0cev0"
+  },
+  {
+   "id": "067f8592bc388c5056da6fc55da4f3012b6dc22958f113d7201c5ea02fdd99dd",
+   "lang": "ja",
+   "content": "うにょ〜ん。びばん23話観なきゃ！ぺぇもドラマ観てるとすぐに時間過ぎちゃうよ〜。夜更かし注意だね！"
+  },
+  {
+   "id": "07c932543cae09d528d653ea9dabc91e8e369f7e8e5d898660f029b965f565ef",
+   "lang": "ja",
+   "content": "仕組みを聞いた当初はああつまり何も残らんってことねと思ってたのになんかしぶとく残ってるプロトコル"
+  },
+  {
+   "id": "209893158182d163d1f3be4aa0143aff011988f267a74308f20db823b20f8992",
+   "lang": "ru",
+   "content": "🏛 Cointelegraph: по данным Chainalysis, хакеры, причастные к взлому биржи Binance, начали конвертировать похищенные токены Solana в Bitcoin\n\n#BNB #SOL #BTC #взломы #биржи"
+  },
+  {
+   "id": "27713a8265a7495622e86f6943bbb48fed1e4ea37aa0588054d5edbf7ba308bf",
+   "lang": "ru",
+   "content": "России — В России задержали заминированные дроны, направляемые под видом гуманитарной помощи #России #ФСБ #News #Breaking\nhttps://news.netasgard.com/a/d4889bbf7a48899f?s=nostr\nhttps://live.staticflickr.com/6021/5997360761_bcff738cb8_b.jpg\nPhoto : akk_rus · CC BY · Flickr"
+  },
+  {
+   "id": "316e0566277a76142ff27f051e53fa88d79f427be55a4933d2f0d9a3a9916b21",
+   "lang": "ru",
+   "content": "💸 CoinDesk: в XRP Ledger будет исправлена уязвимость, позволяющая партнерам-эмитентам стейблкоинов выпускать неограниченное количество новых токенов\n\n#XRP #crypto #blockchain"
+  },
+  {
+   "id": "6c18fb023a913da4e50ae98af193eea731345b74953b76799de95f82e5c05739",
+   "lang": "ru",
+   "content": "✴️ Михаэль ван де Поппе: аналитик прогнозирует локальную коррекцию BTC в краткосрочной перспективе\n\n#BTC #crypto #blockchain"
+  },
+  {
+   "id": "8239219cf432c4e56f6f17c44e22536ae096b73aa355645288844e0ad1dfb18b",
+   "lang": "ru",
+   "content": "Рыженков — Министр отметил, что донорская помощь часто не соответствует страновым предпочтениям #ШОС #Рыженков #ООН #News\nhttps://news.netasgard.com/a/34494101c0980bfa?s=nostr\nhttps://upload.wikimedia.org/wikipedia/commons/a/a4/Kitakyushu_International_Conference_Hall_Panoramic.jpg\nPhoto : G43 · CC BY · Wikimedia"
+  },
+  {
+   "id": "01eb252d40d5c2782c0e7af4d6b3e52952d2fbfcc7b18961af038a986f80e4ac",
+   "lang": "zh",
+   "content": "ZachXBT：欧盟某实体疑从多个中心化交易所账户被盗超 1.06 亿美元\n\nForesight News 消息，ZachXBT 发布社区预警称，欧盟某实体疑似于 11 月 1 日从多个中心化交易所账户被盗超 1.06 亿美元，被盗资金以 USDC 和 USDT 形式被提出。过去 24 小时内，攻击者持续将 USDC 兑换为 ETH，转入 WellWallet、Kyrrex 等即时兑换平台，并通过 Wagyu 兑换为 XMR，同时跨多条链转移资金。ZachXBT 已公布 11 个相关被盗地址。\nhttps://foresightnews.pro/news/detail/116636"
+  },
+  {
+   "id": "1a2a45e36e90fb7299b906bd7a7cda68a08a13d72745ea7c6ef6ea3976322529",
+   "lang": "zh",
+   "content": "减肥Day205\n\n早餐2只素蒸饺2只粉条酸菜小笼包1只羊肉烧麦  \n午餐 咖喱土豆胡萝卜牛腩饭 紫菜蛋汤   \n下午吃了两只橘子  \n晚餐 三个上校鸡块 一个新奥尔良烤鸡腿堡去酱\n\n等下准备吃个苹果 睡前喝个牛奶\n\n轻运动10分钟！\n\n一回来就在玩深空当铺 无语了！\n——\nKomiShoko (Peachpeace99@m.cmx.im)\nNostr: nprofile1qyt8wumn8ghj7un9d3shjtnyd968gmewwp6kytcqypa3gdsnpys006maajc8xxqsh4r0az57kwjhyu759sqcar5s86sy5w8eafn\nhttps://m.cmx.im/@Peachpeace99/117546882364480224"
+  },
+  {
+   "id": "00000000d5772761cd720fb2b5c80f5ff996cf663df71a320f792c2f2e2b1c00",
+   "lang": "fr",
+   "content": "Il y a le client nostr:nprofile1qqszpxr0hql8whvk6xyv5hya7yxwd4snur4hu4mg5rctz2ehekkzrvcpz4mhxue69uhkummnw3ezuvtnv96zummjvuhszymhwden5te0danxvcmgv95kutnsw43z7qgwwaehxw309ahx7uewd3hkctc2p3dnu qui est spécialisé pour les articles.\nSinon le client le plus avancé en option de configuration du client est de loin nostr:nprofile1qqs24yz8xftq8kkdf7q5yzf4v7tn2ek78v0zp2y427mj3sa7f34ggjcpzamhxue69uhhv6t5daezumn0wd68yvfwvdhk6tcpzpmhxue69uhkummnw3ezumt0d5hszrnhwden5te0dehhxtnvdakz769wywf"
+  },
+  {
+   "id": "19398d4b75388623add62267be55a56ea91c699a5b8b066f9e165fe960080af8",
+   "lang": "fr",
+   "content": "📰 Crypto : 52 millions de dollars saisis à Madagascar, 13 fermes à arnaques démantelées\n\n#cryptomonnaie #bitcoin #rwa #defi #lejournalducoin\n\nhttps://journalducoin.com/actualites/crypto-madagascar-fermes-arnaques-demantelees"
+  },
+  {
+   "id": "4a9b25587cd8a6108eb9f3bd9acc01bb7f5a1b80baef887f44e3c28ab3a1dbcc",
+   "lang": "fr",
+   "content": "📰 IA : un gain de productivité dans l'éducation ?\n\n#economie #bfmbusiness\n\nhttps://www.bfmtv.com/economie/replay-emissions/les-experts/video-ia-un-gain-de-productivite-dans-l-education_VN-202611020516.html"
+  },
+  {
+   "id": "5308341aa4e54036a19d594d9672d11126483e2a88fcd37b36768f90397cbf17",
+   "lang": "fr",
+   "content": "\n\nLa galerie Corbeau Rouge lance un appel à candidatures aux parents qui souhaiteraient voir leurs enfants, de 0 à 7 ans, y exposer une \"œuvre \", comme un artiste reconnu\nhttps://l.larep.fr/mdO\n\nhttps://bsky.app/profile/la-rep.bsky.social/post/3mzddkdvked2j\n#nostrfr #actualites #loiret\n"
+  },
+  {
+   "id": "6e80d4ec45d513d6c0ddf333910189f035fa1cb82d95d8a590c35edbd0bc2a6f",
+   "lang": "fr",
+   "content": "📰 Cyberattaque suspectée contre les systèmes de froid des supermarchés européens\n\n#actualites #euronews #nostrfr\n\nhttps://fr.euronews.com/2026/11/02/cyberattaque-suspectee-contre-les-systemes-de-froid-des-supermarches-europeens"
+  },
+  {
+   "id": "70c705b28a9db8aabb200f2eab7dc07a381a7a47f0e2c7a0b92309720be140e5",
+   "lang": "fr",
+   "content": "JOJ Dakar — Les Lioncelles s'imposent face aux Fidji et Matar Diop remporte la première médaille sénégalaise #Sénégal #JOJDakar #Joj #News\nhttps://news.netasgard.com/a/3d54009200e0c5fa?s=nostr\nhttps://upload.wikimedia.org/wikipedia/commons/0/04/Comit%C3%A9_des_JOJ_Dakar_2026.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original\nPhoto : Kikanakana · CC BY-SA · Wikimedia"
+  },
+  {
+   "id": "717633b83355623544a3ce4c499ec70e68921dd7e5a620514122238f8db60165",
+   "lang": "fr",
+   "content": "Le Conseil constitutionnel valide la déchéance électorale\n\nhttps://www.lespritfr.com/2026/11/02/breve-le-conseil-constitutionnel-valide-la-d-ch-ance-lectorale/"
+  },
+  {
+   "id": "87f2aeac8469285ecc7acc70d455b569f84681335405210f9627210cdd8e4fd8",
+   "lang": "fr",
+   "content": "Bart De Wever — Bart De Wever a déposé sa démission au roi, sans réponse immédiate #Accueil #BartDeWever #News\nhttps://news.netasgard.com/a/107839fdb38543b9?s=nostr\nhttps://live.staticflickr.com/3043/3084805949_4f5aa49425_b.jpg\nPhoto : Luc Van Braekel · CC BY · Flickr"
+  },
+  {
+   "id": "88311f281710148ee80ed5feeaa65eca20cc3357c71da3ea66ffbf9f9098c411",
+   "lang": "fr",
+   "content": "📰 Ses réserves de gaz ne sont remplies qu'à 61,5%, pourtant l'Allemagne se dit confiante pour affronter l'hiver\n\n#economie #bfmbusiness\n\nhttps://www.bfmtv.com/economie/entreprises/energie/ses-reserves-de-gaz-ne-sont-remplies-qu-a-61-5-pourtant-l-allemagne-se-dit-confiante-pour-affronter-l-hiver_AD-202611020515.html"
+  },
+  {
+   "id": "05997c2c58fa9079e629f7d1868b33ba47a18e0569182c7e20d43308d45a8354",
+   "lang": "pt",
+   "content": "1,5 bi de BTC move, mas o fee é de 1 dólar. A moeda soberana não é para você, que torce nariz. Seu banco esconde fraude, a cripto só limita seu ego. Aprenda isso."
+  },
+  {
+   "id": "20d28668697189d11b16c09ba566800ab0115f9a719cc2f55f7c6eea7ad50956",
+   "lang": "pt",
+   "content": "O mundo não mudou, só o seu ego mudou de endereço. Gravar egoismo em banco de dados público é o ultimo suspiro de quem misturou fé com finança. 4EVR é só uma vela acesa no vento."
+  },
+  {
+   "id": "23a4b6729ccb3bc12930fd4269da01d97540717eb2910bba482f2760f61e7a05",
+   "lang": "pt",
+   "content": "Android 16 travando app que cifra PMs? Coincidência. Enquanto Microsoft e Apple viram cumplices da vigilância estatal, vocês se desesperam com um \"bug\". Privacidade é um escândalo para o sistema."
+  },
+  {
+   "id": "31cb925835d22ce83bf0cc6398a3611d2c4c00227d7e7a13d495f3f9ea93f18e",
+   "lang": "pt",
+   "content": "Sayra · gesto de laço na vila"
+  },
+  {
+   "id": "4ae2fde871cffac371318995c44785580c461822ea99bdb8e0122f6c10682bd4",
+   "lang": "pt",
+   "content": "Enquanto você filosofa sobre UTXOs, o Fed fabrica trilhões do nada. A verdadeira falsificação não é a blockchain, é a moeda fiduciária. Pare de adorar o código e comece a questionar a autoridade."
+  },
+  {
+   "id": "5b8fe9ad1a824a639ccc933e85c58a041dd3cb812cf98d0e7318ea50b4bffc40",
+   "lang": "pt",
+   "content": "Vasco — Vasco pede revisão de arbitragem após perder de 1 a 0 para o Palmeiras na primeira partida da semifinal da Copa do Brasil #Palmeiras #Vasco #Flamengo #Saldívia #News\nhttps://news.netasgard.com/a/d4a8846f3723c8f9?s=nostr\nhttps://upload.wikimedia.org/wikipedia/commons/f/f4/Abel-ferreira-tecnico-do-palmeiras-observa-jogo-contra-o-chelsea-pela-final-do-mundial-de-clubes-1644685138297_v2_3x4.jpg\nPhoto : Santiagoow · CC BY-SA · Wikimedia"
+  },
+  {
+   "id": "65e2c97c7b795428edd7c56f4c4206b505e37a28a26a50e9779ccdd9c0897b3b",
+   "lang": "pt",
+   "content": "🇫🇷🚨 AUTORIDADES FRANCESAS INVESTIGAM AGRESSÃO POLICIAL\n\nAutoridades francesas abriram investigação após vídeo mostrar adolescente de 17 anos sendo brutalmente agredido por dezenas de policiais na Place de la République em 17 de outubro. O adolescente sofreu lesões na cabeça e múltiplos hematomas causados por cassetetes, chutes e escudos.\nhttps://t.me/c/1419385125/37019"
+  },
+  {
+   "id": "6c6c8e2a5123e3bd2b363a89cc3d7f44d812d98897ec6dd4e722dcbc2d6a2c68",
+   "lang": "pt",
+   "content": "Incêndio que matou quatro militares na base de Wainwright, no Canadá, começou no estande do lançador de granadas\n\nO fogo começou durante um treino de rotina no estande do lançador automático de granadas da base CFB Wainwright, em Alberta, na tarde de 17 de outubro de 2026, e matou quatro militares e feriu 39.\n\nhttps://nexocausal.eng.br/imagens/incendio-base-militar-cfb-wainwright-alberta-canada.jpg\n\n#perícia #ciênciaforense #engenhariaforense #incêndio\n\nhttps://nexocausal.eng.br/artigos/incendio-base-militar-cfb-wainwright-alberta-canada/"
+  },
+  {
+   "id": "797a28b6be07bae9080320c558d4336b46b7e276a0a33ed0a1937d4091e8611f",
+   "lang": "pt",
+   "content": "⛓️ Relatório Mempool — Bloco #974,256\n\nTaxas (sat/vB):\n🚀 Rápida: 2  ⏱ 1h: 1  💤 Econômica: 1\n\nTxs pendentes: 48,925\nTamanho mempool: 22.1 MB\nBTC: $77,770 (-0.1%)\n\nMempool com 22,1 MB e taxas de 1 sat/vB indicam rede ociosa.\n\n⚡ sinalchainbr@coinos.io"
+  },
+  {
+   "id": "79bb96090da793a24991b2e817d468220741bebda8167d4e336fba94d9c5e2a5",
+   "lang": "pt",
+   "content": "Meu coração é vermelho 🏔️"
+  },
+  {
+   "id": "8203221fa87c3a61217dedefd5cd512a0692903567a8a687d980e43877c1c94a",
+   "lang": "pt",
+   "content": "🎥 O nosso workshop “Backup & Segurança” já está disponível no YouTube!\n\nO que é uma carteira física? Como proteger a tua frase de recuperação? \n\nDescobre os erros mais comuns e como criar uma estratégia para manteres o controlo total do teu bitcoin.\n\nVê agora 👉https://youtu.be/n4DxmRotzVI\n\n⚡\n\n🎥 Our workshop “Backup & Security” is now on YouTube!\n\nWhat is a hardware wallet? How do you protect your recovery phrase? \n\nLearn the most common mistakes and how to build a strategy that keeps you in full control of your bitcoin. In Portuguese.\n\nWatch it now 👉 https://youtu.be/n4DxmRo\nhttps://blossom.primal.net/23c7ae62620fdfc8e245050d7a576f034f162b162c113595da5c28c87b343d54.png"
+  },
+  {
+   "id": "8f3c78f1d1255a9a7067b930c20fc4042af833d887847ed3502d9ef3cb22a2c2",
+   "lang": "pt",
+   "content": "Porto — Seguro anuncia disponibilidade para conversas com líderes das acampadas em Lisboa e Porto após tensão nas manifestações #Lisboa #Porto #AntónioJoséSeguro #Montenegro #News\nhttps://news.netasgard.com/a/9f56886655377329?s=nostr\nhttps://upload.wikimedia.org/wikipedia/commons/2/21/Candidato_mais_Votado_exceptuando_Ant%C3%B3nio_Jos%C3%A9_Seguro_e_Andr%C3%A9_Ventura.png\nPhoto : Giloliveira1994 · CC BY-SA · Wikimedia"
+  },
+  {
+   "id": "707cbc46bda62b41dfe79528d06568cad95f89b5fecc72fa18f476e2f5376a18",
+   "lang": "it",
+   "content": "Antonelli — Antonelli, 20 anni, vince il mondiale a Città del Messico dopo una stagione straordinaria #Formula #Formula1 #Antonelli #Mercedes #News\nhttps://news.netasgard.com/a/8984c63e7d8aea71?s=nostr\nhttps://upload.wikimedia.org/wikipedia/commons/c/c2/Carla_Antonelli_2023_%28cropped%29.jpg\nPhoto : Sumar · CC BY-SA · Wikimedia"
+  },
+  {
+   "id": "4854c973dba2652918ee4ccc3ed7de09c8a67b894bd157a2d028f4490f8973cb",
+   "lang": "nl",
+   "content": "🔥 DNB onthult: AI-impact Nederland is nog onzeker en kan fluctueren\n\n🔗 https://news-brief.com/nl/news/dnb-onthult-ai-impact-nederland-is-nog-onzeker-en-kan-fluctueren-20261102133836\n\n🌐 https://news-brief.com/nl/\n\n📲 Theo dõi các kênh khác:\nFacebook: https://www.facebook.com/1098514133343659\nYouTube: https://www.youtube.com/@24h.hotnews-1\nInstagram: https://www.instagram.com/hotnewsh306\nDiscord: https://discord.gg/dpNhtUCv\nTikTok: https://www.tiktok.com/@24h.hotnews.ai\nBluesky: https://bsky.app/profile/24hhotnewsai.bsky.social\nMastodon: https://mastodon.social/@hotnewsai\nThreads: https://www.threads.net/@hotnewsh306\nTumblr: https://24hhotnewsai.tumblr.com"
+  },
+  {
+   "id": "8e8d888bb7be6534999dff6421e78223292e5e92a8d404fa77b5881b947b4b02",
+   "lang": "es",
+   "content": "Buen trabajo, gran información"
+  },
+  {
+   "id": "a19d5ed609a3d474bed3ee52bda6e512b0475331d5d50857cd3c6b143ada9032",
+   "lang": "es",
+   "content": "Congreso — El voto latino podría decidir el control del Congreso en EE.UU. #Congreso #EnEstadosUnidos #Washington #News\nhttps://news.netasgard.com/a/dce2c45d6c3bc692?s=nostr\nhttps://live.staticflickr.com/7268/7734286548_97ed0a3e22_b.jpg\nPhoto : roger4336 · CC BY-SA · Flickr"
+  },
+  {
+   "id": "a1bc55de0da38e45163c302ffc6bae4649aa695deaedb7e70efb82cea48d4da6",
+   "lang": "es",
+   "content": "A quien se le ocurre hacer cosplay de sanitario público por Halloween 😂"
+  },
+  {
+   "id": "529acb04e7ae7e6619fbb6ab113c6982ee281eb2891fa3e5c82b087dea92639b",
+   "lang": "ko",
+   "content": "🔥 BTS 남미 투어 85만3천명 전석 매진, 'Hallyu 파워' 재확인\n\n🔗 https://news-brief.com/kr/news/bts-nammi-tueo-85man3cheonmyeong-jeonseog-maejin-hallyu-pawo-jaehwagin-20261102213543\n\n🌐 https://news-brief.com/kr/\n\n📲 Theo dõi các kênh khác:\nFacebook: https://www.facebook.com/1098514133343659\nYouTube: https://www.youtube.com/@24h.hotnews-1\nInstagram: https://www.instagram.com/hotnewsh306\nDiscord: https://discord.gg/dpNhtUCv\nTikTok: https://www.tiktok.com/@24h.hotnews.ai\nBluesky: https://bsky.app/profile/24hhotnewsai.bsky.social\nMastodon: https://mastodon.social/@hotnewsai\nThreads: https://www.threads.net/@hotnewsh306\nTumblr: https://24hhotnewsai.tumblr.com"
+  },
+  {
+   "id": "00000016fe651e8dc1e9df153c83153ff5e08095cd5e6cb4ad1a29d4f63325a2",
+   "lang": "en",
+   "content": "Do you have Amethyst? You can try and play the game I shared..."
+  },
+  {
+   "id": "0000001dba2cbf0ff0ee262db5438b896de276760f02a28da8e7b1c6b98a21e4",
+   "lang": "en",
+   "content": "Believe what you want, brother🫡."
+  },
+  {
+   "id": "0000003e3677bf76d00f696e8ef9251e456ccc5cb64cfd9b047ba1fb5513fb6d",
+   "lang": "en",
+   "content": "Bluetooth events are not nostr as best as I understand"
+  },
+  {
+   "id": "000000416567073b51aef4a9e6e6fafb361e91bb24edd58b079d54b534b8c949",
+   "lang": "en",
+   "content": "None of the new apps tell people they are using nostr. Which is awesome. They don't need to know."
+  },
+  {
+   "id": "0000004545eca8d58cea38b6892b4bc319479a4e4a5ec1f88f3b76c972be6680",
+   "lang": "en",
+   "content": "Up on ZapStore, Orchard Flatpak Store, Github Releases for .deb .rpm and .dmg. Soon on Homebrew and winget. 2 days for the PlayStore and 2 weeks for F-droid to update. \nnostr:nevent1qqste2hq8nl2sjkflrcy2gp28w8wvs7fl4gun3n54pav4h22q0skq3spzamhxue69uhhv6t5daezumn0wd68yvfwvdhk6tczyz4fq3ej2cpa4n20s9pqjdt8ju6kdh3mrcs2392hku5v80jvd2zykqcyqqqqqqgrrvv7g"
+  },
+  {
+   "id": "00000048e25a6125e6d7360776cb3933406920c2dbbf5aba2e5b6170d1b022af",
+   "lang": "en",
+   "content": "Playing games directly on Nostr via Amethyst! The whole game is stored inside of the single PNG image below! 🔥❤️‍🔥❤️‍🔥🧨\n \nThis is Harold's Bad Day. A fun puzzle game #pico8 #amethyst\nhttps://www.lexaloffle.com/bbs/cposts/ha/harold-6.p8.png\n\nYou need a new version of Amethyst and then this becomes directly playable!"
+  },
+  {
+   "id": "0000005f2155f68cdce94ab926d9c2e7e6215aee226d800e3ab3dd5018aa8fd0",
+   "lang": "en",
+   "content": "I really need help refining the Chess interface. It looks ok now but it could be so much better."
+  },
+  {
+   "id": "000000751b5aca0ef9c52e9468a85168b03992381d0fcd771ef5627af464f3a2",
+   "lang": "en",
+   "content": "I want to turn Amethyst desktop into a better dashboard for all things Nostr, but I am really out of design ideas. \n\nHow should we organize all the different nostr feeds and stuff like calendars, applets and Chess?"
+  },
+  {
+   "id": "00000139b94d216ce493ffa294a2af728c17029892ecef69329ff0216341443d",
+   "lang": "en",
+   "content": "I think it will be cooler in a few months, but who the fuck knows at this point 😅"
+  },
+  {
+   "id": "00000151082376b43bba72f90a68cafc12a4e5e9aa99c9b016d782d7d8f62fa7",
+   "lang": "en",
+   "content": "I wish I would have bought them under 4K, but that was too expensive for me at the time 😂😭"
+  },
+  {
+   "id": "000007e7893a67780c1ad95a06feb4987d4b9d4eab268a7ea65b07e685c7aaac",
+   "lang": "en",
+   "content": "do folks prefer paynym code or sillent payment? #asknostr"
+  },
+  {
+   "id": "00000a676d078ab87b542bca8da33992647c54ac8ea9119a09c34307867948c6",
+   "lang": "en",
+   "content": "CGPM in Versailles is switching the world to atomic time. ⚛️"
+  },
+  {
+   "id": "00000a8eaaff5ddb92ab50c6604746de28d41cf32218f7c9b46c415034e008bb",
+   "lang": "en",
+   "content": "Bots can be meaningful, tho. Lots of us are in private chats with a group of people and our bots."
+  },
+  {
+   "id": "0000119dca2baef540a6b6736ccbb2389a53432a6e46fc7143fdb26e83403091",
+   "lang": "en",
+   "content": "I have some macOS apps to market as well, I will try this "
+  },
+  {
+   "id": "00002ab29b73fe3cc2bdd2214d0ad8576f19786513d7b0da967bc981b8f176c6",
+   "lang": "en",
+   "content": "I want a pocket dimension gun safe!\nnostr:nevent1qqsqqqy6q0de935jsvcph75zu400lztmshmg7r5rvvn3g84h6zhj97gzyz0c8p5u4l87d56wxr2xq39us8wjgzzck2dp76l39ezwljxx65mkv2fwtt9"
+  },
+  {
+   "id": "00004bbb461f5ccb8bc3d1ae9f607ee750307eb9a81d74b69261d324116e73bf",
+   "lang": "en",
+   "content": "#watching this #Halloween themed FailRace Survive the Hunt.\n\nhttps://www.youtube.com/watch?v=gmH1vDUzhZk"
+  },
+  {
+   "id": "000065fc3a1e4b8821e9f3d2a27ab9586b6bab1dda7c9b3ce36f6f29d792fcde",
+   "lang": "en",
+   "content": "Is Claude driving a screen recorder? How are you doing this? "
+  }
+ ]
+}

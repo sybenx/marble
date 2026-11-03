@@ -1,0 +1,142 @@
+{
+  "name": "npub-in-picture-host-and-listing",
+  "rule": "§1 §3 §4",
+  "why": "a picture whose host is an npub (not a mention), then an naddr to a kind 30402 listing",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "daf20f6c3fefc290daac55f5cb93aba6a658e685a82721cc558ced968003cb4f",
+    "pubkey": "23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5",
+    "created_at": 1793121200,
+    "kind": 1,
+    "tags": [
+      [
+        "p",
+        "23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5",
+        "wss://nostr.bitcoiner.social/"
+      ],
+      [
+        "r",
+        "https://npub1ywmvpn3uwykwp080f6hezujucs5k0l7dq5754m846ymuxr7uu66sexmhsq.blossom.band/7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc.jpg"
+      ],
+      [
+        "q",
+        "30402:23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5:product_1793120120507_9kdjz",
+        "wss://relay.damus.io/"
+      ],
+      [
+        "imeta",
+        "url https://npub1ywmvpn3uwykwp080f6hezujucs5k0l7dq5754m846ymuxr7uu66sexmhsq.blossom.band/7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc.jpg",
+        "x 7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc",
+        "size 117872",
+        "m image/jpeg",
+        "dim 1080x1131",
+        "blurhash |5S?DVt7%M~q?b_3%M-;ay_3ofj[WBRjWBWBofWB?bt7WBM{IURjWBofj[?bofj[j[WBayj[ayfQxuj[ayWBWBj[j[j[WB-;j[ayayayofofayj[xuofWBayWBWBWBWBofxuRjt7t7t7fQj[ayWBWBWBofj[ayayfQofay",
+        "ox 7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc"
+      ],
+      [
+        "client",
+        "Amethyst"
+      ]
+    ],
+    "content": "https://npub1ywmvpn3uwykwp080f6hezujucs5k0l7dq5754m846ymuxr7uu66sexmhsq.blossom.band/7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc.jpg\nnostr:naddr1qqdhqun0v36kxazlxymnjve3xgcrzv3sx5crwheeddjx57spz4mhxue69uhhyetvv9ujuerpd46hxtnfduhsygprkmqvu0r39nstem6w47ghyhxy99nllng9849weaw3xlpslh8xk5psgqqqwmpqxw3nag",
+    "sig": "afca8d5daa2f9c6a585349b714d3570f7797bf56af80918f66af6cf7ece23d01648132afa3507b1c8626035c920847b5a7f2767dff24517cd75f12b400e2f0bb"
+  },
+  "related": [
+    {
+      "content": "Have you ever had an entheogenic experience?\nHave you ever tried wachuma, mushrooms or ayahuasca?\nDo you like trip reports?\nWould you like to know some of what happens during these experiences?\nHow to integrate them?\n\nThis book intends to fill those gaps between the universal spiritual experience and the use of nature's catalysers like entheogenic plant medicines. Because the meaningful transformation stories I've read have been very useful for me and medicinal themselves. Because I know some of you need some courage and a little more information to proceed in life. Because we all have to co-create some sense in this world through our journeys and trips.\n\nBecause navigating the divine is also fun, we must celebrate it together!\n\nI wrote this two years ago and I have been correcting it, editing it and translating it. Most of the paintings in it have been done by me, related to the trips, after the experiences or in the period I am describing in the chapter.\n",
+      "created_at": 1793120389,
+      "id": "bbdcd40b18094a9c3085eeaf80d6127127f0e070364a57a35ca73824a79307d0",
+      "kind": 30402,
+      "pubkey": "23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5",
+      "sig": "0a98e87c68d9e1c51ec6fc366c109936e46af6f837053bb096134fe4d0183c26dccbea1e74b6ace399ed17bff1034ebb8589966daaccbcc5150eb0fc29ea142b",
+      "tags": [
+        [
+          "d",
+          "product_1793120120507_9kdjz"
+        ],
+        [
+          "title",
+          "From my trips : Entheogenic stories"
+        ],
+        [
+          "price",
+          "3.5",
+          "USD"
+        ],
+        [
+          "type",
+          "simple",
+          "physical"
+        ],
+        [
+          "visibility",
+          "on-sale"
+        ],
+        [
+          "stock",
+          "100"
+        ],
+        [
+          "summary",
+          "Ebook and pdf"
+        ],
+        [
+          "image",
+          "https://cdn.nostrcheck.me/f5d8bb17ceac1103bde1f053be72334ed77b9781abf94c5a4094f9a5b2244ece.jpeg",
+          "800x600",
+          "0"
+        ],
+        [
+          "image",
+          "https://cdn.nostrcheck.me/db502b65954a4eb843115369d801b095155f453682aaa0428b392784658c5cbc.jpeg",
+          "800x600",
+          "1"
+        ],
+        [
+          "image",
+          "https://cdn.nostrcheck.me/0b6beeef04d9822b24759537cc34af108412581de4665fe94ca7f5306647f535.jpeg",
+          "800x600",
+          "2"
+        ],
+        [
+          "t",
+          "Art"
+        ],
+        [
+          "t",
+          "Ebook pdf"
+        ],
+        [
+          "spec",
+          "135 pages",
+          "Colourful handmade paintings "
+        ],
+        [
+          "shipping_option",
+          "30406:23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5:shipping_1793119980575_fdqsq"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [],
+    "cards": [
+      {
+        "card": "other",
+        "ref": "30402:23b6c0ce3c712ce0bcef4eaf91725cc42967ffcd053d4aecf5d137c30fdce6b5:product_1793120120507_9kdjz",
+        "line": "From my trips : Entheogenic stories"
+      }
+    ],
+    "media": [
+      {
+        "image": "https://npub1ywmvpn3uwykwp080f6hezujucs5k0l7dq5754m846ymuxr7uu66sexmhsq.blossom.band/7677f107b461e9f2f98424c595acc0635eb94f3b47a8bf1aca5632b9a77544bc.jpg"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "naddr1",
+      "blossom.band"
+    ]
+  }
+}

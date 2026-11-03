@@ -504,7 +504,8 @@ internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit) {
+internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit,
+                           onSpecial: () -> Unit = {}, onNews: () -> Unit = {}) {
     val m = ui.member!!
     var leaving by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
@@ -583,6 +584,59 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
         }
 
+        // Following: your Special Follow list and where the news comes from.
+        item { Heading("Following") }
+        item {
+            val special by social.special.collectAsState()
+            Column {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onSpecial).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Special Follow", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(if (special.isEmpty()) "›" else "${special.size} ›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+                val circle by social.circleOn.collectAsState()
+                Row(Modifier.fillMaxWidth().clickable { social.setCircleOn(!circle) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Only your circle", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                        Text("People you follow, and people at least two of them follow. Others stay out of Following, come after them in search, and fold under your posts. Worked out on this phone.",
+                            color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    androidx.compose.material3.Switch(circle, { social.setCircleOn(it) })
+                }
+                Row(Modifier.fillMaxWidth().clickable(onClick = onNews).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("News sources", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        // Translation: posts in a language you don't read are translated on this phone; these you read are left as they are.
+        item { Heading("Languages you read") }
+        item {
+            val added by cc.aaro.cosign.OnDevice.added.collectAsState()
+            var adding by remember { mutableStateOf(false) }
+            val phoneLangs = remember { val l = android.os.LocaleList.getDefault(); (0 until l.size()).map { l[it].language }.distinct() }
+            Column {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (l in phoneLangs) Text(cc.aaro.cosign.OnDevice.name(l), color = Vault.Text, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp)).padding(horizontal = 10.dp, vertical = 7.dp))
+                    for (l in added.filter { it !in phoneLangs }) Text(cc.aaro.cosign.OnDevice.name(l) + "  ×", color = Vault.Text, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))
+                            .clickable { cc.aaro.cosign.OnDevice.setAdded(added - l) }.padding(horizontal = 10.dp, vertical = 7.dp))
+                    Box {
+                        Text("+ Add", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { adding = true }.padding(horizontal = 10.dp, vertical = 7.dp))
+                        if (adding) androidx.compose.material3.DropdownMenu(true, { adding = false }, containerColor = Vault.Surface) {
+                            for (l in cc.aaro.cosign.OnDevice.all().filter { it !in added && it !in phoneLangs })
+                                androidx.compose.material3.DropdownMenuItem({ Text(cc.aaro.cosign.OnDevice.name(l), color = Vault.Text) }, { adding = false; cc.aaro.cosign.OnDevice.setAdded(added + l) })
+                        }
+                    }
+                }
+                Text("Posts in other languages are translated on this phone, at the top of the post, with the original a tap away. A language is downloaded once, the first time.",
+                    color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+        item { TranslateSetting() }
+
         // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
         item { Heading("Search") }
         item {
@@ -618,18 +672,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                     }
                 }
                 Text("Automatic: offered under your search only if you follow people.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        // Discover's topics you follow: on this phone only.
-        item { Heading("Topics you follow") }
-        item {
-            val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
-            val followed by social.followedTopics.collectAsState()
-            if (followed.isEmpty()) Muted("None yet. Tap the topic under a story in Discover to follow it. What you like teaches Discover too, on this phone only.")
-            for (t in followed.sorted()) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(cc.aaro.cosign.TopicFeeds.name(t), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                TextButton({ social.followTopic(t, false) }) { Text("✕", color = Vault.Muted) }
             }
         }
 
@@ -669,7 +711,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 if (ui.relaysUp == 0) Text("No relay connection. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
             if (m.group.threshold >= 4) item { TextButton({ phone.chooseServer() }, contentPadding = PaddingValues(0.dp)) { Text("Add a server", color = Vault.Accent) } }
-            item { TranslateSetting() }
             item { TakeOutEntry(phone, onScan) }
             item { Heading("On this phone") }
             items(ui.log.take(20)) { LogLine(it) }
@@ -678,6 +719,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 Muted("${ui.relaysUp}/${m.group.relays.size} relays · " + if (ui.push != null) "ntfy wakes this phone for approvals" else "no ntfy: approvals arrive while $appName is running")
                 TextButton({ leaving = true }, contentPadding = PaddingValues(0.dp)) { Text("Remove this phone from your account", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
+            item { FeedLogSetting() }
         }
     }
 
@@ -707,6 +749,74 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     )
 }
 
+/**
+ * The version, and under it (once the version's been tapped seven times) the feed log, for tuning Discover by hand:
+ * off unless you turn it on, kept on this phone only. See [cc.aaro.cosign.FeedLog].
+ */
+@Composable
+private fun FeedLogSetting() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val unlocked by cc.aaro.cosign.FeedLog.unlocked.collectAsState()
+    val on by cc.aaro.cosign.FeedLog.on.collectAsState()
+    val bytes by cc.aaro.cosign.FeedLog.bytes.collectAsState()
+    var taps by remember { mutableStateOf(0) }
+    var deleting by remember { mutableStateOf(false) }
+    var said by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val version = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName } catch (_: Exception) { null } ?: "" }
+    Column {
+        Text("$appName $version", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+                if (!unlocked && ++taps >= 7) cc.aaro.cosign.FeedLog.unlock(context)
+            }.padding(vertical = 6.dp))
+        if (!unlocked) return@Column
+        Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.FeedLog.set(context, !on) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Record how I use Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                Text("What you open, like and pass over in Following, and how long things stay on screen, for tuning it by hand. " +
+                    "Kept on this phone only; nothing is sent. " + if (bytes > 0) "%.1f MB so far.".format(bytes / 1_048_576.0) else "Nothing recorded yet.",
+                    color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            androidx.compose.material3.Switch(on, { cc.aaro.cosign.FeedLog.set(context, it) })
+        }
+        // Which feed Following is, to compare them (one tap back, any time): Feed 1 · Original (as on 27 Oct), Feed 2 · Mixed
+        // (no counts, news between posts), Feed 3 · Edition (what's new from your people, Special Follow first; Today's news; three from beyond; the rest of your people; an end).
+        val social = remember { cc.aaro.cosign.Social.of(cc.aaro.cosign.CosignApp.instance.phone) }
+        val feed by social.feedVersion.collectAsState()
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Text("Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+            Text("Now: " + cc.aaro.cosign.FeedNames.of(feed), color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (v in listOf(1, 2, 3)) Text(cc.aaro.cosign.FeedNames.short(v), color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (feed == v) Vault.Accent else Vault.Surface).border(1.dp, if (feed == v) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                        .clickable { social.setFeedVersion(v) }.padding(horizontal = 10.dp, vertical = 6.dp))
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton({
+                scope.launch {
+                    val uri = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cc.aaro.cosign.FeedLog.export(context) }
+                    if (uri == null) { said = "Nothing to export, or it couldn't be saved."; return@launch }
+                    said = "Saved in Downloads/Marble."
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("application/zip").putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    try { context.startActivity(android.content.Intent.createChooser(send, "Export the feed log")) } catch (_: Exception) {}
+                }
+            }, enabled = bytes > 0, contentPadding = PaddingValues(0.dp)) { Text("Export", color = Vault.Accent) }
+            TextButton({ deleting = true }, enabled = bytes > 0, contentPadding = PaddingValues(0.dp)) { Text("Delete what's recorded", color = Vault.Danger) }
+        }
+        said?.let { Muted(it) }
+    }
+    if (deleting) AlertDialog(
+        onDismissRequest = { deleting = false },
+        title = { Text("Delete what's recorded?") },
+        text = { Text("Everything the feed log kept on this phone goes. Exports already in Downloads stay.") },
+        confirmButton = { TextButton({ deleting = false; cc.aaro.cosign.FeedLog.clear(); said = null }) { Text("Delete", color = Vault.Danger) } },
+        dismissButton = { TextButton({ deleting = false }) { Text("Keep it") } },
+        containerColor = Vault.Surface,
+    )
+}
+
 /** Your own LibreTranslate: notes in other languages are translated instead of left out. */
 @Composable
 private fun TranslateSetting() {
@@ -717,9 +827,9 @@ private fun TranslateSetting() {
     var typed by remember(url) { mutableStateOf(url) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     Column(Modifier.padding(top = 6.dp)) {
-        Text("Use your own LibreTranslate server", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
-        Muted(if (url.isEmpty()) "Off: notes in other languages are left out of Discover. Set your LibreTranslate server to translate them instead."
-            else "Notes in other languages are translated by your server. If it's down or slow, they're left out.")
+        Text("Your own translation server (optional)", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
+        Muted(if (url.isEmpty()) "A LibreTranslate address, if you run one: posts are then translated by it, and by this phone whenever it doesn't answer."
+            else "Posts are translated by your server, and by this phone whenever it doesn't answer.")
         Spacer(Modifier.height(8.dp))
         androidx.compose.material3.OutlinedTextField(typed, { typed = it }, Modifier.fillMaxWidth(), singleLine = true,
             placeholder = { Text("https://translate.example.com", color = Vault.Muted) },
@@ -735,7 +845,7 @@ private fun TranslateSetting() {
             }
         }
         status?.let { Muted(it) }
-        Muted("Your LibreTranslate, over https.")
+        Muted("Over https. The address and key stay on this phone.")
     }
 }
 

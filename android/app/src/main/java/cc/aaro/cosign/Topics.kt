@@ -1,8 +1,8 @@
 package cc.aaro.cosign
 
 import android.content.Context
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.Json
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
 import cc.aaro.cosign.net.Fetch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -72,8 +72,10 @@ object TopicFeeds {
     /** The phone's copy was fetched in the last 30 minutes. */
     fun fresh(context: Context) = File(context.cacheDir, "topic-feeds.json").let { it.exists() && System.currentTimeMillis() - it.lastModified() < 30 * 60_000L }
 
-    /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site. */
-    suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = withContext(Dispatchers.IO) {
+    /** All the cards, from disk if fetched in the last 30 minutes (or [cachedOnly]), else from the site; as your news sources say. */
+    suspend fun load(context: Context, cachedOnly: Boolean = false): List<TopicCard> = NewsSources.mix(context, loadSite(context, cachedOnly), cachedOnly)
+
+    private suspend fun loadSite(context: Context, cachedOnly: Boolean): List<TopicCard> = withContext(Dispatchers.IO) {
         val file = File(context.cacheDir, "topic-feeds.json")
         val fresh = System.currentTimeMillis() - file.lastModified() < 30 * 60_000L
         if (file.exists() && (fresh || cachedOnly)) parse(file.readText())?.let { return@withContext it }
@@ -122,7 +124,7 @@ object TopicFeeds {
             val m = x as? Map<*, *> ?: return@mapNotNull null
             val src = m["source"] as? Map<*, *> ?: return@mapNotNull null
             TopicCard(m["id"] as? String ?: return@mapNotNull null, (m["url"] as? String)?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null,
-                (m["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null, (m["summary"] as? String)?.trim().orEmpty(),
+                (m["title"] as? String)?.let(HtmlText::decode)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null, (m["summary"] as? String)?.let(HtmlText::decode)?.trim().orEmpty(),
                 (m["image"] as? String)?.takeIf { it.startsWith("https://") }, src["id"] as? String ?: "", src["name"] as? String ?: "",
                 (m["published_at"] as? Long) ?: (m["first_seen"] as? Long) ?: 0L, m["topic"] as? String ?: return@mapNotNull null,
                 Discussion.list(m["discussions"], m["url"] as String, m["discussion"]))
@@ -255,6 +257,28 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         if (caughtUp) extra.put("likesTo", System.currentTimeMillis() / 1000)
         learn(topics, 1.0)
     }
+    /**
+     * The things you look into (names and words from what you search, keep in Later and open), on this phone only:
+     * never in the copy on your account. Newest count most; the strongest 150 are kept.
+     */
+    private val entities = HashMap<String, Double>().apply {
+        prefs.getString("entities", null)?.let { try { val o = org.json.JSONObject(it); o.keys().forEach { k -> put(k, o.optDouble(k)) } } catch (_: Exception) {} }
+    }
+    @Synchronized fun noticed(text: String, by: Double = 1.0) {
+        val words = Entities.of(text)
+        if (words.isEmpty()) return
+        entities.replaceAll { _, v -> v * 0.98 }
+        words.forEach { entities[it] = (entities[it] ?: 0.0) + by }
+        val keep = entities.entries.sortedByDescending { it.value }.take(150).associate { it.key to it.value }
+        entities.clear(); entities.putAll(keep)
+        prefs.edit().putString("entities", org.json.JSONObject(entities as Map<*, *>).toString()).apply()
+    }
+    /** 0..1: how much a title is about the things you look into. */
+    @Synchronized fun entityFit(text: String): Double {
+        val max = entities.values.maxOrNull()?.takeIf { it > 0 } ?: return 0.0
+        return Entities.of(text).maxOfOrNull { (entities[it] ?: 0.0) / max } ?: 0.0
+    }
+
     @Synchronized fun follow(topic: String, on: Boolean) { if (on) { followed += topic; lessTopic -= topic } else followed -= topic; save() }
     @Synchronized fun lessOfTopic(topic: String) { lessTopic[topic] = (lessTopic[topic] ?: 0) + 1; followed -= topic; save() }
     @Synchronized fun lessOfSource(source: String) { lessSource[source] = (lessSource[source] ?: 0) + 1; save() }
@@ -273,6 +297,12 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         val list = extra.optJSONArray(kind) ?: org.json.JSONArray().also { extra.put(kind, it) }
         if ((0 until list.length()).none { list.optString(it) == id }) { list.put(id); save() }
     }
+    /** Hidden no longer (Undo). */
+    @Synchronized fun unhide(kind: String, id: String) {
+        val list = extra.optJSONArray(kind) ?: return
+        val keep = org.json.JSONArray(); for (i in 0 until list.length()) list.optString(i).takeIf { it != id }?.let(keep::put)
+        if (keep.length() != list.length()) { extra.put(kind, keep); save() }
+    }
     @Synchronized fun hidden(kind: String, id: String) = extra.optJSONArray(kind)?.let { l -> (0 until l.length()).any { l.optString(it) == id } } == true
 
     /** 0..1 for a topic: followed is the most; learned weight relative to your strongest; each "less" halves it. */
@@ -290,13 +320,32 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
         .put("weights", org.json.JSONObject(weights as Map<*, *>)).put("followed", org.json.JSONArray(followed.toList()))
         .put("lessTopics", org.json.JSONObject(lessTopic as Map<*, *>)).put("lessSources", org.json.JSONObject(lessSource as Map<*, *>)).toString()
 
-    /** Your account's copy, if it's newer than this phone's: true if taken. */
+    /**
+     * Your account's copy, merged with this phone's, topic by topic: what you follow and how much less you want of
+     * things come from the newer copy (they're choices); a topic learned on only one side is kept; for one learned on
+     * both, the newer copy's weight; hidden people and sites from either. True if anything here changed.
+     */
     @Synchronized fun adopt(json: String): Boolean {
         val o = try { org.json.JSONObject(json) } catch (_: Exception) { return false }
-        if (o.optInt("v") != 1 || o.optLong("at") <= at) return false
-        read(o)
-        prefs.edit().putString("interests", toJson()).putBoolean("interestsSeeded", true).apply()
-        return true
+        if (o.optInt("v") != 1) return false
+        val before = toJson()
+        val theirsNewer = o.optLong("at") > at
+        val mine = org.json.JSONObject(before)
+        val (newer, older) = if (theirsNewer) o to mine else mine to o
+        val merged = org.json.JSONObject(newer.toString())
+        val w = org.json.JSONObject((newer.optJSONObject("weights") ?: org.json.JSONObject()).toString())
+        older.optJSONObject("weights")?.let { ow -> ow.keys().forEach { k -> if (!w.has(k)) w.put(k, ow.optDouble(k)) } }
+        merged.put("weights", w)
+        for (kind in listOf("hiddenPeople", "hiddenSources")) {
+            val all = LinkedHashSet<String>()
+            for (x in listOf(newer, older)) x.optJSONArray(kind)?.let { a -> for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotEmpty() }?.let(all::add) }
+            if (all.isNotEmpty()) merged.put(kind, org.json.JSONArray(all.toList()))
+        }
+        read(merged)
+        val differs = toJson() != before
+        if (differs && !theirsNewer) save()
+        else prefs.edit().putString("interests", toJson()).putBoolean("interestsSeeded", true).apply()
+        return differs
     }
 
     private fun read(o: org.json.JSONObject) {
@@ -383,4 +432,14 @@ object SeenSync {
             days.keys().asSequence().flatMap { d -> days.optString(d).split(' ').filter { it.isNotEmpty() }.map { it to (d.toLongOrNull() ?: 0) * 86_400 } }.toList()
         }
     } catch (_: Exception) { emptyList() }
+}
+
+/** The words a text is about, for [Interests.noticed]: four letters or more, not the everyday ones, lower case. */
+object Entities {
+    private val COMMON = setOf("this", "that", "with", "from", "have", "what", "when", "your", "about", "they", "their", "there", "will", "would",
+        "could", "should", "were", "been", "into", "more", "than", "just", "like", "some", "only", "over", "after", "also", "most", "how", "why",
+        "here", "these", "those", "which", "while", "where", "does", "made", "make", "new", "news", "says", "said", "best", "first", "year", "years",
+        "week", "today", "page", "home", "http", "https", "www", "com", "html")
+    fun of(text: String): Set<String> = Regex("[\\p{L}\\p{N}][\\p{L}\\p{N}'.-]*").findAll(text.lowercase())
+        .map { it.value.trim('.', '-', '\'') }.filter { it.length >= 4 && it !in COMMON && !it.all(Char::isDigit) }.take(12).toSet()
 }

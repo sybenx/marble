@@ -1,22 +1,27 @@
 package cc.aaro.cosign
 
 import android.content.Context
-import cc.aaro.cosign.core.Bech32
+import cc.aaro.qrst.core.Bech32
 import cc.aaro.cosign.core.Clock
-import cc.aaro.cosign.core.Event
-import cc.aaro.cosign.core.Json
-import cc.aaro.cosign.core.Nip19
-import cc.aaro.cosign.core.isHex32
-import cc.aaro.cosign.core.toHex
-import cc.aaro.cosign.core.hexToBytes
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
+import cc.aaro.qrst.core.Nip19
+import cc.aaro.qrst.core.isHex32
+import cc.aaro.qrst.core.toHex
+import cc.aaro.qrst.core.hexToBytes
 import cc.aaro.cosign.net.Conn
 import cc.aaro.cosign.net.Fetch
+import cc.aaro.cosign.notes.NotesNet
+import cc.aaro.cosign.notes.NotesStore
+import cc.aaro.cosign.notes.NotesSync
+import cc.aaro.cosign.notes.Stored
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,6 +98,71 @@ fun nevent(id: String, author: String, kind: Int, relays: List<String>): String 
     return Bech32.encode("nevent", out.toByteArray())
 }
 
+/** An article's address for other apps (NIP-19 naddr): its d tag, author and kind (an article is replaceable: this finds its newest version). */
+fun naddr(d: String, author: String, kind: Int): String {
+    val out = java.io.ByteArrayOutputStream()
+    fun tlv(t: Int, v: ByteArray) { out.write(t); out.write(v.size); out.write(v) }
+    tlv(0, d.toByteArray())
+    tlv(2, author.hexToBytes())
+    tlv(3, java.nio.ByteBuffer.allocate(4).putInt(kind).array())
+    return Bech32.encode("naddr", out.toByteArray())
+}
+
+/**
+ * A post's or article's link to share: marble.syb.lol, which opens it at once (Ditto's search finds it by its id) and
+ * which Marble opens itself. The same every time (no relay hints, which change).
+ */
+fun marbleLink(e: Event): String = "https://marble.syb.lol/" +
+    if (e.kind in 30000..39999) naddr(e.firstTag("d") ?: "", e.pubkey, e.kind) else nevent(e.id, e.pubkey, e.kind, emptyList())
+
+/** What a marble.syb.lol link names: a post or someone (/nevent1…, /note1…, /npub1…, /nprofile1…, and the older /e/… and /p/…). */
+fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
+
+/**
+ * A link that's a post, article or someone, opened in Marble rather than a browser: marble.syb.lol (/nevent1…, /e/…,
+ * /p/…, /a/…), njump.me, or nostr:…. Anything else (a real web page): null.
+ */
+fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, setOf("marble.syb.lol", "njump.me"))
+
+private fun refIn(url: String, hosts: Set<String>): Ref? {
+    val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }
+    if (u.scheme?.lowercase() !in setOf("https", "http") || u.host?.lowercase()?.removePrefix("www.") !in hosts) return null
+    val segs = u.path.orEmpty().split('/').filter { it.isNotEmpty() }
+    val last = segs.lastOrNull() ?: return null
+    // /e/<hex> and /p/<hex>; a bare hex says nothing about what it is.
+    if (isHex32(last.lowercase())) return when (segs.getOrNull(segs.size - 2)) { "e" -> Ref.Note(last.lowercase()); "p" -> Ref.Profile(last.lowercase()); else -> null }
+    return Ref.parse(last)
+}
+
+/** The post a marble.syb.lol link stands for, if that's what it is. */
+fun marblePost(url: String): String? = (marbleRef(url) as? Ref.Note)?.id
+
+/** Folded news stories ("seen, but keep it"): small rows in Following, kept across restarts. Not a ranking signal. */
+/**
+ * A post's text for one line (a kept post in Notes): a mention becomes @their name, and a quoted post or article
+ * "↪ quoted" / "↪ an article", never the raw nostr:… string. [name]: someone's name, if known.
+ */
+fun readable(text: String, name: (String) -> String? = { null }): String = MENTION.replace(text) { m ->
+    when (val r = Ref.parse(m.value)) {
+        is Ref.Profile -> "@" + (name(r.pubkey) ?: "someone")
+        is Ref.Note -> "↪ quoted"
+        is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted"
+        null -> m.value
+    }
+}
+private val MENTION = Regex("nostr:(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+", RegexOption.IGNORE_CASE)
+
+object FoldedStories {
+    private fun prefs() = CosignApp.instance.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE)
+    val ids = kotlinx.coroutines.flow.MutableStateFlow(try { prefs().getStringSet("folded", emptySet())!!.toSet() } catch (_: Exception) { emptySet() })
+    fun toggle(id: String) {
+        val on = id !in ids.value
+        ids.value = if (on) (ids.value + id).toList().takeLast(1000).toSet() else ids.value - id
+        prefs().edit().putStringSet("folded", ids.value).apply()
+        FeedLog.act("t:$id", if (on) "seen" else "unseen")
+    }
+}
+
 fun shortNpub(pk: String) = try { Nip19.npub(pk).let { it.drop(5).take(6) + "…" + it.takeLast(4) } } catch (_: Exception) { pk.take(8) }
 
 /**
@@ -163,6 +233,10 @@ sealed class Ref {
     var relays: List<String> = emptyList()
     data class Profile(val pubkey: String) : Ref()
     data class Note(val id: String) : Ref()
+    /** An addressable event (NIP-19 naddr): kind, author and d tag; its newest version is the one. */
+    data class Addr(val kind: Int, val pubkey: String, val d: String) : Ref() {
+        val naddr get() = naddr(d, pubkey, kind)
+    }
 
     companion object {
         fun parse(input: String): Ref? {
@@ -176,11 +250,25 @@ sealed class Ref {
                 "note" -> if (data.size == 32) Note(data.toHex()) else null
                 "nprofile" -> tlv(data)?.let { Profile(it).apply { relays = hints(data) } }
                 "nevent" -> tlv(data)?.let { Note(it).apply { relays = hints(data) } }
+                "naddr" -> addr(data)?.apply { relays = hints(data) }
                 else -> null
             }
         }
 
-        private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1)[02-9ac-hj-np-z]+")
+        private val ENTITY = Regex("(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+")
+
+        /** An naddr's TLV: 0 the d tag, 2 the author, 3 the kind (4 bytes, big-endian). */
+        private fun addr(b: ByteArray): Addr? {
+            var d: String? = null; var author: String? = null; var kind: Int? = null; var i = 0
+            while (i + 2 <= b.size) {
+                val t = b[i].toInt() and 0xff; val l = b[i + 1].toInt() and 0xff
+                if (i + 2 + l > b.size) break
+                val v = b.copyOfRange(i + 2, i + 2 + l)
+                when (t) { 0 -> d = String(v); 2 -> if (l == 32) author = v.toHex(); 3 -> if (l == 4) kind = java.nio.ByteBuffer.wrap(v).int }
+                i += 2 + l
+            }
+            return if (d != null && author != null && kind != null) Addr(kind, author, d) else null
+        }
 
         /** The relays under type 1 of a NIP-19 TLV (wss:// ones, at most four). */
         private fun hints(b: ByteArray): List<String> {
@@ -230,7 +318,9 @@ data class Notice(val event: Event, val type: Type, val about: String?) {
 
 data class Notices(val list: List<Notice> = emptyList(), val loading: Boolean = false, val at: Long = 0)
 
-data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap())
+/** A search's results; [split]: someone you follow named in it, and [byAuthor], their posts with the other words (first). */
+data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap(),
+                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
 data class Held(val what: String, val event: Event)
@@ -327,6 +417,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val out = Calm.stories(left, interests, Clock.now(), ::shownCount).takeIf { it.size >= 12 }
             ?: Calm.stories(left, interests, Clock.now(), ::shownCount, window = 7 * 86_400L)
         if (debuggable) storyCounts("more stories", out.size)
+        logStories("stories", out)
         return out
     }
 
@@ -365,6 +456,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             return
         }
         feed.update { it.copy(loading = true, failed = false) }
+        if (force) FeedLog.ev("pull", "screen" to "discover")
+        // (Feed 3's "where you'd got to" moves on a new visit only, never on a pull: pulling twice mustn't make it all "earlier".)
+        if (f.posts.isEmpty()) editionVisit()
         scope.launch { afterPaint(); knowMutes(); knowSaved(); knowInterests() }
         val onScreen = if (force) (f.posts.take(lookedAt + 2).map { it.e.id } + f.stories.map { "t:" + it.id }).toSet() else emptySet()
         if (force) lookedAt = 0
@@ -392,9 +486,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val fresh = posts.filter { p -> keep.none { it.e.id == p.e.id } }
                 // Back after a while: the new ones first, unless you've already started down the list (then below, as ever).
                 val first = top && lookedAt <= 1
-                cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
+                // The popular list: what's new goes above what you have (the list keeps your place; a "new" pill says so),
+                // and nothing you were reading moves or goes.
+                if (Sources.POPULAR_ONLY) cur.copy(posts = (posts.filter { p -> cur.posts.none { it.e.id == p.e.id } } + cur.posts).take(400), loading = false, at = System.currentTimeMillis())
+                else cur.copy(posts = if (first) fresh + keep else keep + (if (force) fresh.take((20 - keep.size).coerceAtLeast(0)) else fresh), loading = false, at = System.currentTimeMillis())
             }
+            // A refresh of the list lets what you put away go (its slim rows with Undo).
+            justDismissed.value = emptyMap()
             if (posts.isNotEmpty()) Startup.mark("feed posts ${posts.size}")
+            logPosts(if (force) "pull" else if (top) "back" else "load", feed.value.posts)
             saveFeed()
             loadPreviews(posts.map { it.e })
         }
@@ -406,6 +506,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * use). A short hop never comes here, so coming back from an article changes nothing.
      */
     fun returned(fetchAfter: Long = 10 * 60_000L) {
+        editionVisit()
         if (feed.value.loading) return
         lookedAt = 0
         if (!Sources.POPULAR_ONLY) feed.update { it.copy(posts = it.posts.filter { p -> unseen(p.e.id) }) }
@@ -479,7 +580,29 @@ class Social private constructor(private val phone: Phone, context: Context) {
         step("counts ${followers.size}")
         val picks = passes.mapNotNull { e -> Calm.score(e, weights, Standing(e.pubkey in follows, 0, followers[e.pubkey] ?: 0), emptySet(), follows, false, now, interests.digestWeight()) }
         if (debuggable) Startup.mark("feed quick asked ${got.size}, passed ${passes.size}, follows ${follows.size}, counted ${followers.size}, picked ${picks.size}")
-        Calm.diversify(picks, max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
+        Calm.diversify(withoutSpam(picks.sortedByDescending { it.score }.take(30), follows), max = 6).also { remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }) }
+    }
+
+    /** Posts that look like spam, by id, and why (cued wherever they show; see [Spam]). */
+    val spam = MutableStateFlow<Map<String, cc.aaro.cosign.spam.Spam.Why>>(emptyMap())
+
+    /**
+     * Picks without manufactured engagement (what hot lists are full of): a stranger's goes, a follow's is only cued.
+     * [got]: the picks' reactions and reposts, if already fetched; else they're asked for (two seconds at most).
+     */
+    private suspend fun withoutSpam(picks: List<Pick>, follows: Set<String>, got: List<Event>? = null): List<Pick> {
+        if (picks.isEmpty()) return picks
+        val all = got ?: kotlinx.coroutines.withTimeoutOrNull(2000) {
+            Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"), mapOf("kinds" to listOf(7, 6, 16), "#e" to picks.map { it.e.id }, "limit" to 3000), 2000)
+        } ?: emptyList()
+        val fof = friendsOfFriends()
+        val why = picks.filter { !cc.aaro.cosign.spam.Spam.notSpam(it.e.pubkey) }.mapNotNull { p ->
+            (cc.aaro.cosign.spam.Spam.inflated(p.e.id, all) ?: cc.aaro.cosign.spam.Spam.advert(p.e)?.takeIf { (fof[p.e.pubkey] ?: 0) == 0 })?.let { p.e.id to it }
+        }.toMap()
+        if (why.isEmpty()) return picks
+        spam.update { it + why }
+        if (debuggable) Startup.mark("feed spam ${why.size}")
+        return picks.filter { it.e.id !in why || it.e.pubkey in follows || it.e.pubkey == me }
     }
 
     /** The relays a topic's posts are looked for on: those that search, and the big ones for its hashtags. */
@@ -542,15 +665,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val first = rank(emptyMap()).take(200)
         Startup.mark("feed first pass ${first.size}")
         val fans = HashMap<String, MutableSet<String>>()
-        first.map { it.e.id }.chunked(150).map { ids -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol", "wss://syb.lol"), mapOf("kinds" to listOf(7, 6, 9735), "#e" to ids, "limit" to 5000), 8000) } }
-            .awaitAll().flatten().forEach { r ->
+        val reactions = first.map { it.e.id }.chunked(150).map { ids -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol", "wss://syb.lol"), mapOf("kinds" to listOf(7, 6, 9735), "#e" to ids, "limit" to 5000), 8000) } }
+            .awaitAll().flatten().distinctBy { it.id }
+        reactions.forEach { r ->
                 val target = r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) ?: return@forEach
                 val who = if (r.kind == 9735) (try { (Json.parse(r.tags.firstOrNull { it.size > 1 && it[0] == "description" }?.get(1) ?: "") as? Map<*, *>)?.get("pubkey") as? String } catch (_: Exception) { null }) ?: return@forEach else r.pubkey
                 fans.getOrPut(target) { HashSet() } += who
             }
         Startup.mark("feed fans ${fans.size}")
         inputs = Inputs(passes, standing, fans, follows, perAuthor)
-        val picks = Calm.collapse(Calm.diversify(rank(fans)), ::nameOf)
+        val picks = Calm.collapse(Calm.diversify(withoutSpam(rank(fans), follows, reactions)), ::nameOf)
         remember(picks.map { it.e })
         People.want(picks.map { it.e.pubkey })
         Startup.mark("feed ranked ${picks.size}")
@@ -559,21 +683,112 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun nameOf(pk: String) = People.known.value[pk]?.shown ?: shortNpub(pk)
 
     /**
-     * Discover's posts, the simple way: what fiatjaf's Pyramid says was popular this week (read only, already
-     * curated, so no trust filter of ours), newest first, with recent posts from your Special Follow list woven in.
+     * Following's posts, the simple way: what the people you follow posted in the last two days (four each at most),
+     * newest first, lifted a little by what you like, with your Special Follow people (★) woven in near the top.
      */
     private suspend fun popularPosts(skip: Set<String>): List<Pick> = kotlinx.coroutines.coroutineScope {
         val now = Clock.now()
-        val pop = async { Fetch.query(listOf(Sources.POPULAR), mapOf("kinds" to listOf(1), "limit" to 120), 8000) }
+        if (feedVersion.value == 3) return@coroutineScope editionPosts(skip, now)
+        // Following: what the people you follow posted in the last two days (their own posts, not replies).
+        val pop = async { followingPosts(now) }
         val theirs = async { specialPosts(now) }
         val hidden = muted.value
         fun ok(e: Event) = e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600
-        val woven = Calm.weave(pop.await().filter(::ok), theirs.await().filter(::ok))
+        val woven = Calm.weave(pop.await().filter { ok(it) && !snoozedNow(it.pubkey) }, theirs.await().filter(::ok), ::lift)
         if (debuggable) Startup.mark("feed popular ${woven.count { !it.second }}, special ${woven.count { it.second }}")
-        woven.map { (e, special) -> Pick(e, "", 0.0, if (special) "★ Special Follow" else "") }.also {
+        val starred = special.value
+        woven.map { (e, sp) -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (sp || e.pubkey in starred) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
     }
+
+    // --- Feed 3 · Edition ---------------------------------------------------------------------------
+
+    /**
+     * Feed 3's people: everyone you follow, their own posts of the last two days, strictly newest first (no lift, no
+     * cap: a burst folds on screen instead). Special Follow people are marked, not moved. Nothing here is ranked.
+     */
+    private suspend fun editionPosts(skip: Set<String>, now: Long): List<Pick> = kotlinx.coroutines.coroutineScope {
+        val sp = async { specialPeople() }
+        val hidden = muted.value
+        val posts = followingPosts(now, cap = Int.MAX_VALUE).filter { e ->
+            e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600 && !snoozedNow(e.pubkey)
+        }
+        val starred = sp.await()
+        scope.launch { beyond.value = try { beyondPosts(now) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; beyond.value } }
+        posts.map { e -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (e.pubkey in starred) "★ Special Follow" else "") }.also {
+            remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
+        }
+    }
+
+    /** Feed 3's end: three posts from outside your follows, each with why it's here. */
+    val beyond = MutableStateFlow<List<Pick>>(emptyList())
+
+    /**
+     * Beyond your people: posts of the last two days that people you follow liked or shared, from people you don't follow.
+     * Trust comes from your people only: no counts, no follower numbers, no hot lists. The more of your people, the
+     * likelier; three at most, one per person; likely spam out. The why says who, and what they did.
+     */
+    private suspend fun beyondPosts(now: Long): List<Pick> {
+        val mine = follows.value.orEmpty()
+        if (mine.isEmpty()) return emptyList()
+        val relays = (readRelays() + POST_RELAYS).distinct().take(6)
+        val acts = mine.toList().chunked(300).map { part ->
+            Fetch.query(relays, mapOf("kinds" to listOf(7, 6), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 800), 6000)
+        }.flatten().distinctBy { it.id }
+        val who = HashMap<String, MutableSet<String>>()
+        for (a in acts) {
+            if (a.kind == 7 && a.content == "-") continue
+            a.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)?.let { who.getOrPut(it) { LinkedHashSet() } += a.pubkey }
+        }
+        val top = who.entries.sortedByDescending { it.value.size }.take(60).map { it.key }
+        if (top.isEmpty()) return emptyList()
+        val hidden = muted.value
+        val evs = Fetch.query((relays + bigRelays).distinct(), mapOf("ids" to top), 6000).distinctBy { it.id }.filter { e ->
+            e.kind == 1 && parentOf(e) == null && e.pubkey !in mine && e.pubkey != me && e.pubkey !in hidden && safe(e) && !mutedText(e.content, e) &&
+                !interests.hidden("hiddenPeople", e.pubkey) && e.createdAt > now - 3 * 86_400L
+        }
+        circleCounts()
+        val clean = withoutSpam(evs.filter { inCircle(it.pubkey) }.map { Pick(it, "", 0.0, "") }, mine).map { it.e }
+        val chosen = clean.sortedByDescending { who[it.id]?.size ?: 0 }.distinctBy { it.pubkey }.take(3)
+        People.want(chosen.flatMap { who[it.id].orEmpty().take(3) } + chosen.map { it.pubkey })
+        kotlinx.coroutines.delay(800)
+        return chosen.map { e ->
+            val names = who[e.id].orEmpty().mapNotNull { People.known.value[it]?.name?.takeIf { n -> n.isNotBlank() } }.take(2)
+            val did = if (acts.any { it.kind == 6 && it.tags.any { t -> t.size > 1 && t[0] == "e" && t[1] == e.id } }) "shared" else "liked"
+            val reason = when {
+                names.isEmpty() -> "People you follow $did this"
+                (who[e.id]?.size ?: 0) > names.size -> "${names.joinToString(", ")} and others you follow $did this"
+                else -> "${names.joinToString(" and ")} $did this"
+            }
+            Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, reason)
+        }.also { remember(it.map { p -> p.e }) }
+    }
+
+    /** Where you'd got to last time in Feed 3 (the newest post's time then): an "Earlier" line goes there. Kept on this phone. */
+    val editionMark = MutableStateFlow(prefs.getLong("editionMark", 0L))
+    @Volatile private var editionTop = prefs.getLong("editionMark", 0L)
+    /** Seen at the top: remembered for next time (the line on screen now stays where it is). */
+    fun editionSeen(newest: Long) { if (newest > editionTop) { editionTop = newest; prefs.edit().putLong("editionMark", newest).apply() } }
+    /** A new visit (opening Marble, or back after a while; never a pull): the line moves to where you'd got to. */
+    fun editionVisit() { editionMark.value = editionTop }
+    /** A story in the box, opened already. */
+    fun storyRead(c: TopicCard) = storyOpened(c)
+
+    /** What the people you follow posted in the last two days, their own posts (not replies), from their relays and the big ones. */
+    private suspend fun followingPosts(now: Long, cap: Int = 4): List<Event> {
+        knowFollows()
+        val who = follows.value.orEmpty().toList()
+        if (who.isEmpty()) return emptyList()
+        val relays = (readRelays() + POST_RELAYS + bigRelays).distinct().take(8)
+        return who.chunked(400).map { part ->
+            Fetch.query(relays, mapOf("kinds" to listOf(1, Polls.POLL), "authors" to part, "since" to now - 2 * 86_400L, "limit" to 300), 8000)
+        }.flatten().filter { parentOf(it) == null }.distinctBy { it.id }.sortedByDescending { it.createdAt }
+            .let { l -> val each = HashMap<String, Int>(); l.filter { (each.merge(it.pubkey, 1, Int::plus) ?: 0) <= cap } }.take(if (cap == 4) 300 else 600)
+    }
+
+    /** What you like, lightly, in Discover's popular posts: up to a couple of hours earlier for your strongest topics, a little later for your weakest. */
+    private fun lift(e: Event) = (((TopicGuess.of(e).maxOfOrNull { interests.of(it) } ?: 0.4) - 0.4) * 4 * 3600).toLong()
 
     /** Your Special Follow list (kind 10010, the one Jumble keeps), and how many: public names, and private ones if it has any (NIP-44 to yourself). */
     val special = MutableStateFlow<Set<String>>(prefs.getStringSet("special", emptySet())!!.toSet())
@@ -620,9 +835,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Called once the whole object is set up: the filters below need it. */
     private fun restoreFeed() {
+        // The feed log switched on with a feed already on screen: that list, at once (otherwise only the next load would say what's in it).
+        scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); pullSeen(); pullDeviceNames(); pullLater()
+            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
             pullKept()
@@ -649,6 +866,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 remember(posts.map { it.e })
                 feed.update { if (it.posts.isNotEmpty()) it else it.copy(posts = posts, stories = stories.ifEmpty { it.stories }, at = m["at"] as? Long ?: 0) }
                 restored.complete(true)
+                logPosts("cache", feed.value.posts)
                 People.want(posts.map { it.e.pubkey })
                 Startup.mark("feed from cache ${posts.size}")
             } finally { restored.complete(false) }
@@ -661,6 +879,41 @@ class Social private constructor(private val phone: Phone, context: Context) {
             "posts" to f.posts.map { mapOf("event" to it.e.toMap(), "topic" to it.topic, "reason" to it.reason, "likes" to it.likes.toLong(), "more" to it.more) },
             "stories" to f.stories.map { it.toMap() }))) } catch (_: Exception) {}
     }
+
+    // --- The feed log (when it's on): each list in the order shown, with what its ranking went on --------
+
+    /** Discover's posts, in the order shown. [why]: "load", "pull", "back" (after a while away), "cache" (last time's) or "on" (the log just switched on). */
+    private fun logPosts(why: String, posts: List<Pick>) {
+        if (!FeedLog.on.value || posts.isEmpty()) return
+        scope.launch {
+            val follows = follows.value ?: emptySet()
+            for (p in posts) {
+                val inner = p.e.takeIf { it.kind == 6 }?.let(::reposted) ?: p.e
+                val (pics, vids) = Calm.media(inner)
+                FeedLog.item(p.e.id, "kind" to "post", "ek" to p.e.kind, "src" to inner.pubkey, "at" to inner.createdAt, "from" to if (p.reason.startsWith("★")) "special" else "pyramid",
+                    "why" to p.reason.takeIf { it.isNotEmpty() }, "topics" to TopicGuess.hits(inner).take(3).associate { it.topic to it.strength },
+                    "words" to Entities.of(Calm.text(inner)).take(8), "len" to Calm.text(inner).length, "link" to (Calm.link(inner) != null), "pics" to pics, "vids" to vids,
+                    "digest" to Calm.digest(inner), "reply" to (parentOf(inner) != null), "repost" to (p.e.kind == 6), "follow" to (inner.pubkey in follows), "likes" to p.likes.takeIf { it > 0 })
+            }
+            FeedLog.ev("feed", "screen" to "discover", "why" to why, "rv" to FeedLog.RANKER, "prof" to logProfile(),
+                "list" to posts.map { p -> mapOf("id" to p.e.id, "lift" to lift(p.e.takeIf { it.kind == 6 }?.let(::reposted) ?: p.e), "sp" to p.reason.startsWith("★").takeIf { it }) })
+        }
+    }
+
+    /** Today's stories for More stories, in the order shown, each with its score. */
+    /** The feed log (when on): a list of stories as a screen showed it (Following's News and Topics). */
+    fun logStoryList(screen: String, list: List<TopicCard>) = logStories(screen, list)
+    private fun logStories(screen: String, list: List<TopicCard>) {
+        if (!FeedLog.on.value || list.isEmpty()) return
+        val now = Clock.now()
+        for (c in list) FeedLog.item("t:" + c.id, "kind" to "story", "src" to c.sourceId, "srcName" to c.sourceName, "topic" to c.topic, "at" to c.publishedAt,
+            "words" to Entities.of(c.title).take(8), "img" to (c.image != null), "disc" to c.discussions.map { mapOf("site" to it.site, "n" to it.comments) })
+        FeedLog.ev("feed", "screen" to screen, "rv" to FeedLog.RANKER, "prof" to logProfile(),
+            "list" to list.map { c -> mapOf("id" to "t:" + c.id, "sc" to Calm.storyScore(c, interests, now, shownCount(c.id)), "shown" to shownCount(c.id).takeIf { it > 0 }) })
+    }
+
+    /** What the ranking knew of you just then: each topic's interest (0 to 1), and the topics you follow. */
+    private fun logProfile() = mapOf("i" to TopicGuess.topics.associateWith { interests.of(it) }, "fol" to synchronized(interests) { interests.followed.toList() })
 
     // --- What you like: topics, learned on this phone ------------------------------------
 
@@ -798,16 +1051,118 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     // --- Later: what you saved from the search box ------------------------------------------------
     //
-    // Your account's copy (kind 30078, d=marble/later, NIP-44 to yourself), read once a start and written half a
-    // minute after the last change (read again and merged first, so another device's saves are never lost).
+    // Your account's notes (notes sync v3, cc.aaro.cosign.notes): packs of kind 30078, NIP-44 to yourself, read on
+    // start and on coming back, and written at most every 3 minutes after a change, and on leaving. The old single
+    // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
+    init { NewsSources.load(CosignApp.instance); NewsSources.changed = { newsChanged() }; OnDevice.load() }
+    /** What you searched, on this phone only (not synced), 30 days. */
+    val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
 
     private fun laterChanged() {
         if (Sources.viewAs != null) return
+        if (laterSending?.isActive == true) return
+        laterSending = scope.launch { delay(180_000); sendLater() }
+    }
+
+    private var answering: kotlinx.coroutines.Job? = null
+    /** Marble open: another of your devices setting up can catch up from this one (notes sync, option D). */
+    fun answerDevices() {
+        if (me == null || Sources.viewAs != null || answering?.isActive == true) return
+        answering = scope.launch { notesSync.serve { later.items.value } }
+    }
+
+    /** Leaving Marble: what's waiting goes now. */
+    fun left() {
+        answering?.cancel()
+        if (laterSending?.isActive != true) return
         laterSending?.cancel()
-        laterSending = scope.launch { delay(30_000); sendLater() }
+        laterSending = scope.launch { sendLater() }
+    }
+
+    private val notesNet = object : NotesNet {
+        override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
+            val me = me ?: return null
+            val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+            if (relays.isEmpty()) return null
+            val f = mutableMapOf<String, Any>("kinds" to listOf(30078), "authors" to listOf(me), "#$tag" to values, "limit" to limit)
+            until?.let { f["until"] = it }; since?.let { f["since"] = it }
+            return Fetch.query(relays, f, 8000).filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
+                .map { Stored(it.id, it.firstTag("d") ?: "", it.createdAt, toSelf(it.content, encrypt = false)) }
+        }
+        override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
+            val me = me ?: return false
+            val text = toSelf(content, encrypt = true) ?: return false.also { if (debuggable) android.util.Log.i("CosignSync", "notes not sent: couldn't encrypt") }
+            val signed = try { phone.signOwn(Event(me, createdAt, 30078, listOfNotNull(listOf("d", d), w?.let { listOf("w", it) }), text).withId()) } catch (e: Exception) {
+                if (debuggable) android.util.Log.i("CosignSync", "notes not sent: ${e.javaClass.simpleName}"); return false
+            }
+            val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
+            return Fetch.publish(to, signed) > 0
+        }
+        override suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? { val me = me ?: return null; return Blossom.fetch((servers + Blossom.mine(me)).distinct(), sha256) }
+        override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> { val me = me ?: return emptyList(); return Blossom.upload(Blossom.mine(me), bytes, sha256, seed) }
+        override suspend fun deleteBlob(sha256: String, servers: List<String>, seed: ByteArray) = Blossom.delete(servers, sha256, seed)
+        // Catch-up between your devices: kind 21078 (ephemeral), signed by a key made for the one message.
+        private fun live() = if (Sources.localOnly) Sources.extra.value else writeRelays().take(4)
+        override suspend fun shout(w: String, content: String): Boolean {
+            val text = toSelf(content, encrypt = true) ?: return false
+            val r = java.security.SecureRandom()
+            var secret = ByteArray(32).also(r::nextBytes)
+            while (!cc.aaro.qrst.core.Secp.isValidSecret(secret)) r.nextBytes(secret)
+            val pk = cc.aaro.qrst.core.Secp.publicKey(secret).joinToString("") { "%02x".format(it) }
+            val e = Event(pk, Clock.now(), 21078, listOf(listOf("w", w)), text).withId()
+            val sig = cc.aaro.qrst.core.Secp.sign(e.id.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), secret, ByteArray(32).also(r::nextBytes))
+            secret.fill(0)
+            return Fetch.publish(live(), e.copy(sig = sig.joinToString("") { "%02x".format(it) })) > 0
+        }
+        override fun hear(w: String, onMessage: (String) -> Unit): AutoCloseable? {
+            if (me == null) return null
+            return Fetch.listen(live(), mapOf("kinds" to listOf(21078), "#w" to listOf(w), "since" to Clock.now() - 5)) { e -> toSelf(e.content, encrypt = false)?.let(onMessage) }
+        }
+    }
+    private val notesSync by lazy {
+        NotesSync(notesNet, object : NotesStore {
+            override fun get(k: String) = prefs.getString(k, null)
+            override fun put(k: String, v: String) = prefs.edit().putString(k, v).apply()
+        }, Clock::now, later.items.value)
+    }
+
+    /**
+     * Your own name and picture, from your relays (where your profile is; the big public ones may not have it),
+     * kept with the others on this phone.
+     */
+    fun knowMe() = scope.launch {
+        val me = me ?: return@launch
+        People.add(Fetch.query((writeRelays() + readRelays() + listOf("wss://syb.lol", "wss://relay.ditto.pub") + Sources.PROFILES).distinct().take(10),
+            mapOf("kinds" to listOf(0), "authors" to listOf(me), "limit" to 3), 6000))
+    }
+
+    /**
+     * Your profile and follow list where apps look for them. Whenever your relay list changes (and once, to catch up),
+     * the newest of each, from every relay known to have them, goes as it is (signed already: no round with your
+     * servers) to the list's write relays and the profile indexes. Only the newest, so an old copy never wins.
+     * Tried again at the next start if a copy reached fewer than two of them.
+     */
+    fun spreadIdentity() = scope.launch {
+        val me = me ?: return@launch
+        val indexes = listOf("wss://purplepag.es", "wss://user.kindpag.es")
+        val lookIn = (indexes + Sources.PROFILES + writeRelays() + readRelays()).distinct()
+        val list = (Fetch.query(lookIn.take(10), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 3), 6000) + listOfNotNull(phone.latest("10002")))
+            .filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt } ?: return@launch
+        val listed = list.tags.filter { it.size > 1 && it[0] == "r" && it[1].startsWith("wss://") }
+        val writes = listed.filter { it.getOrNull(2) != "read" }.map { it[1].trimEnd('/') }.distinct()
+        if (writes.isEmpty()) return@launch
+        val key = list.id
+        if (prefs.getString("identitySpreadFor", null) == key) return@launch
+        val known = (listed.map { it[1].trimEnd('/') } + lookIn + POST_RELAYS).distinct()
+        val got = Fetch.query(known.take(14), mapOf("kinds" to listOf(0, 3), "authors" to listOf(me), "limit" to 10), 8000)
+        val newest = listOf(0, 3).mapNotNull { k -> got.filter { it.kind == k && it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } }
+        if (newest.isEmpty()) return@launch
+        val to = (writes + indexes).distinct()
+        val reached = newest.map { e -> Fetch.publish(to, e).also { n -> if (debuggable) android.util.Log.i("CosignSync", "kind ${e.kind} sent to $n of ${to.size} relays") } }
+        if (reached.all { it >= writes.size.coerceAtMost(2) }) prefs.edit().putString("identitySpreadFor", key).apply()
     }
 
     /**
@@ -819,12 +1174,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val known = (later.pages.value.firstOrNull { it.url == url }?.title ?: allStories.value.firstOrNull { it.url == url }?.title)
             ?.takeIf { it.isNotBlank() && it != host && it != url }
         val item = later.savePage(url, known ?: host) ?: return null
+        interests.noticed(known ?: host)
         if (item.text == host) scope.launch { Preview.fetch(url)?.title?.let { later.retitle(item.id, host, it) } }
         return item
     }
 
     /** A page opened from search: its title for Later, from the page itself, in the background. */
-    fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it) } }
+    fun titlePage(url: String) = scope.launch { Preview.fetch(url)?.title?.let { later.titled(url, it); searches.titled(url, it) } }
 
     @Volatile private var laterPulledAt = 0L
     /** What you saved on your other devices: coming back to Marble or opening Later, at most once a minute. */
@@ -836,26 +1192,23 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
     private suspend fun pullLater(sending: Boolean = false) {
         laterPulledAt = System.currentTimeMillis()
-        val me = me ?: return
-        if (Sources.viewAs != null) return
-        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(Later.TAG), "limit" to 4), 6000)
-            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
-        // This phone has things the account's copy hasn't (or there's no copy yet): send them.
-        val ahead = if (got == null) later.items.value.isNotEmpty() else later.merge(toSelf(got.content, encrypt = false) ?: return)
-        if (ahead && !sending) laterChanged()
+        if (me == null || Sources.viewAs != null) return
+        // Everything once a day; otherwise what's new since the last pull.
+        val full = System.currentTimeMillis() - prefs.getLong("notesFull", 0) > 86_400_000L
+        val before = later.items.value
+        val after = notesSync.pull(before, full) ?: return
+        if (full) prefs.edit().putLong("notesFull", System.currentTimeMillis()).apply()
+        later.synced(before, after)
+        if (debuggable) android.util.Log.i("CosignSync", "notes pulled: ${after.size}${if (notesSync.halted) ", stopped (too many removals)" else ""}${if (notesSync.partial) ", not all pages" else ""}")
+        if (notesSync.pending && !sending) laterChanged()
     }
 
     private suspend fun sendLater() {
-        val me = me ?: return
-        pullLater(sending = true)
-        val text = toSelf(later.json(), encrypt = true) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "later not sent: couldn't encrypt") }
-        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", Later.TAG)), text).withId()) } catch (e: Exception) {
-            if (debuggable) android.util.Log.i("CosignSync", "later not sent: ${e.javaClass.simpleName}"); return
-        }
-        val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
-        val n = Fetch.publish(to, signed)
-        if (debuggable) android.util.Log.i("CosignSync", "later sent: ${later.items.value.size} items to $n of ${to.size} relays")
+        if (me == null || Sources.viewAs != null) return
+        val before = later.items.value
+        val after = notesSync.flush(before) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "notes not sent") }
+        later.synced(before, after)
+        if (debuggable) android.util.Log.i("CosignSync", "notes sent: ${after.size}${if (notesSync.pending) ", some still waiting" else ""}")
     }
 
     // --- Your marbles: the ones you kept -------------------------------------------------------
@@ -875,13 +1228,25 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * Today's marble, kept: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it. Quietly;
-     * tried again on later opens the same UTC day if the issuer isn't there or says no.
+     * One of your marbles taken off (the trash can): the marker goes to your account within seconds, not the usual half
+     * minute, so your other devices drop it too. (Missed, it's sent at the next start: this phone's change is the newer.)
+     */
+    fun removeMarble(id: String) {
+        kept.remove(id)
+        if (Sources.viewAs != null) return
+        keptSending?.cancel()
+        keptSending = scope.launch { delay(2_000); sendKept() }
+    }
+
+    /**
+     * Today's marble, claimed: its award from the issuer (POST /collect {"id","date"}, NIP-98 signed by you), kept with it,
+     * privately (the issuer only signs and returns it; nothing is published). Quietly; tried again on later opens the
+     * same UTC day if the issuer isn't there or says no.
      */
     fun claimToday() {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
         val id = "marble-$today"
-        if (kept.all.value[id]?.let { it.award == null } != true || claiming) return
+        if (kept.all.value[id]?.let { it.here && it.award == null } != true || claiming) return
         val issuer = cc.aaro.cosign.ui.Daily.issuer ?: return
         claiming = true
         scope.launch {
@@ -909,61 +1274,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
     @Volatile private var claiming = false
 
-    // --- A marble on your profile: one at a time, only when you say ------------------------------
-    //
-    // NIP-58: your profile_badges (kind 30008) lists the awards other apps show on your profile, as a/e pairs.
-    // A marble's award goes in only when you tap "Show on profile" for that marble; nothing is added by itself.
+    // Marble keeps your marbles and their awards; what other apps show on your profile (profile_badges) is theirs to decide.
 
-    /** The award ids on your profile_badges, as last read. */
-    val onProfile = MutableStateFlow<Set<String>>(emptySet())
-
-    private suspend fun profileBadges(pk: String): Event? =
-        Fetch.query((writeRelays() + readRelays() + Sources.PROFILES.take(2)).distinct().take(8),
-            mapOf("kinds" to listOf(30008), "authors" to listOf(pk), "#d" to listOf("profile_badges"), "limit" to 4), 6000)
-            .filter { it.pubkey == pk && it.verify() }.maxByOrNull { it.createdAt }
-
-    fun readOnProfile() = scope.launch {
-        val me = me ?: return@launch
-        onProfile.value = profileBadges(me)?.tags?.filter { it.size > 1 && it[0] == "e" }?.map { it[1] }?.toSet() ?: emptySet()
-    }
-
-    /** Show this marble's award on your profile, or stop: your profile_badges, read fresh, with its pair added or taken out. */
-    fun showOnProfile(awardJson: String, on: Boolean) {
-        val me = me ?: return
-        val award = Event.fromMap(Json.parse(awardJson)) ?: return
-        val a = award.tags.firstOrNull { it.size > 1 && it[0] == "a" }?.get(1) ?: return
-        onProfile.update { if (on) it + award.id else it - award.id }
-        scope.launch {
-            val cur = profileBadges(me)
-            val tags = (cur?.tags ?: listOf(listOf("d", "profile_badges"))).toMutableList()
-            // Pairs: an "a" then its "e". Take this award's pair out; put it back at the end if showing.
-            val out = ArrayList<List<String>>()
-            var i = 0
-            while (i < tags.size) {
-                val t = tags[i]; val next = tags.getOrNull(i + 1)
-                if (t.size > 1 && t[0] == "a" && next != null && next.size > 1 && next[0] == "e" && next[1] == award.id) { i += 2; continue }
-                out += t; i++
-            }
-            if (on) { out += listOf("a", a); out += listOf("e", award.id) }
-            if (actEvent(Event(me, Clock.now(), 30008, out, cur?.content ?: "").withId()) == null) onProfile.update { if (on) it - award.id else it + award.id }
-        }
-    }
-
-    /** The marbles someone shows on their profile: their profile_badges' awards from Marble's issuer, as (name, picture). */
-    suspend fun marblesShownBy(pk: String): List<Pair<String, String?>> {
-        val list = profileBadges(pk) ?: return emptyList()
-        val issuer = cc.aaro.cosign.ui.Daily.issuerKey() ?: kept.all.value.values.firstNotNullOfOrNull { k ->
-            k.award?.let { Event.fromMap(Json.parse(it)) }?.tags?.firstOrNull { it.size > 1 && it[0] == "a" }?.get(1)?.split(':')?.getOrNull(1)
-        } ?: return emptyList()
-        val ds = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30009:$issuer:") }.map { it[1].substringAfter("30009:$issuer:") }
-        if (ds.isEmpty()) return emptyList()
-        val defs = Fetch.query((Sources.PROFILES.take(3) + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30009), "authors" to listOf(issuer), "#d" to ds), 6000)
-            .filter { it.pubkey == issuer && it.verify() }.associateBy { e -> e.tags.firstOrNull { it.size > 1 && it[0] == "d" }?.get(1) ?: "" }
-        return ds.mapNotNull { d -> defs[d]?.let { e ->
-            val tag = { k: String -> e.tags.firstOrNull { it.size > 1 && it[0] == k }?.get(1) }
-            (tag("name") ?: "Marble") to (tag("thumb") ?: tag("image"))
-        } }
-    }
     private val claimHttp by lazy { Fetch.http.newBuilder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build() }
 
     private suspend fun pullKept(sending: Boolean = false) {
@@ -1027,6 +1339,37 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val own = phone.ui.value.member?.let { m -> m.group.members.firstOrNull { it.idx == m.idx } }?.let(::deviceKey)
         if (own != null && own !in merged) nameDevice(own, readableDeviceName(CosignApp.instance))
         else if (merged != theirs) sendDeviceNames()
+    }
+
+    // --- News sources (Account › News sources): kept on your account like device names ------
+
+    private var newsSending: kotlinx.coroutines.Job? = null
+    private fun newsChanged() {
+        if (Sources.viewAs != null) return
+        // What's shown changes at once; the account's copy half a minute after the last change.
+        scope.launch { allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value } }
+        newsSending?.cancel()
+        newsSending = scope.launch { delay(30_000); sendNews() }
+    }
+
+    private suspend fun pullNews(): Boolean {
+        val me = me ?: return false
+        if (Sources.viewAs != null) return false
+        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(NewsSources.TAG), "limit" to 4), 6000)
+            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        val before = NewsSources.json()
+        val ahead = if (got == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.take(toSelf(got.content, encrypt = false) ?: return false)
+        if (NewsSources.json() != before) allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
+        return ahead
+    }
+
+    private suspend fun sendNews() {
+        val me = me ?: return
+        if (pullNews().not() && NewsSources.own.value.isEmpty() && NewsSources.off.value.isEmpty()) return
+        val text = toSelf(NewsSources.json(), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
+        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
     }
 
     private suspend fun sendDeviceNames() {
@@ -1138,6 +1481,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * interests list (kind 10015), which other apps read too.
      */
     fun followTopic(topic: String, on: Boolean) {
+        FeedLog.act(null, if (on) "followTopic" else "unfollowTopic", "topic" to topic)
         interests.follow(topic, on)
         followedTopics.value = interests.followed.toSet()
         if (on) message.value = "You'll see more about ${TopicFeeds.name(topic).lowercase()}."
@@ -1154,10 +1498,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** "More like this": a little more of its topic (and, for a newsletter, of newsletters). */
-    fun moreLike(topic: String, post: Event? = null) { interests.learn(listOf(topic), 1.0); post?.let { newsletterTaste(it, 1) }; message.value = "More like this from now on." }
+    fun moreLike(topic: String, post: Event? = null, key: String? = post?.id) { FeedLog.act(key, "more", "topic" to topic); interests.learn(listOf(topic), 1.0); post?.let { newsletterTaste(it, 1) }; message.value = "More like this from now on." }
 
     /** You opened a post's link. */
-    fun openedLink(post: Event) = newsletterTaste(post, 1)
+    fun openedLink(post: Event) { FeedLog.open(post.id, "link"); newsletterTaste(post, 1) }
 
     /** A stranger's newsletter you liked (or didn't): more of them, or fewer. */
     private fun newsletterTaste(e: Event, by: Int) {
@@ -1167,26 +1511,114 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** "Less like this": this one goes, and a little less of its topic. [key]: the post's id, or "t:" and the story's. */
     fun lessLike(topic: String, key: String, post: Event? = null) {
-        interests.learn(listOf(topic), -1.5)
+        FeedLog.act(key, "less", "topic" to topic)
+        interests.learn(listOf(topic), -0.25)
         post?.let { newsletterTaste(it, -1) }
         hide(key)
-        message.value = "Less like this from now on."
+        folded(key, "Less like this") { interests.learn(listOf(topic), 0.25); post?.let { newsletterTaste(it, 1) } }
     }
 
+    /**
+     * What you've just put away in Following (Not interested, Less like this, Hide…), by its key, with how to take it
+     * back: it stays where it was as a slim row with Undo, and nothing moves up to take its place. The next refresh
+     * of the list lets it go.
+     */
+    data class Dismissal(val label: String, val undo: () -> Unit)
+    val justDismissed = MutableStateFlow<Map<String, Dismissal>>(emptyMap())
+    private fun folded(key: String, label: String, undo: () -> Unit) = justDismissed.update { it + (key to Dismissal(label, undo)) }
+    /** Undo on a put-away row: it comes back as it was, and what was learned from it is taken back. */
+    fun undoDismiss(key: String) {
+        val d = justDismissed.value[key] ?: return
+        FeedLog.act(key, "undo")
+        d.undo()
+        dismissed.update { it - key }
+        prefs.edit().putStringSet("dismissed", dismissed.value).apply()
+        justDismissed.update { it - key }
+    }
+
+    /**
+     * Which feed Following is: 1, as it was on 27 Oct (branch feed-1: reaction counts beside the heart), or 2 (no counts
+     * in lists; they're a tap in, on the post). A hidden switch in Account › Advanced, so the two can be compared.
+     */
+    // The user asked to try Feed 3 (27 Oct): this build starts in it, once; the switch takes it back in one tap.
+    val feedVersion = MutableStateFlow(prefs.let { p ->
+        if (!p.getBoolean("feed3Tried", false)) p.edit().putInt("feedVersion", 3).putBoolean("feed3Tried", true).apply()
+        p.getInt("feedVersion", 2)
+    }).also { FeedLog.RANKER = "following" + it.value }
+    fun setFeedVersion(v: Int) {
+        if (v == feedVersion.value) return
+        val was = feedVersion.value
+        feedVersion.value = v
+        prefs.edit().putInt("feedVersion", v).apply()
+        FeedLog.RANKER = "following$v"
+        FeedLog.ev("feedVersion", "v" to v)
+        // Into or out of Feed 3 (a different list): start over.
+        if (v == 3 || was == 3) { feed.update { it.copy(posts = emptyList()) }; loadFeed(force = true) }
+    }
+
+    /** A post's own link (what keeping it in Notes keeps, and what Share sends): its marble.syb.lol link. */
+    fun postLink(e: Event) = marbleLink(e)
+
+    /**
+     * The bookmark under a post in Following: kept in Notes (who wrote it, and its words), or, tapped again, not. Keeping
+     * is a strong yes for what it's about.
+     */
+    fun keepPost(e: Event, author: String) {
+        val url = postLink(e)
+        // (Kept before links were marble.syb.lol ones: under the njump.me link.)
+        val old = "https://njump.me/" + nevent(e.id, e.pubkey, e.kind, emptyList())
+        later.items.value.firstOrNull { (it.url == url || it.url == old) && it.deleted == null }?.let { FeedLog.act(e.id, "unkeep"); later.remove(it); return }
+        FeedLog.act(e.id, "keep", "author" to e.pubkey)
+        interests.learn(TopicGuess.of(e).take(2), 1.0)
+        later.keep(author, url, e.content.trim().take(2000).ifEmpty { null })
+    }
+
+    /** The bookmark on a news story: kept in Notes (its headline and link), or, tapped again, not. */
+    fun keepStory(c: TopicCard) {
+        later.items.value.firstOrNull { it.url == c.url && it.deleted == null }?.let { FeedLog.act("t:" + c.id, "unkeep"); later.remove(it); return }
+        FeedLog.act("t:" + c.id, "keep", "topic" to c.topic, "src" to c.sourceId)
+        interests.learn(listOf(storyTopic(c)), 1.0)
+        later.savePage(c.url, c.title)
+    }
+
+    /** "Not interested" in one story: it goes, and only it (one story says little about its topic or its site). */
+    fun notInterested(c: TopicCard) {
+        FeedLog.act("t:" + c.id, "notInterested", "topic" to c.topic, "src" to c.sourceId)
+        hide("t:" + c.id)
+        folded("t:" + c.id, "Not interested") {}
+    }
+
+    /** "Fewer stories about" a topic: much less of it from now on (more than Less like this). */
+    fun fewerAbout(topic: String, key: String?) {
+        FeedLog.act(key, "fewerTopic", "topic" to topic)
+        interests.learn(listOf(topic), -0.6)
+        key?.let { hide(it); folded(it, "Fewer stories about ${TopicFeeds.name(topic)}") { interests.learn(listOf(topic), 0.6) } }
+    }
+
+    /** What a story is about, as finely as its words say (else its feed's topic). */
+    fun storyTopic(c: TopicCard): String = TopicGuess.of(Event("", 0, 1, emptyList(), c.title + " " + c.summary)).firstOrNull() ?: c.topic
+
     /** "Hide": nothing more from this person, or from this site. */
-    fun hidePerson(pk: String) {
+    fun hidePerson(pk: String, from: String? = null) {
+        FeedLog.act(from, "hideAuthor", "author" to pk)
         interests.hide("hiddenPeople", pk)
+        // From a post in the list: that post folds where it was (with Undo); their others go at the next refresh.
+        if (from != null) { hide(from); folded(from, "Hidden ${nameOf(pk)}") { interests.unhide("hiddenPeople", pk) }; return }
         feed.update { f -> f.copy(posts = f.posts.filter { it.e.pubkey != pk }) }
         message.value = "You won't see posts from ${nameOf(pk)} here."
     }
     fun hideSource(c: TopicCard) {
+        FeedLog.act("t:" + c.id, "hideSource", "src" to c.sourceId)
         interests.hide("hiddenSources", c.sourceId)
-        feed.update { f -> f.copy(stories = f.stories.filter { it.sourceId != c.sourceId }) }
-        message.value = "You won't see stories from ${c.sourceName}."
+        hide("t:" + c.id)
+        folded("t:" + c.id, "Hidden ${c.sourceName}") { interests.unhide("hiddenSources", c.sourceId) }
     }
 
-    /** You opened a story: a little more of its topic. */
-    fun opened(c: TopicCard) { interests.learn(listOf(c.topic), 1.0); if (seen.add("o:" + c.id)) seenChanged() }
+    /** You opened a story: a little more of its topic (never of its site, from an open alone), and of what it's about. */
+    fun opened(c: TopicCard) { FeedLog.open("t:" + c.id, "story"); learnOpened(c) }
+    /** You opened what people say about a story ([site]: where): as much as opening it. */
+    fun openedComments(c: TopicCard, site: String? = null) { FeedLog.open("t:" + c.id, "comments", "site" to site); learnOpened(c) }
+    private fun learnOpened(c: TopicCard) { interests.learn(listOf(c.topic), 0.5); interests.noticed(c.title); if (seen.add("o:" + c.id)) seenChanged() }
 
     private fun hide(key: String) {
         dismissed.update { it + key }
@@ -1203,6 +1635,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun save(id: String, isLink: Boolean) {
         val me = me ?: return
         val on = id !in saved.value
+        FeedLog.act(if (isLink) allStories.value.firstOrNull { it.url == id }?.let { "t:" + it.id } ?: id else id, if (on) "save" else "unsave")
         saved.update { if (on) it + id else it - id }
         scope.launch {
             val list = newest(10003, null, fetch = true)
@@ -1225,10 +1658,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * search relays find, each as it answers (none is dropped for being slow); then the order settles
      * as names, NIP-05s and trust come in. A #tag searches posts only.
      */
-    fun search(q: String) {
+    fun search(q: String, author: String? = null) {
         val text = q.trim()
         if (text.isEmpty()) return
-        if (found.value?.query == text && found.value?.loading == true) return
+        if (found.value?.query == text && found.value?.loading == true && (author == null || found.value?.split?.author == author)) return
         searching?.cancel()
         val gen = searchGen.incrementAndGet()
         found.value = Found(text)
@@ -1242,13 +1675,20 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val notes = java.util.Collections.synchronizedList(ArrayList<Event>())
             val order = java.util.concurrent.atomic.AtomicInteger()
             val mine = follows.value ?: emptySet()
+            // Someone you follow, named in it (or picked from the chips): their posts with the other words, first.
+            val split = if (tag != null) null else AuthorQuery.split(text, mine, People.known.value)?.let { s ->
+                if (author == null || author == s.author) s else s.copy(author = author, others = (listOf(s.author) + s.others).filter { it != author })
+            }
+            val byAuthor = java.util.Collections.synchronizedList(ArrayList<Event>())
+            val caught = ConcurrentHashMap<String, cc.aaro.cosign.spam.Spam.Why>()
             var first: String? = null
             fun show(loading: Boolean) {
                 if (searchGen.get() != gen) return
                 val people = SearchRank.sort(hits.values.filter { it.pubkey !in muted.value }, text).take(30)
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
-                found.value = Found(text, people.map { it.pubkey }, posts, loading, people.associateBy { it.pubkey })
+                val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
+                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught))
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
             fun add(pk: String, name: String?, rank: Int = 9) { hits.putIfAbsent(pk, Hit(pk, name, rank * 1000 + order.getAndIncrement(), follow = pk in mine)) }
@@ -1284,10 +1724,31 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     if (named.isNotEmpty()) toEnrich.send(named.take(30))
                 }
             }
+            if (split != null) {
+                val words = SearchRank.norm(split.rest).split(' ').filter { it.isNotEmpty() }
+                fun has(e: Event, all: Boolean) = SearchRank.norm(e.content + " " + (e.firstTag("title") ?: "")).let { c -> if (all) words.all { it in c } else words.any { it in c } }
+                // (From a search relay, at least one of the words: one that ignores search would send everything.)
+                fun theirs(got: List<Event>, how: String) {
+                    val ok = got.filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) && has(it, how == "latest") }
+                    remember(ok); byAuthor += ok.filter { safe(it) }
+                    show(true); mark("theirs ($how): ${ok.size}")
+                }
+                val f = mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 40)
+                // Newest first where the relay can (Ditto's own search ranks by relevance, and a busy poster's new post falls
+                // past any limit); the others don't know sort:new.
+                relayJobs += launch { theirs(Fetch.query(SearchRelays.FAST, f + ("search" to split.rest + " sort:new"), 6000), "newest") }
+                relayJobs += launch { theirs(Fetch.query(SearchRelays.SLOW + Sources.extra.value, f + ("search" to split.rest), 4000), "search") }
+                // And their latest posts (where they write, and the big relays), looked through here: what no search has indexed yet.
+                relayJobs += launch {
+                    theirs(Fetch.query((outboxOf(split.author) + bigRelays).map { it.trimEnd('/') }.distinct(), mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000), "latest")
+                }
+            }
             // Posts: the fast relays together, the slow ones on their own.
-            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1), "search" to text, "limit" to 40)
+            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
             for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
-                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 }
+                // Posts and long-form articles (an article counts once, as its newest version).
+                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == 30023 }
+                    .sortedByDescending { it.createdAt }.distinctBy { if (it.kind == 30023) "a:" + it.pubkey + ":" + (it.firstTag("d") ?: it.id) else it.id }
                 remember(got)
                 notes += got.filter { safe(it) }
                 People.want(got.map { it.pubkey })
@@ -1301,10 +1762,35 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 show(true); mark("friends of friends")
             }
             relayJobs.joinAll()
+            // Likely spam out of the ranking (strangers only): manufactured likes, or an author who writes like spam.
+            if (!notes.isEmpty()) kotlinx.coroutines.withTimeoutOrNull(6000) { searchSpam(synchronized(notes) { notes.distinctBy { it.id }.toList() }, mine, caught) { show(true) } }
             toEnrich.close(); enricher.join(); redraw.cancel()
             People.want(hits.keys.toList())
             show(false); mark("done")
         }
+    }
+
+    /** Search's posts through the spam checks; what's caught goes into [into]'s spam (shown apart, and cued). */
+    private suspend fun searchSpam(posts: List<Event>, mine: Set<String>, caught: MutableMap<String, cc.aaro.cosign.spam.Spam.Why>, changed: () -> Unit) = kotlinx.coroutines.coroutineScope {
+        val strangers = posts.filter { it.pubkey != me && it.pubkey !in mine && !cc.aaro.cosign.spam.Spam.notSpam(it.pubkey) }.sortedByDescending { it.createdAt }.take(40)
+        // Guesses from what someone writes count only for people nobody you follow follows (trust holds up when known).
+        val fof = friendsOfFriends()
+        fun unknown(pk: String) = (fof[pk] ?: 0) == 0
+        if (strangers.isEmpty()) return@coroutineScope
+        fun publish() { spam.update { it + caught }; changed() }
+        val likes = async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"), mapOf("kinds" to listOf(7, 6, 16), "#e" to strangers.map { it.id }, "limit" to 3000), 4000) }
+        val authors = strangers.map { it.pubkey }.distinct().take(25)
+        val notes = async { Fetch.query(SearchRelays.FAST + "wss://relay.primal.net", mapOf("kinds" to listOf(1), "authors" to authors, "limit" to 250), 4000) }
+        val got = likes.await()
+        strangers.forEach { p -> (cc.aaro.cosign.spam.Spam.inflated(p.id, got) ?: cc.aaro.cosign.spam.Spam.advert(p)?.takeIf { unknown(p.pubkey) })?.let { caught[p.id] = it } }
+        val byAuthor = notes.await().groupBy { it.pubkey }
+        kotlinx.coroutines.withContext(Dispatchers.Default) {
+            for (pk in authors.filter(::unknown)) {
+                val score = cc.aaro.cosign.spam.Spam.author(CosignApp.instance, pk, byAuthor[pk] ?: strangers.filter { it.pubkey == pk }) ?: continue
+                if (score >= cc.aaro.cosign.spam.Spam.AUTHOR_LINE) strangers.filter { it.pubkey == pk }.forEach { caught.putIfAbsent(it.id, cc.aaro.cosign.spam.Spam.authorWhy(score)) }
+            }
+        }
+        if (caught.isNotEmpty()) publish()
     }
 
     /** Follower counts and NIP-05 checks for people a search just found, filled into [hits] as they come. */
@@ -1325,17 +1811,52 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private val searchGen = java.util.concurrent.atomic.AtomicInteger()
     private val debuggable = CosignApp.instance.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-    @Volatile private var fofCache: Map<String, Int>? = null
-    /** For each person, how many of the people you follow follow them (from up to 300 follow lists). */
-    private suspend fun friendsOfFriends(): Map<String, Int> {
-        fofCache?.let { return it }
-        val mine = follows.value?.toList()?.take(300) ?: return emptyMap()
-        if (mine.isEmpty()) return emptyMap()
-        val lists = mine.chunked(100).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(3), "authors" to part), 6000) } }.awaitAll().flatten()
-        val count = HashMap<String, Int>()
-        lists.filter { it.kind == 3 }.groupBy { it.pubkey }.values.map { l -> l.maxBy { it.createdAt } }
-            .forEach { l -> l.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }.distinct().forEach { count[it] = (count[it] ?: 0) + 1 } }
-        return count.also { fofCache = it }
+    /** For each person, how many of the people you follow follow them (the circle's counts, Circle). */
+    private suspend fun friendsOfFriends(): Map<String, Int> = circleCounts()
+
+    // --- The trust filter: your circle (Circle) -----------------------------------------------
+
+    /** Account › Only your circle: on by default. */
+    val circleOn = MutableStateFlow(prefs.getBoolean("circleOn", true))
+    fun setCircleOn(on: Boolean) { circleOn.value = on; prefs.edit().putBoolean("circleOn", on).apply() }
+    /** Bumped when the circle changes, so screens filter again. */
+    val circleAt = MutableStateFlow(0L)
+    @Volatile private var counts: Map<String, Int>? = null
+    private val circleFile get() = File(CosignApp.instance.cacheDir, "circle-" + (me?.take(16) ?: "none") + ".json")
+    private val circleLock = kotlinx.coroutines.sync.Mutex()
+
+    /** The counts: from this phone's copy (a day at most, and for the same follows), else from your follows' lists. */
+    private suspend fun circleCounts(): Map<String, Int> = circleLock.withLock {
+        counts?.let { return@withLock it }
+        val mine = follows.value ?: return@withLock emptyMap()
+        if (mine.isEmpty()) return@withLock emptyMap()
+        val f = circleFile
+        try {
+            if (f.exists() && System.currentTimeMillis() - f.lastModified() < 86_400_000L) {
+                val o = org.json.JSONObject(f.readText())
+                if (o.optInt("follows") == mine.size) {
+                    val c = o.getJSONObject("counts"); val m = HashMap<String, Int>()
+                    c.keys().forEach { m[it] = c.getInt(it) }
+                    counts = m; circleAt.value = System.currentTimeMillis(); return@withLock m
+                }
+            }
+        } catch (_: Exception) {}
+        val lists = mine.toList().take(1000).chunked(150).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(3), "authors" to part), 8000) } }.awaitAll().flatten()
+        val m = Circle.counts(lists, mine)
+        // Only the people the circle takes in are kept (2 or more), to keep the copy small.
+        try { f.writeText(org.json.JSONObject().put("follows", mine.size).put("counts", org.json.JSONObject(m.filterValues { it >= Circle.AT } as Map<*, *>)).toString()) } catch (_: Exception) {}
+        counts = m; circleAt.value = System.currentTimeMillis()
+        m
+    }
+
+    /** Worked out in the background (screens filter once it's ready; until then nothing is hidden). */
+    fun knowCircle() { if (counts == null) scope.launch { try { circleCounts() } catch (_: Exception) {} } }
+
+    /** Whether [pk] is in your circle; true while it's not known yet, or with the filter off. */
+    fun inCircle(pk: String): Boolean {
+        if (!circleOn.value) return true
+        val c = counts ?: return true
+        return Circle.has(pk, me, follows.value.orEmpty(), c) { cc.aaro.cosign.spam.Spam.notSpam(it) }
     }
 
     fun clearSearch() { searching?.cancel(); searchGen.incrementAndGet(); found.value = null }
@@ -1429,7 +1950,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
             engagement.update { m -> m + (root.id to (m[root.id] ?: Engagement()).copy(countedReplies = r, countedLikes = l)) }
         }
         val replies = posts.drop(1).groupBy { parentOf(it) ?: root.id }.mapValues { it.value.size }
+        // A stranger's post, opened: does its author write like spam?
+        val stranger = root.pubkey != me && follows.value?.contains(root.pubkey) != true && !cc.aaro.cosign.spam.Spam.notSpam(root.pubkey)
+        val unknown = stranger && (friendsOfFriends()[root.pubkey] ?: 0) == 0
+        if (unknown) launch { checkAuthor(root) }
         val got = posts.map { it.id }.chunked(100).map { ids -> async { Fetch.query(relays, mapOf("kinds" to listOf(7, 6, 16, 9735), "#e" to ids), 6000) } }.awaitAll().flatten().distinctBy { it.id }
+        (cc.aaro.cosign.spam.Spam.inflated(root.id, got)?.takeIf { !cc.aaro.cosign.spam.Spam.notSpam(root.pubkey) } ?: cc.aaro.cosign.spam.Spam.advert(root).takeIf { unknown })
+            ?.let { w -> spam.update { it + (root.id to w) } }
         val byTarget = got.groupBy { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }
         engagement.update { m ->
             m + posts.associate { p ->
@@ -1439,6 +1966,21 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 p.id to (m[p.id] ?: Engagement()).copy(replies = replies[p.id] ?: 0, likes = likes.size, reposts = rs.count { it.kind == 6 || it.kind == 16 }, zaps = rs.count { it.kind == 9735 }, emojis = emojis)
             }
         }
+    }
+
+    /** "Not spam", from you: [e]'s author isn't marked on this phone again (and the feed log says so). */
+    fun notSpam(e: Event) {
+        cc.aaro.cosign.spam.Spam.markNotSpam(e.pubkey)
+        FeedLog.act(e.id, "notSpam", "author" to e.pubkey, "why" to (spam.value[e.id]?.short ?: ""))
+        spam.update { m -> m.filterKeys { id -> note(id)?.pubkey != e.pubkey && id != e.id } }
+        circleAt.value = System.currentTimeMillis()
+    }
+
+    /** [e]'s author's latest posts, through the spam check; flagged: [e] says so. */
+    private suspend fun checkAuthor(e: Event) {
+        val notes = Fetch.query((outboxOf(e.pubkey) + POST_RELAYS).distinct().take(6), mapOf("kinds" to listOf(1), "authors" to listOf(e.pubkey), "limit" to 10), 5000)
+        val score = kotlinx.coroutines.withContext(Dispatchers.Default) { cc.aaro.cosign.spam.Spam.author(CosignApp.instance, e.pubkey, notes) } ?: return
+        if (score >= cc.aaro.cosign.spam.Spam.AUTHOR_LINE) spam.update { it + (e.id to cc.aaro.cosign.spam.Spam.authorWhy(score)) }
     }
 
     // --- A pasted link: the post or person, and what points at them ------------------------------
@@ -1523,6 +2065,44 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** A post by id, for a repost that only points at it: asked for when that repost comes on screen. */
+    /** The newest version of an addressable event (a quoted naddr), from its hints and the usual relays. */
+    suspend fun fetchAddr(a: Ref.Addr): Event? {
+        val f = mapOf("kinds" to listOf(a.kind), "authors" to listOf(a.pubkey), "#d" to listOf(a.d), "limit" to 2)
+        fun newest(l: List<Event>) = l.filter { it.kind == a.kind && it.pubkey == a.pubkey && it.verify() }.maxByOrNull { it.createdAt }
+        val asked = (a.relays + POST_RELAYS + Sources.GENERAL).map { it.trimEnd('/') }.distinct().take(8)
+        // Not there (the link's hint can be wrong): where its author writes.
+        return (newest(Fetch.query(asked, f, 6000))
+            ?: outboxOf(a.pubkey).map { it.trimEnd('/') }.filter { it !in asked }.takeIf { it.isNotEmpty() }?.let { newest(Fetch.query(it, f, 5000)) })
+            ?.also { remember(listOf(it)) }
+    }
+
+    /** A quoted post of any kind (a post, an article, or something from another app), by id. */
+    suspend fun fetchQuoted(id: String): Event? {
+        note(id)?.let { return it }
+        val got = Fetch.query(SearchRelays.FAST + Sources.GENERAL, mapOf("ids" to listOf(id)), 4000).firstOrNull { it.id == id && it.verify() } ?: return null
+        remember(listOf(got))
+        People.want(listOf(got.pubkey))
+        return got
+    }
+
+    private val openTargets = ConcurrentHashMap<String, String>()
+
+    /**
+     * Where "Open" takes something Marble doesn't draw: the app its client tag names (that app's NIP-89 handler), else a
+     * handler for its kind that you, someone you follow or its author published or recommended (never a stranger's: a
+     * handler is a redirect), else the client's own site, else its marble.syb.lol page.
+     */
+    suspend fun openTarget(e: Event): String = openTargets[e.id] ?: kotlinx.coroutines.coroutineScope {
+        val named = OtherApps.clientHandler(e)?.let { a -> async { fetchAddr(a) } }
+        val trusted = (follows.value.orEmpty() + listOfNotNull(reader, e.pubkey)).toSet()
+        val k = e.kind.toString()
+        val found = async {
+            Fetch.query(POST_RELAYS + Sources.GENERAL, listOf(mapOf("kinds" to listOf(31990), "#k" to listOf(k), "limit" to 50),
+                mapOf("kinds" to listOf(31989), "#d" to listOf(k), "authors" to trusted.take(500), "limit" to 50)), 4000).filter { it.verify() }
+        }
+        OtherApps.open(e, named?.await(), found.await(), trusted)
+    }.also { openTargets[e.id] = it }
+
     suspend fun fetchNote(id: String): Event? {
         note(id)?.let { return it }
         val got = kotlinx.coroutines.coroutineScope {
@@ -1586,12 +2166,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return null
         val quoted = Ref.parse(link.substringAfterLast('/').substringBefore('?')) as? Ref.Note
         val tail = when {
-            quoted != null -> "nostr:" + cc.aaro.cosign.core.Bech32.encode("note", quoted.id.hexToBytes())
+            quoted != null -> "nostr:" + cc.aaro.qrst.core.Bech32.encode("note", quoted.id.hexToBytes())
             else -> link.trim()
         }
         val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
         val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else emptyList()
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId()) ?: return null
+        if (link.isNotBlank()) FeedLog.act(quoted?.id ?: allStories.value.firstOrNull { it.url == link.trim() }?.let { "t:" + it.id } ?: link.trim(), if (quoted != null) "quote" else "post")
         remember(listOf(signed))
         return signed
     }
@@ -1603,10 +2184,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val tags = buildList {
             add(listOf("e", root, "", "root"))
             if (root != parent.id) add(listOf("e", parent.id, "", "reply"))
-            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.cosign.core.isHex32(it) }
+            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
                 .forEach { add(listOf("p", it)) }
         }
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
+        FeedLog.act(parent.id, "reply", "root" to root.takeIf { it != parent.id })
         remember(listOf(signed))
         // In the thread it was written in, under the post it answers, at once.
         synchronized(threads) {
@@ -1624,7 +2206,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** NIP-56: report a post and its author (spam, nudity, illegal, impersonation, other), and stop showing it. */
     fun report(n: Event, reason: String) {
         val me = me ?: return
-        notInterested(n)
+        FeedLog.act(n.id, "report", "why" to reason)
+        // Gone from Discover, the author for a while; what you like isn't changed by a report.
+        notInterested(n, learn = false)
         scope.launch {
             val tags = listOf(listOf("e", n.id, reason), listOf("p", n.pubkey, reason))
             if (act(Event(me, Clock.now(), 1984, tags, "").withId())) message.value = "Reported. Thanks for telling us."
@@ -1681,6 +2265,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         val first = note.id !in liked.value
         val before = reactions.value[note.id]
+        FeedLog.act(note.id, if (emoji == "+") "like" else "react", "emoji" to emoji.takeIf { it != "+" }, "first" to first)
         mark(note.id, true)
         setReaction(note.id, emoji.takeIf { it != "+" })
         if (emoji != "+") { emojiUse[emoji] = (emojiUse[emoji] ?: 0) + 1; prefs.edit().putString("emojiUse", org.json.JSONObject(emojiUse.entries.sortedByDescending { it.value }.take(40).associate { it.key to it.value }).toString()).apply() }
@@ -1695,10 +2280,77 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
-    fun topEmojis(): List<String> = emojiUse.entries.sortedByDescending { it.value }.map { it.key }
-        .filter { it !in USUAL_EMOJIS && it.codePointCount(0, it.length) <= 4 }.take(4) + USUAL_EMOJIS
+    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key }.take(3) + USUAL_EMOJIS).distinct().take(7)
 
-    private val USUAL_EMOJIS = listOf("❤️", "😂", "😮", "😢", "🔥", "🤙")
+    // Counts under posts in a list (reactions with counts, as Jumble): each post on screen asks, and they're fetched together.
+    private val wantCounts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+    private val counted = java.util.Collections.synchronizedSet(HashSet<String>())
+    @Volatile private var countBatch: kotlinx.coroutines.Job? = null
+    fun wantCounts(id: String) {
+        if (id in counted || !wantCounts.add(id)) return
+        if (countBatch?.isActive == true) return
+        countBatch = scope.launch {
+            delay(600)
+            val ids = synchronized(wantCounts) { wantCounts.toList().also { wantCounts.clear() } }.filter { counted.add(it) }
+            if (ids.isEmpty()) return@launch
+            val got = ids.chunked(100).map { part -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"),
+                mapOf("kinds" to listOf(1, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
+            val byTarget = HashMap<String, MutableList<Event>>()
+            for (r in got) {
+                val target = if (r.kind == 1) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
+                if (target != null && target in ids) byTarget.getOrPut(target) { ArrayList() } += r
+            }
+            engagement.update { m ->
+                m + ids.associateWith { id ->
+                    val rs = byTarget[id].orEmpty()
+                    val likes = rs.filter { it.kind == 7 && it.content != "-" }.distinctBy { it.pubkey }
+                    val emojis = likes.groupingBy { it.content.ifBlank { "+" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key to it.value }
+                    val had = m[id] ?: Engagement()
+                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 }), likes = maxOf(had.likes, likes.size),
+                        reposts = maxOf(had.reposts, rs.count { it.kind == 6 || it.kind == 16 }), emojis = if (likes.size >= had.likes) emojis else had.emojis)
+                }
+            }
+        }
+    }
+
+    /** The posts you reposted from here (this phone), so the button shows it. */
+    val reposted = MutableStateFlow(prefs.getStringSet("reposted", emptySet())!!.toSet())
+
+    /** A repost (kind 6): the post, as it is, shared with everyone who follows you. Public; the button asks first. */
+    fun repost(note: Event) {
+        val me = me ?: return
+        if (note.id in reposted.value) return
+        FeedLog.act(note.id, "repost")
+        reposted.update { (it + note.id).toList().takeLast(500).toSet() }
+        prefs.edit().putStringSet("reposted", reposted.value).apply()
+        scope.launch {
+            val ev = Event(me, Clock.now(), 6, listOf(listOf("e", note.id, ""), listOf("p", note.pubkey), listOf("k", note.kind.toString())), note.toJson()).withId()
+            if (!act(ev)) { reposted.update { it - note.id }; prefs.edit().putStringSet("reposted", reposted.value).apply() }
+        }
+    }
+
+    /** Your reactions to pages (the news among your people's posts): its address → the emoji. */
+    val pageReactions = MutableStateFlow<Map<String, String>>(try {
+        org.json.JSONObject(prefs.getString("pageReactions", "{}")!!).let { o -> o.keys().asSequence().associateWith { o.getString(it) } }
+    } catch (_: Exception) { emptyMap() })
+
+    /** A reaction to a web page (kind 17, NIP-25's reaction to a site): a news story, say. */
+    fun reactToPage(url: String, emoji: String) {
+        val me = me ?: return
+        val before = pageReactions.value[url]
+        FeedLog.act(null, "react", "url" to url, "emoji" to emoji)
+        pageReactions.update { (it + (url to emoji)).entries.toList().takeLast(500).associate { e -> e.key to e.value } }
+        prefs.edit().putString("pageReactions", org.json.JSONObject(pageReactions.value).toString()).apply()
+        scope.launch {
+            if (!act(Event(me, Clock.now(), 17, listOf(listOf("r", url), listOf("k", "web")), emoji).withId())) {
+                pageReactions.update { if (before == null) it - url else it + (url to before) }
+                prefs.edit().putString("pageReactions", org.json.JSONObject(pageReactions.value).toString()).apply()
+            }
+        }
+    }
+
+    // The usual six, the ones you use: like, love, haha, sad, eyes, the monocle. (Others' 😮 or 😡 still show as they are.)
+    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "🥲", "👀", "🫡", "🫂")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }
@@ -1725,6 +2377,99 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
                 val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
                 act(Event(me, at, 3, tags, list?.content ?: "").withId())
+            } finally { busy.update { it - pk } }
+        }
+    }
+
+    // --- Polls (NIP-88, Polls) ------------------------------------------------------------------
+
+    /** The votes counted for each poll (by its id), as last fetched; and what you chose. */
+    val polls = MutableStateFlow<Map<String, Polls.Tally>>(emptyMap())
+
+    suspend fun pollVotes(p: Polls.Poll) {
+        val relays = (p.relays.take(4) + POST_RELAYS + readRelays().take(3)).distinct()
+        val got = Fetch.query(relays, mapOf("kinds" to listOf(Polls.VOTE), "#e" to listOf(p.id), "limit" to 2000), 6000).distinctBy { it.id }.filter { it.verify() }
+        polls.update { it + (p.id to Polls.tally(p, got)) }
+    }
+
+    /** Your vote: to the poll's relays (where it asks votes to go) and yours. Public, like a reply. */
+    fun vote(p: Polls.Poll, options: List<String>) {
+        val me = me ?: return
+        if (options.isEmpty()) return
+        scope.launch {
+            val ev = Event(me, Clock.now(), Polls.VOTE, Polls.voteTags(p, options), "").withId()
+            if (actEvent(ev, relays = (p.relays.take(4) + writeRelays()).distinct()) != null) {
+                polls.update { m -> val t = m[p.id]; val choices = (t?.choices ?: emptyMap()) + (me to options)
+                    val counts = HashMap<String, Int>(); choices.values.flatten().forEach { counts[it] = (counts[it] ?: 0) + 1 }
+                    m + (p.id to Polls.Tally(counts, choices.size, choices)) }
+            }
+        }
+    }
+
+    // --- Pinned posts (kind 10001): first on a profile; yours pinned and unpinned from a post's ⋯ ---------
+
+    /** Your pinned posts' ids, as last read or written (the profile's Unpin and the menu's label follow it). */
+    val myPins = MutableStateFlow<List<String>>(prefs.getString("myPins", null)?.split(',')?.filter { it.length == 64 } ?: emptyList())
+
+    /** [pk]'s pinned posts, newest pin first (their newest list; the posts from their relays and the big ones). */
+    suspend fun pinnedOf(pk: String): List<Event> {
+        val relays = (outboxOf(pk).take(4) + POST_RELAYS + readRelays().take(4)).distinct()
+        val list = Fetch.query((relays + Sources.PROFILES.take(2)).distinct(), mapOf("kinds" to listOf(10001), "authors" to listOf(pk), "limit" to 3), 6000)
+            .filter { it.pubkey == pk && it.kind == 10001 }.maxByOrNull { it.createdAt } ?: return emptyList()
+        val ids = list.tags.filter { it.size > 1 && it[0] == "e" && it[1].length == 64 }.map { it[1] }.distinct().reversed()
+        if (pk == me) { myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply() }
+        if (ids.isEmpty()) return emptyList()
+        val got = Fetch.query(relays, mapOf("ids" to ids.take(20)), 6000).filter { it.pubkey == pk }.associateBy { it.id }
+        return ids.mapNotNull { got[it] }.also { remember(it) }
+    }
+
+    /** Your post [e] pinned to your profile (or not): from your newest list anywhere, the rest kept as it is. */
+    fun pin(e: Event, on: Boolean) {
+        val me = me ?: return
+        if (e.pubkey != me) return
+        scope.launch {
+            val list = newest(10001, null, fetch = true)
+            val old = list?.tags ?: emptyList()
+            val has = old.any { it.size > 1 && it[0] == "e" && it[1] == e.id }
+            if (has == on) return@launch
+            val tags = if (on) old + listOf(listOf("e", e.id)) else old.filterNot { it.size > 1 && it[0] == "e" && it[1] == e.id }
+            val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
+            if (act(Event(me, at, 10001, tags, list?.content ?: "").withId())) {
+                val ids = tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
+                myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply()
+                message.value = if (on) "Pinned to your profile" else "Unpinned"
+            }
+        }
+    }
+
+    /**
+     * [pk] into (or out of) your Special Follow list (kind 10010, the one Jumble keeps): started from your newest list
+     * anywhere, its other people and private part kept as they are.
+     */
+    fun special(pk: String, on: Boolean) {
+        val me = me ?: return
+        if (pk in busy.value || pk == me) return
+        busy.update { it + pk }
+        scope.launch {
+            try {
+                val list = newest(10010, null, fetch = true)
+                if (list == null && !on) return@launch
+                val old = list?.tags ?: emptyList()
+                val public = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
+                // Someone kept privately: taken out of the private part (which only you can read).
+                val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
+                    ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
+                val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
+                if (on == (public || inPrivate)) return@launch
+                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
+                val content = if (!on && inPrivate) toSelf(Json.stringify(private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }), encrypt = true) ?: return@launch
+                    else list?.content ?: ""
+                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
+                if (act(Event(me, at, 10010, tags, content).withId())) {
+                    special.update { if (on) it + pk else it - pk }
+                    specialAt = System.currentTimeMillis()
+                    prefs.edit().putStringSet("special", special.value).apply()
+                }
             } finally { busy.update { it - pk } }
         }
     }
@@ -1777,6 +2522,62 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val translations = MutableStateFlow<Map<String, Translated>>(emptyMap())
     private val translationsFile = File(context.cacheDir, "translations-" + (phone.ui.value.member?.group?.groupX?.take(16) ?: phone.slot) + ".json")
 
+    // --- Translating on the phone (OnDevice, PostLanguage) ------------------------------------------
+
+    /** A post not in a language you read, not translated yet: from [from] once its language is downloaded, or ask which of [likeliest]. */
+    data class Offer(val from: String?, val likeliest: List<String>)
+    val offers = MutableStateFlow<Map<String, Offer>>(emptyMap())
+    private val looked = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** The language you picked for someone's posts when the guess was unsure. */
+    private val authorLang by lazy { HashMap<String, String>().apply {
+        prefs.getString("authorLang", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { put(it, o.getString(it)) } } catch (_: Exception) {} }
+    } }
+
+    /** A post on screen: translated at once if it isn't in a language you read and its language is on the phone; else offered. */
+    fun lookAt(e: Event) {
+        if (e.id in translations.value || !looked.add(e.id) || e.pubkey == me) return
+        scope.launch(Dispatchers.Default) {
+            try {
+                val text = e.content
+                val cleaned = PostLanguage.clean(text)
+                val known = PostLanguage.tagged(e) ?: synchronized(authorLang) { authorLang[e.pubkey] }
+                val guess = if (known != null) PostLanguage.Guess(known, listOf(known)) else if (!PostLanguage.guessable(cleaned)) return@launch
+                    else PostLanguage.decide(OnDevice.candidates(cleaned)).let { g ->
+                        // Unsure: your server's opinion, if you set one, settles it when it's confident.
+                        if (g.lang != null) g else Translate.detect(cleaned)?.firstOrNull()?.takeIf { it.second >= 0.8f }?.let { PostLanguage.Guess(it.first, listOf(it.first)) } ?: g
+                    }
+                val reads = OnDevice.reads()
+                val from = guess.lang
+                if (from == null) {
+                    // Unsure, and maybe in a language you read: offered only when none of the likeliest is yours.
+                    val likely = guess.likeliest.filter { OnDevice.supported(it) }
+                    if (likely.isNotEmpty() && likely.none { it in reads }) offers.update { it + (e.id to Offer(null, likely)) }
+                    return@launch
+                }
+                if (from in reads || (!OnDevice.supported(from) && !Translate.on)) return@launch
+                val out = OnDevice.translate(text, from, download = false)
+                if (out != null) keepTranslation(e.id, Translated(out, from)) else offers.update { it + (e.id to Offer(from, listOf(from))) }
+            } catch (x: Exception) { if (x is kotlinx.coroutines.CancellationException) throw x }
+        }
+    }
+
+    /** Translate [e] from [from] (downloading that language once, if needed); [pickedFor]: remember it for this author. */
+    fun translateFrom(e: Event, from: String, remember: Boolean) {
+        if (remember) synchronized(authorLang) { authorLang[e.pubkey] = from; prefs.edit().putString("authorLang", org.json.JSONObject(authorLang as Map<*, *>).toString()).apply() }
+        offers.update { it + (e.id to Offer(from, listOf(from))) }
+        scope.launch {
+            val out = OnDevice.translate(e.content, from, download = true)
+            if (out != null) { keepTranslation(e.id, Translated(out, from)); offers.update { it - e.id } }
+            else message.value = "Couldn't translate that right now."
+        }
+    }
+
+    private fun keepTranslation(id: String, t: Translated) {
+        translations.update { (it + (id to t)).entries.toList().takeLast(500).associate { e -> e.key to e.value } }
+        offers.update { it - id }
+        try { translationsFile.writeText(Json.stringify(translations.value.mapValues { (_, v) -> mapOf("text" to v.text, "from" to v.from) })) } catch (_: Exception) {}
+    }
+
     private fun loadTranslations() {
         val m = try { Json.parse(translationsFile.readText()) as? Map<*, *> } catch (_: Exception) { null } ?: return
         translations.value = m.entries.mapNotNull { (k, v) -> val x = v as? Map<*, *> ?: return@mapNotNull null; (k as String) to Translated(x["text"] as? String ?: return@mapNotNull null, x["from"] as? String) }.toMap()
@@ -1787,10 +2588,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val snoozed = MutableStateFlow(prefs.getStringSet("snoozed", emptySet())!!.mapNotNull { s ->
         s.substringAfter(':').toLongOrNull()?.takeIf { it > System.currentTimeMillis() }?.let { s.substringBefore(':') to it } }.toMap())
 
-    /** Not this note, and less like it: the same author is left out of Discover for three days. */
-    fun notInterested(e: Event) {
-        interests.learn(TopicGuess.of(e), -1.0)
-        newsletterTaste(e, -1)
+    /** Not this note, and a little less like it: the same author is left out of Discover for three days. */
+    fun notInterested(e: Event, learn: Boolean = true) {
+        if (learn) FeedLog.act(e.id, "notint", "author" to e.pubkey)
+        if (learn) { interests.learn(TopicGuess.of(e), -0.25); newsletterTaste(e, -1) }
         dismissed.update { it + e.id }
         snoozed.update { it + (e.pubkey to System.currentTimeMillis() + 3 * 86_400_000L) }
         prefs.edit().putStringSet("dismissed", dismissed.value.toList().takeLast(2000).toSet())
@@ -1803,6 +2604,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun mute(pk: String) {
         val me = me ?: return
         if (pk == me) return
+        FeedLog.act(null, "mute", "author" to pk)
         muted.update { it + pk }
         prefs.edit().putStringSet("muted", muted.value).apply()
         scope.launch {

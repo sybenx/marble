@@ -4,13 +4,17 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -25,6 +29,7 @@ import okhttp3.Cache
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
+import androidx.compose.ui.unit.dp
 
 /** Pictures in notes and profiles: fetched over https, cached on disk by OkHttp, scaled down to what's shown. */
 object Images {
@@ -44,6 +49,8 @@ object Images {
     suspend fun load(url: String, px: Int): ImageBitmap? {
         val key = "$px $url"
         memory.get(key)?.let { return it }
+        // A Blossom link: found where its hints say, then loaded (and kept) under its own name.
+        if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { load(it, px) }?.also { memory.put(key, it) }
         if (!url.startsWith("https://") || synchronized(failed) { url in failed }) return null
         return gate.withPermit {
             withContext(Dispatchers.IO) {
@@ -61,6 +68,57 @@ object Images {
                 } catch (_: Exception) { synchronized(failed) { failed += url }; null }
             }
         }
+    }
+}
+
+/**
+ * A moving picture (an animated GIF or WebP): decoded whole by the platform (ImageDecoder plays it; BitmapFactory would
+ * keep only its first frame, which for a drawing being drawn is a blank page). Null if it can't be had or decoded.
+ */
+suspend fun Images.animated(url: String): android.graphics.drawable.Drawable? {
+    if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { animated(it) }
+    if (!url.startsWith("https://")) return null
+    return withContext(Dispatchers.IO) {
+        try {
+            val bytes = Fetch.http.newCall(Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@withContext null
+            if (bytes.size > 12 * 1024 * 1024) return@withContext null
+            android.graphics.ImageDecoder.decodeDrawable(android.graphics.ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)))
+        } catch (_: Exception) { null }
+    }
+}
+
+/**
+ * A picture in a post: animated if it's a GIF or WebP, else as [NetImage]. One that can't be shown falls back to the
+ * post's own preview of it ([preview]), and failing that to a quiet "Open" (in your browser), never an empty box.
+ */
+@Composable
+fun PostImage(url: String, preview: String?, modifier: Modifier, onTap: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val moving = remember(url) { Regex("\\.(gif|webp)(\\?.*)?$", RegexOption.IGNORE_CASE).containsMatchIn(url) }
+    if (moving) {
+        // null: still loading; Unit: couldn't; a Drawable: playing.
+        val got by androidx.compose.runtime.produceState<Any?>(null, url) { value = Images.animated(url) ?: Unit }
+        when (val d = got) {
+            is android.graphics.drawable.Drawable -> androidx.compose.ui.viewinterop.AndroidView({ c ->
+                android.widget.ImageView(c).apply { scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; setImageDrawable(d); (d as? android.graphics.drawable.AnimatedImageDrawable)?.start() }
+            }, modifier.clickable(onClick = onTap), update = { it.setImageDrawable(d); (d as? android.graphics.drawable.AnimatedImageDrawable)?.start() })
+            Unit -> if (preview != null) NetImage(preview, modifier.clickable(onClick = onTap), 1080, placeholder = { OpenLink(url, context) }) else Box(modifier.background(Vault.Surface)) { OpenLink(url, context) }
+            else -> Box(modifier.background(Vault.Surface))
+        }
+        return
+    }
+    NetImage(url, modifier.clickable(onClick = onTap), 1080, description = "Picture", placeholder = { OpenLink(url, context, after = 5000) })
+}
+
+/** "Open ›" in the middle of a picture's place, quietly (after [after] ms, so not while it's still on its way). */
+@Composable
+private fun OpenLink(url: String, context: android.content.Context, after: Long = 0) {
+    var shown by remember(url) { mutableStateOf(after == 0L) }
+    if (after > 0) androidx.compose.runtime.LaunchedEffect(url) { kotlinx.coroutines.delay(after); shown = true }
+    if (!shown) return
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        androidx.compose.material3.Text("Open ›", color = Vault.Muted, style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+            modifier = Modifier.clickable { try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) {} }.padding(12.dp))
     }
 }
 

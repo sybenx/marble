@@ -1,0 +1,37 @@
+{
+  "name": "picture-without-imeta",
+  "rule": "§4 §6",
+  "why": "a .jpeg link with no imeta is a picture; two hashtags",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "https://i.redd.it/w4nie1czegxh1.jpeg\n\n#memes #nostr",
+    "created_at": 1793131152,
+    "id": "dc72877c2040e7c1798a772a28eec8934b4e157dcc3608ebfb44637c297eeee9",
+    "kind": 1,
+    "pubkey": "2e8edeb54879a188a9d15a8cfcf965c7c2136fe1fbb1e5a27bae25375fde40fc",
+    "sig": "a1ef0d1ba4a9612ebdbf538405fc9053b023321c3c51b90f754c8eb3d8010996b376942dbb6150358e6f5f4a1dcd6d440465d2e15b4fcb3c3a87cea3a91f6844",
+    "tags": []
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "hashtag": "memes"
+      },
+      {
+        "hashtag": "nostr"
+      }
+    ],
+    "cards": [],
+    "media": [
+      {
+        "image": "https://i.redd.it/w4nie1czegxh1.jpeg"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "i.redd.it"
+    ]
+  }
+}

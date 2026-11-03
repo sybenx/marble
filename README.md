@@ -66,7 +66,10 @@ git clone --recursive https://github.com/sybenx/marble && cd marble
   build (`includeBuild("../cosign/android")`), and the app depends on
   `cc.aaro.cosign:cosign`, which Gradle builds from that source. There is no published
   package yet; the submodule pins the exact Cosign commit each Marble build uses. To
-  take a newer Cosign, check it out in `cosign/` and commit the new pointer.
+  take a newer Cosign, check it out in `cosign/` and commit the new pointer. Cosign has
+  a submodule of its own, QRST's Kotlin library (`cosign/qr-secret-transfer`, included
+  by Cosign's build), so in a checkout made without `--recursive` run
+  `git submodule update --init --recursive`.
 - **The Android SDK**: set `ANDROID_HOME`, or put `sdk.dir` in a `local.properties` in
   both `android/` and `cosign/android/` (Gradle reads one per build).
 - The app keeps the id `cc.aaro.cosign` and the Kotlin packages it had in the Cosign

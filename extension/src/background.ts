@@ -58,7 +58,8 @@ async function load(): Promise<{ pairing?: Pairing; sites: Sites }> {
 const savePairing = (p: Pairing | undefined) => p ? api.storage.local.set({ pairing: p }) : api.storage.local.remove('pairing');
 const saveSites = (s: Sites) => api.storage.local.set({ sites: s });
 
-/** Sites you said "Not now" to, until the browser closes. */
+/** Sites you said "Not now" to, until the browser closes. It no longer decides anything (a request with no click is
+ * refused anyway, and a click asks again); the popup's state still lists it. */
 async function notNow(): Promise<string[]> {
   try { return ((await api.storage.session.get('notNow')) as { notNow?: string[] }).notNow ?? []; } catch { return memNotNow; }
 }
@@ -92,6 +93,7 @@ function deviceFor(m: MemberState): Device {
     device?.close();
     device = new Device(m, st => { void saveMember(st).then(changed); });
     device.onJoinRequest = r => { for (const p of safetyPorts) p.postMessage({ type: 'join_request', ...r }); };
+    device.onRemoved = () => void tellTabs(); // every open site signs out: this browser can't sign for any of them now
   }
   return device;
 }
@@ -111,12 +113,12 @@ async function memberGrant(d: Device, origin: string): Promise<string> {
   return pk;
 }
 
-async function memberNip07(m: MemberState, origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+async function memberNip07(m: MemberState, origin: string, tabId: number | undefined, method: string, params: any, gesture = false): Promise<unknown> {
   if (m.removed) throw new Error('This browser was removed from your key, so it can’t sign any more.');
   const d = deviceFor(m);
   const { sites } = await load();
   if (!sites[origin]) {
-    if ((await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
   }
   const grant = await memberGrant(d, origin);
@@ -267,11 +269,11 @@ async function withKey<T>(p: Pending, f: (sk: Uint8Array) => T | Promise<T>): Pr
   try { return await f(sk); } finally { sk.fill(0); }
 }
 
-async function pendingNip07(p: Pending, origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+async function pendingNip07(p: Pending, origin: string, tabId: number | undefined, method: string, params: any, gesture = false): Promise<unknown> {
   void tryDeal();
   const { sites } = await load();
   if (!sites[origin]) {
-    if ((await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
     await pendingGrant(origin);
   }
@@ -321,9 +323,8 @@ api.alarms?.onAlarm?.addListener((a: { name: string }) => { if (a.name === 'deal
 /** Still not protected after a day: a "!" on the toolbar icon until it is. */
 async function nag() {
   const p = await loadPending();
-  const action = api.action ?? (api as any).browserAction;
-  if (p && Date.now() - p.since > 24 * 3600_000) action?.setBadgeText({ text: '!' })?.catch?.(() => {});
-  else if (!p && busy === 0) action?.setBadgeText({ text: '' })?.catch?.(() => {});
+  notProtected = !!p && Date.now() - p.since > 24 * 3600_000;
+  paint();
 }
 
 let joining: Promise<void> | undefined;
@@ -344,6 +345,16 @@ async function signOutLocally() {
   await savePairing(undefined);
   await saveSites({});
   changed();
+  tellTabs();
+}
+
+// Open pages of a site (or of every site) hear at once that they're signed out, as a `marble:signedout` event on the
+// page, rather than at their next request: a site removed here or on your phone, or Marble signed out here. Every tab
+// gets the origin, which is fine: content scripts are walled off from the page, and each one keeps to its own origin.
+async function tellTabs(origin?: string) {
+  try {
+    for (const t of await api.tabs.query({})) if (t.id !== undefined) api.tabs.sendMessage(t.id, { type: 'signedout', origin }).catch(() => {});
+  } catch { /* no tabs to tell */ }
 }
 
 /** Make sure `origin` has a grant. Returns the key it signs with. */
@@ -378,6 +389,7 @@ async function forgetSite(origin: string, tellServer: boolean) {
   delete sites[origin];
   await saveSites(sites);
   changed();
+  tellTabs(origin);
   const m = await loadMember();
   if (tellServer && m && s.sk) deviceFor(m).forget(getPublicKey(hexToBytes(s.sk)));
   else if (tellServer && pairing && s.sk) {
@@ -401,31 +413,49 @@ async function signOut() {
 let busy = 0;
 function setBusy(d: number) {
   busy += d;
-  // `action` in the newer format; Firefox's build uses the older `browserAction`.
-  const action = api.action ?? (api as any).browserAction;
-  action?.setBadgeText({ text: busy > 0 ? '…' : '' })?.catch?.(() => {});
+  paint();
 }
 
-async function nip07(origin: string, tabId: number | undefined, method: string, params: any): Promise<unknown> {
+/**
+ * The toolbar icon's badge: how many requests wait for your answer (in the cobalt accent); else "…" while
+ * something is being signed; else "!" when the account still isn't protected after a day.
+ */
+let notProtected = false;
+function paint() {
+  // `action` in the newer format; Firefox's build uses the older `browserAction`.
+  const action = api.action ?? (api as any).browserAction;
+  const waiting = [...asks.values()].filter(a => !a.answered && (a.kind === 'pair' || a.kind === 'allow' || a.kind === 'approve')).length;
+  action?.setBadgeText({ text: waiting ? String(waiting) : busy > 0 ? '…' : notProtected ? '!' : '' })?.catch?.(() => {});
+  action?.setBadgeBackgroundColor?.({ color: waiting ? '#2E4CB8' : '#666666' })?.catch?.(() => {});
+}
+
+/**
+ * A site's request. [gesture]: it came straight from a click or a key on the page (the content script's own
+ * view of it, which the page can't fake). Nothing opens without one: a site this browser hasn't let in, or any site
+ * while Marble isn't signed in here, gets `not-connected:` at once (a site reads it as signed out), and only a
+ * click (its Sign in) brings up the window or the card, even after "Not now".
+ */
+const notConnected = (origin: string) => new Error(`not-connected: ${host(origin)} isn’t connected to Marble in this browser. Sign in on the site to connect it.`);
+async function nip07(origin: string, tabId: number | undefined, method: string, params: any, gesture = false): Promise<unknown> {
   const member = await loadMember();
-  if (member) return memberNip07(member, origin, tabId, method, params);
+  if (member) return memberNip07(member, origin, tabId, method, params, gesture);
   const pending = await loadPending();
-  if (pending) return pendingNip07(pending, origin, tabId, method, params);
+  if (pending) return pendingNip07(pending, origin, tabId, method, params, gesture);
   let { pairing, sites } = await load();
 
   if (!pairing) {
-    if ((await notNow()).includes(origin)) throw new Error('Not signed in.');
+    if (!gesture) throw new Error('not-connected: Not signed in to Marble in this browser.');
     startPairing(); // the code is ready by the time you tap Sign in with Marble
     await ask(tabId, origin, 'pair');
     // Signed in by phone (a pairing), or made an account here (a member).
     const made = await loadMember();
-    if (made) return memberNip07(made, origin, tabId, method, params);
+    if (made) return memberNip07(made, origin, tabId, method, params, true);
     const madeHere = await loadPending();
-    if (madeHere) return pendingNip07(madeHere, origin, tabId, method, params);
+    if (madeHere) return pendingNip07(madeHere, origin, tabId, method, params, true);
     ({ pairing, sites } = await load());
     if (!pairing) throw new Error('Not signed in.');
   } else if (!sites[origin]) {
-    if ((await notNow()).includes(origin)) throw new Error('You said not now to this site.');
+    if (!gesture) throw notConnected(origin);
     await ask(tabId, origin, 'allow');
   }
 
@@ -504,6 +534,7 @@ function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' |
   const done = new Promise<void>((y, n) => { resolve = y; reject = n; });
   const a: Ask = { id, tabId, origin, kind, detail, done, resolve, reject };
   asks.set(id, a);
+  paint();
   // Allow and approvals are decided where the page can't cover, fade or move them under
   // your pointer: a window of the extension's own on a computer, a tab of its own on a
   // phone (then back to the site). The page only gets a pointer. If neither can be opened,
@@ -514,6 +545,8 @@ function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' |
   let win: number | undefined, tab: number | undefined;
   const close = () => {
     asks.delete(id);
+    paint();
+    api.notifications?.clear?.(id)?.catch?.(() => {});
     api.tabs.sendMessage(tabId, { type: 'card', url: null, id }).catch(() => {});
     if (win !== undefined) api.windows.remove(win).catch(() => {});
     if (tab !== undefined) { api.tabs.remove(tab).catch(() => {}); api.tabs.update(tabId, { active: true }).catch(() => {}); }
@@ -540,18 +573,41 @@ function ask(tabId: number | undefined, origin: string, kind: 'pair' | 'allow' |
       const near = cur?.left !== undefined && cur.width ? { left: Math.max(0, cur.left + cur.width - 420), top: (cur.top ?? 0) + 80 } : {};
       const w = await api.windows.create({ ...base, ...near }).catch(() => api.windows.create(base));
       win = w?.id;
+      if (win === undefined) throw new Error('no window');
       a.window = win;
+      // Some browsers open it behind the one you're in: bring it up, and flash it if that's refused.
+      void api.windows.update(win, { focused: true, drawAttention: true }).catch(() => {});
       void inPage(`${id}&pointer`);
-    } catch { void inPage(id); } // no windows here after all: the hardened card
+    } catch {
+      // No window (a policy, or no windows here after all): the hardened card, and a word from the
+      // toolbar and the system that something waits.
+      void inPage(id);
+      notify(a);
+    }
   })();
   return done;
 }
+
+/** "marble.syb.lol wants to sign in": a system notification for a request no window could be opened for. A click brings it up. */
+function notify(a: Ask) {
+  const what = a.kind === 'approve' ? 'is waiting for your approval' : a.kind === 'pair' ? 'wants you to sign in' : 'wants to sign in';
+  api.notifications?.create?.(a.id, { type: 'basic', iconUrl: api.runtime.getURL('icon-128.png'), title: 'Marble', message: `${host(a.origin)} ${what}.`, priority: 2, requireInteraction: true } as any)?.catch?.(() => {});
+}
+api.notifications?.onClicked?.addListener?.((nid: string) => {
+  const a = asks.get(nid);
+  api.notifications.clear(nid).catch(() => {});
+  if (!a || a.tabId === undefined) return;
+  // Back to the page, where the card is.
+  void api.tabs.update(a.tabId, { active: true }).then(t => { if (t?.windowId !== undefined) void api.windows.update(t.windowId, { focused: true }); }).catch(() => {});
+});
 
 async function answer(id: string, yes: boolean) {
   const a = asks.get(id);
   if (!a || a.answered) return;
   a.answered = true; // the first answer stands (a window closing after a tap isn't a second one)
+  paint();
   if (yes) {
+    if (a.kind === 'allow' || a.kind === 'pair') await setNotNow((await notNow()).filter(o => o !== a.origin));
     if (a.kind === 'allow') {
       const { pairing, sites } = await load();
       const m = await loadMember();
@@ -726,7 +782,7 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : '');
     if (!/^https?:\/\//.test(origin)) { reply({ error: 'This page can’t sign.' }); return false; }
     if (sender.tab?.id !== undefined) { if (msg.narrow) narrowTabs.add(sender.tab.id); else narrowTabs.delete(sender.tab.id); }
-    nip07(origin, sender.tab?.id, String(msg.method), msg.params ?? {}).then(result => reply({ result }), e => reply({ error: (e as Error).message ?? String(e) }));
+    nip07(origin, sender.tab?.id, String(msg.method), msg.params ?? {}, msg.gesture === true).then(result => reply({ result }), e => reply({ error: (e as Error).message ?? String(e) }));
     return true;
   }
   if (!isOurs(sender)) return false;
@@ -740,7 +796,7 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     }
     case 'card-answer': void answer(msg.id, !!msg.yes); return false;
     case 'remove-site': void forgetSite(msg.origin, true); return false;
-    case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
+    case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); const m = await loadMember(); if (m && !m.removed) await memberGrant(deviceFor(m), msg.origin); else if (await loadPending()) await pendingGrant(msg.origin); else if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
     case 'sign-out': void signOut(); return false;
     case 'open-safety': void openSafety(msg.which === 'phone' ? 'phone' : 'paper'); return false;
   }

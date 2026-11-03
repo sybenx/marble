@@ -1,0 +1,32 @@
+{
+  "name": "kind1-is-not-markdown",
+  "rule": "§7",
+  "why": "**bold** in kind 1 keeps its asterisks",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "📊 **Bitcoin-Update**\n- 💰 Price: $80827\n- 📦 Blockheight: 973481\n- ⌛ Mempool: 758208 TXs\n- 💸 Fees: 1 sats/vByte",
+    "created_at": 1793152807,
+    "id": "0f2b52ed455fbd368237cc7eb39d29db6b98e579b2a88503ead79146dd88a89b",
+    "kind": 1,
+    "pubkey": "e2b8ba3e6f7d63ab44559f25a6863d1d9ba1a2cd751391a69e261ad027400d81",
+    "sig": "68b64bad5855818fbcdd0abc39382297108fb38315d3f52af09f008a49b4222fb7f742106b1afef26a895785c0deca2205cedc52d13567574dd4060f7d13a39f",
+    "tags": []
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "📊 **Bitcoin-Update**"
+      },
+      {
+        "text": "- 💰 Price: $80827"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

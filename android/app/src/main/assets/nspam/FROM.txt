@@ -1,0 +1,1 @@
+nspam: from Wisp (github.com/barrydeen/wisp) 0c2126a, MIT License, Copyright (c) 2025 Barry Deen. See licenses/wisp-MIT.txt.

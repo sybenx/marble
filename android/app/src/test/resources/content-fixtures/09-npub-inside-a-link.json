@@ -1,0 +1,37 @@
+{
+  "name": "npub-inside-a-link",
+  "rule": "§1",
+  "why": "an npub1 inside a URL (after #/p/) belongs to the link: not a mention",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "id": "d4db71a8f82335e31c7e3302e474ef8559a3afc65f6ab0b71f249153e52882db",
+    "pubkey": "fd208ee8c8f283780a9552896e4823cc9dc6bfd442063889577106940fd927c1",
+    "created_at": 1793050316,
+    "kind": 1,
+    "tags": [
+      [
+        "e",
+        "c7df1b0445493cf7053da7a2b93a6b347e6385fe96b187e2d883ac316856dab5",
+        "wss://pipe.imwald.eu/",
+        "root",
+        "fd208ee8c8f283780a9552896e4823cc9dc6bfd442063889577106940fd927c1"
+      ]
+    ],
+    "content": "https://gc-alexandria.imwald.eu/#/p/npub1m4ny6hjqzepn4rxknuq94c2gpqzr29ufkkw7ttcxyak7v43n6vvsajc2jl",
+    "sig": "b3c54edf5cdae2c8eaa2fec9b8ecca51a5d0c545d7d4610bc7132b7718f9f4867652ce2d4b866e76868a5663e6ce27902d3acced09811d2ecbe9b53ca3ec11f7"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "link": "https://gc-alexandria.imwald.eu/#/p/npub1m4ny6hjqzepn4rxknuq94c2gpqzr29ufkkw7ttcxyak7v43n6vvsajc2jl"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:"
+    ]
+  }
+}

@@ -24,6 +24,10 @@ object Glyphs {
     val lang = line("lang", "M4 5h9M8.5 3v2M6 5c1 3.5 3.5 6 7 7.5M11 5c-1 4-3.5 7-7 8.5M13 21l4-9 4 9M14.5 18h5")
     val repost = line("repost", "M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3")
     val out = line("out", "M7 17 17 7M8 7h9v9")
+    /** Share: three dots joined. */
+    val share = line("share", "M18 2.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 15.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4")
+    /** A past search: the clock. */
+    val clock = line("clock", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 7v5l3.5 2")
     /** A site: the globe. */
     val site = line("site", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9M12 3c-2.5 2.5-3.8 5.5-3.8 9s1.3 6.5 3.8 9")
     /** Write: a new post. */
@@ -31,5 +35,16 @@ object Glyphs {
     private const val SAVE = "M6 4h12v16l-6-4-6 4z"
     val save = line("save", SAVE)
     val saveOn = line("saveOn", SAVE, fill = true)
+    /** Enter (return): keep what's typed as a note, and search it. */
+    val enter = line("enter", "M19 5v7a3 3 0 0 1-3 3H6M10 11l-4 4 4 4")
+    /** A video's sound: on, and off (muted). */
+    val soundOn = line("soundOn", "M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12")
+    val soundOff = line("soundOff", "M4 9v6h4l5 4V5L8 9H4zM17 9l5 6M22 9l-5 6")
+    /** Replay: a circle arrow, back to the start. */
+    val replay = line("replay", "M3 12a9 9 0 1 0 3-6.7M3 4v5h5")
+    /** Save to the phone (Downloads). */
+    val download = line("download", "M12 4v11M7 10l5 5 5-5M5 20h14")
+    /** Full screen. */
+    val fullscreen = line("fullscreen", "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5")
     val warn = line("warn", "M12 3 2 20h20L12 3zM12 10v4M12 17h.01")
 }

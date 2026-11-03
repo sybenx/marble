@@ -78,6 +78,25 @@ class KeptTest {
         assertEquals("ab", org.json.JSONObject(other.all.value["marble-2026-10-26"]!!.award!!).getString("id"))
     }
 
+    @Test fun takenOffAndClaimedAgain() {
+        val p = Prefs(); val k = Kept(p)
+        k.keep("2026-10-27"); k.keep("2026-10-20")
+        k.remove("marble-2026-10-27")
+        assertEquals(setOf("marble-2026-10-20"), k.here().keys)
+        // The marker is kept, and synced: another device with it there takes it off too.
+        val other = Kept(Prefs()); other.keep("2026-10-27")
+        assertFalse(other.merge(k.json("2026"), "2026"))
+        assertEquals(setOf("marble-2026-10-20"), other.here().keys)
+        // An older copy that still has it doesn't bring it back, and this phone is ahead of it.
+        assertTrue(k.merge("""{"v":1,"kept":[{"id":"marble-2026-10-27","at":1}]}""", "2026"))
+        assertFalse(k.all.value["marble-2026-10-27"]!!.here)
+        // Claimed again (on its day): there again, the flourish again, and that wins over the marker elsewhere.
+        assertTrue(k.keep("2026-10-27"))
+        other.merge(k.json("2026"), "2026")
+        assertTrue(other.all.value["marble-2026-10-27"]!!.here)
+        assertEquals(setOf("marble-2026-10-20", "marble-2026-10-27"), Kept(p).here().keys)   // as this phone keeps it
+    }
+
     @Test fun aLaterVersionIsLeftAlone() {
         val k = Kept(Prefs())
         assertFalse(k.merge("""{"v":2,"kept":[{"id":"marble-2026-10-01","at":1}]}""", "2026"))

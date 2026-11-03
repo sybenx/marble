@@ -1,0 +1,49 @@
+{
+  "name": "video-with-imeta",
+  "rule": "§4",
+  "why": "an .mp4 with imeta m video/mp4: a player",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "https://blossom.primal.net/c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf.mp4",
+    "created_at": 1793152078,
+    "id": "33ca381a9ccd17374edb2f1c5d80c1d9fac140cdbbd50a88fb18d24c782335c3",
+    "kind": 1,
+    "pubkey": "0018b7ee33fb253843639c62e292fec700a69a93b08ee374c5bda971c9b39564",
+    "sig": "c4b522cef420d6db3e2725782a3ee68703db30c38a1a34deda89bfbcdb8f5eaafdfe04bbcae22dff7d76abc14b51e3785227186dc6db7e978bc2f5a1e20e17ee",
+    "tags": [
+      [
+        "r",
+        "https://blossom.primal.net/c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf.mp4"
+      ],
+      [
+        "imeta",
+        "url https://blossom.primal.net/c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf.mp4",
+        "x c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf",
+        "size 54939887",
+        "m video/mp4",
+        "dim 1440x1920",
+        "blurhash _34ef_?vWBRjM{IUM{InITV@oft8t8t7D%Mxofozoft8of_4-=ofRjM_MxM{IUITM_oft8t7t8WAayt7ozofofa|%N%Mt7RjM{RPRjM_M_Riayogt7t7fka#j]t7t7ofay",
+        "ox c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf"
+      ],
+      [
+        "client",
+        "Amethyst"
+      ]
+    ]
+  },
+  "related": [],
+  "expect": {
+    "inline": [],
+    "cards": [],
+    "media": [
+      {
+        "video": "https://blossom.primal.net/c298e8244dc8f2d1511e998f04a4df61c953b7336b719c5e8b2e2e5d973bbdcf.mp4"
+      }
+    ],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "blossom.primal.net"
+    ]
+  }
+}

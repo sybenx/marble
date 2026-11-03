@@ -1,0 +1,126 @@
+{
+  "name": "naddr-calendar-event",
+  "rule": "§3",
+  "why": "nostr:naddr1… to kind 31923 (a calendar event): 'other', its alt",
+  "source": "wss://relay.damus.io, relay.primal.net, nos.lol, relay.ditto.pub or syb.lol",
+  "event": {
+    "content": "🏁 A new TMNF week is open: TMNF Week 44, 2026\n🏎️ Track A05-Race on our own server, your best finish of the week counts\n🗓️ Until Mon, 2 Nov 2026, 12:00 AM CET\n\nnostr:naddr1qq8hgmtwvcknyvpjxcknzvpdxgmqz9nhwden5te0wfjkccte9ec8y6tdv9kzumn9wspzph6zuqlgnsaj5pdgjkmupnjxurquuyz33yndekwu4r3q8ey56fyuqvzqqqrukvcqkz0d",
+    "created_at": 1793131509,
+    "id": "4d6d2ce98861ca03861f5517075272c487aeb92b45f1afaeeee47bba6e4d2567",
+    "kind": 1,
+    "pubkey": "df42e03e89c3b2a05a895b7c0ce46e0c1ce10518926dcd9dca8e203e494d249c",
+    "sig": "951971101b7068366768f5ca2a0b5afce6083b8231cf90fb5212678079aaf26f09dfaa7b352309c260238c0b747b350e29659403bdab4ba4bf8d9bc1a8701c56",
+    "tags": [
+      [
+        "q",
+        "31923:df42e03e89c3b2a05a895b7c0ce46e0c1ce10518926dcd9dca8e203e494d249c:tmnf-2026-10-26",
+        "wss://relay.primal.net"
+      ]
+    ]
+  },
+  "related": [
+    {
+      "content": "TrackMania Nations Forever time-attack, leaderboard. A leaderboard on our own TMNF server: every player drives the track A05-Race alone, as often as they like, from the start until the end of the week; the fastest time wins, a tie goes to the earlier finish, a finish outside that time does not count. Times are the finishes our own TMNF server timed, of players who linked their TMNF login; a time far below the author time waits for an admin. Nothing is submitted by hand. Unrated: a leaderboard has no Elo ladder. Its places score points on the game's points ladder. Page: https://esports.einundzwanzig.space/tournaments/48",
+      "created_at": 1792969277,
+      "id": "3cd65c0c4422d70345fe5e7c17b3bbc9e1814db3e9e9d36bf073f687b8ccd6e0",
+      "kind": 31923,
+      "pubkey": "df42e03e89c3b2a05a895b7c0ce46e0c1ce10518926dcd9dca8e203e494d249c",
+      "sig": "c823c60adff733575307b41b2b4ab7583a4dabf16cba86b3895703214aa05dd5cef6d5b91c70c133df417f78dcf2fd74108874564c14ed441611d5988c846aad",
+      "tags": [
+        [
+          "d",
+          "tmnf-2026-10-26"
+        ],
+        [
+          "title",
+          "TMNF Week 44, 2026"
+        ],
+        [
+          "summary",
+          "TrackMania Nations Forever time-attack, leaderboard."
+        ],
+        [
+          "start",
+          "1792969260"
+        ],
+        [
+          "end",
+          "1793574000"
+        ],
+        [
+          "D",
+          "20751"
+        ],
+        [
+          "D",
+          "20752"
+        ],
+        [
+          "D",
+          "20753"
+        ],
+        [
+          "D",
+          "20754"
+        ],
+        [
+          "D",
+          "20755"
+        ],
+        [
+          "D",
+          "20756"
+        ],
+        [
+          "D",
+          "20757"
+        ],
+        [
+          "D",
+          "20758"
+        ],
+        [
+          "start_tzid",
+          "Europe/Berlin"
+        ],
+        [
+          "location",
+          "https://esports.einundzwanzig.space/tournaments/48"
+        ],
+        [
+          "r",
+          "https://esports.einundzwanzig.space/rules"
+        ],
+        [
+          "a",
+          "31924:df42e03e89c3b2a05a895b7c0ce46e0c1ce10518926dcd9dca8e203e494d249c:tournaments",
+          ""
+        ],
+        [
+          "alt",
+          "Tournament: TMNF Week 44, 2026, 2026-10-25 23:01 UTC"
+        ]
+      ]
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "A new TMNF week is open: TMNF Week 44, 2026"
+      }
+    ],
+    "cards": [
+      {
+        "card": "other",
+        "ref": "31923:df42e03e89c3b2a05a895b7c0ce46e0c1ce10518926dcd9dca8e203e494d249c:tmnf-2026-10-26",
+        "line": "Tournament: TMNF Week 44, 2026, 2026-10-25 23:01 UTC"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "never": [
+      "nostr:",
+      "naddr1"
+    ]
+  }
+}

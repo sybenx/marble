@@ -4,6 +4,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release: phones and tablets only (arm64). The x86_64 copies are for the emulator (debug builds keep them), and ML
+// Kit's translator alone is ~17 MB each.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { it.packaging.jniLibs.excludes.add("lib/x86_64/**") }
+}
+
 android {
     namespace = "cc.aaro.cosign"
     compileSdk = 35
@@ -12,8 +18,8 @@ android {
         applicationId = "cc.aaro.cosign"
         minSdk = 30
         targetSdk = 35
-        versionCode = 37
-        versionName = "0.12.18"
+        versionCode = 42
+        versionName = "0.12.21"
         // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -60,11 +66,25 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.unifiedpush.android:connector:3.0.10")
     implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.19.0")
-    // Videos in notes: the player and HLS only (its own controls are Compose; no media3-ui, no session).
+    // Videos in notes, as Wisp plays them: the player, HLS, its stock controls (media3-ui), fetched with our OkHttp.
     implementation("androidx.media3:media3-exoplayer:1.5.1")
+    // Translating posts on the phone: which language (language ID), and the translation (models downloaded once per language).
+    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("com.google.mlkit:translate:17.0.3")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("net.sf.kxml:kxml2:2.3.0")
+    // Only to measure language guessing on real posts (LanguagesTest); not in the app (80 MB).
+    testImplementation("com.github.pemistahl:lingua:1.2.2")
     testImplementation("fr.acinq.secp256k1:secp256k1-kmp-jni-jvm:0.19.0")
+}
+
+// Unit tests on Java 21: Wisp's spam classifier matches emoji by Unicode property (\p{IsEmoji_Presentation}),
+// which Android's regex has and Java 17's doesn't.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }
