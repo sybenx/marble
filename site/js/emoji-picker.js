@@ -1,32 +1,27 @@
-// The reaction picker, as Jumble has it (github.com/CodyTseng/jumble, MIT): a row of quick reactions (a plain like, up
-// to three you used lately, then 👍 ❤️ 😂 😢 👀 🧐) and "⋯" for every emoji: in sections under sticky names (Recently used
-// first), a search, a skin tone, and your own emoji (NIP-30: your list, kind 10030, and the packs it names, 30030) as
-// tabs. On a phone it's a sheet from the bottom: the quick row, then everything. The emoji are emojibase's (MIT),
-// trimmed into /emoji.json and fetched the first time "⋯" opens.
+// Reacting (the Marble reactions design, ~/igloo/marble-reactions.md; reactions.js has its rules): the tray, a small
+// row that floats above the button: six emoji (your recent ones, then the defaults) and + for everything. Everything is
+// Jumble's picker (github.com/CodyTseng/jumble, MIT): a search at the top, then Recent, your own emoji (NIP-30: your
+// list, kind 10030, and the sets it names, 30030), and the usual sections, with a skin tone; on a phone, a sheet from
+// the bottom. The emoji are emojibase's (MIT), trimmed into /emoji.json and fetched the first time + opens.
 import { req, relays, FAST, INDEXERS } from "./pool.js";
 import { esc } from "./render.js";
+import { trayOf, keyOf, same } from "./reactions.js";
 
-export const QUICK = ["👍", "❤️", "😂", "😢", "👀", "🧐"];
-export const LIKE = "+";
-
-// An emoji: a character ("😂"), or one of someone's own ({shortcode, url}).
-const keyOf = (e) => (typeof e === "string" ? `n:${e}` : `c:${e.shortcode}|${e.url}`);
 const TONE = "marble.skin-tone";
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
-// "Recently used" is worked out from your own published reactions (kind 7, newest first), as Android does, so every
-// device shows the same with nothing more to sync; what you pick here goes first at once (before the relays have it).
-let history = [], picked = [];
+// Recents: worked out from your own reactions (reactions.js), kept here for the next visit; what you pick goes first at
+// once (before the relays have it).
+let recents = [], recentsFor = null;
 const unique = (list) => { const seen = new Set(); return list.filter((e) => { const k = keyOf(e); return !seen.has(k) && seen.add(k); }); };
-/** What you've reacted with lately, most recent first (as many as n), never the plain like. */
-export const recent = (n = 24) => unique([...picked, ...history]).slice(0, n);
-/** Your own reactions' emoji, newest first (from the relays). */
-export function setHistory(list) { history = unique(list.filter((e) => e && e !== LIKE)); }
-/** Signed out, or someone else: nothing recent. */
-export function forgetRecent() { history = []; picked = []; }
-/** Remembers emoji as just used, for this visit. */
-export function used(emoji) { if (emoji !== LIKE) picked = unique([emoji, ...picked]); }
+/** Whose recents these are (a pubkey, or null): the ones kept from last time, until the relays say. */
+export function recentsOf(pk) { recentsFor = pk; recents = pk ? load(`marble.recents.${pk}`, []) : []; }
+/** Your recent emoji, most recent first, from your own reactions. */
+export function setRecents(pk, list) { if (pk !== recentsFor) return; recents = unique(list).slice(0, 48); if (pk) save(`marble.recents.${pk}`, recents); }
+/** An emoji you've just reacted with. */
+export function used(e) { setRecents(recentsFor, [e, ...recents]); }
+export const recent = (n = 24) => recents.slice(0, n);
 
 // ── Your own emoji (NIP-30) ─────────────────────────────────────────────────────────────────────────
 
@@ -63,56 +58,82 @@ const allEmoji = () => (data ||= fetch("/emoji.json").then((r) => r.json()).then
 const toned = (row, tone) => (tone && row[3] ? row[3].split(" ")[tone - 1] || row[0] : row[0]);
 const TONES = ["✋", "✋🏻", "✋🏼", "✋🏽", "✋🏾", "✋🏿"];
 
-const HEART_FILLED = `<svg viewBox="0 0 24 24" aria-hidden="true" class="like-heart"><path d="M12 20.5s-7.5-4.6-9.3-9.5C1.4 7.4 3.7 4 7.2 4c2 0 3.6 1.1 4.8 2.8C13.2 5.1 14.8 4 16.8 4c3.5 0 5.8 3.4 4.5 7-1.8 4.9-9.3 9.5-9.3 9.5z"/></svg>`;
 const SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`;
-const SMILE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg>`;
-const STAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/></svg>`;
-const BACK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>`;
+const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
 
-/** An emoji drawn: a character, the plain like as a heart, or someone's own as its picture. */
-export function drawEmoji(e, { big = false } = {}) {
-  if (e === LIKE) return HEART_FILLED;
+/** An emoji drawn: a character, or someone's own as its picture. */
+export function drawEmoji(e) {
   if (typeof e === "string") return `<span class="em">${esc(e)}</span>`;
-  return `<img class="em${big ? " big" : ""}" src="${esc(e.url)}" alt=":${esc(e.shortcode)}:" title=":${esc(e.shortcode)}:" loading="lazy" referrerpolicy="no-referrer" draggable="false">`;
+  return `<img class="em" src="${esc(e.url)}" alt=":${esc(e.shortcode)}:" title=":${esc(e.shortcode)}:" loading="lazy" referrerpolicy="no-referrer" draggable="false">`;
 }
 
-// ── The picker ──────────────────────────────────────────────────────────────────────────────────────
+// ── The tray and the picker ─────────────────────────────────────────────────────────────────────────
 
-let box = null, picks = [], onPick = null, anchor = null;
+let box = null, picks = [], onPick = null, anchor = null, current = null;
 const phone = () => matchMedia("(max-width: 640px), (pointer: coarse) and (max-width: 900px)").matches;
-const cell = (e, cls = "") => { picks.push(e); return `<button type="button" class="${cls}" data-pick="${picks.length - 1}"${typeof e === "string" ? "" : ` title=":${esc(e.shortcode)}:"`}>${drawEmoji(e)}</button>`; };
+const cell = (e) => { picks.push(e); return `<button type="button" data-pick="${picks.length - 1}" aria-pressed="${same(e, current)}"${typeof e === "string" ? ` aria-label="${esc(e)}"` : ` title=":${esc(e.shortcode)}:" aria-label=":${esc(e.shortcode)}:"`}>${drawEmoji(e)}</button>`; };
+const $ = (s, el = box) => el?.querySelector(s);
 
-/** The quick row's emoji, as Jumble's: the three you used last, then the rest of the six (all six always there). */
-export function quick() {
-  const lately = recent(3);
-  return [...lately, ...QUICK.filter((e) => !lately.includes(e))];
-}
-
-/** Opens the picker by a reaction button; pick(emoji) is called with what's chosen (LIKE for the plain like). */
-export function openPicker(at, pick) {
+/** The tray by a reaction button: pick(emoji) gets what's chosen; yours (if any) is marked. */
+export function openTray(at, pick, { yours = null, focus = true } = {}) {
   closePicker();
-  anchor = at; onPick = pick; picks = [];
+  anchor = at; onPick = pick; picks = []; current = yours;
   box = document.createElement("div");
-  box.className = phone() ? "picker-sheet" : "picker-pop";
+  box.className = "picker-pop tray-pop";
+  box.setAttribute("role", "menu");
+  box.setAttribute("aria-label", "React");
+  box.innerHTML = `<div class="tray">${trayOf(recents).map(cell).join("")}<button type="button" class="more-emoji" data-more aria-label="Every emoji">${PLUS}</button></div>`;
+  document.body.append(box);
+  place();
+  if (focus) $("[data-pick]")?.focus({ preventScroll: true });
+}
+/** Everything: by the button on a computer, a sheet on a phone. */
+function openFull() {
+  const at = anchor, pick = onPick, yours = current;
+  closePicker();
+  anchor = at; onPick = pick; current = yours; picks = [];
+  box = document.createElement("div");
   box.setAttribute("role", "dialog");
   box.setAttribute("aria-label", "React");
   if (phone()) {
-    box.innerHTML = `<div class="sheet-scrim" data-close></div><div class="sheet"><div class="sheet-grip"></div><h2 class="sheet-title">React</h2>${quickRow(false)}<div class="picker-full"></div></div>`;
-    document.body.append(box);
-    full($(".picker-full"));
+    box.className = "picker-sheet";
+    box.innerHTML = `<div class="sheet-scrim" data-close></div><div class="sheet"><div class="sheet-grip"></div><div class="picker-full"></div></div>`;
   } else {
-    box.innerHTML = quickRow(true);
-    document.body.append(box);
-    place();
+    box.className = "picker-pop wide";
+    box.innerHTML = `<div class="picker-full"></div>`;
   }
-  $("[data-pick]", box)?.focus({ preventScroll: true });
+  document.body.append(box);
+  full($(".picker-full"));
+  place();
 }
-export function closePicker() { box?.remove(); box = null; anchor = null; }
+export function closePicker() { box?.remove(); box = null; anchor = null; slid = null; }
 export const pickerOpen = () => !!box;
+export const trayOpenFor = (b) => !!box && anchor === b;
+export const trayOnly = () => !!box?.classList.contains("tray-pop");
+export const pointerInPicker = (el) => !!box && box.contains(el);
 
-const $ = (s, el = box) => el?.querySelector(s);
-const quickRow = (more) => `<div class="quick-row" role="menu">${cell(LIKE, "like")}${quick().map((e) => cell(e)).join("")}`
-  + (more ? `<button type="button" class="more-emoji" data-more aria-label="All emoji"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>` : "") + `</div>`;
+// Sliding (a press that opened the tray): the emoji under the finger lights up; letting go there picks it.
+let slid = null;
+/** The emoji at (x, y) in the tray, lit up (or none). */
+export function slideTo(x, y) {
+  if (!box) return;
+  const b = document.elementFromPoint(x, y)?.closest?.(".tray [data-pick], .tray [data-more]");
+  if (b === slid) return;
+  slid?.classList.remove("lit");
+  slid = b && box.contains(b) ? b : null;
+  slid?.classList.add("lit");
+}
+/** Letting go: picks what's lit (true), or leaves the tray open (false). */
+export function slideEnd() {
+  const b = slid;
+  slid?.classList.remove("lit"); slid = null;
+  if (!b) return false;
+  if (b.matches("[data-more]")) { openFull(); return true; }
+  const e = picks[+b.dataset.pick], f = onPick;
+  closePicker();
+  f?.(e);
+  return true;
+}
 
 function place() {
   if (!box || !anchor || !box.classList.contains("picker-pop")) return;
@@ -122,58 +143,41 @@ function place() {
   box.style.top = `${(above >= 8 ? above : Math.min(r.bottom + 8, innerHeight - h - 8)) + scrollY}px`;
 }
 
-// Everything: tabs (search, emoji, yours, your packs), the sections, the skin tone.
-let tab = "system", query = "", searching = false, tone = 0;
+// Everything: the search, then Recent, your own emoji, and the sections; the skin tone.
+let query = "", tone = 0;
 async function full(where) {
   tone = load(TONE, 0);
-  tab = "system"; query = ""; searching = false;
-  where.innerHTML = `<div class="picker"><div class="picker-head"></div><div class="picker-grid"><p class="muted picker-empty">Loading…</p></div>
-    <div class="skin-tone" data-tones></div></div>`;
-  head(); tones();
+  query = "";
+  where.innerHTML = `<div class="picker"><div class="picker-head"><label class="picker-field">${SEARCH}<input type="search" placeholder="Search emoji" aria-label="Search emoji"></label></div>
+    <div class="picker-grid"><p class="muted picker-empty">Loading…</p></div><div class="skin-tone" data-tones></div></div>`;
+  tones();
+  if (!phone()) $(".picker-field input")?.focus({ preventScroll: true });
   const groups = await allEmoji();
   if (!box) return;
-  groups.recent = recent(24);
   where.querySelector(".picker").groups = groups;
   grid();
 }
-function head() {
-  const h = $(".picker-head");
-  if (!h) return;
-  if (searching) {
-    h.innerHTML = `<div class="picker-search"><button type="button" class="tab" data-back aria-label="Back">${BACK}</button>
-      <label class="picker-field">${SEARCH}<input type="search" placeholder="Search emojis" aria-label="Search emojis" value="${esc(query)}"></label></div>`;
-    $(".picker-search input").focus();
-    return;
-  }
-  h.innerHTML = `<div class="picker-tabs"><button type="button" class="tab" data-search title="Search emojis" aria-label="Search emojis">${SEARCH}</button>
-    <button type="button" class="tab" data-tab="system" title="Smileys & Emotion" aria-pressed="${tab === "system"}">${SMILE}</button>
-    ${mine.standalone.length ? `<button type="button" class="tab" data-tab="standalone" title="My emojis" aria-pressed="${tab === "standalone"}">${STAR}</button>` : ""}
-    ${mine.packs.map((p) => `<button type="button" class="tab pack" data-tab="${esc(p.id)}" title="${esc(p.title)}" aria-pressed="${tab === p.id}">${drawEmoji(p.emojis[0])}</button>`).join("")}</div>`;
-}
 function tones() {
   const t = $("[data-tones]");
-  if (t) { t.hidden = searching || tab !== "system"; t.innerHTML = `<button type="button" data-tone="${tone}" aria-label="Skin tone">${TONES[tone]}</button>`; }
+  if (t) { t.hidden = !!query.trim(); t.innerHTML = `<button type="button" data-tone="${tone}" aria-label="Skin tone">${TONES[tone]}</button>`; }
 }
 function grid() {
   const g = $(".picker-grid"), groups = $(".picker")?.groups;
   if (!g || !groups) return;
-  picks = picks.slice(0, $(".quick-row") ? $(".quick-row").querySelectorAll("[data-pick]").length : 0);
-  const section = (label, items) => items.length ? `<section>${label ? `<h3>${esc(label)}</h3>` : ""}<div class="emoji-grid">${items.map((e) => cell(e)).join("")}</div></section>` : "";
-  let html = "";
-  if (searching) {
-    const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    if (!words.length) html = section("Recently used", groups.recent);
-    else {
-      const hits = groups.flatMap((gr) => gr.emoji).map((row) => [row, rank(row, words)]).filter((h) => h[1] < 9)
-        .sort((x, y) => x[1] - y[1]).slice(0, 120).map(([row]) => toned(row, tone));
-      const yours = [...mine.standalone, ...mine.packs.flatMap((p) => p.emojis)].filter((e) => words.every((q) => e.shortcode.toLowerCase().includes(q)));
-      html = section("Emoji", hits) + section("My emojis", yours);
-    }
-  } else if (tab === "system") {
-    html = section("Recently used", groups.recent) + groups.map((gr) => section(gr.label, gr.emoji.map((row) => toned(row, tone)))).join("");
-  } else if (tab === "standalone") html = section("My emojis", mine.standalone);
-  else { const p = mine.packs.find((x) => x.id === tab); html = p ? section(p.title, p.emojis) : ""; }
-  g.innerHTML = html || `<p class="muted picker-empty">No emojis found</p>`;
+  picks = [];
+  const section = (label, items) => items.length ? `<section>${label ? `<h3>${esc(label)}</h3>` : ""}<div class="emoji-grid">${items.map(cell).join("")}</div></section>` : "";
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  let html;
+  if (words.length) {
+    const hits = groups.flatMap((gr) => gr.emoji).map((row) => [row, rank(row, words)]).filter((h) => h[1] < 9)
+      .sort((x, y) => x[1] - y[1]).slice(0, 120).map(([row]) => toned(row, tone));
+    const yours = unique([...mine.standalone, ...mine.packs.flatMap((p) => p.emojis)]).filter((e) => words.every((q) => e.shortcode.toLowerCase().includes(q)));
+    html = section("Emoji", hits) + section("Your emoji", yours);
+  } else {
+    html = section("Recent", recent(24)) + section("Your emoji", mine.standalone) + mine.packs.map((p) => section(p.title, p.emojis)).join("")
+      + groups.map((gr) => section(gr.label, gr.emoji.map((row) => toned(row, tone)))).join("");
+  }
+  g.innerHTML = html || `<p class="muted picker-empty">No emoji found</p>`;
   g.scrollTop = 0;
 }
 
@@ -205,20 +209,9 @@ document.addEventListener("click", (ev) => {
     closePicker();
     return f?.(e);
   }
-  if (t.closest("[data-more]")) {
-    box.className = "picker-pop wide";
-    box.innerHTML = `<div class="picker-full"></div>`;
-    picks = [];
-    full($(".picker-full"));
-    place();
-    return;
-  }
-  if (t.closest("[data-search]")) { searching = true; head(); tones(); grid(); return; }
-  if (t.closest("[data-back]")) { searching = false; query = ""; head(); tones(); grid(); return; }
-  const tb = t.closest("[data-tab]");
-  if (tb) { tab = tb.dataset.tab; head(); tones(); grid(); return; }
+  if (t.closest("[data-more]") && box.contains(t)) return openFull();
   const tn = t.closest("[data-tone]");
-  if (tn) {
+  if (tn && box.contains(tn)) {
     const row = tn.parentElement;
     if (!row.classList.contains("open")) { row.classList.add("open"); row.innerHTML = TONES.map((x, i) => `<button type="button" data-tone="${i}" aria-pressed="${i === tone}">${x}</button>`).join(""); return; }
     tone = +tn.dataset.tone; save(TONE, tone); row.classList.remove("open"); tones(); grid(); return;
@@ -226,13 +219,13 @@ document.addEventListener("click", (ev) => {
   if (t.closest("[data-close]") || (!box.contains(t) && !t.closest("[data-react]"))) closePicker();
 }, true);
 document.addEventListener("input", (ev) => {
-  if (box && ev.target.closest?.(".picker-search input")) { query = ev.target.value; grid(); }
+  if (box && ev.target.closest?.(".picker-field input")) { query = ev.target.value; tones(); grid(); }
 });
 document.addEventListener("keydown", (ev) => {
   if (!box) return;
   if (ev.key === "Escape") { const a = anchor; closePicker(); a?.focus(); return; }
-  // arrows step through the quick row
-  const row = ev.target.closest?.(".quick-row");
+  // arrows step through the tray
+  const row = ev.target.closest?.(".tray");
   if (row && (ev.key === "ArrowRight" || ev.key === "ArrowLeft")) {
     const all = [...row.querySelectorAll("button")], i = all.indexOf(ev.target);
     all[(i + (ev.key === "ArrowRight" ? 1 : all.length - 1)) % all.length]?.focus();

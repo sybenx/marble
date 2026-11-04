@@ -488,38 +488,35 @@
   .heart { display: inline-grid; place-items: center; min-width: 36px; height: 36px; padding: 0 8px; background: none; border: 0; border-radius: 999px; color: var(--muted); cursor: pointer; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; user-select: none; }
   .heart svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .heart:hover, .heart[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
-  .heart .like-heart { fill: #D9455F; stroke: #D9455F; }
   .heart .em { font-size: 19px; line-height: 1; }
   .heart img.em { width: 20px; height: 20px; object-fit: contain; border-radius: 3px; }
 
-  /* an opened post's reactions: each emoji and how many gave it, yours marked (as Jumble's) */
-  .reactions { display: flex; gap: 6px; margin: 12px 0 0; overflow-x: auto; scrollbar-width: none; }
+  /* an opened post's reactions: each emoji and how many gave it (the top five, then +N), yours marked */
+  .reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 0; }
   .reactions:empty { display: none; }
   .card.lead .reactions { margin: 10px 0 2px; }
-  .pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+  .pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; -webkit-touch-callout: none; user-select: none; }
   .pill:hover { border-color: var(--accent); color: var(--ink); }
   .pill.yours { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); cursor: default; }
+  .pill.more { padding: 0 12px; }
   .pill .em { font-size: 16px; line-height: 1; }
   .pill img.em { width: 18px; height: 18px; object-fit: contain; }
-  .pill .like-heart { width: 16px; height: 16px; fill: #D9455F; }
+  .who-end { flex: 1; align-self: stretch; min-width: 24px; border: 0; background: none; cursor: pointer; border-radius: 999px; }
+  .who-end:hover, .who-end:focus-visible { background: var(--accent-soft); outline: none; }
 
-  /* the picker (emoji-picker.js) */
+  /* the tray and the picker (emoji-picker.js) */
   .picker-pop { position: absolute; z-index: 30; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .2); overflow: hidden; }
-  .quick-row { display: flex; gap: 2px; padding: 4px; width: max-content; }
-  .quick-row button { display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: none; border-radius: 9px; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
-  .quick-row button:hover, .quick-row button:focus-visible { background: var(--accent-soft); outline: none; }
-  .quick-row .like-heart { width: 22px; height: 22px; fill: #D9455F; }
-  .quick-row .more-emoji svg { width: 22px; height: 22px; fill: currentColor; }
-  .quick-row img.em { width: 24px; height: 24px; object-fit: contain; border-radius: 4px; }
+  .tray-pop { border-radius: 999px; }
+  .tray { display: flex; gap: 2px; padding: 4px 6px; width: max-content; }
+  .tray button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; background: none; border-radius: 50%; font-size: 24px; line-height: 1; cursor: pointer; color: var(--muted); transition: transform .12s ease; -webkit-tap-highlight-color: transparent; }
+  .tray button:hover, .tray button:focus-visible, .tray button.lit { background: var(--accent-soft); outline: none; transform: scale(1.18); }
+  .tray button[aria-pressed="true"] { background: var(--accent-soft); }
+  .tray .more-emoji svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .tray img.em { width: 26px; height: 26px; object-fit: contain; border-radius: 4px; }
   .picker-pop.wide .picker-full { width: 420px; max-width: calc(100vw - 16px); height: min(50vh, 440px); }
   .picker-full { display: flex; flex-direction: column; min-height: 0; }
   .picker { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
-  .picker-head { border-bottom: 1px solid var(--line); }
-  .picker-tabs, .picker-search { display: flex; align-items: center; gap: 2px; padding: 4px 6px; overflow-x: auto; scrollbar-width: none; }
-  .picker .tab { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
-  .picker .tab:hover, .picker .tab[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); }
-  .picker .tab svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .picker .tab.pack img.em { width: 28px; height: 28px; object-fit: contain; border-radius: 4px; }
+  .picker-head { border-bottom: 1px solid var(--line); padding: 6px; }
   .picker-field { position: relative; flex: 1; display: flex; align-items: center; }
   .picker-field svg { position: absolute; left: 10px; width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2; pointer-events: none; }
   .picker-field input { width: 100%; height: 40px; padding: 0 10px 0 32px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: var(--ink); font: inherit; font-size: 16px; }
@@ -531,7 +528,6 @@
   .emoji-grid button { display: grid; place-items: center; aspect-ratio: 1; min-width: 0; border: 0; border-radius: 8px; background: none; font-size: 28px; line-height: 1; cursor: pointer; touch-action: manipulation; user-select: none; }
   .emoji-grid button:hover, .emoji-grid button:focus-visible { background: var(--accent-soft); outline: none; }
   .emoji-grid img.em { width: 32px; height: 32px; object-fit: contain; border-radius: 4px; }
-  .emoji-grid .like-heart { width: 26px; height: 26px; fill: #D9455F; }
   .picker-empty { padding: 24px; text-align: center; }
   .skin-tone { position: absolute; right: 6px; bottom: 6px; z-index: 2; display: flex; padding: 2px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, .12); }
   .skin-tone button { width: 36px; height: 36px; border: 0; border-radius: 6px; background: none; font-size: 20px; cursor: pointer; }
@@ -540,10 +536,27 @@
   .sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .4); }
   .sheet { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; height: min(72vh, 560px); background: var(--card); border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); box-shadow: 0 -8px 30px rgba(0, 0, 0, .2); }
   .sheet-grip { width: 40px; height: 4px; margin: 8px auto 2px; border-radius: 2px; background: var(--line); }
-  .sheet-title { margin: 4px 16px 2px; font-size: 16px; }
-  .sheet .quick-row { width: auto; overflow-x: auto; padding: 4px 10px 8px; scrollbar-width: none; }
-  .sheet .quick-row button { width: 42px; height: 42px; font-size: 26px; }
-  .sheet .picker-full { flex: 1; border-top: 1px solid var(--line); }
+  .sheet .picker-full { flex: 1; min-height: 0; }
+
+  /* who reacted: a tab for each emoji, and All */
+  .who-sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; }
+  .who-box { position: relative; display: flex; flex-direction: column; width: min(440px, calc(100vw - 32px)); max-height: min(70vh, 560px); background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+  .who-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 6px; }
+  .who-head h2 { margin: 0; font-size: 17px; }
+  .who-tabs { display: flex; gap: 4px; padding: 4px 12px 8px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+  .who-tabs button { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+  .who-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+  .who-tabs img.em { width: 18px; height: 18px; object-fit: contain; }
+  .who-list { overflow-y: auto; padding: 6px 0 10px; }
+  .who-row { display: flex; align-items: center; gap: 12px; padding: 8px 16px; color: var(--ink); text-decoration: none; }
+  .who-row:hover { background: var(--accent-soft); }
+  .who-row .who-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .who-row .who-emoji { font-size: 18px; }
+  .who-row img.em { width: 20px; height: 20px; object-fit: contain; }
+  @media (max-width: 640px) {
+    .who-sheet { place-items: end stretch; }
+    .who-box { width: 100%; max-height: 75vh; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  }
   .reply-box { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; }
   .reply-box.signed-out { padding: 10px 14px; }
   .reply-box textarea { width: 100%; font: inherit; font-size: 16px; color: var(--ink); background: none; border: 0; resize: vertical; min-height: 52px; outline: none; }
