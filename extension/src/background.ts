@@ -93,7 +93,8 @@ function deviceFor(m: MemberState): Device {
     device?.close();
     device = new Device(m, st => { void saveMember(st).then(changed); });
     device.onJoinRequest = r => { for (const p of safetyPorts) p.postMessage({ type: 'join_request', ...r }); };
-    device.onRemoved = () => void tellTabs(); // every open site signs out: this browser can't sign for any of them now
+    // every open site signs out: this browser can't sign for any of them now (and each is told on its next load)
+    device.onRemoved = () => void load().then(({ sites }) => tellTabs('signedout', Object.keys(sites)));
   }
   return device;
 }
@@ -341,20 +342,56 @@ function join(uri: string, status: (s: string) => void): Promise<void> {
 const removedErr = (e: unknown) => /^(revoked|not-connected):|removed|not connected/i.test(String((e as Error)?.message ?? e));
 
 async function signOutLocally() {
+  const { sites } = await load();
   link?.close(); link = undefined;
   await savePairing(undefined);
   await saveSites({});
+  await addGone(Object.keys(sites));
   changed();
-  tellTabs();
+  tellTabs('signedout', Object.keys(sites));
 }
 
-// Open pages of a site (or of every site) hear at once that they're signed out, as a `marble:signedout` event on the
-// page, rather than at their next request: a site removed here or on your phone, or Marble signed out here. Every tab
-// gets the origin, which is fine: content scripts are walled off from the page, and each one keeps to its own origin.
-async function tellTabs(origin?: string) {
+// Open pages of the sites named hear it at once: `signedout` (a site removed here or on your phone, or Marble signed
+// out here) as a `marble:signedout` event on the page, rather than at their next request; `connected` (let in from
+// the popup) as window.nostr.__marble. Only sites you've let in are named: any other page hears nothing. Every tab
+// gets the list, which is fine: content scripts are walled off from the page, and each one keeps to its own origin.
+async function tellTabs(type: 'signedout' | 'connected', origins: string[]) {
+  if (!origins.length) return;
   try {
-    for (const t of await api.tabs.query({})) if (t.id !== undefined) api.tabs.sendMessage(t.id, { type: 'signedout', origin }).catch(() => {});
+    for (const t of await api.tabs.query({})) if (t.id !== undefined) api.tabs.sendMessage(t.id, { type, origins }).catch(() => {});
   } catch { /* no tabs to tell */ }
+}
+
+/**
+ * Sites signed out here that haven't been loaded since, and when: each is told so the next time it is (see
+ * siteStatus). A small record of sites you used, so it doesn't outlive a month, or 200 sites.
+ */
+const GONE_FOR = 30 * 24 * 3600_000;
+async function gone(): Promise<Record<string, number>> {
+  const g = ((await api.storage.local.get('gone')) as { gone?: Record<string, number> }).gone ?? {};
+  return Object.fromEntries(Object.entries(g).filter(([, at]) => Date.now() - at < GONE_FOR));
+}
+async function addGone(origins: string[]) {
+  if (!origins.length) return;
+  const g = await gone();
+  for (const o of origins) g[o] = Date.now();
+  await api.storage.local.set({ gone: Object.fromEntries(Object.entries(g).sort((a, b) => b[1] - a[1]).slice(0, 200)) });
+}
+
+/**
+ * A page asks as it loads. A site let in here is told it's Marble (window.nostr.__marble); one signed out here hears
+ * `marble:signedout` on its next load (at least once: again if a tab of it was open then, and on every load while
+ * this browser is removed from your key, which a site takes as nothing new); any other page is told nothing, and
+ * sees only the standard window.nostr, so it can't tell Marble from any other NIP-07 extension.
+ */
+async function siteStatus(origin: string): Promise<{ connected?: true; gone?: true }> {
+  const { pairing, sites } = await load();
+  const m = await loadMember();
+  const signedIn = m ? !m.removed : !!pairing || !!(await loadPending());
+  if (sites[origin] && signedIn) return { connected: true };
+  const g = await gone(), was = origin in g;
+  if (was) { delete g[origin]; await api.storage.local.set({ gone: g }); }
+  return sites[origin] || was ? { gone: true } : {};
 }
 
 /** Make sure `origin` has a grant. Returns the key it signs with. */
@@ -388,8 +425,9 @@ async function forgetSite(origin: string, tellServer: boolean) {
   if (!s) return;
   delete sites[origin];
   await saveSites(sites);
+  await addGone([origin]);
   changed();
-  tellTabs(origin);
+  tellTabs('signedout', [origin]);
   const m = await loadMember();
   if (tellServer && m && s.sk) deviceFor(m).forget(getPublicKey(hexToBytes(s.sk)));
   else if (tellServer && pairing && s.sk) {
@@ -785,6 +823,13 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     nip07(origin, sender.tab?.id, String(msg.method), msg.params ?? {}, msg.gesture === true).then(result => reply({ result }), e => reply({ error: (e as Error).message ?? String(e) }));
     return true;
   }
+  if (msg?.type === 'site-status') {
+    if (isOurs(sender)) return false;
+    const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : '');
+    if (!/^https?:\/\//.test(origin)) { reply({}); return false; }
+    siteStatus(origin).then(reply, () => reply({}));
+    return true;
+  }
   if (!isOurs(sender)) return false;
   switch (msg?.type) {
     case 'card-info': { const a = asks.get(msg.id); reply(a ? { kind: a.kind, origin: a.origin, detail: a.detail } : null); return false; }
@@ -796,7 +841,9 @@ api.runtime.onMessage.addListener((msg: any, sender: chrome.runtime.MessageSende
     }
     case 'card-answer': void answer(msg.id, !!msg.yes); return false;
     case 'remove-site': void forgetSite(msg.origin, true); return false;
-    case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); const m = await loadMember(); if (m && !m.removed) await memberGrant(deviceFor(m), msg.origin); else if (await loadPending()) await pendingGrant(msg.origin); else if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed(); })(); return false;
+    case 'allow-site': void (async () => { await setNotNow((await notNow()).filter(o => o !== msg.origin)); const { pairing: p, sites } = await load(); const m = await loadMember(); if (m && !m.removed) await memberGrant(deviceFor(m), msg.origin); else if (await loadPending()) await pendingGrant(msg.origin); else if (p) await grantFor(p, sites, msg.origin).catch(() => {}); changed();
+      // only if it worked: a grant that failed (caught above) leaves the site not let in, and its page is told nothing
+      if ((await siteStatus(msg.origin)).connected) void tellTabs('connected', [msg.origin]); })(); return false;
     case 'sign-out': void signOut(); return false;
     case 'open-safety': void openSafety(msg.which === 'phone' ? 'phone' : 'paper'); return false;
   }
