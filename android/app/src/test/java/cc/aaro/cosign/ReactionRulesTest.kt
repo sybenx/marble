@@ -7,7 +7,7 @@ import org.junit.Test
 
 class ReactionRulesTest {
     private fun r(who: String, at: Long, c: String, target: String = "p", vararg extra: List<String>) = Event(who, at, 7, listOf(listOf("e", target)) + extra, c)
-    private val defaults = listOf("👍", "❤️", "😂", "😢", "👀", "🧐")
+    private val defaults = listOf("❤️", "👍", "😂", "😢", "😡", "🤔")
 
     @Test fun likeBothWays() {
         assertEquals("❤️", ReactionRules.shown(r("a", 1, "+"))!!.emoji)
@@ -33,7 +33,7 @@ class ReactionRulesTest {
         assertEquals(defaults, ReactionRules.tray(emptyList()).map { it.emoji })
         val recents = ReactionRules.recents(listOf(r("me", 1, "🔥", "a"), r("me", 5, "😂", "b"), r("me", 3, "🔥", "c"), r("me", 4, "+", "d"), r("someone", 9, "🎉")), "me")
         assertEquals(listOf("😂", "❤️", "🔥"), recents.map { it.emoji })
-        assertEquals(listOf("😂", "❤️", "🔥", "👍", "😢", "👀"), ReactionRules.tray(recents).map { it.emoji })
+        assertEquals(listOf("😂", "❤️", "🔥", "👍", "😢", "😡"), ReactionRules.tray(recents).map { it.emoji })
     }
 
     @Test fun tagsAsNip25() {

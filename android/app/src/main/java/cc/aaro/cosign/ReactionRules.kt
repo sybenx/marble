@@ -6,11 +6,11 @@ import cc.aaro.qrst.core.Event
  * Reactions as Marble draws and sends them (~/igloo/marble-reactions.md; content-rules §10): ❤️ goes out as "+" and
  * "+" (or nothing) shows as ❤️; "-" and anything that isn't one emoji or one :shortcode: (with its emoji tag) are
  * left out. On an opened post: each one with how many gave it, one per person (their newest). The tray: your recent
- * ones (from your own published reactions), then 👍 ❤️ 😂 😢 👀 🧐, then +.
+ * ones (from your own published reactions), then ❤️ 👍 😂 😢 😡 🤔, then +.
  */
 object ReactionRules {
     const val LIKE = "❤️"
-    val DEFAULTS = listOf("👍", LIKE, "😂", "😢", "👀", "🧐")
+    val DEFAULTS = listOf(LIKE, "👍", "😂", "😢", "😡", "🤔")
 
     /** One reaction as shown: an emoji, or a custom one (:name: and its picture). */
     data class Shown(val emoji: String, val url: String? = null)

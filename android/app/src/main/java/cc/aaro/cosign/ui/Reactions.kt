@@ -70,7 +70,7 @@ import androidx.compose.foundation.layout.height
 
 
 // Reactions (~/igloo/marble-reactions.md: Facebook's tray, Wisp's recents, Jumble's picker). The button: ☺+, or your
-// reaction. A tap opens the tray (seven: your recent ones, then 👍 ❤️ 😂 😢 👀 🧐, then +), or, once you've reacted,
+// reaction. A tap opens the tray (seven: your recent ones, then ❤️ 👍 😂 😢 😡 🤔, then +), or, once you've reacted,
 // takes your reaction back. Press and slide: the tray under your finger; let go on one to react (or change yours).
 // A long press: the tray. + opens the full picker. No counts here: an opened post has them (ReactionChips).
 
