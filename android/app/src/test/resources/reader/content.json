@@ -1,0 +1,153 @@
+{
+ "about": "Reader drawing posts with the shared content rules (content-rules.md, fixtures 1-36): people you follow post these, built at test time (fresh keys, now-relative times, the {…} references filled with real ones), and Reader must show them as everywhere else. Line text (the collapsed row) never shows a raw reference (nostr:, npub1…, nevent1…, naddr1…, blossom:). Opened, they're the shared renderer's: a quote card, an article card, @names, a Blossom picture, a viewer link opening here; a Nostr item's Open in… offers Marble, your Nostr app and njump.me. Posts with a quote or a Blossom picture are items (reader.md §3); a short one is a day's line.",
+ "people": {
+  "ana": "Ana Quote",
+  "ben": "Ben Builder",
+  "cy": "Cy Writer",
+  "dee": "Dee Linker"
+ },
+ "follow": [
+  "ana",
+  "cy",
+  "dee"
+ ],
+ "events": [
+  {
+   "ref": "quoted",
+   "by": "ben",
+   "kind": 1,
+   "ago": 7200,
+   "content": "The original post, quoted below."
+  },
+  {
+   "ref": "article",
+   "by": "cy",
+   "kind": 30023,
+   "ago": 5000,
+   "d": "field-notes",
+   "title": "Field notes on soil",
+   "summary": "What a year of compost taught me.",
+   "content": "# Field notes\n\nA year of compost."
+  },
+  {
+   "ref": "withNevent",
+   "by": "ana",
+   "kind": 1,
+   "ago": 600,
+   "content": "Look at this nostr:{nevent:quoted} so good"
+  },
+  {
+   "ref": "withNpub",
+   "by": "ana",
+   "kind": 1,
+   "ago": 700,
+   "content": "Thanks nostr:{npub:ben} for the help"
+  },
+  {
+   "ref": "withNaddr",
+   "by": "ana",
+   "kind": 1,
+   "ago": 800,
+   "content": "Read this: nostr:{naddr:article}"
+  },
+  {
+   "ref": "withBlossom",
+   "by": "dee",
+   "kind": 1,
+   "ago": 900,
+   "content": "Garden photo {blossom:png}"
+  },
+  {
+   "ref": "withNjump",
+   "by": "dee",
+   "kind": 1,
+   "ago": 1000,
+   "content": "See https://njump.me/{nevent:quoted}"
+  }
+ ],
+ "expect": {
+  "lines": [
+   {
+    "source": "Ana Quote",
+    "title": "Look at this so good"
+   },
+   {
+    "source": "Ana Quote",
+    "title": "1 post",
+    "has": [
+     "@Ben Builder"
+    ]
+   },
+   {
+    "source": "Ana Quote",
+    "title": "Read this:"
+   },
+   {
+    "source": "Cy Writer",
+    "title": "Field notes on soil"
+   },
+   {
+    "source": "Dee Linker",
+    "title": "Garden photo"
+   },
+   {
+    "source": "Dee Linker",
+    "title": "See a post"
+   }
+  ],
+  "noRaw": "nostr:|blossom:|\\b(npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,}",
+  "opened": [
+   {
+    "line": [
+     "Ana Quote",
+     "Look at this so good"
+    ],
+    "quote": "The original post, quoted below.",
+    "openIn": [
+     "Marble",
+     "Your Nostr app",
+     "njump.me"
+    ]
+   },
+   {
+    "line": [
+     "Ana Quote",
+     "1 post"
+    ],
+    "mention": "@Ben Builder"
+   },
+   {
+    "line": [
+     "Ana Quote",
+     "Read this:"
+    ],
+    "article": "Field notes on soil"
+   },
+   {
+    "line": [
+     "Cy Writer",
+     "Field notes on soil"
+    ],
+    "openIn": [
+     "Marble",
+     "Your Nostr app",
+     "njump.me"
+    ]
+   },
+   {
+    "line": [
+     "Dee Linker",
+     "Garden photo"
+    ],
+    "blossomImage": true
+   },
+   {
+    "line": [
+     "Dee Linker",
+     "See a post"
+    ],
+    "linkHref": "^/nevent1"
+   }
+  ]
+ }
+}

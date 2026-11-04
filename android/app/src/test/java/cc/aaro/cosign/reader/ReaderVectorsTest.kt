@@ -4,6 +4,7 @@ import cc.aaro.qrst.core.Event
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** marble-content-fixtures/fixtures/reader/vectors.json (reader.md), copied to resources/reader. */
@@ -53,5 +54,15 @@ class ReaderVectorsTest {
         val i = c.getJSONObject("item")
         fun s(k: String) = i.optString(k).takeIf { it.isNotEmpty() }
         assertEquals(c.getString("name"), c.getString("discussion"), ReaderRules.discussion(s("link"), s("comments"), s("replies"), s("guid"), s("description")))
+    }
+
+    @Test fun addressKey() = each("addressKey") { c -> assertEquals(c.getString("key"), ReaderRules.addressKey(c.getInt("kind"), c.getString("pubkey"), c.getString("d"))) }
+
+    @Test fun fitSeen() = each("fitSeen") { c ->
+        val out = ReaderRules.fitSeen(JSONObject(c.getJSONObject("in").toString()), c.getLong("now")); val want = c.getJSONObject("out")
+        for (name in listOf("upto", "unread", "days")) want.optJSONArray(name)?.let { w ->
+            assertEquals("${c.getString("name")} $name", (0 until w.length()).map { w.getString(it) }.toSet(), out.optJSONObject(name)?.keys()?.asSequence()?.toSet() ?: emptySet<String>())
+        }
+        if (want.has("maxBytes")) assertTrue(c.getString("name"), out.toString().toByteArray().size <= want.getInt("maxBytes"))
     }
 }

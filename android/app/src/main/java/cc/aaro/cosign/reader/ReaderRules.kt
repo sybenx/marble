@@ -13,13 +13,18 @@ object ReaderRules {
     enum class Kind { ITEM, SHORT, REPLY }
 
     private val URL = Regex("""(?i)\bhttps?://[^\s<>"]+""")
+    /** A Blossom picture or video (BUD-10). */
+    private val BLOSSOM_MEDIA = Regex("""(?i)blossom:[0-9a-f]{64}\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)\b""")
+    /** A quoted post or article (with or without nostr:). */
+    private val QUOTES = Regex("""(?i)(?<![\p{L}\p{N}_/])(?:nostr:)?(nevent|note|naddr)1[02-9ac-hj-np-z]+""")
 
     /** A person's post in Reader: an article or a post with a link or media is an item; any other post is short; replies don't show. */
     fun kindOf(e: Event): Kind {
         if (e.tags.any { it.size > 1 && it[0] == "e" && it.getOrNull(3) != "mention" }) return Kind.REPLY
         if (e.kind == 30023) return Kind.ITEM
         if (e.tags.any { it.isNotEmpty() && it[0] == "imeta" }) return Kind.ITEM
-        if (URL.containsMatchIn(e.content)) return Kind.ITEM
+        if (URL.containsMatchIn(e.content) || BLOSSOM_MEDIA.containsMatchIn(e.content) || QUOTES.containsMatchIn(e.content)) return Kind.ITEM
+        if (e.tags.any { it.size > 1 && it[0] == "q" }) return Kind.ITEM
         return Kind.SHORT
     }
 
@@ -32,6 +37,26 @@ object ReaderRules {
         return "r" + java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
     }
 
+    /** An article's (any addressable event's) read-state key: a and 16 hex of SHA-256 of kind:pubkey:d, the same after an edit. */
+    fun addressKey(kind: Int, pubkey: String, d: String): String =
+        "a" + java.security.MessageDigest.getInstance("SHA-256").digest("$kind:$pubkey:$d".toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
+
+    /** A post's key, or an addressable event's. */
+    fun keyOf(e: Event): String = if (e.kind in 30000..39999) addressKey(e.kind, e.pubkey, e.firstTag("d") ?: "") else postKey(e.id)
+
+    /** Fits NIP-44 (reader.md §2): upto and unread entries older than 30 days go; then while over [max] bytes, the oldest day of keys. */
+    fun fitSeen(o: JSONObject, now: Long, max: Int = MAX_SEEN): JSONObject {
+        val cutoff = now - UNREAD_FOR
+        for (name in listOf("upto", "unread")) o.optJSONObject(name)?.let { m -> m.keys().asSequence().toList().forEach { k -> if (Math.abs(m.getLong(k)) <= cutoff) m.remove(k) } }
+        val days = o.optJSONObject("days") ?: return o
+        while (o.toString().toByteArray().size > max && days.length() > 0) days.remove(days.keys().asSequence().minBy { it.toLongOrNull() ?: Long.MAX_VALUE })
+        return o
+    }
+    const val MAX_SEEN = 48_000
+
+    /** Open in… for a post or an article (reader.md §5): in this order. */
+    val OPEN_IN = listOf("Marble", "Your Nostr app", "njump.me")
+
     /** A Nostr post's read-state key (as the seen list has always used): its id's first 16 hex. */
     fun postKey(id: String) = id.take(16)
 
@@ -40,7 +65,8 @@ object ReaderRules {
 
     /** Read: seen, or older than its source's read-up-to; unless kept unread. */
     fun isRead(key: String, source: String, at: Long, s: Seen): Boolean {
-        if (key in s.unread) return false
+        // Kept unread: a positive time; read again after it, the time made negative (so a merge can't bring it back).
+        if ((s.unread[key] ?: 0) > 0) return false
         return key in s.days || (s.upto[source]?.let { at <= it } ?: false)
     }
 
@@ -54,7 +80,10 @@ object ReaderRules {
             days.put(k, (have + d.optString(k).split(' ').filter { it.isNotEmpty() }).distinct().joinToString(" "))
         } }
         fun join(name: String) = JSONObject().also { r -> for (o in listOf(a, b)) o.optJSONObject(name)?.let { m -> m.keys().forEach { k -> r.put(k, maxOf(r.optLong(k, Long.MIN_VALUE), m.getLong(k))) } } }
-        return out.put("v", 1).put("at", maxOf(a.optLong("at"), b.optLong("at"))).put("days", days).put("upto", join("upto")).put("unread", join("unread"))
+        // Kept unread: the later of the two by size (a negative time is "read again then").
+        val unread = JSONObject().also { r -> for (o in listOf(a, b)) o.optJSONObject("unread")?.let { m -> m.keys().forEach { k ->
+            val t = m.getLong(k); if (!r.has(k) || Math.abs(t) > Math.abs(r.getLong(k))) r.put(k, t) } } }
+        return out.put("v", 1).put("at", maxOf(a.optLong("at"), b.optLong("at"))).put("days", days).put("upto", join("upto")).put("unread", unread)
     }
 
     /** Two copies of the Reader list (sources, folders, mutes): per entry the newest `at` wins; the toggle too; other fields kept. */
