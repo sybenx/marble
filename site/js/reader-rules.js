@@ -99,14 +99,16 @@ export function discussionOf({ link = "", comments = "", replies = "", guid = ""
 }
 
 /**
- * The seen list kept small (NIP-44 holds at most 65,535 bytes): read-up-to times and Keep unread entries older than the
- * window (30 days) go, nothing that old shows; then while it's over maxBytes: the oldest day of keys (the newest day
- * always stays), then the oldest read-up-to times, then the oldest cleared marks (negative); Keep unread marks stay.
+ * The seen list kept small (NIP-44 holds at most 65,535 bytes): read-up-to times and Keep unread marks older than the
+ * window (30 days) go, nothing that old shows; cleared marks (negative) after 7 days (they only need to outlive a mark
+ * still on its way); then while it's over maxBytes: the oldest day of keys (the newest day always stays), then the
+ * oldest read-up-to times, then the oldest cleared marks; Keep unread marks stay.
  */
+export const CLEARED_FOR = 7 * 86400;
 export function fitSeen(s, now, { window = 30 * 86400, maxBytes = 48000 } = {}) {
   const old = now - window;
   const out = { ...s, days: { ...(s.days || {}) }, upto: Object.fromEntries(Object.entries(s.upto || {}).filter(([, x]) => x > old)),
-    unread: Object.fromEntries(Object.entries(s.unread || {}).filter(([, x]) => Math.abs(x) > old)) };
+    unread: Object.fromEntries(Object.entries(s.unread || {}).filter(([, x]) => x > 0 ? x > old : -x > now - CLEARED_FOR)) };
   const size = () => new TextEncoder().encode(JSON.stringify(out)).length;
   const days = Object.keys(out.days).sort((a, b) => a - b);
   while (size() > maxBytes && days.length > 1) delete out.days[days.shift()];
@@ -122,9 +124,11 @@ export function fitSeen(s, now, { window = 30 * 86400, maxBytes = 48000 } = {}) 
  * device knows them ({at, read, aged}): the newest aged-out read item's time, but never to or past an unread item
  * (at most the oldest unread one's time − 1). 0: no change.
  */
-export function readUpTo(items) {
+export function readUpTo(items, marks = []) {
   const aged = items.filter((i) => i.read && i.aged).map((i) => i.at), unread = items.filter((i) => !i.read).map((i) => i.at);
   if (!aged.length) return 0;
-  const upto = Math.min(Math.max(...aged), unread.length ? Math.min(...unread) - 1 : Infinity);
+  // never to an unread item (a day's posts: its oldest unread one), nor to a Keep unread mark still standing (marks:
+  // the source's positive marks' times), even one whose item didn't come in this time
+  const upto = Math.min(Math.max(...aged), unread.length ? Math.min(...unread) - 1 : Infinity, marks.length ? Math.min(...marks) - 1 : Infinity);
   return upto > 0 ? upto : 0;
 }

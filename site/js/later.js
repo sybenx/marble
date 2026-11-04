@@ -11,7 +11,8 @@ import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
 import * as packs from "./notes-v3.js";
-import { decide, completeRead, retryAfter } from "./sync-guard.js";
+import { decide, completeRead, fullRead, written, retryAfter } from "./sync-guard.js";
+import { accountRelays } from "./account-relays.js";
 
 export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
@@ -164,22 +165,23 @@ const failed = (err) => {
   else failing = true;
   listeners.forEach((fn) => fn());
 };
-let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false), failures = 0, stopped = false, found = 0;
+let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false), failures = 0, stopped = false, found = 0, version = 0;
 function changed() {
   dirty = true;
+  version++; // (a change made while a send is under way is sent next, never marked sent by it)
   write(DIRTY(who), true);
   if (!syncs()) return;
   failures = 0;
+  stopped = false; // (your change: worth one more try at a copy that wouldn't decrypt)
   clearTimeout(sendTimer);
   sendTimer = setTimeout(send, 10000);
 }
 
 // your relays: your own list (waited for: a send always goes there), else a few fast ones
+// your write relays as your list says (account-relays.js: every one, down or not), and where to read; null: not known yet
 async function where() {
-  const o = await outbox(current()).catch(() => ({ write: [], read: [] }));
-  // (testing on localhost: the local relay is where writes go, so it's the one that has to answer)
-  const write = testRelay() ? relays([testRelay()]) : relays(o.write.length ? o.write : FAST.slice(0, 3));
-  return { write, both: relays(write, o.read, FAST.slice(0, 2)).slice(0, 10) };
+  const a = await accountRelays(current()).catch(() => null);
+  return a && { write: a.write, both: relays(a.write, a.read, FAST.slice(0, 2)).slice(0, 10) };
 }
 
 /**
@@ -189,13 +191,15 @@ async function where() {
  */
 let pulling = null;
 export function pull({ force = false } = {}) {
-  if (!syncs() || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(false);
+  // (a copy that won't decrypt isn't asked about again, not even on coming back to the tab, until you change something)
+  if (!syncs() || stopped || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(stopped ? null : false);
   // (one read at a time: two asks at once would be two decrypt prompts)
   return pulling ||= pullNow().finally(() => { pulling = null; });
 }
 async function pullNow() {
   lastPull = Date.now();
   const me = current(), w = await where();
+  if (!w) { failing = true; listeners.forEach((fn) => fn()); return null; } // (your relay list isn't known yet)
   const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 6000 });
   const got = answer.filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return null; // (signed out or in as someone else meanwhile)
@@ -209,7 +213,7 @@ async function pullNow() {
     stopped = false;
     if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
   }
-  const g = decide({ complete: completeRead(w.write, answer.answeredBy), found, seenAt: read(COPY_AT(me), 0), misses: read(MISSED(me), 0) });
+  const g = decide({ complete: completeRead(w.write, answer.answeredBy), full: fullRead(w.write, answer.answeredBy), found, seenAt: read(COPY_AT(me), 0), misses: read(MISSED(me), 0) });
   write(MISSED(me), g.misses);
   if (g.do === "rebase") write(COPY_AT(me), found); // (your relays have what they have: from here on, that's the copy)
   const ahead = theirs ? merge(theirs) : false;
@@ -223,9 +227,9 @@ async function pullNow() {
 
 // Android's packs, read (never written): one NIP-44 decrypt per pack not taken yet
 function readPacks(me) {
-  where().then(({ both }) => packs.readPacks(me, {
+  where().then((w) => w && packs.readPacks(me, {
     req: (urls, filter) => req(urls, filter, { timeout: 6000, settle: 1200 }),
-    relays: both,
+    relays: w.both,
     decrypt: (text) => nip44Self(text, false),
     fetchBlob,
   })).catch(() => {});
@@ -254,12 +258,22 @@ export async function send() {
       if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, retryAfter(++failures) * 1000); }
       return;
     }
+    const v = version, w = await where();
+    if (!w) throw new Error("relays not known");
     const content = await nip44Self(JSON.stringify(doc), true);
     const ev = await sign({ kind: 30078, created_at: Math.max(Math.floor(Date.now() / 1000), found + 1), tags: [["d", TAG]], content });
-    const sent = await publish((await where()).write, ev);
-    if (sent.ok.length && me === who) { write(COPY_AT(me), ev.created_at); dirty = false; failing = false; write(DIRTY(me), false); write(SYNCED(me), true); listeners.forEach((fn) => fn()); }
-    else if (!sent.ok.length) failed(new Error("not sent"));
-  } catch (err) { failed(err); } finally { sending = false; }
+    const sent = await publish(w.write, ev);
+    // done only when most of your write relays took it (reader.md §6); a change since stays to be sent
+    if (written(w.write, new Set(sent.ok)) && me === who) {
+      write(COPY_AT(me), ev.created_at); failures = 0; failing = false; write(SYNCED(me), true);
+      if (version === v) { dirty = false; write(DIRTY(me), false); } else { clearTimeout(sendTimer); sendTimer = setTimeout(send, 10000); }
+      listeners.forEach((fn) => fn());
+    } else throw new Error("not sent");
+  } catch (err) {
+    failed(err);
+    // tried again, waiting longer each time (a minute, doubling, up to ten)
+    if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, retryAfter(++failures) * 1000); }
+  } finally { sending = false; }
 }
 
 // Another account (or nobody): its own copy. The one signed out of leaves the page; if all of it is on the account
@@ -295,7 +309,7 @@ export function dropStrays() {
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && dirty && syncs()) { clearTimeout(sendTimer); send(); }
+    if (document.visibilityState === "hidden" && dirty && syncs() && !stopped) { clearTimeout(sendTimer); send(); }
     if (document.visibilityState === "visible") pull();
   });
   onMe((pk) => { switchTo(pk); pull(); });

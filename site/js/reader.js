@@ -12,8 +12,9 @@ import { decode, naddr, nevent } from "./ids.js";
 import { current, method, myFollows, nip44Self, sign, myWriteRelays } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo } from "./reader-rules.js";
-import { decide, completeRead, retryAfter } from "./sync-guard.js";
+import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo, CLEARED_FOR } from "./reader-rules.js";
+import { decide, completeRead, fullRead, written, retryAfter } from "./sync-guard.js";
+import { accountRelays } from "./account-relays.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -41,7 +42,7 @@ function saveSeen() {
   const t = now(), cut = Math.floor((t - UNREAD_FOR) / DAY);
   for (const d of Object.keys(seen.days)) if (+d < cut) delete seen.days[d];
   seen = { ...seen, at: t, upto: Object.fromEntries(Object.entries(seen.upto).filter(([, x]) => x > t - UNREAD_FOR)),
-    unread: Object.fromEntries(Object.entries(seen.unread).filter(([, x]) => Math.abs(x) > t - UNREAD_FOR)) };
+    unread: Object.fromEntries(Object.entries(seen.unread).filter(([, x]) => x > 0 ? x > t - UNREAD_FOR : -x > t - CLEARED_FOR)) };
   keys = seenKeys(seen);
   write(SEEN(who), seen);
   changed("seen");
@@ -52,8 +53,8 @@ function saveSeen() {
 // from another device loses (reader.md §2)
 function markRead(key, opened = false) {
   const u = seen.unread[key];
-  if (keys.has(key) && !(u > 0) && !(opened && u == null)) return;
-  if (u > 0 || opened) seen.unread[key] = -now();
+  if (keys.has(key) && !(u > 0) && !opened) return;
+  if (u > 0 || opened) seen.unread[key] = -now(); // (an open always writes a fresh clearing)
   const d = String(Math.floor(now() / DAY));
   seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
   saveSeen();
@@ -92,11 +93,10 @@ const onRead = new Set();
 const later = (ms) => { clearTimeout(timer); timer = setTimeout(() => { timer = null; pushAccount(); }, ms); };
 
 // your relays: your own list (waited for: a write always goes there), else a few fast ones
+// your write relays as your list says (account-relays.js: every one, down or not), and where to read; null: not known yet
 async function where() {
-  const o = await outbox(current()).catch(() => ({ write: [], read: [] }));
-  // (testing on localhost: the local relay is where writes go, so it's the one that has to answer)
-  const write = testRelay() ? relays([testRelay()]) : relays(o.write.length ? o.write : FAST.slice(0, 3));
-  return { write, both: relays(write, o.read, FAST.slice(0, 2)).slice(0, 10) };
+  const a = await accountRelays(current()).catch(() => null);
+  return a && { write: a.write, both: relays(a.write, a.read, FAST.slice(0, 2)).slice(0, 10) };
 }
 // the newest account copy this browser has seen, by d, and how many complete reads in a row have missed it
 const STATE = (pk) => `marble.reader.copies.${pk}`, MISSED = (pk) => `marble.reader.missed.${pk}`;
@@ -105,6 +105,7 @@ const sawCopy = (d, at) => { const c = copiesSeen(); if ((c[d] || 0) < at) write
 /** Your newest copy of each, decrypted ({event, body}; body null: it didn't decrypt), and whether every write relay answered. */
 async function fetchMine(ds) {
   const me = current(), w = await where();
+  if (!w) return { copies: {}, answered: 0, complete: false, full: false, write: [] };
   const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 6000 });
   const got = answer.filter((e) => e.pubkey === me), out = {};
   for (const d of ds) {
@@ -115,7 +116,7 @@ async function fetchMine(ds) {
     out[d] = { event: e, body };
     if (body) sawCopy(d, e.created_at);
   }
-  return { copies: out, answered: answer.answered, complete: completeRead(w.write, answer.answeredBy), write: w.write };
+  return { copies: out, answered: answer.answered, complete: completeRead(w.write, answer.answeredBy), full: fullRead(w.write, answer.answeredBy), write: w.write };
 }
 
 /** The account's copies merged in here (and your old news feeds moved over once). */
@@ -168,7 +169,7 @@ export async function pushAccount() {
       const there = r.copies[D[k]], v = version[k];
       if (there && !there.body) { broken.add(k); dirty.delete(k); continue; } // (never over a copy that didn't decrypt)
       const missed = read(MISSED(me), {});
-      const g = decide({ complete: r.complete, found: there?.event.created_at || 0, seenAt: copiesSeen()[D[k]] || 0, misses: missed[k] || 0, expires: EXPIRES[k], now: now() });
+      const g = decide({ complete: r.complete, full: r.full, found: there?.event.created_at || 0, seenAt: copiesSeen()[D[k]] || 0, misses: missed[k] || 0, expires: EXPIRES[k], now: now() });
       write(MISSED(me), { ...missed, [k]: g.misses });
       if (g.do === "wait") { retry = true; continue; }
       if (g.do === "rebase") write(STATE(me), { ...copiesSeen(), [D[k]]: there?.event.created_at || 0 }); // (your relays have what they have)
@@ -194,7 +195,8 @@ export async function pushAccount() {
       const tags = [["d", D[k]], ...(EXPIRES[k] ? [["expiration", String(t + EXPIRES[k])]] : [])];
       const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(json, true) });
       const sent = await publish(r.write, ev);
-      if (sent.ok.length) { sawCopy(D[k], ev.created_at); if (version[k] === v) dirty.delete(k); } else retry = true;
+      // done only when most of your write relays took it; until then pending, sent again, and not "seen"
+      if (written(r.write, new Set(sent.ok))) { sawCopy(D[k], ev.created_at); if (version[k] === v) dirty.delete(k); } else retry = true;
     }
   } catch (err) { console.warn("Reader: not synced", err); retry = true; }
   finally {
@@ -395,7 +397,10 @@ function shown(items) {
   const bySource = new Map();
   for (const i of all) bySource.set(i.source, [...(bySource.get(i.source) || []), i]);
   for (const [src, list] of bySource) {
-    const upto = readUpTo(list.map((i) => ({ at: i.at, read: i.read, aged: t - i.at >= ageOf(i) })));
+    // a day's posts count by their oldest unread post; the source's standing Keep unread marks cap it too
+    const at = (i) => i.kind === "digest" && !i.read ? Math.min(...i.posts.filter((p) => !isRead({ key: eventKey(p), source: i.source, at: p.created_at, folder: i.folder }, seen, keys)).map((p) => p.created_at), i.at) : i.at;
+    const marks = list.flatMap((i) => [i.key, ...(i.keys || [])]).map((k) => seen.unread[k]).filter((x) => x > 0);
+    const upto = readUpTo(list.map((i) => ({ at: at(i), read: i.read, aged: t - i.at >= ageOf(i) })), marks);
     if (upto > (seen.upto[src] || 0)) { seen.upto[src] = upto; raised = true; }
   }
   if (raised) saveSeen();
@@ -429,7 +434,8 @@ const pathOf = (e) => e.kind >= 30000 && e.kind < 40000 ? `/${naddr({ kind: e.ki
 // a Nostr item's own address (nevent, or naddr for an article), for Open in… and sharing
 const entityOf = (i) => {
   const e = i.event || i.posts?.[0];
-  if (!e) return /^\/((?:note|nevent|naddr)1\w+)$/.exec(i.link || "")?.[1] || "";
+  // a feed's Nostr link: a path here already, or a viewer's (njump.me/nevent1…) or Marble's
+  if (!e) return /^\/((?:note|nevent|naddr)1\w+)$/.exec(hereOf(i.link) || "")?.[1] || "";
   return e.kind >= 30000 && e.kind < 40000 ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === "d")?.[1] || "", relays: foundOn(e.id).slice(0, 2) })
     : nevent(e.id, { relays: foundOn(e.id).slice(0, 2), author: e.pubkey });
 };
@@ -611,8 +617,10 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
   };
   const allRead = () => { const list = items.get(folder) || [...byKey.values()]; markAllRead([...new Set(list.map((i) => i.source))], list, folder); drawRiver(); };
 
+  const again = new Set(); // folders asked for again while their first fill was running (your account's list came in)
   async function fill(f, { quiet = false } = {}) {
-    if (busy.has(f) || gone()) return;
+    if (busy.has(f)) { again.add(f); return; }
+    if (gone()) return;
     busy.add(f);
     if (f === folder && !(quiet && byKey.size)) drawRiver();
     try {
@@ -630,6 +638,7 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
     if (gone()) return;
     drawFolders();
     if (f === folder) refresh();
+    if (again.delete(f)) fill(f, { quiet: true });
   }
   // new items for the folder on screen: drawn at once only when it's empty; otherwise nothing moves under you, and a
   // quiet "Show new items" brings them in
@@ -709,7 +718,9 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
     ];
     openMenu(anchor, rest);
     // the app your follows recommend, at the top once it's known (the list doesn't wait for it)
-    const shownNow = menu, rec = e && openTarget ? await openTarget(e, ent).catch(() => null) : null;
+    // (a story pointing at a Nostr item: its kind and author from its address, for the app your follows recommend)
+    const d = !e && decode(ent), q = e || (d && { kind: d.kind ?? 1, pubkey: d.pubkey || d.author || "", tags: [] });
+    const shownNow = menu, rec = q && openTarget ? await openTarget(q, ent).catch(() => null) : null;
     if (rec && /^https:/.test(rec.url) && menu === shownNow && menu) openMenu(anchor, [[rec.label.replace(/ ›$/, ""), () => open(rec.url, "_blank", "noopener")], ...rest]);
   };
 
@@ -757,7 +768,9 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
   }
 
   // (the document's listeners are added once, for whichever Reader is on screen: this one, also after Back)
-  active = { root, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); }, key: (ev) => {
+  // brought back by Back (app.js route): this one is on screen again: its keys, and what came in while away
+  root.addEventListener("marble:restored", () => { active = me_; drawFolders(); if (!root.querySelector(".r-row")) drawRiver(); else refresh(); });
+  const me_ = active = { root, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); }, key: (ev) => {
     if (ev.key === "Escape") return closeMenu();
     if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest?.("input, textarea, [contenteditable]") || document.querySelector("dialog[open]")) return;
     const all = rowsEl(), el = all[cur];

@@ -77,6 +77,7 @@ function route(state, back = false) {
     input.value = prior.q || "";
     requestAnimationFrame(() => scrollTo(0, prior.y));
     paintAll();
+    pageEl.dispatchEvent(new Event("marble:restored")); // (a page that goes on, Reader: it is back)
     return;
   }
   scrollTo(0, 0);
