@@ -44,13 +44,14 @@ const seenKeys = (seen) => {
 /**
  * Whether an item ({key, source, at, folder?}) is read, by the seen list: its key read, or it's no newer than its
  * source's read-up-to time or its folder's (`folder:<id>`, Mark all as read on a folder of people). Kept unread
- * (unread[key] > 0) wins, unless the key was read on a later day than the mark (opened on another device after it).
+ * (unread[key] > 0) wins, unless the mark is no newer than that read-up-to time (marked all read after it). Opening an
+ * item always clears a mark (unread[key] = -now), so a mark that arrives later from another device loses too.
  */
 export function isRead(item, seen, keys = seenKeys(seen)) {
   const u = seen?.unread?.[item.key];
-  const day = keys.get(item.key);
-  if (u > 0 && !(day > Math.floor(u / 86400))) return false;
-  return day !== undefined || item.at <= (seen?.upto?.[item.source] ?? -1) || (!!item.folder && item.at <= (seen?.upto?.[`folder:${item.folder}`] ?? -1));
+  const upto = Math.max(seen?.upto?.[item.source] ?? -1, item.folder ? seen?.upto?.[`folder:${item.folder}`] ?? -1 : -1);
+  if (u > 0 && u > upto) return false;
+  return keys.has(item.key) || item.at <= upto;
 }
 export { seenKeys };
 
@@ -98,8 +99,9 @@ export function discussionOf({ link = "", comments = "", replies = "", guid = ""
 }
 
 /**
- * The seen list kept small (NIP-44 holds at most 65,535 bytes): read-up-to times and Keep unread marks older than the
- * window (30 days) go, nothing that old shows; then while it's over maxBytes, the oldest day of keys goes.
+ * The seen list kept small (NIP-44 holds at most 65,535 bytes): read-up-to times and Keep unread entries older than the
+ * window (30 days) go, nothing that old shows; then while it's over maxBytes: the oldest day of keys (the newest day
+ * always stays), then the oldest read-up-to times, then the oldest cleared marks (negative); Keep unread marks stay.
  */
 export function fitSeen(s, now, { window = 30 * 86400, maxBytes = 48000 } = {}) {
   const old = now - window;
@@ -108,5 +110,21 @@ export function fitSeen(s, now, { window = 30 * 86400, maxBytes = 48000 } = {}) 
   const size = () => new TextEncoder().encode(JSON.stringify(out)).length;
   const days = Object.keys(out.days).sort((a, b) => a - b);
   while (size() > maxBytes && days.length > 1) delete out.days[days.shift()];
+  const upto = Object.entries(out.upto).sort((a, b) => a[1] - b[1]);
+  while (size() > maxBytes && upto.length) delete out.upto[upto.shift()[0]];
+  const cleared = Object.entries(out.unread).filter(([, x]) => x < 0).sort((a, b) => b[1] - a[1]); // (-older is larger)
+  while (size() > maxBytes && cleared.length) delete out.unread[cleared.shift()[0]];
   return out;
+}
+
+/**
+ * How far a source can be marked read up to (the seen list's upto) as its read items age out, from its items as this
+ * device knows them ({at, read, aged}): the newest aged-out read item's time, but never to or past an unread item
+ * (at most the oldest unread one's time − 1). 0: no change.
+ */
+export function readUpTo(items) {
+  const aged = items.filter((i) => i.read && i.aged).map((i) => i.at), unread = items.filter((i) => !i.read).map((i) => i.at);
+  if (!aged.length) return 0;
+  const upto = Math.min(Math.max(...aged), unread.length ? Math.min(...unread) - 1 : Infinity);
+  return upto > 0 ? upto : 0;
 }

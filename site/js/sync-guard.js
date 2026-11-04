@@ -1,6 +1,7 @@
 // Whether a synced copy on your account (Notes' marble/later, Reader's marble/reader and discover/seen) may be written
 // now, from what a read just found. No page, no network: marble-content-fixtures/fixtures/sync/guard.json runs it.
-//  - A read that didn't hear back from every one of your write relays tells nothing: wait.
+//  - A read that didn't hear back from most of your write relays (more than half sent EOSE; read relays don't count, a
+//    copy is only ever written to write relays) tells nothing: wait.
 //  - This device has seen a newer copy than any relay gave: the relay holding it may be down, so wait, but not forever:
 //    after MISSES complete reads in a row without it (your relays changed, or one dropped it), or once it's past its
 //    own expiration (the seen list's two weeks), what your relays have now is the truth: start again from that.
@@ -21,5 +22,8 @@ export function decide({ complete, found = 0, seenAt = 0, misses = 0, expires = 
   return { do: "wait", misses: misses + 1 };
 }
 
-/** Whether a read heard back from every write relay (answeredBy: the relays that ended their answer, as pool.req gives). */
-export const completeRead = (write, answeredBy) => write.length > 0 && write.every((u) => answeredBy.has(u));
+/** Whether a read reached the account: more than half of the write relays ended their answer (answeredBy, as pool.req gives). */
+export const completeRead = (write, answeredBy) => write.length > 0 && write.filter((u) => answeredBy.has(u)).length * 2 > write.length;
+
+/** The wait before trying a write again after the n-th failure in a row (1, 2, …): a minute, doubling, at most ten. */
+export const retryAfter = (n) => Math.min(60 * 2 ** Math.max(0, n - 1), 600);

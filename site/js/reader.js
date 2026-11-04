@@ -12,8 +12,8 @@ import { decode, naddr, nevent } from "./ids.js";
 import { current, method, myFollows, nip44Self, sign, myWriteRelays } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen } from "./reader-rules.js";
-import { decide, completeRead } from "./sync-guard.js";
+import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo } from "./reader-rules.js";
+import { decide, completeRead, retryAfter } from "./sync-guard.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -48,10 +48,12 @@ function saveSeen() {
 }
 // Keep unread: unread[key] = when (positive); read again after that: unread[key] = -when (so a merge can't bring the
 // mark back: the newer of the two times wins, reader-rules.js mergeSeen)
-function markRead(key) {
+// opened (not only scrolled past): the mark is cleared even if this device never had it, so one that arrives later
+// from another device loses (reader.md §2)
+function markRead(key, opened = false) {
   const u = seen.unread[key];
-  if (keys.has(key) && !(u > 0)) return;
-  if (u > 0) seen.unread[key] = -now();
+  if (keys.has(key) && !(u > 0) && !(opened && u == null)) return;
+  if (u > 0 || opened) seen.unread[key] = -now();
   const d = String(Math.floor(now() / DAY));
   seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
   saveSeen();
@@ -84,7 +86,7 @@ function ensureFolder(id, label) {
 const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
 const EXPIRES = { list: 0, seen: 14 * DAY };
 const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
-let broken = new Set(), timer = null, wait = 60000;
+let broken = new Set(), timer = null, failures = 0;
 const dirty = new Set(), version = { list: 0, seen: 0 }; // (a change made while a copy is being sent is sent next)
 const onRead = new Set();
 const later = (ms) => { clearTimeout(timer); timer = setTimeout(() => { timer = null; pushAccount(); }, ms); };
@@ -140,7 +142,7 @@ function changed(what) {
   if (!syncs()) return;
   dirty.add(what);
   version[what]++;
-  wait = 60000;
+  failures = 0;
   later(20000);
 }
 // the seen list as the account keeps it: the last week, the newest 2,000 keys, under 48 KB
@@ -198,7 +200,8 @@ export async function pushAccount() {
   finally {
     pushing = false;
     // tried again, waiting longer each time (a minute, then two, up to ten), until it's sent or nothing's left
-    if (dirty.size) { later(retry ? wait : 20000); if (retry) wait = Math.min(wait * 2, 600000); }
+    if (dirty.size) later(retry ? retryAfter(++failures) * 1000 : 20000);
+    else failures = 0;
   }
 }
 if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pushAccount(); });
@@ -392,8 +395,7 @@ function shown(items) {
   const bySource = new Map();
   for (const i of all) bySource.set(i.source, [...(bySource.get(i.source) || []), i]);
   for (const [src, list] of bySource) {
-    let upto = 0;
-    for (const i of list.sort((a, b) => a.at - b.at)) { if (!i.read) break; if (t - i.at >= ageOf(i)) upto = i.at; }
+    const upto = readUpTo(list.map((i) => ({ at: i.at, read: i.read, aged: t - i.at >= ageOf(i) })));
     if (upto > (seen.upto[src] || 0)) { seen.upto[src] = upto; raised = true; }
   }
   if (raised) saveSeen();
@@ -582,7 +584,7 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
         else {
           clearTimeout(timers.get(key));
           if (!en.target.isConnected || !en.rootBounds) continue; // (the page left, not scrolled past)
-          if (looked.has(key) && en.boundingClientRect.bottom <= (en.rootBounds?.top ?? 0) + 1) { readItem(byKey.get(key)); en.target.classList.add("read"); io.unobserve(en.target); }
+          if (looked.has(key) && en.boundingClientRect.bottom <= (en.rootBounds?.top ?? 0) + 1) { readItem(byKey.get(key), false); en.target.classList.add("read"); io.unobserve(en.target); }
         }
       }
     }, { threshold: 0.2 });
@@ -590,7 +592,7 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
   }
   // (left for a post and brought back by Back, this page goes on as it was: only a page no longer shown stops)
   const gone = () => signal.aborted && !root.isConnected;
-  const readItem = (i) => { if (!i) return; for (const k of i.keys || [i.key]) markRead(k); if (i.kind === "digest") markRead(i.key); drawFolders(); };
+  const readItem = (i, opened = true) => { if (!i) return; for (const k of i.keys || [i.key]) markRead(k, opened); if (i.kind === "digest") markRead(i.key, opened); drawFolders(); };
   const unread = (el) => { const i = byKey.get(el.dataset.key); if (!i) return; for (const k of [i.key, ...(i.keys || [])]) keepUnread(k); el.classList.remove("read"); drawFolders(); };
   const star = (el) => {
     const i = byKey.get(el.dataset.key), b = el.querySelector("[data-star]");

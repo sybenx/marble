@@ -11,7 +11,7 @@ import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
 import * as packs from "./notes-v3.js";
-import { decide, completeRead } from "./sync-guard.js";
+import { decide, completeRead, retryAfter } from "./sync-guard.js";
 
 export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
@@ -146,12 +146,12 @@ const failed = (err) => {
   else failing = true;
   listeners.forEach((fn) => fn());
 };
-let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false), wait = 60000, stopped = false, found = 0;
+let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false), failures = 0, stopped = false, found = 0;
 function changed() {
   dirty = true;
   write(DIRTY(who), true);
   if (!syncs()) return;
-  wait = 60000;
+  failures = 0;
   clearTimeout(sendTimer);
   sendTimer = setTimeout(send, 10000);
 }
@@ -233,7 +233,7 @@ export async function send() {
     // read first: if it says not now, nothing is sent (it would go over what another device has); tried again,
     // waiting longer each time (a minute, two, up to ten), but not when the copy won't decrypt (next visit)
     if ((await pull({ force: true }).catch(() => null)) === null) {
-      if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, wait); wait = Math.min(wait * 2, 600000); }
+      if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, retryAfter(++failures) * 1000); }
       return;
     }
     const content = await nip44Self(JSON.stringify(doc), true);
