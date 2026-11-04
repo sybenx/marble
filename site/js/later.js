@@ -67,7 +67,9 @@ export function items() {
 export const open = () => items().filter((i) => !i.done);
 export const doneItems = () => items().filter((i) => i.done);
 /** These words, typed and kept, not ticked: what the filled bookmark shows. */
-export const saved = (text) => items().find((i) => !i.url && !i.done && same(i.text, text)) || null;
+export const saved = (text) => items().find((i) => !i.url && !i.done && same(wordsOf(i.text), text)) || null;
+/** A note's own words: what it searches for and matches by (a Next step written under them, "\n→ …", isn't). */
+export const wordsOf = (text) => String(text || "").split("\n→ ")[0];
 
 function put(item) {
   doc.items = doc.items.filter((i) => i.id !== item.id).concat(item);
@@ -81,7 +83,7 @@ function put(item) {
 export function jot(text) {
   const t = String(text || "").trim().slice(0, 500);
   if (!t) return null;
-  const have = doc.items.find((i) => !i.url && !i.deleted && same(i.text, t));
+  const have = doc.items.find((i) => !i.url && !i.deleted && same(wordsOf(i.text), t));
   const item = have ? { ...have, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null };
   put(item);
   return { item, fresh: !have };
@@ -118,6 +120,23 @@ export function keepInView(item, on) {
   const list = read(VIEW(who), []).filter((id) => id !== item.id);
   write(VIEW(who), on ? [...list, item.id] : list);
   listeners.forEach((fn) => fn());
+}
+/** Move a note within Keep in view (-1: up, 1: down). */
+export function moveInView(item, by) {
+  const list = read(VIEW(who), []), i = list.indexOf(item.id), j = i + by;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  write(VIEW(who), list);
+  listeners.forEach((fn) => fn());
+}
+// when each note was last shown or opened here (home-rules.md: the older note is one not seen in 14 days)
+const SEEN_AT = (pk) => `marble.later.seen.${pk}`;
+export const seenTimes = () => read(SEEN_AT(who), {});
+export function sawNotes(ids) {
+  if (!ids.length) return;
+  const m = seenTimes(), t = now();
+  for (const id of ids) m[id] = t;
+  write(SEEN_AT(who), Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 2000)));
 }
 /** The older note offered last ({id, at}), so the same one stays all day. */
 export const offered = () => read(OFFERED(who), null);
@@ -204,12 +223,15 @@ async function pullNow() {
   const got = answer.filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return null; // (signed out or in as someone else meanwhile)
   if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); return null; } // (couldn't ask: not "nothing there")
+  readPacks(me); // (Android's packs, read only: whatever the old list says, even "moved")
   found = got?.created_at || 0;
   let theirs = null;
   if (got) {
     try { theirs = JSON.parse(await nip44Self(got.content, false)); }
     catch (err) { stopped = true; failed(err); return null; } // (never sent over; and not asked again and again: next visit)
     if (me !== who) return null;
+    // a newer format than this knows (v2 "moved", or later): read nothing from it, and never send over it
+    if (theirs?.v !== 1) { stopped = true; failing = true; listeners.forEach((fn) => fn()); return null; }
     stopped = false;
     if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
   }
@@ -218,7 +240,6 @@ async function pullNow() {
   if (g.do === "rebase") write(COPY_AT(me), found); // (your relays have what they have: from here on, that's the copy)
   const ahead = theirs ? merge(theirs) : false;
   if (theirs) write(SYNCED(me), true);
-  readPacks(me);
   if (g.do === "wait") { failing = true; listeners.forEach((fn) => fn()); return null; }
   failing = false;
   if (ahead || (dirty && !theirs)) changed();
@@ -260,8 +281,13 @@ export async function send() {
     }
     const v = version, w = await where();
     if (!w) throw new Error("relays not known");
-    const content = await nip44Self(JSON.stringify(doc), true);
-    const ev = await sign({ kind: 30078, created_at: Math.max(Math.floor(Date.now() / 1000), found + 1), tags: [["d", TAG]], content });
+    // (the account may switch at any wait: what's sent is this account's notes, as read and merged, or nothing)
+    const body = JSON.stringify(doc), after = found;
+    if (me !== who || me !== current()) return;
+    const content = await nip44Self(body, true);
+    if (me !== who || me !== current()) return;
+    const ev = await sign({ kind: 30078, created_at: Math.max(Math.floor(Date.now() / 1000), after + 1), tags: [["d", TAG]], content });
+    if (me !== who || me !== current() || ev.pubkey !== me) return;
     const sent = await publish(w.write, ev);
     // done only when most of your write relays took it (reader.md §6); a change since stays to be sent
     if (written(w.write, new Set(sent.ok)) && me === who) {

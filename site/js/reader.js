@@ -9,7 +9,7 @@ import { req, relays, publish, FAST, INDEXERS, normalize, foundOn, testRelay } f
 import { keep, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { esc, name, postPath, content, inApp } from "./render.js";
 import { decode, naddr, nevent } from "./ids.js";
-import { current, method, myFollows, nip44Self, sign, myWriteRelays } from "./me.js";
+import { current, method, myFollows, nip44Self, sign, myWriteRelays, onMe } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
 import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo, CLEARED_FOR } from "./reader-rules.js";
@@ -87,7 +87,9 @@ function ensureFolder(id, label) {
 const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
 const EXPIRES = { list: 0, seen: 14 * DAY };
 const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
-let broken = new Set(), timer = null, failures = 0;
+let broken = new Set(), timer = null, failures = 0, unreached = 0;
+/** Why your account's copy isn't being written, said quietly in Reader (or ""): your relays can't be reached or read. */
+export const syncTrouble = () => unreached >= 3 ? "Your relays aren't answering, so what you read here is kept in this browser for now." : broken.size ? "Your Reader copy on the account is in a format this page can't change, so changes stay here." : "";
 const dirty = new Set(), version = { list: 0, seen: 0 }; // (a change made while a copy is being sent is sent next)
 const onRead = new Set();
 const later = (ms) => { clearTimeout(timer); timer = setTimeout(() => { timer = null; pushAccount(); }, ms); };
@@ -164,14 +166,17 @@ export async function pushAccount() {
   try {
     const todo = [...dirty];
     const r = await fetchMine(todo.map((k) => D[k]));
+    if (who !== me) return; // (this browser's copy is another account's now)
     for (const k of todo) {
-      if (current() !== me) return;
+      if (current() !== me || who !== me) return;
       const there = r.copies[D[k]], v = version[k];
       if (there && !there.body) { broken.add(k); dirty.delete(k); continue; } // (never over a copy that didn't decrypt)
+      if (there && there.body.v !== 1) { broken.add(k); dirty.delete(k); continue; } // (nor over a newer format this doesn't know)
       const missed = read(MISSED(me), {});
       const g = decide({ complete: r.complete, full: r.full, found: there?.event.created_at || 0, seenAt: copiesSeen()[D[k]] || 0, misses: missed[k] || 0, expires: EXPIRES[k], now: now() });
       write(MISSED(me), { ...missed, [k]: g.misses });
-      if (g.do === "wait") { retry = true; continue; }
+      unreached = r.complete ? 0 : unreached + 1;
+      if (g.do === "wait") { retry = true; onRead.forEach((fn) => fn()); continue; }
       if (g.do === "rebase") write(STATE(me), { ...copiesSeen(), [D[k]]: there?.event.created_at || 0 }); // (your relays have what they have)
       const t = now();
       let body;
@@ -193,7 +198,11 @@ export async function pushAccount() {
       // NIP-44 takes at most 65,535 bytes: the seen list is fitted to 48 KB, the Reader list never gets near
       if (new TextEncoder().encode(json).length > 60000) { console.warn("Reader: too big to sync", k); dirty.delete(k); continue; }
       const tags = [["d", D[k]], ...(EXPIRES[k] ? [["expiration", String(t + EXPIRES[k])]] : [])];
-      const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(json, true) });
+      if (current() !== me || who !== me) return; // (switched account meanwhile: nothing of one goes into the other)
+      const content = await nip44Self(json, true);
+      if (current() !== me || who !== me) return;
+      const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content });
+      if (current() !== me || who !== me || ev.pubkey !== me) return;
       const sent = await publish(r.write, ev);
       // done only when most of your write relays took it; until then pending, sent again, and not "seen"
       if (written(r.write, new Set(sent.ok))) { sawCopy(D[k], ev.created_at); if (version[k] === v) dirty.delete(k); } else retry = true;
@@ -207,6 +216,15 @@ export async function pushAccount() {
   }
 }
 if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pushAccount(); });
+// Another account (or nobody): nothing of the last one's goes on. Its unsent changes stay in this browser under its own
+// name, for when it's back; the new one starts from its own copy here, and writes nothing until a read has reached it.
+onMe(() => {
+  clearTimeout(timer); timer = null;
+  dirty.clear(); version.list = version.seen = 0; failures = 0; broken = new Set();
+  who = null;
+  load();
+  onRead.forEach((fn) => fn());
+});
 
 // ── Sources: what each brings ────────────────────────────────────────────────────────────────────────
 
@@ -482,6 +500,9 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
   };
 
   function drawFolders() {
+    const trouble = syncTrouble(), p = $(".r-said");
+    if (trouble && (p.hidden || p.dataset.trouble)) { p.textContent = trouble; p.hidden = false; p.dataset.trouble = "1"; }
+    else if (!trouble && p.dataset.trouble) { p.hidden = true; delete p.dataset.trouble; }
     const list = folders().map((f) => {
       const toggle = f.id === "people" && me ? `<button type="button" class="r-toggle" role="switch" aria-checked="${doc.people.on}" aria-label="Your people: ${doc.people.on ? "on" : "off"}" data-people></button>` : "";
       return `<a class="r-folder${f.id === folder ? " on" : ""}" href="/reader?f=${esc(f.id)}" data-folder="${esc(f.id)}">${esc(f.name)}${fresh(f.id) ? '<span class="r-dot" aria-label="new"></span>' : ""}${toggle}</a>`;

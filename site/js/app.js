@@ -1179,13 +1179,36 @@ const PLACES = [{ name: "Reader", path: "/reader" }, { name: "Notes", path: "/no
 const DASHED = `<svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-dasharray="3 2.5" d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 const FILLED = `<svg viewBox="0 0 24 24" aria-hidden="true" class="filled"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 const ARROW = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`;
-let stepFor = null; // the older note whose Next step is being written
+let stepFor = null, choicesFor = null; // the older note whose Next step is being written; whose choices are open
 const handled = new Map(); // a handle's key → its rows, once looked up
 let lookTimer = 0, relayTimer = 0, pasted = false;
 // your latest searches show under an empty box once you've clicked or typed in it (not when the page puts the cursor
 // there itself, which would cover Notes and Tabs)
 let engaged = false;
-for (const ev of ["pointerdown", "keydown"]) input.addEventListener(ev, () => { if (!engaged) { engaged = true; boxState(); } });
+for (const ev of ["pointerdown", "keydown"]) input.addEventListener(ev, (e) => {
+  // (home put the cursor in the box itself: "/" there opens its list rather than typing a slash)
+  if (e.key === "/" && !input.value && !engaged) e.preventDefault();
+  if (!engaged) { engaged = true; boxState(); }
+});
+// focus by keyboard (Tab, or "/") counts too: the list shows at once (not when the page puts the cursor there itself)
+let keyAt = 0;
+addEventListener("keydown", () => { keyAt = Date.now(); }, true);
+// On a phone the box rises above the keyboard while the list is open, and Back (the system's) closes the list
+let boxUp = false, watcher = null;
+input.addEventListener("focus", () => {
+  if (!engaged && Date.now() - keyAt < 600) { engaged = true; boxState(); }
+  if (document.body.dataset.page === "home" && matchMedia("(pointer: coarse)").matches) {
+    boxUp = true;
+    document.body.dataset.boxUp = "1";
+    if ("CloseWatcher" in window) { watcher = new CloseWatcher(); watcher.onclose = () => { watcher = null; input.blur(); }; }
+  }
+});
+input.addEventListener("blur", () => setTimeout(() => {
+  if (document.activeElement === input || drop.contains(document.activeElement)) return;
+  boxUp = false;
+  delete document.body.dataset.boxUp;
+  watcher?.destroy(); watcher = null;
+}, 160));
 
 function boxState() {
   const t = input.value.trim();
@@ -1212,17 +1235,25 @@ function boxState() {
   // two of your own: searches and notes that hold what you've typed (your two latest searches when nothing's typed)
   const low = t.toLowerCase(), holds = (x) => x.toLowerCase() !== low && x.toLowerCase().includes(low);
   // the focused, empty box (home-rules.md): Keep in view, one older note, your 2 latest, Notes and searches
-  if (!t && engaged) {
+  if (!t && engaged && document.body.dataset.page === "home") {
     const open = notes.open().filter((i) => !i.url || i.text);
-    const list = focusList({ inView: notes.inView(), notes: open, searches: notes.searches(), offered: notes.offered(), now: Math.floor(Date.now() / 1000) });
+    const list = focusList({ inView: notes.inView(), notes: open, searches: notes.searches(), seen: notes.seenTimes(), offered: notes.offered(), now: Math.floor(Date.now() / 1000) });
     for (const r of list) {
       if (r.kind === "all") rows.push({ all: true });
       else if (r.kind === "search") rows.push({ own: { text: r.text, search: true } });
-      else { const it = open.find((i) => i.id === r.id); if (it) rows.push({ own: it, shelf: r.kind }); }
+      else {
+        const it = open.find((i) => i.id === r.id);
+        if (!it) continue;
+        rows.push({ own: it, shelf: r.kind });
+        // the older note's choices, as options of their own (so the arrow keys and a screen reader reach them)
+        if (r.kind === "older" && choicesFor === it.id) for (const act of it.readOnly ? ["view"] : ["step", "view", "go"]) rows.push({ act, own: it });
+      }
     }
     const older = list.find((r) => r.kind === "older");
     if (older) notes.offer(older.id);
-  } else if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
+    // shown here counts as seen (so tomorrow's older note is another one)
+    notes.sawNotes(list.filter((r) => r.id).map((r) => r.id));
+  } else if (!t && engaged) for (const x of notes.searches().slice(0, 2)) rows.push({ own: { text: x.text, search: true } }); else if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
     const own = [...notes.searches().filter((x) => holds(x.text)).map((x) => ({ text: x.text, search: true })),
       ...notes.open().filter((i) => i.text && holds(i.text))];
     const exact = notes.open().filter((i) => i.text?.trim().toLowerCase() === low);
@@ -1233,18 +1264,23 @@ function boxState() {
   } else if (t) { const g = goTo(t, PLACES, notes.open()); if (g) rows.unshift({ place: g.place }); }
   pick = -1;
   const html = rows.map((r, k) => {
-    const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`, atWith = (cls) => at.replace('class="drop-row"', `class="drop-row ${cls}"`);
+    const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}" tabindex="-1"`, atWith = (cls) => at.replace('class="drop-row"', `class="drop-row ${cls}"`);
+    const words = (it) => notes.wordsOf(it.text);
     if (r.all) return `<a ${atWith("all")} href="/notes">${ARROW}<span class="t">Notes and searches</span></a>`;
     if (r.place) return `<a ${at} href="${esc(r.place.path)}">${ARROW}<span class="t">Go to ${esc(r.place.name)}</span></a>`;
+    if (r.act) {
+      const label = { step: "Next step", view: "Keep in view", go: "Let go" }[r.act];
+      return `<div ${atWith("act")} aria-label="${label}: ${esc(words(r.own))}"><span class="t">${label}</span></div>`;
+    }
     if (r.own && r.shelf === "older") {
       const it = r.own;
-      if (stepFor === it.id) return `<div ${atWith("step")}><span class="ic">${DASHED}</span><span class="t typed">${esc(it.text)}</span>
+      if (stepFor === it.id) return `<div ${atWith("step")}><span class="ic">${DASHED}</span><span class="t typed">${esc(words(it))}</span>
         <div class="step-form" data-step="${esc(it.id)}"><input type="text" placeholder="One next step" aria-label="One next step" autocomplete="off" enterkeyhint="done"><button type="button" data-add-step>Add it</button></div></div>`;
-      return `<div ${atWith("older")}><a class="row-main" href="/?q=${encodeURIComponent(it.text)}">${DASHED}<span class="t typed">${esc(it.text)}</span></a>
-        <button type="button" class="more" data-older="${esc(it.id)}" aria-label="Choose for this note" aria-haspopup="menu">⋯</button>
-        <div class="older-menu" hidden role="menu"><button type="button" role="menuitem" data-act="step">Next step</button><button type="button" role="menuitem" data-act="view">Keep in view</button><button type="button" role="menuitem" data-act="go">Let go</button></div></div>`;
+      const open = choicesFor === it.id;
+      return `<div ${atWith("older")} aria-label="Your note, from a while ago: ${esc(words(it))}${open ? "" : ". Right arrow: choose what happens to it"}" aria-expanded="${open}"><span class="row-main">${DASHED}<span class="t typed">${esc(words(it))}</span></span>
+        <span class="more${open ? " on" : ""}" data-older="${esc(it.id)}" aria-hidden="true">⋯</span></div>`;
     }
-    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}" aria-label="${r.shelf === "inView" ? "Kept in view: " : r.own.search ? "Search: " : "Note: "}${esc(r.own.text)}">${r.shelf === "inView" ? FILLED : r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t${r.own.search ? "" : " typed"}">${esc(r.own.text)}</span></a>`;
+    if (r.own) { const w = r.own.search ? r.own.text : words(r.own); return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(w)}`)}" aria-label="${r.shelf === "inView" ? "Kept in view: " : r.own.search ? "Search: " : "Note: "}${esc(w)}">${r.shelf === "inView" ? FILLED : r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t${r.own.search ? "" : " typed"}">${esc(w)}</span></a>`; }
     if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
     if (r.relay) return `<a ${at} href="${esc(relayPath(r.relay))}">${relayIcon(r.info, 28)}<span class="t">Browse ${esc(r.relay.address)}</span><span class="sub">${esc(r.info?.name ? `Relay · ${r.info.name}` : "Relay")}</span></a>`;
     if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
@@ -1294,7 +1330,8 @@ function goToSite(s, from) {
 function choose(r) {
   const t = input.value.trim();
   if (r.all || r.place) { input.blur(); done(); return go(r.all ? "/notes" : r.place.path); }
-  if (r.shelf === "older") { input.value = r.own.text; return showResults(r.own.text); }
+  if (r.act) return act(r.act, r.own);
+  if (r.shelf === "older" || (r.own && !r.own.search && !r.own.url)) { const w = notes.wordsOf(r.own.text); notes.sawNotes([r.own.id]); input.value = w; return showResults(w); }
   if (r.relay) { input.blur(); done(); return go(relayPath(r.relay)); }
   if (r.site) return goToSite(r.site, t);
   if (r.kind === "web") return goToSite({ url: r.url, address: r.sub }, t);
@@ -1341,24 +1378,24 @@ input.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     pick = ev.key === "ArrowDown" ? Math.min(rows.length - 1, pick + 1) : Math.max(-1, pick - 1);
     showDrop();
-  } else if (ev.key === "Escape") { rows = []; drop.innerHTML = ""; showDrop(); }
+  } else if ((ev.key === "ArrowRight" || ev.key === "ArrowLeft") && !input.value && rows[pick]?.shelf === "older") {
+    ev.preventDefault();
+    const id = rows[pick].own.id, keep = pick;
+    choicesFor = ev.key === "ArrowRight" ? id : null;
+    boxState();
+    pick = ev.key === "ArrowRight" ? keep + 1 : keep;
+    showDrop();
+  } else if (ev.key === "Escape") {
+    // one layer at a time: the older note's choices, then the list
+    if (choicesFor) { const at = rows.findIndex((r) => r.shelf === "older"); choicesFor = null; boxState(); pick = at; showDrop(); return; }
+    rows = []; drop.innerHTML = ""; showDrop();
+  }
 });
 drop.addEventListener("mousedown", (ev) => { if (!ev.target.closest("input")) ev.preventDefault(); }); // keeps the box focused (the Next step field can take it)
 drop.addEventListener("click", (ev) => {
   // the older note's ⋯: Next step (one step written into it), Keep in view, Let go (done)
   const more = ev.target.closest("[data-older]");
-  if (more) { ev.preventDefault(); const m = more.nextElementSibling; m.hidden = !m.hidden; more.setAttribute("aria-expanded", String(!m.hidden)); if (!m.hidden) m.querySelector("button").focus(); return; }
-  const act = ev.target.closest("[data-act]");
-  if (act) {
-    ev.preventDefault();
-    const id = act.closest(".drop-row").querySelector("[data-older]").dataset.older, it = notes.open().find((i) => i.id === id);
-    if (!it) return;
-    if (act.dataset.act === "step") { stepFor = id; input.focus(); boxState(); drop.querySelector(".step-form input")?.focus(); return; }
-    if (act.dataset.act === "view") notes.keepInView(it, true);
-    if (act.dataset.act === "go") notes.tick(it, true);
-    input.focus();
-    return boxState();
-  }
+  if (more) { ev.preventDefault(); choicesFor = choicesFor === more.dataset.older ? null : more.dataset.older; input.focus(); return boxState(); }
   if (ev.target.closest("[data-add-step]")) { ev.preventDefault(); return addStep(ev.target.closest(".step-form")); }
   if (ev.target.closest(".step-form")) return;
   const row = ev.target.closest("[data-k]");
@@ -1366,6 +1403,15 @@ drop.addEventListener("click", (ev) => {
   ev.preventDefault();
   choose(rows[+row.dataset.k]);
 });
+// the older note's choices: Next step (a step written under its words), Keep in view, Let go (done)
+function act(which, it) {
+  choicesFor = null;
+  if (which === "step") { stepFor = it.id; input.focus(); boxState(); drop.querySelector(".step-form input")?.focus(); return; }
+  if (which === "view") notes.keepInView(it, true);
+  if (which === "go") notes.tick(it, true);
+  input.focus();
+  boxState();
+}
 // (inside the search form, so no form of its own: Enter and the button add the step)
 function addStep(f) {
   const it = notes.open().find((i) => i.id === f.dataset.step), step = f.querySelector("input").value.trim();
@@ -1389,8 +1435,8 @@ keptMark.addEventListener("click", () => {
 form.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const t = input.value.trim();
-  if (!t) return;
   if (pick >= 0 && rows[pick]) return choose(rows[pick]);
+  if (!t) return;
   // a relay (typed with wss://, or it said so): browse it here
   const rl = relayOf(t);
   if (rl && (rl.sure || relayAnswered(rl))) return choose({ relay: rl });
@@ -1403,6 +1449,11 @@ addEventListener("keydown", (ev) => {
   if (ev.key === "/" && document.activeElement !== input && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) {
     ev.preventDefault();
     input.focus();
+  } else if (ev.key === "/" && document.activeElement === input && !input.value && !engaged) {
+    // (home put the cursor in the box itself: "/" opens its list rather than typing a slash)
+    ev.preventDefault();
+    engaged = true;
+    boxState();
   }
 });
 
@@ -1481,7 +1532,7 @@ function showNotes(signal, tab) {
         : `<button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>`}
       <a class="note-main" href="${i.url ? esc(i.url) : "#"}" data-open ${i.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
-        <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(i.text, f)}</span>
+        <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(notes.wordsOf(i.text), f)}</span>${i.text.includes("\n→ ") ? `<span class="nstep">${esc(i.text.slice(notes.wordsOf(i.text).length + 1))}</span>` : ""}
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
           <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.readOnly && "change it in Marble on your phone"].filter(Boolean).join(" · "))}</span></span>
       </a>
@@ -1504,15 +1555,22 @@ function showNotes(signal, tab) {
     const tabs = notes.tabs().filter((p) => hit(p.title, f) || hit(p.url, f) || hit(p.from, f));
     chips.innerHTML = [["notes", "Notes"], ["searches", "Searches"], ["done", "Done"]]
       .map(([k, label]) => `<button type="button" role="tab" aria-selected="${show === k}" data-show="${k}">${label}</button>`).join("");
-    const these = show === "done" ? doneList : open;
+    // Keep in view, the whole shelf (the box shows its first 3): in your order, each movable and takeable out
+    const shelfIds = show === "notes" && !f ? notes.inView() : [];
+    const shelf = shelfIds.map((id) => open.find((i) => i.id === id)).filter(Boolean);
+    const these = show === "done" ? doneList : open.filter((i) => !shelfIds.includes(i.id));
+    const shelfRow = (i, n) => `<div class="shelf-row" data-shelf="${esc(i.id)}">${noteRow(i, f)}<span class="shelf-acts">
+      <button type="button" class="ic-btn" data-move="-1" aria-label="Move up: ${esc(notes.wordsOf(i.text))}" ${n === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+      <button type="button" class="ic-btn" data-move="1" aria-label="Move down: ${esc(notes.wordsOf(i.text))}" ${n === shelf.length - 1 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
+      <button type="button" class="link" data-unview>Take out</button></span></div>`;
+    const shelfHtml = shelf.length ? `<h2 class="shelf-head">Keep in view</h2>${shelf.map(shelfRow).join("")}<h2 class="shelf-head">The rest</h2>` : "";
     const empty = `<p class="empty-line">${f ? `Nothing matches “${esc(f)}”.` : "Nothing yet."}</p>`;
     const searchRow = (x) => `<div class="note-row search-row"><a class="note-main" href="/?q=${encodeURIComponent(x.text)}" data-search="${esc(x.text)}">${CLOCK}<span class="note-text"><span class="nt">${mark(x.text, f)}</span></span></a></div>`;
     const searches = notes.searches().filter((x) => hit(x.text, f));
     list.innerHTML = show === "searches" ? (searches.length ? searches.map(searchRow).join("") : empty)
       : show === "tabs"
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
-      : (these.length ? these.map((i) => noteRow(i, f)).join("") : empty)
-        ;
+      : shelfHtml + (these.length ? these.map((i) => noteRow(i, f)).join("") : shelf.length ? "" : empty);
     $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
     const strays = notes.strays(), bar = $(".strays", root);
@@ -1526,6 +1584,14 @@ function showNotes(signal, tab) {
     if (stray) return stray.dataset.strays === "add" ? notes.adoptStrays() : notes.dropStrays();
     const chip = ev.target.closest("[data-show]");
     if (chip) { show = chip.dataset.show; history.replaceState(history.state, "", show === "notes" ? "/notes" : `/notes?tab=${show}`); return draw(); }
+    const sh = ev.target.closest("[data-shelf]");
+    if (sh && ev.target.closest("[data-move], [data-unview]")) {
+      const it = notes.items().find((i) => i.id === sh.dataset.shelf);
+      if (!it) return;
+      const mv = ev.target.closest("[data-move]");
+      if (mv) notes.moveInView(it, +mv.dataset.move); else notes.keepInView(it, false);
+      return;
+    }
     const sr = ev.target.closest("[data-search]");
     if (sr) { ev.preventDefault(); input.value = sr.dataset.search; return showResults(sr.dataset.search); }
     const row = ev.target.closest(".note-row"), item = row && notes.items().find((i) => i.id === row.dataset.id);
@@ -1535,8 +1601,8 @@ function showNotes(signal, tab) {
       if (item.url) return notes.opened(item.url, item.text, item.text);
       ev.preventDefault();
       // your own words: searched again, here
-      input.value = item.text;
-      return showResults(item.text);
+      input.value = notes.wordsOf(item.text);
+      return showResults(notes.wordsOf(item.text));
     }
     const tabEl = ev.target.closest(".tab-row");
     if (tabEl && ev.target.closest("[data-keep]")) {
@@ -1612,7 +1678,6 @@ function drawAccount() {
       <div class="menu sheet-rows" hidden role="menu">
         <a href="${personPath(me)}" class="who-row-me" role="menuitem">${avatar(me, 32)}<span><b data-name="${me}">${esc(name(me))}</b><small>Your profile</small></span></a>
         <a href="/notes" role="menuitem">Notes and searches</a>
-        <button type="button" data-switch role="menuitem">Switch account</button>
         <a href="/about" role="menuitem">About Marble</a>
         <button type="button" data-sign-out role="menuitem">Sign out</button></div>`;
     document.body.dataset.signed = "1";
@@ -1624,11 +1689,20 @@ account.addEventListener("click", async (ev) => {
   else if (ev.target.closest(".me")) {
     menu.hidden = !menu.hidden;
     $(".me", account).setAttribute("aria-expanded", !menu.hidden);
+    if (!menu.hidden) menu.querySelector("a, button")?.focus(); // (a menu: focus goes in, arrows move, Esc closes)
   } else if (ev.target.closest("[data-sign-out]")) signOut();
-  else if (ev.target.closest("[data-switch]")) { signOut(); openSignIn(); }
+
   else if (ev.target.closest("a") && menu) menu.hidden = true;
 });
 document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
+account.addEventListener("keydown", (ev) => {
+  const menu = $(".menu", account);
+  if (!menu || menu.hidden) return;
+  const items = [...menu.querySelectorAll("a, button")], i = items.indexOf(document.activeElement);
+  if (ev.key === "Escape") { ev.preventDefault(); menu.hidden = true; $(".me", account)?.setAttribute("aria-expanded", "false"); $(".me", account)?.focus(); }
+  else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); items[(i + (ev.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+  else if (ev.key === "Home" || ev.key === "End") { ev.preventDefault(); items[ev.key === "Home" ? 0 : items.length - 1]?.focus(); }
+});
 onMe((me) => {
   drawAccount();
   trustNow();
