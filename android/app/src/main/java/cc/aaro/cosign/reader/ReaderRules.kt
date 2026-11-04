@@ -57,7 +57,9 @@ object ReaderRules {
     }
 
     /** Still in Reader (§4): unread (up to 30 days, filtered before this), read but not aged yet, or starred. */
-    fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long): Boolean = !read || now - at < keepFor(type) || starred
+    fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long, onScreen: Boolean = false): Boolean = !read || now - at < keepFor(type) || starred || onScreen
+    /** How long a read-again mark (−t) is kept: long enough to beat any Keep unread still on its way; a positive mark stays [UNREAD_FOR]. */
+    const val CLEARED_FOR = 7 * 86_400L
 
     /** A Reader item for [ageUpto]: its source, its time, whether it's read, and whether it has aged out. */
     data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
@@ -66,11 +68,15 @@ object ReaderRules {
      * Read-up-to as items age out (reader.md §2, vectors readUpTo): to the newest aged-out read item's time, but never
      * to or past an unread item of that source (at most the oldest unread one's time − 1). Only the sources that rise.
      */
-    fun ageUpto(items: List<Aged>, upto: Map<String, Long>): Map<String, Long> = items.groupBy { it.source }.mapNotNull { (src, l) ->
-        val to = l.filter { it.read && it.aged }.maxOfOrNull { it.at } ?: return@mapNotNull null
-        val cap = l.filter { !it.read }.minOfOrNull { it.at - 1 } ?: Long.MAX_VALUE
-        minOf(to, cap).takeIf { it > (upto[src] ?: 0) }?.let { src to it }
-    }.toMap()
+    fun ageUpto(items: List<Aged>, upto: Map<String, Long>, marks: Collection<Long> = emptyList()): Map<String, Long> {
+        // A live Keep unread mark is never reached (whichever item it's on, loaded or not): it must stay newer than upto.
+        val markCap = marks.filter { it > 0 }.minOrNull()?.let { it - 1 } ?: Long.MAX_VALUE
+        return items.groupBy { it.source }.mapNotNull { (src, l) ->
+            val to = l.filter { it.read && it.aged }.maxOfOrNull { it.at } ?: return@mapNotNull null
+            val cap = l.filter { !it.read }.minOfOrNull { it.at - 1 } ?: Long.MAX_VALUE
+            minOf(to, cap, markCap).takeIf { it > (upto[src] ?: 0) }?.let { src to it }
+        }.toMap()
+    }
     const val MAX_SEEN = 48_000
 
     /** Open in… for a post or an article (reader.md §5): in this order. */

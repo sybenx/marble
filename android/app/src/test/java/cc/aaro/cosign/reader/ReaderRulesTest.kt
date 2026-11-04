@@ -65,4 +65,24 @@ class ReaderRulesTest {
         assertEquals("ab…", Body.cut("ab " + "x".repeat(40), 20))
         assertEquals("x".repeat(20) + "…", Body.cut("x".repeat(40), 20))
     }
+
+    @Test fun aKeptUnreadMarkHoldsTheRiseEvenWhenItsItemIsntLoaded() {
+        val day = 86_400L
+        // K (day 1) kept unread on day 2, missing from this load; B (day 3) read and aged out: upto stays under the mark.
+        val got = ReaderRules.ageUpto(listOf(ReaderRules.Aged("s", 3 * day, read = true, aged = true)), emptyMap(), marks = listOf(2 * day, -5 * day))
+        assertEquals(mapOf("s" to 2 * day - 1), got)
+        assertFalse(ReaderRules.isRead("K", "s", day, ReaderRules.Seen(emptyMap(), got, mapOf("K" to 2 * day))))
+    }
+
+    @Test fun rowsOnScreenStayThroughAReload() {
+        val now = 10 * 86_400L
+        assertTrue(ReaderRules.stays(read = true, at = now - 2 * 86_400, type = "news", starred = false, now = now, onScreen = true))
+        assertFalse(ReaderRules.stays(read = true, at = now - 2 * 86_400, type = "news", starred = false, now = now, onScreen = false))
+    }
+
+    @Test fun aWarnedPostKeepsItsOwnWordsForSharing() {
+        val e = cc.aaro.qrst.core.Event("%064x".format(1), 1, 1, listOf(listOf("content-warning", "spoilers")), "The ending was a surprise").withId()
+        assertEquals("spoilers: show", Body.line(e))
+        assertEquals("The ending was a surprise", Body.line(e, veil = false))
+    }
 }

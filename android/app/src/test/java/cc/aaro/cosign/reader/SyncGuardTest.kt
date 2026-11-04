@@ -23,4 +23,11 @@ class SyncGuardTest {
     @Test fun retryAfter() { val a = v.getJSONArray("retryAfter"); for (n in 0 until a.length()) { val c = a.getJSONObject(n)
         assertEquals("after ${c.getInt("failures")}", c.getLong("seconds"), SyncGuard.retryAfter(c.getInt("failures")))
     } }
+
+    @Test fun aWriteTakesOnlyWithMostWriteRelays() {
+        assertEquals(false, SyncGuard.written(3, 1))
+        assertEquals(true, SyncGuard.written(3, 2))
+        assertEquals(false, SyncGuard.written(2, 1))
+        assertEquals(false, SyncGuard.written(0, 1))
+    }
 }

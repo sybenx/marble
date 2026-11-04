@@ -17,6 +17,9 @@ object SyncGuard {
         return w.isNotEmpty() && w.count { it in a } * 2 > w.size
     }
 
+    /** A write took: more than half of the write relays said OK (one relay's OK can be missed by a later majority read). */
+    fun written(write: Int, okBy: Int): Boolean = write > 0 && okBy * 2 > write
+
     /** The wait after the [failures]-th failure in a row: 60 · 2^(n−1) s, at most 600 s. */
     fun retryAfter(failures: Int): Long = minOf(600L, 60L shl (maxOf(failures, 1) - 1).coerceAtMost(10))
 
