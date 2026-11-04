@@ -109,6 +109,24 @@ export function searched(text) {
   write(SEARCHES(who), [{ text: t, at: now() }, ...list.slice(edit ? 1 : 0).filter((x) => words(x.text) !== a)].slice(0, 200));
 }
 
+// ── Keep in view, and the older note (home-rules.md): this browser only, as the notes trial keeps them on the phone ──
+const VIEW = (pk) => `marble.later.inview.${pk}`, OFFERED = (pk) => `marble.later.offered.${pk}`;
+/** Notes kept in view, in order (ids of open notes). */
+export const inView = () => read(VIEW(who), []).filter((id) => items().some((i) => i.id === id && !i.done));
+export function keepInView(item, on) {
+  const list = read(VIEW(who), []).filter((id) => id !== item.id);
+  write(VIEW(who), on ? [...list, item.id] : list);
+  listeners.forEach((fn) => fn());
+}
+/** The older note offered last ({id, at}), so the same one stays all day. */
+export const offered = () => read(OFFERED(who), null);
+export const offer = (id) => { const o = offered(); if (o?.id !== id || Math.floor(o.at / 86400) !== Math.floor(now() / 86400)) write(OFFERED(who), { id, at: now() }); };
+/** Next step: one step written into the note, on a new line ("→ step"). */
+export function nextStep(item, step) {
+  const i = doc.items.find((x) => x.id === item.id), t = String(step || "").trim();
+  if (i && t) put({ ...i, text: `${i.text}\n→ ${t}`.slice(0, 500), updated: next(i) });
+}
+
 // Changes go to this browser's own copy of the note only (never one only in Android's packs, or the packs' text).
 const own = (item) => doc.items.find((i) => i.id === item.id);
 export const tick = (item, on) => { const i = own(item); if (i) put({ ...i, done: on ? now() : null, updated: next(i) }); };

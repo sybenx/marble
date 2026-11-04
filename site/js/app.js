@@ -12,6 +12,7 @@ import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply,
 import * as notes from "./later.js";
 import { showReader } from "./reader.js";
 import { follow, following } from "./follow.js";
+import { focusList, goTo } from "./home-rules.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
 import { fillBlossom } from "./blossom.js";
@@ -1172,6 +1173,12 @@ const GLOBE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="1
 const CLOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>`;
 const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
 let rows = [], pick = -1;
+// the places Go to reaches here (home-rules.md: each app its own); Notes and searches is one page
+const PLACES = [{ name: "Reader", path: "/reader" }, { name: "Notes", path: "/notes" }, { name: "Searches", path: "/notes?tab=searches" }, { name: "About", path: "/about" }];
+const DASHED = `<svg viewBox="0 0 24 24" aria-hidden="true"><path stroke-dasharray="3 2.5" d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
+const FILLED = `<svg viewBox="0 0 24 24" aria-hidden="true" class="filled"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg>`;
+const ARROW = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`;
+let stepFor = null; // the older note whose Next step is being written
 const handled = new Map(); // a handle's key → its rows, once looked up
 let lookTimer = 0, relayTimer = 0, pasted = false;
 // your latest searches show under an empty box once you've clicked or typed in it (not when the page puts the cursor
@@ -1203,16 +1210,40 @@ function boxState() {
   pasted = false;
   // two of your own: searches and notes that hold what you've typed (your two latest searches when nothing's typed)
   const low = t.toLowerCase(), holds = (x) => x.toLowerCase() !== low && x.toLowerCase().includes(low);
-  if (!t && engaged) for (const x of notes.searches().slice(0, 2)) rows.push({ own: { text: x.text, search: true } });
-  else if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
+  // the focused, empty box (home-rules.md): Keep in view, one older note, your 2 latest, Notes and searches
+  if (!t && engaged) {
+    const open = notes.open().filter((i) => !i.url || i.text);
+    const list = focusList({ inView: notes.inView(), notes: open, searches: notes.searches(), offered: notes.offered(), now: Math.floor(Date.now() / 1000) });
+    for (const r of list) {
+      if (r.kind === "all") rows.push({ all: true });
+      else if (r.kind === "search") rows.push({ own: { text: r.text, search: true } });
+      else { const it = open.find((i) => i.id === r.id); if (it) rows.push({ own: it, shelf: r.kind }); }
+    }
+    const older = list.find((r) => r.kind === "older");
+    if (older) notes.offer(older.id);
+  } else if (t.length >= 2 && kind !== "entity" && kind !== "hex") {
     const own = [...notes.searches().filter((x) => holds(x.text)).map((x) => ({ text: x.text, search: true })),
       ...notes.open().filter((i) => i.text && holds(i.text))];
-    for (const it of own.filter((x, i) => own.findIndex((y) => y.text.toLowerCase() === x.text.toLowerCase()) === i).slice(0, 2)) rows.push({ own: it });
-  }
+    const exact = notes.open().filter((i) => i.text?.trim().toLowerCase() === low);
+    const g = goTo(t, PLACES, notes.open());
+    if (g && !g.below) rows.unshift({ place: g.place });
+    for (const it of [...exact, ...own].filter((x, i, a) => a.findIndex((y) => y.text.toLowerCase() === x.text.toLowerCase()) === i).slice(0, 2)) rows.push({ own: it });
+    if (g && g.below) rows.push({ place: g.place });
+  } else if (t) { const g = goTo(t, PLACES, notes.open()); if (g) rows.unshift({ place: g.place }); }
   pick = -1;
   const html = rows.map((r, k) => {
-    const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`;
-    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}">${r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t">${esc(r.own.text)}</span></a>`;
+    const at = `class="drop-row" role="option" id="drop-${k}" data-k="${k}"`, atWith = (cls) => at.replace('class="drop-row"', `class="drop-row ${cls}"`);
+    if (r.all) return `<a ${atWith("all")} href="/notes">${ARROW}<span class="t">Notes and searches</span></a>`;
+    if (r.place) return `<a ${at} href="${esc(r.place.path)}">${ARROW}<span class="t">Go to ${esc(r.place.name)}</span></a>`;
+    if (r.own && r.shelf === "older") {
+      const it = r.own;
+      if (stepFor === it.id) return `<div ${atWith("step")}><span class="ic">${DASHED}</span><span class="t typed">${esc(it.text)}</span>
+        <div class="step-form" data-step="${esc(it.id)}"><input type="text" placeholder="One next step" aria-label="One next step" autocomplete="off" enterkeyhint="done"><button type="button" data-add-step>Add it</button></div></div>`;
+      return `<div ${atWith("older")}><a class="row-main" href="/?q=${encodeURIComponent(it.text)}">${DASHED}<span class="t typed">${esc(it.text)}</span></a>
+        <button type="button" class="more" data-older="${esc(it.id)}" aria-label="Choose for this note" aria-haspopup="menu">⋯</button>
+        <div class="older-menu" hidden role="menu"><button type="button" role="menuitem" data-act="step">Next step</button><button type="button" role="menuitem" data-act="view">Keep in view</button><button type="button" role="menuitem" data-act="go">Let go</button></div></div>`;
+    }
+    if (r.own) return `<a ${at} href="${esc(r.own.url || `/?q=${encodeURIComponent(r.own.text)}`)}" aria-label="${r.shelf === "inView" ? "Kept in view: " : r.own.search ? "Search: " : "Note: "}${esc(r.own.text)}">${r.shelf === "inView" ? FILLED : r.own.url ? GLOBE : r.own.search ? CLOCK : MARK}<span class="t${r.own.search ? "" : " typed"}">${esc(r.own.text)}</span></a>`;
     if (r.site) return `<a ${at} href="${esc(r.site.url)}" target="_blank" rel="noopener noreferrer">${GLOBE}<span class="t">Go to ${esc(r.site.address)}</span></a>`;
     if (r.relay) return `<a ${at} href="${esc(relayPath(r.relay))}">${relayIcon(r.info, 28)}<span class="t">Browse ${esc(r.relay.address)}</span><span class="sub">${esc(r.info?.name ? `Relay · ${r.info.name}` : "Relay")}</span></a>`;
     if (r.kind === "person") return `<a ${at} href="${personPath(r.pubkey)}">${avatar(r.pubkey, 28)}<span class="t">${esc(name(r.pubkey))}</span><span class="sub">${esc(r.sub)}</span></a>`;
@@ -1228,7 +1259,7 @@ function boxState() {
 // a person's name and picture arriving for a row
 onProfile((pk) => { if (rows.some((r) => r.pubkey === pk)) boxState(); });
 function showDrop() {
-  drop.hidden = !drop.children.length || document.activeElement !== input;
+  drop.hidden = !drop.children.length || (document.activeElement !== input && !drop.contains(document.activeElement));
   input.setAttribute("aria-expanded", String(!drop.hidden));
   input.removeAttribute("aria-activedescendant");
   for (const el of drop.children) el.setAttribute("aria-selected", String(+el.dataset.k === pick));
@@ -1261,6 +1292,8 @@ function goToSite(s, from) {
 }
 function choose(r) {
   const t = input.value.trim();
+  if (r.all || r.place) { input.blur(); done(); return go(r.all ? "/notes" : r.place.path); }
+  if (r.shelf === "older") { input.value = r.own.text; return showResults(r.own.text); }
   if (r.relay) { input.blur(); done(); return go(relayPath(r.relay)); }
   if (r.site) return goToSite(r.site, t);
   if (r.kind === "web") return goToSite({ url: r.url, address: r.sub }, t);
@@ -1309,12 +1342,40 @@ input.addEventListener("keydown", (ev) => {
     showDrop();
   } else if (ev.key === "Escape") { rows = []; drop.innerHTML = ""; showDrop(); }
 });
-drop.addEventListener("mousedown", (ev) => ev.preventDefault()); // keeps the box focused
+drop.addEventListener("mousedown", (ev) => { if (!ev.target.closest("input")) ev.preventDefault(); }); // keeps the box focused (the Next step field can take it)
 drop.addEventListener("click", (ev) => {
+  // the older note's ⋯: Next step (one step written into it), Keep in view, Let go (done)
+  const more = ev.target.closest("[data-older]");
+  if (more) { ev.preventDefault(); const m = more.nextElementSibling; m.hidden = !m.hidden; more.setAttribute("aria-expanded", String(!m.hidden)); if (!m.hidden) m.querySelector("button").focus(); return; }
+  const act = ev.target.closest("[data-act]");
+  if (act) {
+    ev.preventDefault();
+    const id = act.closest(".drop-row").querySelector("[data-older]").dataset.older, it = notes.open().find((i) => i.id === id);
+    if (!it) return;
+    if (act.dataset.act === "step") { stepFor = id; input.focus(); boxState(); drop.querySelector(".step-form input")?.focus(); return; }
+    if (act.dataset.act === "view") notes.keepInView(it, true);
+    if (act.dataset.act === "go") notes.tick(it, true);
+    input.focus();
+    return boxState();
+  }
+  if (ev.target.closest("[data-add-step]")) { ev.preventDefault(); return addStep(ev.target.closest(".step-form")); }
+  if (ev.target.closest(".step-form")) return;
   const row = ev.target.closest("[data-k]");
   if (!row) return;
   ev.preventDefault();
   choose(rows[+row.dataset.k]);
+});
+// (inside the search form, so no form of its own: Enter and the button add the step)
+function addStep(f) {
+  const it = notes.open().find((i) => i.id === f.dataset.step), step = f.querySelector("input").value.trim();
+  if (it && step) notes.nextStep(it, step);
+  stepFor = null;
+  input.focus();
+  boxState();
+}
+drop.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && ev.target.closest(".step-form")) { ev.preventDefault(); ev.stopPropagation(); return addStep(ev.target.closest(".step-form")); }
+  if (ev.key === "Escape" && stepFor) { stepFor = null; input.focus(); boxState(); }
 });
 clearButton.addEventListener("click", () => { done(); input.focus(); });
 // the bookmark: these words kept as a note (or not, again)
@@ -1396,11 +1457,11 @@ const LOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" w
 const TICK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg>`;
 
 function showNotes(signal, tab) {
-  page("notes", "Notes");
+  page("notes", "Notes and searches");
   const root = pageEl;
-  let show = tab === "done" ? tab : "notes"; // (Tabs: hidden, marble-2009-spec step 2; its data and code kept)
+  let show = tab === "done" || tab === "searches" ? tab : "notes"; // (Tabs: hidden, marble-2009-spec step 2; its data and code kept)
   root.innerHTML = `<div class="notes">
-    <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes</h1><span class="only-you"></span></div>
+    <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes and searches</h1><span class="only-you"></span></div>
     <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
       <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
     <p class="strays" hidden></p>
@@ -1421,9 +1482,9 @@ function showNotes(signal, tab) {
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
         <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(i.text, f)}</span>
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
-          <span class="nm">${esc([i.url ? host(i.url) : i.from, i.done ? `done ${agoWords(i.done)}` : agoWords(i.created), i.readOnly && "change it in Marble on your phone"].filter(Boolean).join(" · "))}</span></span>
+          <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.readOnly && "change it in Marble on your phone"].filter(Boolean).join(" · "))}</span></span>
       </a>
-      ${i.readOnly ? "" : `<button type="button" class="remove" data-remove aria-label="Remove from Later"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}
+      ${i.readOnly ? "" : `<button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}
     </div>`;
   const tabRow = (p) => {
     const kept = notes.items().some((i) => i.url === p.url);
@@ -1440,11 +1501,14 @@ function showNotes(signal, tab) {
     const all = notes.items().filter((i) => hit(i.text, f) || hit(i.quote, f));
     const open = all.filter((i) => !i.done), doneList = all.filter((i) => i.done);
     const tabs = notes.tabs().filter((p) => hit(p.title, f) || hit(p.url, f) || hit(p.from, f));
-    chips.innerHTML = [["notes", "Notes"], ["done", "Done"]]
+    chips.innerHTML = [["notes", "Notes"], ["searches", "Searches"], ["done", "Done"]]
       .map(([k, label]) => `<button type="button" role="tab" aria-selected="${show === k}" data-show="${k}">${label}</button>`).join("");
     const these = show === "done" ? doneList : open;
-    const empty = `<p class="empty-line">${f ? `Nothing in Later matches “${esc(f)}”.` : "Nothing yet."}</p>`;
-    list.innerHTML = show === "tabs"
+    const empty = `<p class="empty-line">${f ? `Nothing matches “${esc(f)}”.` : "Nothing yet."}</p>`;
+    const searchRow = (x) => `<div class="note-row search-row"><a class="note-main" href="/?q=${encodeURIComponent(x.text)}" data-search="${esc(x.text)}">${CLOCK}<span class="note-text"><span class="nt">${mark(x.text, f)}</span></span></a></div>`;
+    const searches = notes.searches().filter((x) => hit(x.text, f));
+    list.innerHTML = show === "searches" ? (searches.length ? searches.map(searchRow).join("") : empty)
+      : show === "tabs"
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : (these.length ? these.map((i) => noteRow(i, f)).join("") : empty)
         ;
@@ -1461,6 +1525,8 @@ function showNotes(signal, tab) {
     if (stray) return stray.dataset.strays === "add" ? notes.adoptStrays() : notes.dropStrays();
     const chip = ev.target.closest("[data-show]");
     if (chip) { show = chip.dataset.show; history.replaceState(history.state, "", show === "notes" ? "/notes" : `/notes?tab=${show}`); return draw(); }
+    const sr = ev.target.closest("[data-search]");
+    if (sr) { ev.preventDefault(); input.value = sr.dataset.search; return showResults(sr.dataset.search); }
     const row = ev.target.closest(".note-row"), item = row && notes.items().find((i) => i.id === row.dataset.id);
     if (item && ev.target.closest("[data-tick]")) return notes.tick(item, !item.done);
     if (item && ev.target.closest("[data-remove]")) return notes.remove(item);
@@ -1540,9 +1606,16 @@ function drawAccount() {
   const me = currentMe();
   if (me) {
     wantProfile(me);
-    account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false">${avatar(me, 36)}</button>
-      <div class="menu" hidden><a href="${personPath(me)}">Your profile</a><button type="button" data-sign-out>Sign out</button></div>`;
-  } else account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`;
+    // your picture: one sheet of named rows (home-rules.md: the rare things, and account-shaped ones)
+    account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false" aria-haspopup="menu">${avatar(me, 36)}</button>
+      <div class="menu sheet-rows" hidden role="menu">
+        <a href="${personPath(me)}" class="who-row-me" role="menuitem">${avatar(me, 32)}<span><b data-name="${me}">${esc(name(me))}</b><small>Your profile</small></span></a>
+        <a href="/notes" role="menuitem">Notes and searches</a>
+        <button type="button" data-switch role="menuitem">Switch account</button>
+        <a href="/about" role="menuitem">About Marble</a>
+        <button type="button" data-sign-out role="menuitem">Sign out</button></div>`;
+    document.body.dataset.signed = "1";
+  } else { account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`; delete document.body.dataset.signed; }
 }
 account.addEventListener("click", async (ev) => {
   const menu = $(".menu", account);
@@ -1551,6 +1624,7 @@ account.addEventListener("click", async (ev) => {
     menu.hidden = !menu.hidden;
     $(".me", account).setAttribute("aria-expanded", !menu.hidden);
   } else if (ev.target.closest("[data-sign-out]")) signOut();
+  else if (ev.target.closest("[data-switch]")) { signOut(); openSignIn(); }
   else if (ev.target.closest("a") && menu) menu.hidden = true;
 });
 document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
