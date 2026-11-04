@@ -197,13 +197,15 @@ private sealed class Route {
     data class Relay(val address: String) : Route()
     /** Everything waiting for your key, in one place (marble-2009-spec step 3): what the bell's first half was. */
     data object Approvals : Route()
+    /** Reader's folders and sources: the Add box, the people toggle, Mute and Unsubscribe. */
+    data object ReaderSources : Route()
     /** One of your relay sets, its relays read together. */
     data class RelaySet(val d: String) : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
         is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
@@ -222,6 +224,7 @@ private sealed class Route {
             s == "news" -> News
             s == "relays" -> RelayList
             s == "approvals" -> Approvals
+            s == "readersources" -> ReaderSources
             s.startsWith("relay:") -> Relay(s.removePrefix("relay:"))
             s.startsWith("relayset:") -> RelaySet(s.removePrefix("relayset:"))
             else -> null
@@ -363,6 +366,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.News -> NewsSourcesScreen(social, nav)
             Route.RelayList -> RelayListScreen(social, nav)
             Route.Approvals -> ApprovalsScreen(phone, ui, social, nav)
+            Route.ReaderSources -> ReaderSourcesScreen(social, nav)
             is Route.Relay -> RelayScreen(top.address, social, nav)
             is Route.RelaySet -> RelaySetScreen(top.d, social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
@@ -588,7 +592,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         Box(Modifier.fillMaxWidth().height(56.dp)) {
             Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search")) {
+                for ((i, label) in listOf(PANE_FOLLOWING to (if (social.feedVersion.collectAsState().value == 4) "Reader" else "Following"), PANE_SEARCH to "Search")) {
                     val on = pager.currentPage == i
                     val c = if (on) Vault.Text else Vault.Muted
                     // Following, tapped while you're on it: back to the top (a long way down: a jump, then the last bit animated).
@@ -610,7 +614,8 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
             when (page) {
-                PANE_FOLLOWING -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
+                PANE_FOLLOWING -> if (social.feedVersion.collectAsState().value == 4) ReaderPane(social, nav, current = pager.settledPage == PANE_FOLLOWING && !covered)
+                    else FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
                 PANE_MESSAGES -> MessagesPane()
                 else -> Home(phone, ui, social, nav)
             }
@@ -4295,5 +4300,236 @@ private fun ApprovalsScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Co
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         if (cards.isEmpty()) item { Text("Nothing is waiting for you.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }
+    }
+}
+
+// --- Reader (marble-2009-spec §4, reader.md): Google Reader's list view, a row a story, a tap to read it in place ---
+
+private val READER_FOLDERS = listOf("first" to "Read first", "people" to "Your people", "news" to "News", "writers" to "Writers", "relays" to "Relays")
+
+/** "2:14 pm" today, else "Nov 3". */
+private fun shortDate(t: Long): String {
+    val d = java.util.Date(t * 1000); val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+    return if (today.format(d) == today.format(java.util.Date())) java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(d)
+        else java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(d)
+}
+
+/** Reader: folders along the top (a dot when something's new, never a number), then a compact row per item. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderPane(social: Social, nav: Nav, current: Boolean) {
+    val items by social.readerItems.collectAsState()
+    val list by social.readerList.collectAsState()
+    social.readerReadAt.collectAsState().value
+    val laterItems by social.later.items.collectAsState()
+    val kept = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
+    var folder by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
+    var loading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun refresh() { loading = true; scope.launch { try { social.pullReader(); social.loadReader() } finally { loading = false } } }
+    LaunchedEffect(current) { if (current && (items == null || !loading)) refresh() }
+    val all = items.orEmpty()
+    val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } }.map { it.id to it.name }
+    val folders = (listOf("all" to "All") + READER_FOLDERS + custom).filter { (id, _) -> id == "all" || all.any { it.folder == id } }
+    val shown = if (folder == "all") all else all.filter { it.folder == folder }
+    fun unread(i: Social.ReaderItem) = !social.isRead(i.key, i.source, i.at)
+    val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
+    val open = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((id, name) in folders) {
+                val on = folder == id
+                val fresh = id != "all" && all.any { it.folder == id && unread(it) }
+                Box(Modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Vault.AccentGround else Color.Transparent).border(1.dp, if (on) Vault.AccentEdge else Vault.Edge, RoundedCornerShape(14.dp))
+                    .clickable { folder = id }.padding(horizontal = 11.dp, vertical = 5.dp)) {
+                    Text(name, color = if (on) Vault.Accent else Vault.Text, style = MaterialTheme.typography.labelLarge)
+                    if (fresh) Box(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-3).dp).size(5.dp).clip(CircleShape).background(Vault.Accent))
+                }
+            }
+            Box(Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.ReaderSources) }.padding(horizontal = 11.dp, vertical = 5.dp)) {
+                Text("+", color = Vault.Muted, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(folders.firstOrNull { it.first == folder }?.second ?: "All", color = Vault.Text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "Folder", tint = Vault.Muted) }
+                if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(shown.map { it.source }.distinct(), shown.map { it.key }) })
+                    if (folder != "all") for ((v, label) in listOf("list" to "List view", "river" to "Expanded view")) DropdownMenuItem({ Text((if (view == v) "✓ " else "") + label, color = Vault.Text) }, {
+                        menu = false
+                        val name = folders.firstOrNull { it.first == folder }?.second ?: folder
+                        social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, name, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
+                    })
+                }
+            }
+        }
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(loading && items != null, ::refresh, Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (items == null) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
+                else if (shown.isEmpty()) item { Text(if (all.isEmpty()) "Add a site or a person with +." else "Nothing new here.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                items(shown, key = { it.key }) { i ->
+                    val isOpen = view == "river" || i.key in open
+                    ReaderRow(i, unread(i), social.starred(i, kept), isOpen, social, nav, onToggle = {
+                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markRead(i.key) }
+                    })
+                    // Expanded view: read once it's been on screen a moment.
+                    if (view == "river") LaunchedEffect(i.key) { delay(1000); social.markRead(i.key) }
+                }
+            }
+        }
+    }
+}
+
+/** One item: ☆ · source · title (bold until read) · snippet · date; tapped, it opens in place; held, Keep unread and Share. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, open: Boolean, social: Social, nav: Nav, onToggle: () -> Unit) {
+    val context = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
+    val people by People.known.collectAsState()
+    Box {
+        Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }, onClick = onToggle).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
+                modifier = Modifier.size(36.dp).clip(CircleShape).clickable { social.star(i) }.padding(9.dp))
+            Text(i.sourceName, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 76.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(i.title) }
+                if (i.snippet.isNotBlank() && !open) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Field)) { append(" — " + i.snippet) }
+            }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(vertical = 10.dp))
+            Text(shortDate(i.at), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+        }
+        if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+            DropdownMenuItem({ Text("Keep unread", color = Vault.Text) }, { menu = false; social.keepUnread(i.key) })
+            DropdownMenuItem({ Text("Share with a note", color = Vault.Text) }, { menu = false; sharing = true })
+            DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; share(context, i.title + "\n" + (social.readerUrl(i) ?: ""), null) })
+        }
+    }
+    if (open) Column(Modifier.fillMaxWidth().background(Vault.Surface).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
+        Text(i.title, color = Vault.Text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(i.sourceName + " · " + shortDate(i.at), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+        i.image?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
+        if (i.posts.isNotEmpty()) {
+            // One person's short posts of the day, compact.
+            for (p in i.posts) Row(Modifier.fillMaxWidth().clickable { nav.thread(p.id) }.padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+                Avatar(people[p.pubkey], p.pubkey, 22)
+                Text(cc.aaro.cosign.readable(p.content.trim()) { people[it]?.shown }, color = Vault.Text, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp))
+                Text(shortDate(p.createdAt), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 6.dp))
+            }
+        } else if (i.event != null && i.event.kind == 1) {
+            Text(cc.aaro.cosign.readable(i.event.content.trim()) { people[it]?.shown }, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 12, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        } else if (i.snippet.isNotBlank()) {
+            Text(i.snippet, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        }
+        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Open in…: the story's page, or the post or article in Marble. (The three-way Open in… list comes with the opener.)
+            Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+                when { i.event != null -> nav.thread(i.event.id); i.posts.isNotEmpty() -> nav.thread(i.posts[0].id); i.link != null -> openInBrowser(context, i.link, i.key) }
+            }.padding(10.dp))
+            i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> Icon(Glyphs.talk, "Discussion", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { openInBrowser(context, d, i.key) }.padding(10.dp)) }
+            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Muted,
+                modifier = Modifier.size(40.dp).clip(CircleShape).clickable { social.star(i) }.padding(10.dp))
+        }
+    }
+    HorizontalDivider(color = Vault.Edge)
+    if (sharing) ShareWithNote(i, social) { sharing = false }
+}
+
+/**
+ * Share with a note (marble-2009-spec §5), with its guards: Public is off every time it opens; your private note is
+ * never put into the public one; with Public on the button says Post publicly; a few seconds to take it back first.
+ */
+@Composable
+private fun ShareWithNote(i: Social.ReaderItem, social: Social, onClose: () -> Unit) {
+    var public by remember { mutableStateOf(false) }
+    var keepNote by remember { mutableStateOf("") }
+    var postNote by remember { mutableStateOf("") }
+    var counting by remember { mutableStateOf(0) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(counting) {
+        if (counting <= 0) return@LaunchedEffect
+        delay(1000)
+        if (counting == 1) { counting = 0; val sent = social.shareWithNote(i, postNote); social.message.value = if (sent != null) "Posted." else "Couldn't post that right now."; onClose() } else counting--
+    }
+    androidx.compose.material3.AlertDialog(onDismissRequest = { if (counting == 0) onClose() }, containerColor = Vault.Surface,
+        title = { Text(i.title, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                if (!public) androidx.compose.material3.OutlinedTextField(keepNote, { keepNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Why keep it? (only you)", color = Vault.Muted) })
+                else androidx.compose.material3.OutlinedTextField(postNote, { postNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Say something (everyone sees this)", color = Vault.Muted) })
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = counting == 0) { public = !public }, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Post publicly", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(public, { if (counting == 0) public = it })
+                }
+                if (counting > 0) Text("Posting in $counting…", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            if (counting > 0) TextButton({ counting = 0 }) { Text("Undo", color = Vault.Danger) }
+            else TextButton({
+                if (public) counting = 5
+                else { social.readerUrl(i)?.let { url -> social.later.keep(keepNote.ifBlank { i.title }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }; social.message.value = "Kept in your notes."; onClose() }
+            }, enabled = !public || postNote.isNotBlank()) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
+        },
+        dismissButton = { if (counting == 0) TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** Reader's folders and sources: add a site or a person; the people toggle; each source's Mute and Unsubscribe. */
+@Composable
+private fun ReaderSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Reader", nav)
+    val list by social.readerList.collectAsState()
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var said by remember { mutableStateOf<String?>(null) }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            androidx.compose.material3.OutlinedTextField(typed, { typed = it; said = null }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), singleLine = true,
+                placeholder = { Text("A site or a person", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                leadingIcon = { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp) else Text("＋", color = Vault.Muted) },
+                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, imeAction = ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                    busy = true
+                    scope.launch { val got = social.addToReader(typed); busy = false; said = got?.let { "Added $it." } ?: "Couldn't find anything to follow there."; if (got != null) { typed = ""; social.loadReader() } }
+                }))
+            said?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+        }
+        item { Heading("Folders") }
+        item {
+            Row(Modifier.fillMaxWidth().clickable { social.changeReader { it.withPeople(!social.peopleOn(), cc.aaro.cosign.core.Clock.now()) } }.padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Your people", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                    Text("Posts from people you follow", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                androidx.compose.material3.Switch(social.peopleOn(), { on -> social.changeReader { it.withPeople(on, cc.aaro.cosign.core.Clock.now()) } })
+            }
+        }
+        item { Text("Read first is your Special Follow list.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) }
+        val sources = list.live
+        if (sources.isNotEmpty()) item { Heading("Sources") }
+        items(sources, key = { it.id }) { src ->
+            var menu by remember { mutableStateOf(false) }
+            val isMuted = src.id in list.muted
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                    Text(src.name.ifEmpty { src.value }, color = if (isMuted) Vault.Muted else Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(READER_FOLDERS.firstOrNull { it.first == src.folder }?.second ?: src.folder, color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Box {
+                    IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted) }
+                    if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                        DropdownMenuItem({ Text(if (isMuted) "Unmute" else "Mute", color = Vault.Text) }, { menu = false; social.changeReader { it.withMute(src.id, !isMuted, cc.aaro.cosign.core.Clock.now()) } })
+                        DropdownMenuItem({ Text("Unsubscribe", color = Vault.Danger) }, { menu = false; social.changeReader { it.withSource(src.copy(gone = true, at = cc.aaro.cosign.core.Clock.now())) } })
+                    }
+                }
+            }
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }

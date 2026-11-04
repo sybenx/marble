@@ -1613,6 +1613,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (!p.getBoolean("feed3Tried", false)) p.edit().putInt("feedVersion", 3).putBoolean("feed3Tried", true).apply()
         // Feed 1 and 2 move to Feed 3 once (marble-2009-spec §8); the old choice is kept, and Advanced can go back this release.
         if (!p.getBoolean("feed3For2009", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 3)).putInt("feedVersion", 3).putBoolean("feed3For2009", true).apply()
+        // Reader (marble-2009-spec step 6) takes Following's place once; Edition stays a switch in Advanced for a release.
+        if (!p.getBoolean("readerFirst", false)) p.edit().putInt("feedVersion", 4).putBoolean("readerFirst", true).apply()
         p.getInt("feedVersion", 3)
     }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {

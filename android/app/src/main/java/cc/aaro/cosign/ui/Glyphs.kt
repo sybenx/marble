@@ -25,6 +25,12 @@ object Glyphs {
     val repost = line("repost", "M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3")
     val out = line("out", "M7 17 17 7M8 7h9v9")
     /** Share: three dots joined. */
+    /** Open in…: a box with an arrow leaving it (the external-link mark). */
+    val openIn = line("openIn", "M14 4h6v6M20 4l-9 9M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6")
+    /** A discussion: a speech bubble. */
+    val talk = line("talk", "M4 5h16v11H9l-5 4z")
+    val star = line("star", "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8L3.5 9.7l5.9-.8z")
+    val starOn = line("starOn", "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8L3.5 9.7l5.9-.8z", fill = true)
     val share = line("share", "M18 2.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM6 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM18 15.5a3 3 0 1 0 0 6a3 3 0 1 0 0-6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4")
     /** A past search: the clock. */
     val clock = line("clock", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 7v5l3.5 2")

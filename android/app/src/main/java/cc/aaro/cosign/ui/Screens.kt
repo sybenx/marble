@@ -795,7 +795,7 @@ private fun FeedLogSetting() {
             Text("Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
             Text("Now: " + cc.aaro.cosign.FeedNames.of(feed), color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (v in listOf(1, 2, 3)) Text(cc.aaro.cosign.FeedNames.short(v), color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                for (v in listOf(4, 3)) Text(cc.aaro.cosign.FeedNames.short(v), color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1,
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (feed == v) Vault.Accent else Vault.Surface).border(1.dp, if (feed == v) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
                         .clickable { social.setFeedVersion(v) }.padding(horizontal = 10.dp, vertical = 6.dp))
             }

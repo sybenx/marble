@@ -177,6 +177,6 @@ class LogFiles(val dir: File, private val cap: Long = 30L shl 20, private val da
 
 /** The feeds' names, to tell them apart (Account › Advanced; the feed log says "following1" and so on). */
 object FeedNames {
-    fun of(v: Int) = "Feed $v · " + short(v).substringAfter(" · ")
-    fun short(v: Int) = when (v) { 1 -> "1 · Original"; 2 -> "2 · Mixed"; else -> "3 · Edition" }
+    fun of(v: Int) = if (v == 4) "Reader" else "Feed $v · " + short(v).substringAfter(" · ")
+    fun short(v: Int) = when (v) { 1 -> "1 · Original"; 2 -> "2 · Mixed"; 4 -> "Reader"; else -> "3 · Edition" }
 }
