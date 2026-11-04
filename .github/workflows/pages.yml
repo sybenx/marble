@@ -1,11 +1,9 @@
-# Publishes site/ to GitHub Pages (https://marble.syb.lol, the custom domain set in the repo's Pages settings;
-# sybenx.github.io/marble redirects there) when it changes on main.
+# The old way marble.syb.lol was published: site/ to GitHub Pages. Since 2026-11-03 marble.syb.lol is the Cloudflare
+# Worker (wrangler.jsonc: `npx wrangler deploy`), which answers every page with 200 (Pages answered links like
+# /nevent1… with 404, so browsers offered the Internet Archive). Kept, by hand only, in case it's needed back.
 name: Site
 
 on:
-  push:
-    branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
