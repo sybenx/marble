@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Marble</title>
 <meta name="application-name" content="Marble">
-<meta name="description" content="Marble: search the open social web, keep what you find as notes, and read the people and sites you pick, calmly.">
+<meta name="description" content="Search the open social web.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F7F3EC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#13110F" media="(prefers-color-scheme: dark)">
@@ -49,12 +49,12 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Marble">
 <meta property="og:title" content="Marble">
-<meta property="og:description" content="Search the open social web, keep what you find as notes, and read the people and sites you pick, calmly.">
+<meta property="og:description" content="Search the open social web.">
 <meta property="og:url" content="https://marble.syb.lol/">
 <meta property="og:image" content="https://marble.syb.lol/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="A glass swirl marble, and the words: Marble. One account for the open social web.">
+<meta property="og:image:alt" content="A glass swirl marble and the word Marble.">
 <meta name="twitter:card" content="summary_large_image">
 <style>
   :root {
@@ -158,6 +158,11 @@
   .about-link a:hover { text-decoration: underline; }
   /* home at rest (home-rules.md): the mark, the box, "Reader" top left, your picture top right; About only for visitors */
   body[data-page="home"]:not([data-signed]) .about-link { display: block; }
+  /* a visitor: one quiet line under the box */
+  .get-line { display: none; margin: 18px 0 0; font-size: 14px; }
+  .get-line a { color: var(--muted); text-decoration: none; padding: 12px 8px; }
+  .get-line a:hover { text-decoration: underline; }
+  body[data-page="home"]:not([data-signed]) .get-line { display: block; }
   .place-word { display: none; position: absolute; top: 12px; left: 12px; font-size: 15px; color: var(--ink); text-decoration: none; padding: 0 10px; min-height: 44px; min-width: 44px; line-height: 44px; }
   /* 44 pt at least for everything you tap (home-rules: build requirements) */
   .account .me { min-width: 44px; min-height: 44px; display: grid; place-items: center; }
@@ -176,7 +181,7 @@
   .ic-btn:disabled { opacity: .3; cursor: default; }
   .nstep { display: block; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
   .place-word:hover { text-decoration: underline; }
-  body[data-page="home"] .place-word { display: block; }
+  body[data-page="home"][data-signed] .place-word { display: block; } /* (a visitor: the mark, the box, Sign in, one line) */
   body[data-page="home"] .word { display: none; }
   /* the go-chip on a phone only; on a computer Enter does its job */
   @media (hover: hover) and (pointer: fine) { .go-chip { display: none; } }
@@ -807,6 +812,7 @@
     <button type="submit" class="go-chip" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5v7a3 3 0 0 1-3 3H6"/><path d="M10 11l-4 4 4 4"/></svg></button>
     <div class="drop" id="drop" role="listbox" hidden></div>
   </form>
+  <p class="get-line"><a href="/about#get">Get Marble for Android</a></p>
   <div class="account" id="account"></div>
 </header>
 
@@ -814,33 +820,6 @@
 <p class="about-link"><a href="/about">About Marble</a></p>
 
 <div id="landing">
-<section class="wrap intro" aria-labelledby="tagline">
-  <p class="tagline" id="tagline">Find it, keep it, read it: the open social web, calmly.</p>
-  <a class="button" href="#get">Get Marble</a>
-  <p class="note">Free, for Android. iPhone is coming.</p>
-</section>
-
-<section class="wrap" aria-labelledby="what">
-  <h2 id="what">What it does</h2>
-  <div class="points">
-    <div class="point">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
-      <h3>Your account</h3>
-      <p>It's yours alone. No company holds it, and no company can take it away.</p>
-    </div>
-    <div class="point">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M9.5 9.5h5v5h-5z"/><path d="M11 18h2"/></svg>
-      <h3>Sign in anywhere with your phone</h3>
-      <p>A site shows a code. You scan it with Marble. You're in, with no password.</p>
-    </div>
-    <div class="point">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>
-      <h3>Discover</h3>
-      <p>Posts from people you'll like, plus today's stories.</p>
-    </div>
-  </div>
-</section>
-
 <section class="wrap" aria-labelledby="safe">
   <div class="safe">
     <h2 id="safe">Why it's safe</h2>
