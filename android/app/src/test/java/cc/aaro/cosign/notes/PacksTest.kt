@@ -244,4 +244,15 @@ class PacksTest {
         assertTrue(flush(v, relay, 2000) > 0)
         assertTrue(v.dirty.isEmpty())
     }
+
+    /** 0.12.28: a pack that splits reads each new pack before writing it, so none is written over unread. */
+    @Test fun aSplitReadsItsNewPacksFirst() {
+        val l = layout(); val relay = Relay(); val v = Vault(l)
+        val ids = (0 until 4000).map { "n$it" }.filter { l.owner(it, emptySet()) == "0000" }.take(60)
+        ids.forEach { v.put(note(it, "x".repeat(400))) }
+        val readDs = ArrayList<String>(); val writtenBeforeRead = ArrayList<String>()
+        runBlocking { Cycle.flush(v, 1000, { d -> readDs += d; relay.read(d) }, { d, at, c -> if (d !in readDs) writtenBeforeRead += d; relay.write(d, at, c) }) }
+        assertTrue("0000" in v.retired)
+        assertTrue("written before being read: $writtenBeforeRead", writtenBeforeRead.isEmpty())
+    }
 }

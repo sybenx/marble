@@ -81,9 +81,11 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (k != null) {
             // A device that has never pulled: from another device that's open, if one answers (option D); else pages.
             val caughtUp = store.get(PULLED) == null && catchUp()
+            // A page that didn't come (null): the next pull reads from as far back again, not from now.
+            var missed = false
             if (!caughtUp) for (key in k.keys) {
                 val layout = Layout(key.kid, key.k.unhex())
-                val got = page(layout.w, since) ?: continue
+                val got = page(layout.w, since) ?: run { missed = true; null } ?: continue
                 // Per pack, its newest copy (a tie: the lower id, as relays keep).
                 val newest = got.groupBy { it.d }.values.map { c -> c.sortedWith(compareByDescending<Stored> { it.createdAt }.thenBy { it.id }).first() }
                 val incoming = newest.map { Vault.Incoming(it.d, it.createdAt, it.content) }
@@ -91,8 +93,9 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
                 else Vault(layout).also { if (it.apply(incoming, device).halted) halted = true else vault.adopt(it) }
             }
             if (!caughtUp) base()
-            if (!caughtUp) net.read("d", listOf(vault.layout.checkpointD))?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
-            store.put(PULLED, now().toString())
+            if (!caughtUp) net.read("d", listOf(vault.layout.checkpointD)).also { if (it == null) missed = true }
+                ?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
+            if (!missed) store.put(PULLED, now().toString())
         }
         save()
         items()
@@ -108,9 +111,21 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         val w = vault.layout.w
         val written = Cycle.flush(vault, now(), read = { d -> net.read("d", listOf(d))?.map { Vault.Incoming(it.d, it.createdAt, it.content) } },
             write = { d, at, content -> net.write(d, w, at, content) }, device = device)
-        if (written > 0) net.write(vault.layout.checkpointD, null, now(), vault.nextCheckpoint().toJson())
+        // The checkpoint after reading the one there (a higher seq, newer than it); none written if it couldn't be read.
+        if (written > 0) net.read("d", listOf(vault.layout.checkpointD))?.let { there ->
+            val newest = there.maxByOrNull { it.createdAt }
+            newest?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
+            net.write(vault.layout.checkpointD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), vault.nextCheckpoint().toJson())
+        }
+        // The old list: never over a copy that wasn't read, or isn't v1 (a later version, or "moved").
         val v1 = v1Json()
-        if (v1 != v1Last && net.write(OLD, null, now(), v1Event(v1))) { v1Last = v1; store.put(V1, v1) }
+        if (v1 != v1Last) net.read("d", listOf(OLD))?.let { there ->
+            val newest = there.maxByOrNull { it.createdAt }
+            val v = newest?.let { n -> n.content?.let { c -> try { JSONObject(c).optInt("v", 1) } catch (_: Exception) { 0 } } ?: 0 }
+            // A later version there (or "moved"): left as it is, and nothing waits to go (it isn't ours to write over).
+            if (newest != null && newest.content != null && v != 1) { v1Last = v1; store.put(V1, v1) }
+            else if ((newest == null || v == 1) && net.write(OLD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), v1Event(v1))) { v1Last = v1; store.put(V1, v1) }
+        }
         save()
         items()
     }
@@ -260,7 +275,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         var k = (keys ?: Keys(emptyList())).union(there)
         if (k.keys.isEmpty()) { if (!create || got.isNotEmpty()) return null; k = Keys.fresh(now()) }
         if (k.keys.toSet() != there.keys.toSet() && parsed.none { it == null }) {
-            net.write(Keys.D, null, maxOf(now(), (got.maxOfOrNull { it.createdAt } ?: 0) + 1), k.toJson())
+            // Not taken by most of your write relays: not used (packs under a key no other device has would be lost to them).
+            if (!net.write(Keys.D, null, maxOf(now(), (got.maxOfOrNull { it.createdAt } ?: 0) + 1), k.toJson())) return keys
             // Read back: another device may have written its own key at the same moment.
             net.read("d", listOf(Keys.D))?.mapNotNull { Keys.parse(it.content) }?.forEach { k = k.union(it) }
         }

@@ -26,11 +26,14 @@ class NotesSyncTest {
         var drop = 0
         private var shouts = 0
         var pageReads = 0
+        /** Reads that don't reach the account (null), and writes most relays don't take (false), by tag and value. */
+        var unread: (String, List<String>) -> Boolean = { _, _ -> false }
+        var untaken: (String) -> Boolean = { false }
         val blobs = HashMap<String, ByteArray>()
         private var n = 0
         val net = object : NotesNet {
             override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
-                if (down) return null
+                if (down || unread(tag, values)) return null
                 reads++; if (tag == "w") pageReads++
                 return held.values.filter { if (tag == "d") it.d in values else it.w in values }
                     .filter { e -> (until == null || e.at <= until) && (since == null || e.at >= since) }
@@ -52,7 +55,7 @@ class NotesSyncTest {
                 ears.getOrPut(w) { mutableListOf() }.add(onMessage); return AutoCloseable { ears[w]?.remove(onMessage) }
             }
             override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
-                if (down) return false
+                if (down || untaken(d)) return false
                 val e = Ev("%08d".format(++n), d, w, createdAt, content)
                 val have = held[d]
                 if (have == null || createdAt > have.at || (createdAt == have.at && e.id < have.id)) held[d] = e
@@ -284,4 +287,39 @@ class NotesSyncTest {
         assertEquals(600, tablet.shown().size)
         assertEquals(0, relay.pageReads - 1)
     }
+
+    /** 0.12.28: the old list is never written over a copy that isn't v1 (here, "moved"), nor when it couldn't be read. */
+    @Test fun theOldListIsntWrittenOverALaterVersion() {
+        val relay = Relay()
+        runBlocking { relay.net.write("marble/later", null, 5000, """{"v":2,"moved":"notes"}""") }
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        assertEquals(2, relay.v1()!!.optInt("v"))
+        relay.held.remove("marble/later"); relay.unread = { _, v -> "marble/later" in v }
+        phone.add("b", "bread"); phone.flush()
+        assertNull(relay.held["marble/later"])
+    }
+
+    /** 0.12.28: new keys most write relays didn't take aren't used (packs under them would be lost to other devices). */
+    @Test fun keysThatDidntTakeArentUsed() {
+        val relay = Relay(); relay.untaken = { it == Keys.D }
+        val phone = Device(relay); phone.add("a", "milk")
+        assertNull(phone.flush())
+        assertTrue(relay.held.values.none { it.w != null })
+        relay.untaken = { false }
+        assertNotNull(phone.flush())
+        assertTrue(relay.held.values.any { it.w != null })
+    }
+
+    /** 0.12.28: a pull whose pages didn't all come doesn't move "pulled up to", so the next reads from as far back. */
+    @Test fun aPullWithAMissingPageReadsAgainFromAsFarBack() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        val tablet = Device(relay); tablet.pull()
+        val pulled = tablet.store.m["notesPulled"]
+        clock += 5000
+        relay.unread = { tag, _ -> tag == "w" }
+        tablet.pull(full = false)
+        assertEquals(pulled, tablet.store.m["notesPulled"])
+    }
+
 }

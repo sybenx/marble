@@ -330,14 +330,22 @@ object Cycle {
                 val before = read(v.layout.d(prefix)) ?: return stop(prefix)
                 val applied = v.apply(before, device)
                 if (applied.halted) return stop(prefix)
-                val packs = v.packsFor(prefix)
+                var packs = v.packsFor(prefix)
+                // Split: each new pack is read (and merged) first, as the parent was, so none is written over unread.
+                val heard = HashMap<String, List<Vault.Incoming>>().apply { put(v.layout.d(prefix), before) }
+                for (p in packs) { val d = v.layout.d(p.prefix); if (d in heard) continue
+                    val got = read(d) ?: return stop(prefix)
+                    if (v.apply(got, device).halted) return stop(prefix)
+                    heard[d] = got }
+                // (What those reads merged in goes in: each new pack drawn again, the retired parent as it is.)
+                if (heard.size > 1) packs = packs.flatMap { if (it.retired || it.prefix == prefix) listOf(it) else v.packsFor(it.prefix) }
                 // A pack this device couldn't read stays as it is: the change waits for a readable copy.
                 if (packs.any { v.layout.d(it.prefix) in v.unreadable }) { v.dirty += prefix; break }
                 var clean = true
                 var took = true
                 for (p in packs) {
                     val d = v.layout.d(p.prefix)
-                    val at = maxOf(now, (v.seen[d] ?: 0) + 1, (before.maxOfOrNull { it.createdAt } ?: 0) + 1)
+                    val at = maxOf(now, (v.seen[d] ?: 0) + 1, ((heard[d] ?: before).maxOfOrNull { it.createdAt } ?: 0) + 1)
                     val content = p.toJson()
                     // Done only when most of your write relays took it; else it stays to send, and isn't the newest seen.
                     if (!write(d, at, content)) { took = false; break }
