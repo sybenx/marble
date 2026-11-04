@@ -494,7 +494,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
                 KeptLately(laterItems, social, nav, keptMax)
                 Spacer(Modifier.height(6.dp))
                 val notes = laterItems.count { it.deleted == null && it.done == null }
-                HomePill(Glyphs.save, if (notes > 0) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
+                HomePill(Glyphs.save, if (notes > 0 && !cc.aaro.cosign.NotesTrial.calm) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
             }
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
@@ -667,7 +667,7 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
             item.url?.let { SiteIcon(it, 16); Spacer(Modifier.width(8.dp)) }
             Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
+            if (!cc.aaro.cosign.NotesTrial.calm) Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
         }
     }
 }
@@ -3301,7 +3301,7 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     }
     FilterBox(filter, "Filter your notes") { filter = it }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to if (cc.aaro.cosign.NotesTrial.calm) "Notes" else "Notes · ${open.size}", "done" to "Done")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
@@ -3439,7 +3439,9 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(cc.aaro.cosign.readable(it) { pk -> People.known.value[pk]?.name }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
             val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
-            Text(listOfNotNull(site, if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)).joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            // (After the notes trial, no ages: only where it's from.)
+            val age = if (cc.aaro.cosign.NotesTrial.calm) null else if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)
+            listOfNotNull(site, age).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelMedium) }
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
             if (cc.aaro.cosign.NotesTrial.on && item.done == null) {

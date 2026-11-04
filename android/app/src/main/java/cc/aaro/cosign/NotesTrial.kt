@@ -38,6 +38,8 @@ object NotesTrial {
     fun day(): Int = ((now() - start) / 86_400L).toInt() + 1
     /** Weeks 3–4 and after: the sinking order, the shelf and the long-press choices. */
     val on: Boolean get() = start > 0 && day() >= 15
+    /** After the trial (day 29 on): no counts or ages in Notes, by the calm rule. (Kept during it, so its weeks match.) */
+    val calm: Boolean get() = start > 0 && day() > 28
     /** Day 28 and not answered yet: the one question. */
     val ask: Boolean get() = start > 0 && day() >= 28 && answer.value == null
 
