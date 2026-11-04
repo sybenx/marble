@@ -2292,7 +2292,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch {
             // Yours to it so far (here and on your relays): replaced by the new one (ReactionRules.sends).
             val old = if (first && known.isEmpty()) emptyList() else (known + findMyReactions(me, note.id)).distinct()
-            val plan = ReactionRules.sends(old, s, note)
+            // Where the post can be found (its author's first write relay), for others' notifications.
+            val hint = try { outboxOf(note.pubkey).firstOrNull() } catch (_: Exception) { null } ?: ""
+            val plan = ReactionRules.sends(old, s, note, hint)
             val sent = actEvent(Event(me, Clock.now(), plan[0].kind, plan[0].tags, plan[0].content).withId())
             if (sent == null) { if (first) mark(note.id, false); setReaction(note.id, before); return@launch }
             keepReactionId(note.id, listOf(sent.id))

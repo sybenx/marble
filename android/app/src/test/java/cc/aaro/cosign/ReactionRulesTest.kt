@@ -35,4 +35,10 @@ class ReactionRulesTest {
         assertEquals(listOf("😂", "❤️", "🔥"), recents.map { it.emoji })
         assertEquals(listOf("😂", "❤️", "🔥", "👍", "😢", "👀"), ReactionRules.tray(recents).map { it.emoji })
     }
+
+    @Test fun tagsAsNip25() {
+        val note = Event("author", 1, 1, emptyList(), "", id = "post")
+        assertEquals(listOf(listOf("e", "post", "wss://nos.lol", "author"), listOf("p", "author"), listOf("k", "1")),
+            ReactionRules.tags(note, ReactionRules.Shown("😂"), "wss://nos.lol"))
+    }
 }

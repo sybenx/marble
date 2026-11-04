@@ -56,9 +56,9 @@ object ReactionRules {
 
     /** What a change sends: [to] (null: take it back) given your reactions to the post so far ([before], their ids). */
     data class Send(val kind: Int, val content: String, val tags: List<List<String>>)
-    fun sends(before: List<String>, to: Shown?, note: Event): List<Send> {
+    fun sends(before: List<String>, to: Shown?, note: Event, hint: String = ""): List<Send> {
         val delete = if (before.isEmpty()) emptyList() else listOf(Send(5, "", before.map { listOf("e", it) } + listOf(listOf("k", "7"))))
-        return if (to == null) delete else listOf(Send(7, wire(to.emoji), tags(note, to))) + delete
+        return if (to == null) delete else listOf(Send(7, wire(to.emoji), tags(note, to, hint))) + delete
     }
 
     /** What goes in a reaction's content (❤️ as "+", so other apps count it as a like). */
@@ -87,7 +87,10 @@ object ReactionRules {
     /** The tray's six emoji (then +): your recents, then filled from the defaults, each once. */
     fun tray(recents: List<Shown>): List<Shown> = (recents.take(6) + DEFAULTS.map { Shown(it) }).distinctBy { it.emoji }.take(6)
 
-    /** The tags of a reaction to [note] with [s]. */
-    fun tags(note: Event, s: Shown): List<List<String>> = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString())) +
+    /**
+     * The tags of a reaction to [note] with [s], as NIP-25 and Marble Web: the post with where to find it ([hint]: a
+     * relay, or "") and its author, the author, the post's kind; and a custom emoji's tag.
+     */
+    fun tags(note: Event, s: Shown, hint: String = ""): List<List<String>> = listOf(listOf("e", note.id, hint, note.pubkey), listOf("p", note.pubkey), listOf("k", note.kind.toString())) +
         (s.url?.let { listOf(listOf("emoji", s.emoji.trim(':'), it)) } ?: emptyList())
 }
