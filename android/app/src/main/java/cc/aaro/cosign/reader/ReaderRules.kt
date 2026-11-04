@@ -48,10 +48,40 @@ object ReaderRules {
     fun fitSeen(o: JSONObject, now: Long, max: Int = MAX_SEEN): JSONObject {
         val cutoff = now - UNREAD_FOR
         for (name in listOf("upto", "unread")) o.optJSONObject(name)?.let { m -> m.keys().asSequence().toList().forEach { k -> if (Math.abs(m.getLong(k)) <= cutoff) m.remove(k) } }
-        val days = o.optJSONObject("days") ?: return o
-        while (o.toString().toByteArray().size > max && days.length() > 0) days.remove(days.keys().asSequence().minBy { it.toLongOrNull() ?: Long.MAX_VALUE })
+        fun big() = o.toString().toByteArray().size > max
+        // The oldest days first, but never the newest one; then the oldest read-up-tos; then the oldest read-again marks.
+        o.optJSONObject("days")?.let { days -> while (big() && days.length() > 1) days.remove(days.keys().asSequence().minBy { it.toLongOrNull() ?: Long.MAX_VALUE }) }
+        o.optJSONObject("upto")?.let { m -> while (big() && m.length() > 0) m.remove(m.keys().asSequence().minBy { m.getLong(it) }) }
+        o.optJSONObject("unread")?.let { m -> while (big() && m.keys().asSequence().any { m.getLong(it) < 0 }) m.remove(m.keys().asSequence().filter { m.getLong(it) < 0 }.minBy { -m.getLong(it) }) }
         return o
     }
+
+    /**
+     * Whether this device may write its copy of an account list (marble/reader, discover/seen): a majority of the write
+     * relays (where copies go) said they were done, and none of what came back is older than a copy this device has seen.
+     */
+    fun mayWrite(writeRelays: Collection<String>, answered: Collection<String>, gotAt: Long?, seenAt: Long): Boolean {
+        val w = writeRelays.map { it.trimEnd('/') }.toSet()
+        if (w.isEmpty()) return false
+        val a = answered.map { it.trimEnd('/') }.count { it in w }
+        return a * 2 > w.size && (gotAt ?: 0) >= seenAt
+    }
+
+    /** Still in Reader (§4): unread (up to 30 days, filtered before this), read but not aged yet, or starred. */
+    fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long): Boolean = !read || now - at < keepFor(type) || starred
+
+    /** A Reader item for [ageUpto]: its source, its time, whether it's read, and whether it has aged out. */
+    data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
+
+    /**
+     * Read-up-to rises when read items age out (so they stay read once their keys leave the seen list), but never to
+     * or past an unread item from that source: that one, and anything older, stays unread. Only the sources that rise.
+     */
+    fun ageUpto(items: List<Aged>, upto: Map<String, Long>): Map<String, Long> = items.groupBy { it.source }.mapNotNull { (src, l) ->
+        val to = l.filter { it.read && it.aged }.maxOfOrNull { it.at } ?: return@mapNotNull null
+        val cap = l.filter { !it.read }.minOfOrNull { it.at - 1 } ?: Long.MAX_VALUE
+        minOf(to, cap).takeIf { it > (upto[src] ?: 0) }?.let { src to it }
+    }.toMap()
     const val MAX_SEEN = 48_000
 
     /** Open in… for a post or an article (reader.md §5): in this order. */
@@ -65,8 +95,10 @@ object ReaderRules {
 
     /** Read: seen, or older than its source's read-up-to; unless kept unread. */
     fun isRead(key: String, source: String, at: Long, s: Seen): Boolean {
-        // Kept unread: a positive time; read again after it, the time made negative (so a merge can't bring it back).
-        if ((s.unread[key] ?: 0) > 0) return false
+        // Kept unread: a positive time; read again after it, the time made negative (so a merge can't bring it back);
+        // and Mark all as read after it (the source's read-up-to later than the mark) reads it too.
+        val u = s.unread[key] ?: 0
+        if (u > 0 && u > (s.upto[source] ?: 0)) return false
         return key in s.days || (s.upto[source]?.let { at <= it } ?: false)
     }
 

@@ -2433,7 +2433,9 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         }
 
         /** [s] cut to about [n] characters, at a space where there is one. */
-        fun cut(s: String, n: Int): String = if (s.length <= n) s else s.take(n).let { c -> c.substringBeforeLast(' ').takeIf { it.length > n / 2 } ?: c }.trimEnd() + "…"
+        fun cut(s: String, n: Int): String = if (s.length <= n) s else s.take(n).let { c ->
+            // At the last space; one past half-way if there's one, else any; a single run of letters is cut where it must be.
+            c.substringBeforeLast(' ').takeIf { it.length > n / 2 } ?: c.substringBeforeLast(' ', "").ifEmpty { c } }.trimEnd() + "…"
 
         /** A NIP-36 content warning: its reason ("": none given); null: none. */
         fun warning(e: Event): String? = e.tags.firstOrNull { it.isNotEmpty() && it[0] == "content-warning" }?.let { it.getOrNull(1)?.trim() ?: "" }
@@ -4361,7 +4363,13 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
     val all = items.orEmpty()
     val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } }.map { it.id to it.name }
     val folders = (listOf("all" to "All") + READER_FOLDERS + custom).filter { (id, _) -> id == "all" || all.any { it.folder == id } }
-    val shown = if (folder == "all") all else all.filter { it.folder == folder }
+    // Muted or unsubscribed just now: gone at once; the list loaded again for what changed.
+    val gone = remember(list) { list.muted.toSet() + list.sources.filter { it.gone }.map { it.id } }
+    val inFolder = if (folder == "all") all else all.filter { it.folder == folder }
+    val shown = inFolder.filter { it.source !in gone }
+    val shape = remember(list) { list.live.map { it.id to it.folder } to list.muted.toSet() }
+    var lastShape by remember { mutableStateOf(shape) }
+    LaunchedEffect(shape) { if (shape != lastShape) { lastShape = shape; if (items != null && !loading) social.loadReader() } }
     fun unread(i: Social.ReaderItem) = !social.itemRead(i)
     val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
     val open = remember { androidx.compose.runtime.mutableStateListOf<String>() }
@@ -4418,7 +4426,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
                 items(shown, key = { it.key }) { i ->
                     val isOpen = view == "river" || i.key in open
                     ReaderRow(i, unread(i), social.starred(i, kept), isOpen, social, nav, onToggle = {
-                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markItemRead(i) }
+                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markItemRead(i, opened = true) }
                     })
                 }
             }
@@ -4441,16 +4449,19 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
                 modifier = Modifier.size(36.dp).clip(CircleShape).clickable { social.star(i) }.padding(9.dp))
             Text(i.sourceName, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(76.dp))
             Spacer(Modifier.width(8.dp))
+            // Drawn again as names arrive (the line has @names in it).
+            val (title, snippet) = remember(i, people.size) { cc.aaro.cosign.ReaderRows.text(i, people) }
             Text(androidx.compose.ui.text.buildAnnotatedString {
-                withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(i.title) }
-                if (i.snippet.isNotBlank() && !open) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Field)) { append(" — " + i.snippet) }
+                withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(title) }
+                if (snippet.isNotBlank() && !open) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Field)) { append(" — " + snippet) }
             }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(vertical = 10.dp))
-            Text(shortDate(i.at), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+            if (!open) ReaderOpenIn(i, social, nav, 32)
+            Text(shortDate(i.at), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
             DropdownMenuItem({ Text("Keep unread", color = Vault.Text) }, { menu = false; social.keepUnread(i.key) })
             DropdownMenuItem({ Text("Share with a note", color = Vault.Text) }, { menu = false; sharing = true })
-            DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; share(context, i.title + "\n" + (social.readerUrl(i) ?: ""), null) })
+            DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) })
             DropdownMenuItem({ Text("Mute ${i.sourceName}", color = Vault.Text) }, { menu = false; social.changeReader { it.withMute(i.source, true, cc.aaro.cosign.core.Clock.now()) } })
         }
     }
@@ -4461,7 +4472,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
         // Posts drawn as everywhere else (the shared content rules): @names, quote and article cards, pictures (Blossom too), a warning's veil.
         when {
             i.posts.isNotEmpty() -> i.posts.forEachIndexed { n, p -> if (n > 0) HorizontalDivider(color = Vault.Edge); ReaderPost(p, people, nav, compact = true) }
-            i.event?.kind == 30023 -> ArticleCard(i.event, people, nav)
+            i.event?.kind == 30023 -> Veiled(i.event) { ArticleCard(i.event, people, nav) }
             i.event != null -> ReaderPost(i.event, people, nav, compact = false)
             else -> {
                 i.image?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
@@ -4469,33 +4480,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
             }
         }
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Open in…: the story's page, or the post or article in Marble. (The three-way Open in… list comes with the opener.)
-            // Open in…: a post or article in Marble, your Nostr app, or njump.me; a story's page in the browser.
-            // A viewer's link (njump, primal, nostr.at…) is a post, so it opens here too.
-            val post = i.event?.takeIf { i.link == null || it.kind == 30023 } ?: i.posts.firstOrNull()?.takeIf { i.posts.size == 1 }
-            val here = i.link?.let { cc.aaro.cosign.inAppRef(it) }
-            var opener by remember { mutableStateOf(false) }
-            Box {
-                Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
-                    when {
-                        post != null -> opener = true
-                        here != null -> scope.launch { nav.ref(here, context) }
-                        i.link != null -> openInBrowser(context, i.link, i.key)
-                        i.posts.isNotEmpty() -> nav.thread(i.posts[0].id)
-                    }
-                }.padding(10.dp))
-                if (opener && post != null) DropdownMenu(true, { opener = false }, containerColor = Vault.Surface) {
-                    val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
-                    val (marble, app, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
-                    DropdownMenuItem({ Text(marble, color = Vault.Text) }, { opener = false; nav.thread(post.id) })
-                    DropdownMenuItem({ Text(app, color = Vault.Text) }, {
-                        opener = false
-                        try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
-                    })
-                    DropdownMenuItem({ Text(njump, color = Vault.Text) }, { opener = false; openInBrowser(context, "https://njump.me/$ref", i.key) })
-                }
-            }
+            ReaderOpenIn(i, social, nav, 40)
             i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> Icon(Glyphs.talk, "Discussion", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { openInBrowser(context, d, i.key) }.padding(10.dp)) }
             Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Muted,
                 modifier = Modifier.size(40.dp).clip(CircleShape).clickable { social.star(i) }.padding(10.dp))
@@ -4503,6 +4488,52 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
     }
     HorizontalDivider(color = Vault.Edge)
     if (sharing) ShareWithNote(i, social) { sharing = false }
+}
+
+/**
+ * Open in… (reader.md §5): a post or article (a day's newest post, for a digest) in Marble, your Nostr app or njump.me,
+ * and the page it links to; a story straight to its page; a viewer's link (njump, primal, nostr.at…) here.
+ */
+@Composable
+private fun ReaderOpenIn(i: Social.ReaderItem, social: Social, nav: Nav, size: Int) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val post = i.event ?: i.posts.firstOrNull()
+    val here = i.link?.let { cc.aaro.cosign.inAppRef(it) }
+    val page = i.link?.takeIf { here == null }
+    var opener by remember { mutableStateOf(false) }
+    Box {
+        Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(size.dp).clip(CircleShape).clickable {
+            when {
+                post != null -> opener = true
+                here != null -> scope.launch { nav.ref(here, context) }
+                page != null -> openInBrowser(context, page, i.key)
+            }
+        }.padding((size / 4).dp))
+        if (opener && post != null) DropdownMenu(true, { opener = false }, containerColor = Vault.Surface) {
+            val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
+            val (marble, app, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
+            DropdownMenuItem({ Text(marble, color = Vault.Text) }, { opener = false; social.markItemRead(i, opened = true); nav.thread(post.id) })
+            DropdownMenuItem({ Text(app, color = Vault.Text) }, {
+                opener = false
+                try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
+            })
+            DropdownMenuItem({ Text(njump, color = Vault.Text) }, { opener = false; openInBrowser(context, "https://njump.me/$ref", i.key) })
+            // A post about a page: the page too.
+            page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { opener = false; openInBrowser(context, u, i.key) }) }
+        }
+    }
+}
+
+/** A content warning's veil (NIP-36) over [content]: "<reason>: show", until tapped. */
+@Composable
+private fun Veiled(e: Event, content: @Composable () -> Unit) {
+    val warning = remember(e.id) { Body.warning(e) }
+    var unveiled by remember(e.id) { mutableStateOf(false) }
+    if (warning != null && !unveiled) Text(warning.ifEmpty { "Sensitive" } + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Ground).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
+    else content()
 }
 
 /** A post inside Reader, by the shared renderer (Body): its text, its card, its first picture or video; a tap opens it. */
@@ -4539,6 +4570,9 @@ private fun ReaderPost(n: Event, people: Map<String, Person>, nav: Nav, compact:
                     is Body.Vid -> VideoCard(m.v)
                 }
             }
+            // As a post in a list: one picture, and how many more (a tap shows them, or the post).
+            if (body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, 1) else nav.thread(n.id) })
         }
     }
 }

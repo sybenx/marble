@@ -35,13 +35,14 @@ object Fetch {
      * [query], and how many relays said they were done (EOSE): none means nothing could be asked, which is not the
      * same as "there's nothing there" (reader.md: never write over the account's copy on a timeout).
      */
-    suspend fun queryAnswered(relays: Collection<String>, filter: Map<String, Any>, timeoutMs: Long = 7000): Pair<List<Event>, Int> = runInterruptible(Dispatchers.IO) {
-        val answered = java.util.concurrent.atomic.AtomicInteger()
-        queryBlocking(relays.distinct(), listOf(filter), timeoutMs, 2500, answered) to answered.get()
+    suspend fun queryAnswered(relays: Collection<String>, filter: Map<String, Any>, timeoutMs: Long = 7000): Pair<List<Event>, Set<String>> = runInterruptible(Dispatchers.IO) {
+        val answered = java.util.Collections.synchronizedSet(HashSet<String>())
+        // No grace: every relay gets the whole time, since which ones answered is the point.
+        queryBlocking(relays.distinct(), listOf(filter), timeoutMs, timeoutMs, answered) to synchronized(answered) { answered.toSet() }
     }
 
     private fun queryBlocking(relays: List<String>, filters: List<Map<String, Any>>, timeoutMs: Long, graceMs: Long,
-                              answered: java.util.concurrent.atomic.AtomicInteger? = null): List<Event> {
+                              answered: MutableSet<String>? = null): List<Event> {
         if (relays.isEmpty()) return emptyList()
         // In the order they arrive: a curated feed's order is its ranking.
         val got = java.util.Collections.synchronizedMap(LinkedHashMap<String, Event>())
@@ -60,7 +61,7 @@ object Fetch {
                         if (msg.getOrNull(1) != sub) return
                         when (msg.getOrNull(0)) {
                             "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e -> if (!got.containsKey(e.id) && e.verify()) got[e.id] = e }
-                            "EOSE" -> { answered?.incrementAndGet(); firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
+                            "EOSE" -> { answered?.add(url); firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
                             "CLOSED" -> { firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
                         }
                     }

@@ -392,7 +392,8 @@ class Seen(private val file: File) {
         if (!shorts.add(SeenSync.short(id))) return false
         at[id] = time
         try {
-            if (at.size > 20_000) { val keep = synchronized(at) { at.entries.toList().takeLast(15_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
+            // Room for Reader's month of keys too (unread items show for 30 days), beside the feed's.
+            if (at.size > 60_000) { val keep = synchronized(at) { at.entries.toList().takeLast(50_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
             else file.appendText("$id $time\n")
         } catch (_: Exception) {}
         return true
@@ -410,8 +411,6 @@ object SeenSync {
     const val TAG = "discover/seen"
     const val WINDOW = 7 * 86_400L
     const val CAP = 2000
-    /** What NIP-44 can carry, with room to spare (its limit is 65,535 bytes). */
-    const val MAX_BYTES = 60_000
     /** How long relays keep the account's copy after the last write (NIP-40 expiration). */
     const val EXPIRES = 14 * 86_400L
 
