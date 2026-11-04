@@ -98,7 +98,7 @@ const later = (ms) => { clearTimeout(timer); timer = setTimeout(() => { timer = 
 // your write relays as your list says (account-relays.js: every one, down or not), and where to read; null: not known yet
 async function where() {
   const a = await accountRelays(current()).catch(() => null);
-  return a && { write: a.write, both: relays(a.write, a.read, FAST.slice(0, 2)).slice(0, 10) };
+  return a && { write: a.write, both: relays(a.write, a.read, FAST.slice(0, 2)) }; // (every write relay asked, no cap)
 }
 // the newest account copy this browser has seen, by d, and how many complete reads in a row have missed it
 const STATE = (pk) => `marble.reader.copies.${pk}`, MISSED = (pk) => `marble.reader.missed.${pk}`;

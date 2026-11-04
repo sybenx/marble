@@ -69,6 +69,14 @@ export function mergeSeen(a, b) {
   // a Keep unread mark (t) or its clearing (-t): the later of the two wins
   const unread = { ...(b?.unread || {}) };
   for (const [k, t] of Object.entries(a?.unread || {})) if (unread[k] == null || Math.abs(t) > Math.abs(unread[k])) unread[k] = t;
+  // a read-up-to time from one copy never passes a Keep unread mark the other made after that copy was written (it
+  // couldn't have known of it): clamped just below the mark, never below this copy's own time
+  for (const [mine, other] of [[a, b], [b, a]]) {
+    const marks = Object.entries(mine?.unread || {}).filter(([k, t]) => t > 0 && unread[k] === t && t > (other?.at || 0)).map(([, t]) => t);
+    if (!marks.length) continue;
+    const cap = Math.min(...marks) - 1;
+    for (const [src, t] of Object.entries(other?.upto || {})) if (upto[src] === t && t > cap) upto[src] = Math.max(mine?.upto?.[src] ?? 0, cap);
+  }
   return { ...out, days, upto, unread };
 }
 
