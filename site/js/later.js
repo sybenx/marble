@@ -236,10 +236,11 @@ async function pullNow() {
     try { theirs = JSON.parse(await nip44Self(got.content, false)); }
     catch (err) { stopped = true; failed(err); return null; } // (never sent over; and not asked again and again: next visit)
     if (me !== who) return null;
+    // seen, whatever its format: a later read that misses it then can't let this write over it
+    if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
     // a newer format than this knows (v2 "moved", or later): read nothing from it, and never send over it
     if (theirs?.v !== 1) { stopped = true; failing = true; listeners.forEach((fn) => fn()); return null; }
     stopped = false;
-    if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
   }
   const seenAt = read(COPY_AT(me), 0);
   const g = decide({ complete: completeRead(w.write, answer.answeredBy), full: fullRead(w.write, answer.answeredBy), found, seenAt, misses: missesAgainst(read(MISSED(me), null), seenAt) });
