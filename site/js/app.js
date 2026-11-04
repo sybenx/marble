@@ -99,7 +99,7 @@ function route(state, back = false) {
     return r ? showRelay(r, signal) : showMissing("That doesn't look like a relay's address.");
   }
   if (path === "/notes") return showNotes(signal, new URLSearchParams(location.search).get("tab"));
-  if (path === "/reader") return showReader(pageEl, signal, { page });
+  if (path === "/reader") return showReader(pageEl, signal, { page, card, fillLater });
   if (path === "/about") { page("about", "About"); return; }
   if (path === "/" || path === "/index.html") {
     if (q) {
