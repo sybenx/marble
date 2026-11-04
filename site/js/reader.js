@@ -2,18 +2,18 @@
 // when you've seen them. Folders: Read first (Special Follow, 10010), Your people (your follows, a toggle), News
 // (Marble's stories and the sites you add), Writers, Relays. No counts anywhere; a new item is bold and a folder with
 // new ones has a dot; scrolled past means read; read items age out. A person's short posts come as one row a day.
-// Kept in this browser for now: the account copy (d=marble/reader, and the seen list's upto/unread) waits until
-// Marble Android has agreed the formats (SYNC).
-import { req, relays, FAST, INDEXERS, normalize } from "./pool.js";
+// On your account (signed in with the extension, as Notes): your sources and folders (kind 30078 d=marble/reader) and
+// what you've read (the seen list, d=discover/seen, with its upto and unread), each NIP-44 to yourself, merged with
+// what's there before every write; as Marble Android keeps them (reader.md, agreed 2026-11-04).
+import { req, relays, publish, FAST, INDEXERS, normalize } from "./pool.js";
 import { keep, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { esc, name, avatar, ago, postPath } from "./render.js";
 import { decode } from "./ids.js";
-import { current, myFollows } from "./me.js";
+import { current, method, myFollows, nip44Self, sign } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, postKey, isRead, seenKeys, mergeReader } from "./reader-rules.js";
+import { kindOf, isMedia, digestKey, feedItemKey, postKey, isRead, seenKeys, mergeReader, mergeSeen } from "./reader-rules.js";
 
-export const SYNC = false;
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
 const AGE = { news: DAY, people: 2 * DAY, article: 7 * DAY }, UNREAD_FOR = 30 * DAY;
@@ -33,7 +33,7 @@ function load() {
   seen = { v: 1, at: 0, days: {}, upto: {}, unread: {}, ...read(SEEN(who), {}) };
   keys = seenKeys(seen);
 }
-function saveList() { write(LIST(who), doc); }
+function saveList() { write(LIST(who), doc); changed("list"); }
 function saveSeen() {
   // the last week of keys, as the seen list keeps them; unread marks for 30 days
   const cut = Math.floor((now() - 7 * DAY) / DAY);
@@ -41,6 +41,7 @@ function saveSeen() {
   for (const [k, t] of Object.entries(seen.unread)) if (t < now() - UNREAD_FOR) delete seen.unread[k];
   seen.at = now();
   write(SEEN(who), seen);
+  changed("seen");
 }
 function markRead(key) {
   if (keys.has(key) && seen.unread[key] == null) return;
@@ -57,6 +58,107 @@ function setSource(s) { doc.sources = doc.sources.filter((x) => x.id !== s.id).c
 function ensureFolder(id, label) {
   if (!doc.folders.some((f) => f.id === id && !f.gone)) { doc.folders.push({ id, name: label, order: doc.folders.length, view: "river", at: now() }); saveList(); }
 }
+
+// ── Your account's copy ──────────────────────────────────────────────────────────────────────────────
+// Read when Reader opens; written 20 s after a change (and when you leave the page), from what's there merged with
+// this browser's: never over a copy that didn't decrypt. The seen list keeps the last week (2,000 keys at most) and
+// expires on relays two weeks after its last write, as Android writes it.
+
+const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
+const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
+let account = { list: undefined, seen: undefined }, broken = new Set(), timer = null, dirty = new Set();
+const onRead = new Set();
+
+async function where() {
+  const o = await Promise.race([outbox(current()), new Promise((r) => setTimeout(() => r({ write: [], read: [] }), 2000))]);
+  return { write: o.write.length ? o.write : FAST.slice(0, 3), both: relays(o.write, o.read, FAST.slice(0, 2)).slice(0, 8) };
+}
+/** Your newest copy of each, decrypted: {event, body} (body null: it didn't decrypt). */
+async function fetchMine(ds) {
+  const me = current();
+  const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 5000, settle: 1000 })).filter((e) => e.pubkey === me);
+  const out = {};
+  for (const d of ds) {
+    const e = got.filter((x) => x.tags.some((t) => t[0] === "d" && t[1] === d)).sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
+    if (!e) continue;
+    let body = null;
+    try { body = JSON.parse(await nip44Self(e.content, false)); } catch {}
+    out[d] = { event: e, body };
+  }
+  return out;
+}
+
+/** The account's copies merged in here (and your old news feeds moved over once). */
+export async function pullAccount() {
+  if (!syncs()) return;
+  const me = current();
+  const got = await fetchMine([D.list, D.seen, OLD_FEEDS]);
+  if (current() !== me) return;
+  load();
+  const list = got[D.list], old = got[OLD_FEEDS], sn = got[D.seen];
+  broken = new Set([list && !list.body && "list", sn && !sn.body && "seen"].filter(Boolean));
+  if (list?.body?.v === 1) { account.list = list; doc = mergeReader(doc, list.body); write(LIST(who), doc); }
+  else if (!list && old?.body) {
+    // first time: your news feeds (Account › News sources on the phone) as sources in News
+    for (const f of old.body.own || []) if (f.url && !f.gone && !doc.sources.some((s) => s.id === `feed:${f.url}`)) doc.sources.push({ id: `feed:${f.url}`, type: "feed", value: f.url, name: f.name || hostOf(f.url), folder: "news", at: f.at || now() });
+    write(LIST(who), doc);
+    if (doc.sources.length) changed("list");
+  }
+  if (sn?.body?.v === 1) { account.seen = sn; seen = mergeSeen(seen, sn.body); keys = seenKeys(seen); write(SEEN(who), seen); }
+  onRead.forEach((fn) => fn());
+}
+
+function changed(what) {
+  if (!syncs()) return;
+  dirty.add(what);
+  clearTimeout(timer);
+  timer = setTimeout(pushAccount, 20000);
+}
+let pushing = false;
+/** What changed here, merged with what's there now, to your account. */
+export async function pushAccount() {
+  if (!syncs() || pushing || !dirty.size) return;
+  pushing = true;
+  const me = current();
+  try {
+    const todo = [...dirty];
+    dirty.clear();
+    const got = await fetchMine(todo.map((k) => D[k]));
+    for (const k of todo) {
+      const there = got[D[k]];
+      if (there && !there.body) { broken.add(k); continue; } // (never over a copy that didn't decrypt)
+      if (current() !== me) return;
+      const t = now();
+      let body;
+      if (k === "list") {
+        doc = there?.body?.v === 1 ? mergeReader(doc, there.body) : doc;
+        // removals are kept 30 days, so other devices learn them, then dropped
+        const keepGone = (l) => l.filter((x) => !x.gone || t - (x.at || 0) < 30 * DAY);
+        doc = { ...doc, sources: keepGone(doc.sources), folders: keepGone(doc.folders), muted: keepGone(doc.muted) };
+        write(LIST(who), doc);
+        body = doc;
+      } else {
+        seen = there?.body?.v === 1 ? mergeSeen(seen, there.body) : seen;
+        // the last week, the newest 2,000 keys
+        const cut = Math.floor((t - 7 * DAY) / DAY), all = [];
+        for (const [d, ks] of Object.entries(seen.days)) if (+d >= cut) for (const key of String(ks).split(" ").filter(Boolean)) all.push([+d, key]);
+        const kept = all.sort((a, b) => a[0] - b[0]).slice(-2000), days = {};
+        for (const [d, key] of kept) days[d] = days[d] ? `${days[d]} ${key}` : key;
+        seen = { ...seen, at: t, days };
+        keys = seenKeys(seen);
+        write(SEEN(who), seen);
+        body = seen;
+      }
+      const same = there && JSON.stringify(there.body) === JSON.stringify(body);
+      if (same) continue;
+      const tags = [["d", D[k]], ...(k === "seen" ? [["expiration", String(t + 14 * DAY)]] : [])];
+      const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(JSON.stringify(body), true) });
+      const sent = await publish((await where()).write, ev);
+      if (!sent.ok.length) dirty.add(k);
+    }
+  } catch { } finally { pushing = false; }
+}
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(timer); pushAccount(); } });
 
 // ── Sources: what each brings ────────────────────────────────────────────────────────────────────────
 
@@ -395,6 +497,10 @@ export function showReader(root, signal, { page }) {
   drawFolders();
   drawRiver();
   fill(folder);
+  const redraw = () => { if (!signal.aborted) { drawFolders(); drawRiver(); } };
+  onRead.add(redraw);
+  signal.addEventListener("abort", () => { onRead.delete(redraw); pushAccount(); });
+  pullAccount().then(() => { for (const f of new Set(doc.sources.filter((s) => !s.gone).map((s) => s.folder))) if (f && f !== folder) items.delete(f); if (doc.sources.some((s) => s.folder === folder)) fill(folder); }).catch(() => {});
   // the other folders, quietly, for their dots
   setTimeout(() => { for (const f of folders()) if (f.id !== folder) fill(f.id); }, 1500);
 }
