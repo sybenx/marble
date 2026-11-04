@@ -1156,7 +1156,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val later = Later(prefs).also { it.changed = { laterChanged() } }
     init { OnDevice.load(); NotesTrial.load(CosignApp.instance) }
     /** This account is the one on screen: its own news sources, and changes made now go to it. */
-    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it) }; NewsSources.changed = { newsChanged() } }
+    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it, signedInAtStart) }; NewsSources.changed = { newsChanged() } }
     /** The news sources loaded are this account's (another account's are never pulled into them or sent). */
     private fun newsMine() = me != null && NewsSources.account == me
     /** What you searched, on this phone only (not synced), 30 days. */
@@ -1479,7 +1479,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val before = NewsSources.json()
         val plain = got?.let { toSelf(it.content, encrypt = false) ?: run { newsWritable = false; return false } }
         if (plain != null && (try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) { newsWritable = false; return false }
-        val ahead = if (plain == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.take(plain)
+        // Switched account while reading: this copy is not the list now loaded.
+        if (NewsSources.account != me) { newsWritable = false; return false }
+        val ahead = if (plain == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.takeFor(me, plain)
         if (NewsSources.json() != before) allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
         return ahead
     }
@@ -1488,9 +1490,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun sendNews() {
         val me = me ?: return
         if (pullNews().not() && NewsSources.own.value.isEmpty() && NewsSources.off.value.isEmpty()) return
-        if (!newsWritable) return
-        val text = toSelf(NewsSources.json(), encrypt = true) ?: return
+        if (!newsWritable || NewsSources.account != me) return
+        // Taken now, checked again before signing: a switch of account in between sends nothing.
+        val json = NewsSources.json()
+        val text = toSelf(json, encrypt = true) ?: return
+        if (NewsSources.account != me) return
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
+        if (NewsSources.account != me) return
         Fetch.publish(listTargets(), signed)
     }
 
@@ -3320,7 +3326,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         private fun noteOf(id: String) = synchronized(notes) { notes[id] }
 
         private val all = HashMap<String, Social>()
+        /** The account on screen when the app started (as it was before an upgrade): who the old shared news list goes to. */
+        @Volatile var signedInAtStart: String? = null; private set
         fun of(phone: Phone): Social = synchronized(all) {
+            if (signedInAtStart == null) signedInAtStart = try { CosignApp.instance.accounts.active.ui.value.member?.group?.groupX } catch (_: Exception) { null }
             all.getOrPut(phone.slot + "/" + phone.ui.value.member?.group?.groupX) { People.init(CosignApp.instance); Social(phone, CosignApp.instance).also { it.restoreFeed() } }
         }
     }

@@ -18,9 +18,10 @@ class PacksTest {
     class Relay {
         val held = HashMap<String, Vault.Incoming>()
         fun read(d: String) = listOfNotNull(held[d])
-        fun write(d: String, at: Long, content: String) {
+        fun write(d: String, at: Long, content: String): Boolean {
             val have = held[d]
             if (have == null || at > have.createdAt || (at == have.createdAt && content < (have.content ?: ""))) held[d] = Vault.Incoming(d, at, content)
+            return true
         }
     }
 
@@ -210,5 +211,37 @@ class PacksTest {
         assertTrue(b.dirty.isNotEmpty())
         // Once a read reaches it: merged and sent.
         assertTrue(flush(b, relay, 4000) > 0)
+    }
+
+    /** Gate check 1: a read that stops the flush early leaves every pack not sent yet to send, not only the one it was on. */
+    @Test fun aStoppedFlushKeepsEveryUnsentPack() {
+        val l = layout(); val v = Vault(l)
+        // Two notes in two different packs.
+        val ids = (0 until 200).map { "note-$it" }.groupBy { l.owner(it, emptySet()) }.values.take(2).map { it[0] }
+        ids.forEach { v.put(note(it, "text $it")) }
+        assertEquals(2, v.dirty.size)
+        val relay = Relay()
+        // The relay answers the first pack's read, then stops reaching the account.
+        var reads = 0
+        runBlocking { Cycle.flush(v, 1000, { d -> if (reads++ < 2) relay.read(d) else null }, { d, at, c -> relay.write(d, at, c) }) }
+        // The first went (its read and read-back reached); the second's read didn't, so it's still to send.
+        assertEquals(1, relay.held.size)
+        assertEquals(1, v.dirty.size)
+        // Once it reaches again, everything goes.
+        flush(v, relay, 2000)
+        assertTrue(v.dirty.isEmpty())
+        assertEquals(2, relay.held.size)
+    }
+
+    /** Gate check 2: a write that most write relays didn't take (false) stays to send, and isn't the newest seen. */
+    @Test fun aWriteThatDidntTakeStaysDirty() {
+        val v = Vault(layout()); v.put(note("n", "a change"))
+        val relay = Relay()
+        val wrote = runBlocking { Cycle.flush(v, 1000, { relay.read(it) }, { _, _, _ -> false }) }
+        assertEquals(0, wrote)
+        assertTrue(v.dirty.isNotEmpty())
+        assertTrue(v.seen.isEmpty())
+        assertTrue(flush(v, relay, 2000) > 0)
+        assertTrue(v.dirty.isEmpty())
     }
 }

@@ -230,7 +230,7 @@ class Vault(val layout: Layout) {
     }
 
     /** Decrypted, and a version this device knows (v3): anything else isn't read, so never written over. */
-    private fun readable(inc: Incoming): Boolean = inc.content != null && try { org.json.JSONObject(inc.content).optInt("v") == 3 } catch (_: Exception) { true }
+    private fun readable(inc: Incoming): Boolean = inc.content != null && try { org.json.JSONObject(inc.content).optInt("v") == 3 } catch (_: Exception) { false }
 
     /** What a pull brought: each pack's `d`, `created_at` and decrypted content (null: it didn't decrypt). */
     data class Incoming(val d: String, val createdAt: Long, val content: String?)
@@ -314,34 +314,40 @@ object Cycle {
      * `created_at = max(now, newest seen + 1)` ([write]), and read it back; if another device's copy is there instead,
      * merge again and write again (three tries). Returns how many packs were written.
      */
-    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>?, write: suspend (d: String, createdAt: Long, content: String) -> Unit,
+    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>?, write: suspend (d: String, createdAt: Long, content: String) -> Boolean,
               device: String = "another device"): Int {
         var written = 0
         val todo = ArrayDeque(v.dirty.toList())
         val done = HashSet<String>()
         v.dirty.clear()
+        // Stopping early (a read that didn't reach the account, a halt): this pack and every one not reached yet stay to send.
+        fun stop(prefix: String): Int { v.dirty += prefix; v.dirty += todo.filter { it !in done }; return written }
         while (todo.isNotEmpty()) {
             val prefix = todo.removeFirst()
             if (!done.add(prefix)) continue
             for (attempt in 0 until 3) {
                 // A read that didn't reach your account (null) tells nothing: the change waits for one that does.
-                val before = read(v.layout.d(prefix)) ?: run { v.dirty += prefix; return written }
+                val before = read(v.layout.d(prefix)) ?: return stop(prefix)
                 val applied = v.apply(before, device)
-                if (applied.halted) { v.dirty += prefix; return written }
+                if (applied.halted) return stop(prefix)
                 val packs = v.packsFor(prefix)
-                var clean = true
                 // A pack this device couldn't read stays as it is: the change waits for a readable copy.
                 if (packs.any { v.layout.d(it.prefix) in v.unreadable }) { v.dirty += prefix; break }
+                var clean = true
+                var took = true
                 for (p in packs) {
                     val d = v.layout.d(p.prefix)
                     val at = maxOf(now, (v.seen[d] ?: 0) + 1, (before.maxOfOrNull { it.createdAt } ?: 0) + 1)
                     val content = p.toJson()
-                    write(d, at, content); written++
+                    // Done only when most of your write relays took it; else it stays to send, and isn't the newest seen.
+                    if (!write(d, at, content)) { took = false; break }
+                    written++
                     v.seen[d] = at
                     // Read back: the newest copy should be ours.
                     val back = read(d)?.maxByOrNull { it.createdAt }
                     if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
                 }
+                if (!took) { v.dirty += prefix; v.dirty += packs.map { it.prefix }; break }
                 v.dirty.removeAll(packs.map { it.prefix }.toSet())
                 if (clean) break
                 // Not ours on the relays after three tries (or none answered): it goes out again next flush.

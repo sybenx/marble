@@ -37,19 +37,24 @@ object NewsSources {
     @Volatile var account: String? = null; private set
 
     /** The shown account's sources (loaded again when you switch). */
-    fun load(c: Context, account: String) = load(account) { c.getSharedPreferences(it, Context.MODE_PRIVATE) }
+    fun load(c: Context, account: String, signedIn: String?) = load(account, signedIn) { c.getSharedPreferences(it, Context.MODE_PRIVATE) }
 
     /**
-     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to the account signed in when
-     * this version first loads, and no other account ever gets it, or a copy merged from another account.
+     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to its owner, the account
+     * recorded as having written it, else the one signed in ([signedIn]: the account on screen when the app started,
+     * as before the upgrade), recorded the first time this runs. No other account ever gets it, or a copy merged from another.
      */
-    fun load(account: String, prefsFor: (String) -> android.content.SharedPreferences) {
-        if (this.account == account && prefs != null) return
+    fun load(account: String, signedIn: String?, prefsFor: (String) -> android.content.SharedPreferences) {
         val p = prefsFor("news-sources.$account")
+        if (this.account == account && prefs === p) return
         val legacy = prefsFor("news-sources")
-        if (!p.contains("state") && legacy.getString("movedTo", null) == null) {
-            legacy.getString("state", null)?.let { p.edit().putString("state", it).apply() }
-            legacy.edit().putString("movedTo", account).apply()
+        if (legacy.getString("movedTo", null) == null && legacy.contains("state")) {
+            val owner = prefsFor("news-sources-owner").getString("owner", null) ?: legacy.getString("upgradeAccount", null)
+                ?: signedIn?.also { legacy.edit().putString("upgradeAccount", it).apply() }
+            if (owner == account && !p.contains("state")) {
+                p.edit().putString("state", legacy.getString("state", null)).apply()
+                legacy.edit().putString("movedTo", account).apply()
+            }
         }
         own.value = emptyList(); off.value = emptyMap()
         prefs = p; this.account = account
@@ -70,6 +75,9 @@ object NewsSources {
         .put("off", JSONObject().apply { off.value.forEach { (k, v) -> put(k, JSONObject().put("off", v.first).put("at", v.second)) } }).toString()
 
     /** Another copy merged in (the account's): per feed and per source, the newest change. True if this one has something it hasn't. */
+    /** [take], only if [account]'s list is the one loaded (an account switched mid-pull takes nothing). */
+    fun takeFor(account: String, json: String): Boolean = if (this.account != account) false else take(json)
+
     fun take(json: String): Boolean {
         val o = try { JSONObject(json) } catch (_: Exception) { return false }
         if (o.optInt("v", 1) != 1) return false
