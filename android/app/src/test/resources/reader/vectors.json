@@ -1,0 +1,437 @@
+{
+ "about": "Reader's shared rules (reader.md): what a person's post is in Reader, its digest key, whether an item is read, and how two seen lists and two Reader lists merge. Times in seconds; days are UTC day numbers (created_at / 86400).",
+ "kindOf": [
+  {
+   "name": "a short post",
+   "event": {
+    "kind": 1,
+    "content": "Long walk, no phone. Recommend.",
+    "tags": []
+   },
+   "is": "short"
+  },
+  {
+   "name": "a post with a link",
+   "event": {
+    "kind": 1,
+    "content": "Good read https://example.com/essay",
+    "tags": []
+   },
+   "is": "item"
+  },
+  {
+   "name": "a post with a picture",
+   "event": {
+    "kind": 1,
+    "content": "Garden https://i.example.com/a.jpg",
+    "tags": []
+   },
+   "is": "item"
+  },
+  {
+   "name": "a post with an imeta tag",
+   "event": {
+    "kind": 1,
+    "content": "look",
+    "tags": [
+     [
+      "imeta",
+      "url https://x.example/v",
+      "m video/mp4"
+     ]
+    ]
+   },
+   "is": "item"
+  },
+  {
+   "name": "an article",
+   "event": {
+    "kind": 30023,
+    "content": "# Title",
+    "tags": [
+     [
+      "d",
+      "a"
+     ],
+     [
+      "title",
+      "Title"
+     ]
+    ]
+   },
+   "is": "item"
+  },
+  {
+   "name": "a reply (marked)",
+   "event": {
+    "kind": 1,
+    "content": "agreed https://example.com",
+    "tags": [
+     [
+      "e",
+      "x",
+      "",
+      "reply"
+     ]
+    ]
+   },
+   "is": "reply"
+  },
+  {
+   "name": "a reply (unmarked e)",
+   "event": {
+    "kind": 1,
+    "content": "agreed",
+    "tags": [
+     [
+      "e",
+      "x"
+     ]
+    ]
+   },
+   "is": "reply"
+  },
+  {
+   "name": "a quote is not a reply",
+   "event": {
+    "kind": 1,
+    "content": "this",
+    "tags": [
+     [
+      "q",
+      "x"
+     ],
+     [
+      "e",
+      "x",
+      "",
+      "mention"
+     ]
+    ]
+   },
+   "is": "short"
+  },
+  {
+   "name": "a nostr: link alone is not a link",
+   "event": {
+    "kind": 1,
+    "content": "see nostr:npub1abc",
+    "tags": []
+   },
+   "is": "short"
+  }
+ ],
+ "digestKey": [
+  {
+   "pubkey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+   "created_at": 1762300800,
+   "key": "p01234567:20397"
+  }
+ ],
+ "feedItemKey": [
+  {
+   "link": "https://example.com/a",
+   "key": "r2dce0a4c50441bfc"
+  },
+  {
+   "link": "",
+   "guid": "tag:example.com,2026:1",
+   "key": "re5a88f65007dabbf"
+  }
+ ],
+ "read": [
+  {
+   "name": "seen",
+   "item": {
+    "key": "aaaaaaaaaaaaaaaa",
+    "source": "writer:P",
+    "at": 500
+   },
+   "seen": {
+    "days": {
+     "0": "aaaaaaaaaaaaaaaa"
+    }
+   },
+   "read": true
+  },
+  {
+   "name": "older than read up to",
+   "item": {
+    "key": "bbbbbbbbbbbbbbbb",
+    "source": "feed:https://x.example/rss",
+    "at": 500
+   },
+   "seen": {
+    "days": {},
+    "upto": {
+     "feed:https://x.example/rss": 600
+    }
+   },
+   "read": true
+  },
+  {
+   "name": "newer than read up to",
+   "item": {
+    "key": "bbbbbbbbbbbbbbbb",
+    "source": "feed:https://x.example/rss",
+    "at": 700
+   },
+   "seen": {
+    "days": {},
+    "upto": {
+     "feed:https://x.example/rss": 600
+    }
+   },
+   "read": false
+  },
+  {
+   "name": "kept unread wins over seen",
+   "item": {
+    "key": "cccccccccccccccc",
+    "source": "writer:P",
+    "at": 500
+   },
+   "seen": {
+    "days": {
+     "0": "cccccccccccccccc"
+    },
+    "unread": {
+     "cccccccccccccccc": 900
+    }
+   },
+   "read": false
+  },
+  {
+   "name": "kept unread wins over read up to",
+   "item": {
+    "key": "dddddddddddddddd",
+    "source": "feed:https://x.example/rss",
+    "at": 500
+   },
+   "seen": {
+    "days": {},
+    "upto": {
+     "feed:https://x.example/rss": 600
+    },
+    "unread": {
+     "dddddddddddddddd": 650
+    }
+   },
+   "read": false
+  }
+ ],
+ "mergeSeen": [
+  {
+   "name": "days joined, read up to the larger, unread the newer, unknown fields kept",
+   "a": {
+    "v": 1,
+    "at": 10,
+    "days": {
+     "1": "k1 k2"
+    },
+    "upto": {
+     "s1": 100,
+     "s2": 300
+    },
+    "unread": {
+     "k9": 50
+    },
+    "future": 1
+   },
+   "b": {
+    "v": 1,
+    "at": 20,
+    "days": {
+     "1": "k2 k3",
+     "2": "k4"
+    },
+    "upto": {
+     "s1": 200
+    },
+    "unread": {
+     "k9": 40,
+     "k8": 60
+    }
+   },
+   "out": {
+    "days": {
+     "1": [
+      "k1",
+      "k2",
+      "k3"
+     ],
+     "2": [
+      "k4"
+     ]
+    },
+    "upto": {
+     "s1": 200,
+     "s2": 300
+    },
+    "unread": {
+     "k9": 50,
+     "k8": 60
+    },
+    "future": 1
+   }
+  }
+ ],
+ "mergeReader": [
+  {
+   "name": "per source, folder and mute the newest wins; a removal is kept as gone",
+   "a": {
+    "v": 1,
+    "sources": [
+     {
+      "id": "feed:https://a.example/rss",
+      "type": "feed",
+      "value": "https://a.example/rss",
+      "name": "A",
+      "folder": "news",
+      "at": 10
+     },
+     {
+      "id": "writer:P",
+      "type": "writer",
+      "value": "P",
+      "name": "Pat",
+      "folder": "w",
+      "at": 30
+     }
+    ],
+    "folders": [
+     {
+      "id": "news",
+      "name": "News",
+      "order": 0,
+      "view": "river",
+      "at": 10
+     }
+    ],
+    "people": {
+     "on": true,
+     "at": 5
+    },
+    "muted": []
+   },
+   "b": {
+    "v": 1,
+    "sources": [
+     {
+      "id": "feed:https://a.example/rss",
+      "type": "feed",
+      "value": "https://a.example/rss",
+      "name": "A",
+      "folder": "news",
+      "at": 20,
+      "gone": true
+     },
+     {
+      "id": "writer:P",
+      "type": "writer",
+      "value": "P",
+      "name": "Pat",
+      "folder": "news",
+      "at": 25
+     }
+    ],
+    "folders": [
+     {
+      "id": "news",
+      "name": "Today",
+      "order": 0,
+      "view": "list",
+      "at": 15
+     }
+    ],
+    "people": {
+     "on": false,
+     "at": 8
+    },
+    "muted": [
+     {
+      "source": "relay:wss://r.example",
+      "at": 3
+     }
+    ]
+   },
+   "out": {
+    "sources": {
+     "feed:https://a.example/rss": {
+      "gone": true,
+      "at": 20
+     },
+     "writer:P": {
+      "folder": "w",
+      "at": 30
+     }
+    },
+    "folders": {
+     "news": {
+      "name": "Today",
+      "view": "list"
+     }
+    },
+    "people": {
+     "on": false
+    },
+    "muted": [
+     "relay:wss://r.example"
+    ]
+   }
+  }
+ ],
+ "discussion": [
+  {
+   "name": "a Hacker News item from hnrss: the article, and its comments",
+   "item": {
+    "link": "https://www.anthropic.com/research/provable-inference",
+    "comments": "https://news.ycombinator.com/item?id=50368626",
+    "guid": "https://news.ycombinator.com/item?id=50368626",
+    "description": "<p>Article URL: <a href=\"https://www.anthropic.com/research/provable-inference\">https://www.anthropic.com/research/provable-inference</a></p><p>Comments URL: <a href=\"https://news.ycombinator.com/item?id=50368626\">https://news.ycombinator.com/item?id=50368626</a></p><p>Points: 120</p>"
+   },
+   "discussion": "https://news.ycombinator.com/item?id=50368626"
+  },
+  {
+   "name": "only the description says (hnrss without <comments>)",
+   "item": {
+    "link": "https://example.com/story",
+    "description": "Article URL: https://example.com/story Comments URL: https://news.ycombinator.com/item?id=1 Points: 5"
+   },
+   "discussion": "https://news.ycombinator.com/item?id=1"
+  },
+  {
+   "name": "Atom: link rel=replies",
+   "item": {
+    "link": "https://blog.example.com/post",
+    "replies": "https://blog.example.com/post#comments"
+   },
+   "discussion": "https://blog.example.com/post#comments"
+  },
+  {
+   "name": "Lobsters: the guid is the discussion",
+   "item": {
+    "link": "https://example.org/paper.pdf",
+    "guid": "https://lobste.rs/s/abc123"
+   },
+   "discussion": "https://lobste.rs/s/abc123"
+  },
+  {
+   "name": "an Ask HN: the link is the discussion itself, so no second link",
+   "item": {
+    "link": "https://news.ycombinator.com/item?id=42",
+    "comments": "https://news.ycombinator.com/item?id=42"
+   },
+   "discussion": ""
+  },
+  {
+   "name": "a plain news item: none",
+   "item": {
+    "link": "https://news.example.com/a",
+    "guid": "tag:news.example.com,2026:a",
+    "description": "<p>Story text.</p>"
+   },
+   "discussion": ""
+  }
+ ]
+}
