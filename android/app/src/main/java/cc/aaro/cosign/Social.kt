@@ -1258,6 +1258,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
         val id = "marble-$today"
         if (kept.all.value[id]?.let { it.here && it.award == null } != true || claiming) return
+        // No marble from the issuer today: nothing to claim.
+        if (cc.aaro.cosign.ui.Daily.today.value == null) return
         val issuer = cc.aaro.cosign.ui.Daily.issuer ?: return
         claiming = true
         scope.launch {

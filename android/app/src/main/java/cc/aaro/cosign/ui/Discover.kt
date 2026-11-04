@@ -466,10 +466,11 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         androidx.compose.ui.layout.Layout(content = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-                val marble = Marbles.current()
-                Box(Modifier.size(m.dp).onGloballyPositioned { centre = it.boundsInRoot().center }.clip(CircleShape)
-                    .clickable(onClickLabel = "Look at the marble") { nav.marble(centre) }, contentAlignment = Alignment.Center) {
-                    MarbleArt(marble, "The marble", Modifier.wrapContentSize(Alignment.Center, unbounded = true).requiredSize((m * 1.8f).dp))
+                Marbles.current()?.let { marble ->
+                    Box(Modifier.size(m.dp).onGloballyPositioned { centre = it.boundsInRoot().center }.clip(CircleShape)
+                        .clickable(onClickLabel = "Look at the marble") { nav.marble(centre) }, contentAlignment = Alignment.Center) {
+                        MarbleArt(marble, "The marble", Modifier.wrapContentSize(Alignment.Center, unbounded = true).requiredSize((m * 1.8f).dp))
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1)
@@ -1382,7 +1383,8 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
     var pan by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val d = androidx.compose.ui.platform.LocalDensity.current
     val today = Marbles.current()
-    val marble = big.marble ?: today
+    // No marble today (and none of yours asked for): nothing to show.
+    val marble = big.marble ?: today ?: run { LaunchedEffect(Unit) { onClose() }; return }
     BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Vault.Ground)
         .onGloballyPositioned { centre = it.boundsInRoot().center }, contentAlignment = Alignment.Center) {
         // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
@@ -1622,11 +1624,14 @@ private fun TomorrowCard(t: Social.Tomorrow, social: Social) {
 object Marbles {
     /** Debug builds only: days ahead (or back) to look at (--ei marble_day n). */
     @Volatile var shift = 0L
-    /** Today's: the night's own when it's here ([Daily]), else one from the collection. */
+    /**
+     * Today's: the night's own when the issuer made one ([Daily]); none, nothing (new marbles stopped, 2026-11-04: no
+     * collection's marble stands in, nothing to claim). A debug build looking days ahead or back: the collection's.
+     */
     @Composable
-    fun current(): Marble {
+    fun current(): Marble? {
         val live by Daily.today.collectAsState()
-        return live?.takeIf { shift == 0L } ?: today()
+        return if (shift != 0L) today() else live
     }
     fun today(): Marble = MARBLES[Math.floorMod(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toEpochDay() + shift, MARBLES.size.toLong()).toInt()]
 }
@@ -1732,7 +1737,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
         // Marble of the day; changes at 00:00 UTC, the same moment everywhere (looked at again whenever Discover comes back).
         val marble = Marbles.current()
-        MarbleArt(marble, "The marble",
+        if (marble != null) MarbleArt(marble, "The marble",
             // Unbounded, so a marble wider than the header is still placed by its own centre, not pushed aside.
             Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).wrapContentSize(Alignment.TopStart, unbounded = true).requiredSize((m * 1.8f).dp)
                 .onGloballyPositioned { centre = it.boundsInRoot().center }
