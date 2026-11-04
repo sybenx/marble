@@ -2,11 +2,11 @@
 // §10, fixtures/reactions/): no page, no network, so the fixtures can run it as it is.
 //  - ❤️ goes out as "+" (so other apps count it as a like), and "+" (or nothing) comes in as ❤️; "-" is ignored, and so is
 //    anything that isn't one emoji or one :shortcode: with its emoji tag.
-//  - The tray: your recent emoji (six at most), then the defaults 👍 ❤️ 😂 😢 👀 🧐 without repeats: six in all.
+//  - The tray: your recent emoji (six at most), then the defaults ❤️ 👍 😂 😢 😡 🤔 without repeats: six in all.
 //  - Recents: from your own last ~200 reactions, the most recently used first (how often breaks a tie).
 //  - Changing or removing yours deletes the old one (NIP-09) and, changing, sends the new one.
 
-export const DEFAULTS = ["👍", "❤️", "😂", "😢", "👀", "🧐"];
+export const DEFAULTS = ["❤️", "👍", "😂", "😢", "😡", "🤔"];
 export const TRAY = 6, RECENT_FROM = 200;
 
 // An emoji: a character ("😂"), or someone's own ({shortcode, url}).
