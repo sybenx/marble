@@ -2459,18 +2459,17 @@ class Social private constructor(private val phone: Phone, context: Context) {
         busy.update { it + pk }
         scope.launch {
             try {
-                // Start from your newest follow list anywhere, never from an empty one by mistake.
-                val list = newestContacts(fetch = true)
-                if (list == null && !on) return@launch
-                val old = list?.tags ?: emptyList()
-                val has = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
-                if (has == on) { contacts = list; follows.value = followsIn(list); return@launch }
-                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
-                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-                act(Event(me, at, 3, tags, list?.content ?: "").withId())
+                // Your newest follow list anywhere; a list known to exist and not found: refused, never one started from empty.
+                val expected = contacts != null || phone.latest("3") != null || follows.value?.isNotEmpty() == true
+                val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
+                when (val r = changeList(3, null, change, expected, contacts)) {
+                    is ListResult.Unchanged -> r.newest?.let { contacts = it; follows.value = followsIn(it) }
+                    else -> {}
+                }
             } finally { busy.update { it - pk } }
         }
     }
+
 
     // --- Relays as feeds (RelayFeeds): favourites (10012), sets (30002), what a relay says, its posts -----
 
@@ -2491,10 +2490,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     fun favourite(r: RelayFeeds.Relay, on: Boolean) {
         val me = me ?: return
         scope.launch {
-            val list = newest(10012, favList, fetch = true)
-            if (RelayFeeds.relaysIn(list).any { it.url == r.url } == on) return@launch
-            val ev = Event(me, maxOf(Clock.now(), (list?.createdAt ?: 0) + 1), 10012, RelayFeeds.with(list?.tags ?: emptyList(), r, on), list?.content ?: "").withId()
-            actEvent(ev)?.let { favList = it; favRelays.value = RelayFeeds.relaysIn(it) }
+            val change = if (on) ListWrite.Change(add = listOf("relay", r.url)) else ListWrite.Change(remove = listOf("relay", r.url))
+            when (val res = changeList(10012, null, change, expected = favList != null || phone.latest("10012") != null, have = favList)) {
+                is ListResult.Sent -> { favList = res.e; favRelays.value = RelayFeeds.relaysIn(res.e) }
+                is ListResult.Unchanged -> res.newest?.let { favList = it; favRelays.value = RelayFeeds.relaysIn(it) }
+                else -> {}
+            }
         }
     }
 
@@ -2503,9 +2504,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         scope.launch {
             val old = d?.let { id -> relaySets.value.firstOrNull { it.d == id }?.event }
-            val tags = old?.tags ?: listOf(listOf("d", java.util.UUID.randomUUID().toString().take(12)), listOf("title", title.trim().take(80)))
-            val ev = Event(me, maxOf(Clock.now(), (old?.createdAt ?: 0) + 1), 30002, RelayFeeds.with(tags, r, on), old?.content ?: "").withId()
-            actEvent(ev)?.let { sent ->
+            val id = d ?: java.util.UUID.randomUUID().toString().take(12)
+            val change = if (on) ListWrite.Change(add = listOf("relay", r.url)) else ListWrite.Change(remove = listOf("relay", r.url))
+            val res = changeList(30002, id, change, expected = d != null, have = old, firstTags = listOf(listOf("title", title.trim().take(80))))
+            (res as? ListResult.Sent)?.e?.let { sent ->
                 relaySets.update { l -> RelayFeeds.sets(l.map { it.event }.filter { it.firstTag("d") != sent.firstTag("d") } + sent, me) }
             }
         }
@@ -2591,14 +2593,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (e.pubkey != me) return
         scope.launch {
-            val list = newest(10001, null, fetch = true)
-            val old = list?.tags ?: emptyList()
-            val has = old.any { it.size > 1 && it[0] == "e" && it[1] == e.id }
-            if (has == on) return@launch
-            val tags = if (on) old + listOf(listOf("e", e.id)) else old.filterNot { it.size > 1 && it[0] == "e" && it[1] == e.id }
-            val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-            if (act(Event(me, at, 10001, tags, list?.content ?: "").withId())) {
-                val ids = tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
+            val change = if (on) ListWrite.Change(add = listOf("e", e.id)) else ListWrite.Change(remove = listOf("e", e.id))
+            val res = changeList(10001, null, change, expected = myPins.value.isNotEmpty() || phone.latest("10001") != null)
+            if (res is ListResult.Sent) {
+                val ids = res.e.tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
                 myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply()
                 message.value = if (on) "Pinned to your profile" else "Unpinned"
             }
@@ -2617,18 +2615,22 @@ class Social private constructor(private val phone: Phone, context: Context) {
             try {
                 val list = newest(10010, null, fetch = true)
                 if (list == null && !on) return@launch
-                val old = list?.tags ?: emptyList()
-                val public = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
-                // Someone kept privately: taken out of the private part (which only you can read).
+                val public = list?.tags?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
+                // Someone kept privately: taken out of the private part (which only you can read), checked the same way.
                 val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
                     ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
                 val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
                 if (on == (public || inPrivate)) return@launch
-                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
-                val content = if (!on && inPrivate) toSelf(Json.stringify(private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }), encrypt = true) ?: return@launch
-                    else list?.content ?: ""
-                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-                if (act(Event(me, at, 10010, tags, content).withId())) {
+                val sent = if (!on && inPrivate && !public) {
+                    val next = private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
+                    ListWrite.privateGuard(list!!.tags, list.tags, private, next)?.let { message.value = "Didn't change that list: it would have changed more than you asked."; return@launch }
+                    val content = toSelf(Json.stringify(next), encrypt = true) ?: return@launch
+                    actEvent(Event(me, maxOf(Clock.now(), list.createdAt + 1), 10010, list.tags, content).withId()) != null
+                } else {
+                    val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
+                    changeList(10010, null, change, expected = list != null || special.value.isNotEmpty(), have = list) is ListResult.Sent
+                }
+                if (sent) {
                     special.update { if (on) it + pk else it - pk }
                     specialAt = System.currentTimeMillis()
                     prefs.edit().putStringSet("special", special.value).apply()
@@ -2637,18 +2639,54 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
+
     private fun followsIn(e: Event?) = e?.tags?.filter { it.size > 1 && it[0] == "p" }?.map { it[1] }?.toSet() ?: emptySet()
 
     /** Your newest follow list: what this phone has seen signed, or what your relays have. */
     private suspend fun newestContacts(fetch: Boolean): Event? = newest(3, contacts, fetch)
 
-    /** Your newest version of a list (follows, mutes): what this phone has seen signed, or what your relays have. */
+    /** Your newest version of a list (follows, mutes): what this phone has seen signed, or what your relays have (ListWrite.newest). */
     private suspend fun newest(kind: Int, have: Event?, fetch: Boolean): Event? {
         val me = reader ?: return null
-        val local = listOfNotNull(phone.latest(kind.toString()), have)
-        val remote = if (fetch) Fetch.query((writeRelays() + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(kind), "authors" to listOf(me), "limit" to 1), 6000)
-            .filter { it.pubkey == me && it.kind == kind } else emptyList()
-        return (local + remote).maxByOrNull { it.createdAt }
+        return ListWrite.newest(if (fetch) versions(kind, null, have) else listOfNotNull(phone.latest(kind.toString()), have), me, kind)
+    }
+
+    /** Every version of your list [kind] (a set: the one with [d]) this phone or your relays and the profile indexes have. */
+    private suspend fun versions(kind: Int, d: String?, have: Event?): List<Event> {
+        val me = reader ?: return emptyList()
+        val f = mutableMapOf<String, Any>("kinds" to listOf(kind), "authors" to listOf(me), "limit" to 5)
+        d?.let { f["#d"] = listOf(it) }
+        val remote = Fetch.query((writeRelays() + Sources.PROFILES).distinct(), f, 6000)
+        return listOfNotNull(if (d == null) phone.latest(kind.toString()) else null, have) + remote
+    }
+
+    /** What changing one list did: sent (the new version), nothing to do (the newest found), or refused (why). */
+    sealed class ListResult {
+        data class Sent(val e: Event) : ListResult()
+        data class Unchanged(val newest: Event?) : ListResult()
+        data class Refused(val why: String) : ListResult()
+    }
+
+    /**
+     * One change to one of your lists, by the shared rule (ListWrite, list-writes.md): planned from every version found,
+     * checked again before it's signed. [expected]: a list is known to exist (then none found is a refusal). [firstTags]:
+     * what a brand-new list starts with besides the entry (a new set's title).
+     */
+    private suspend fun changeList(kind: Int, d: String?, change: ListWrite.Change, expected: Boolean, have: Event? = null,
+                                   firstTags: List<List<String>> = emptyList()): ListResult {
+        val me = me ?: return ListResult.Refused("not signed in")
+        val found = versions(kind, d, have)
+        return when (val p = ListWrite.plan(found, me, kind, d, change, expected, Clock.now())) {
+            is ListWrite.Plan.Refuse -> { message.value = "Couldn't change that list: your current one wasn't found. Try again in a moment."; ListResult.Refused(p.why) }
+            ListWrite.Plan.Nothing -> ListResult.Unchanged(ListWrite.newest(found, me, kind, d))
+            is ListWrite.Plan.Write -> {
+                val tags = if (p.old == null && firstTags.isNotEmpty()) p.tags.take(if (d != null) 1 else 0) + firstTags + p.tags.drop(if (d != null) 1 else 0) else p.tags
+                p.old?.let { o -> ListWrite.guard(ListWrite.Version(o.kind, o.createdAt, o.content, o.tags), ListWrite.Version(kind, p.createdAt, p.content, tags)) }?.let { why ->
+                    message.value = "Didn't change that list: it would have changed more than you asked."; return ListResult.Refused(why)
+                }
+                actEvent(Event(me, p.createdAt, kind, tags, p.content).withId())?.let { ListResult.Sent(it) } ?: ListResult.Refused("not sent")
+            }
+        }
     }
 
     // --- Keeping Discover pleasant ---------------------------------------------------------
@@ -2771,12 +2809,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         muted.update { it + pk }
         prefs.edit().putStringSet("muted", muted.value).apply()
         scope.launch {
-            val list = newest(10000, mutes, fetch = true)
-            val old = list?.tags ?: emptyList()
-            if (old.any { it.size > 1 && it[0] == "p" && it[1] == pk }) return@launch
-            // The private part (encrypted in content) stays as it was.
-            val ev = Event(me, maxOf(Clock.now(), (list?.createdAt ?: 0) + 1), 10000, old + listOf(listOf("p", pk)), list?.content ?: "").withId()
-            act(ev)
+            // The private part (encrypted in content) stays as it was (ListWrite).
+            changeList(10000, null, ListWrite.Change(add = listOf("p", pk)), expected = mutes != null || phone.latest("10000") != null, have = mutes)
         }
     }
 
