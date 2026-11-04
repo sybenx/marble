@@ -850,7 +850,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
+            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); launch { try { knowRecents() } catch (_: Exception) {} }; pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
             pullKept()
@@ -1969,6 +1969,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         (cc.aaro.cosign.spam.Spam.inflated(root.id, got)?.takeIf { !cc.aaro.cosign.spam.Spam.notSpam(root.pubkey) } ?: cc.aaro.cosign.spam.Spam.advert(root).takeIf { unknown })
             ?.let { w -> spam.update { it + (root.id to w) } }
         val byTarget = got.groupBy { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }
+        reactors.update { m -> m + (root.id to ReactionRules.tally(got, root.id)) }
         engagement.update { m ->
             m + posts.associate { p ->
                 val rs = byTarget[p.id] ?: emptyList()
@@ -2269,29 +2270,99 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * A reaction: "+" is a like, anything else the emoji it is. Again on a post you've reacted to, it's a new
-     * reaction, and the newest is the one shown (what's learned from it is learned once).
+     * A reaction ([shown]: an emoji, or a custom :name: with its picture), as marble-reactions.md says: ❤️ goes out as
+     * "+"; a new one on a post you've reacted to replaces yours (the old one deleted, NIP-09).
      */
-    fun react(note: Event, emoji: String) {
+    fun react(note: Event, emoji: String, url: String? = null) {
         val me = me ?: return
+        val s = ReactionRules.Shown(if (emoji == "+") ReactionRules.LIKE else emoji, url)
+        if (reactions.value[note.id] == s.emoji && note.id in liked.value) return
         val first = note.id !in liked.value
         val before = reactions.value[note.id]
-        FeedLog.act(note.id, if (emoji == "+") "like" else "react", "emoji" to emoji.takeIf { it != "+" }, "first" to first)
+        val oldId = reactionIds[note.id]
+        FeedLog.act(note.id, if (s.emoji == ReactionRules.LIKE) "like" else "react", "emoji" to s.emoji.takeIf { it != ReactionRules.LIKE }, "first" to first)
         mark(note.id, true)
-        setReaction(note.id, emoji.takeIf { it != "+" })
-        if (emoji != "+") { emojiUse[emoji] = (emojiUse[emoji] ?: 0) + 1; prefs.edit().putString("emojiUse", org.json.JSONObject(emojiUse.entries.sortedByDescending { it.value }.take(40).associate { it.key to it.value }).toString()).apply() }
+        setReaction(note.id, s.emoji)
+        recents.update { l -> (listOf(s) + l).distinctBy { it.emoji }.take(12) }
+        prefs.edit().putString("recentReactions", recents.value.joinToString("\n") { it.emoji + (it.url?.let { u -> " $u" } ?: "") }).apply()
         if (first) {
             interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
             newsletterTaste(reposted(note) ?: note, 1)
         }
         scope.launch {
-            val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
-            if (!act(Event(me, Clock.now(), 7, tags, emoji).withId())) { if (first) mark(note.id, false); setReaction(note.id, before) }
+            val sent = actEvent(Event(me, Clock.now(), 7, ReactionRules.tags(note, s), ReactionRules.wire(s.emoji)).withId())
+            if (sent == null) { if (first) mark(note.id, false); setReaction(note.id, before); return@launch }
+            keepReactionId(note.id, sent.id)
+            oldId?.let { deleteReaction(me, it) }
         }
     }
 
+    /** Your reaction taken back: its event deleted (NIP-09); the button is ☺+ again. */
+    fun unreact(note: Event) {
+        val me = me ?: return
+        val id = reactionIds[note.id]
+        val before = reactions.value[note.id]
+        FeedLog.act(note.id, "unreact")
+        mark(note.id, false); setReaction(note.id, null)
+        scope.launch {
+            val old = id ?: findMyReaction(me, note.id)
+            if (old == null || !deleteReaction(me, old)) { mark(note.id, true); setReaction(note.id, before); return@launch }
+            keepReactionId(note.id, null)
+        }
+    }
+
+    private suspend fun deleteReaction(me: String, id: String): Boolean =
+        actEvent(Event(me, Clock.now(), 5, listOf(listOf("e", id), listOf("k", "7")), "").withId()) != null
+
+    /** Your reaction to [noteId] on your relays (one made on another device, say). */
+    private suspend fun findMyReaction(me: String, noteId: String): String? =
+        Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "#e" to listOf(noteId), "limit" to 5), 5000)
+            .filter { it.pubkey == me }.maxByOrNull { it.createdAt }?.id
+
+    /** Your reaction's event, per post (to replace or take back). */
+    private val reactionIds = HashMap<String, String>().apply {
+        prefs.getStringSet("reactionIds", emptySet())!!.forEach { s -> s.split(' ', limit = 2).takeIf { it.size == 2 }?.let { put(it[0], it[1]) } }
+    }
+    private fun keepReactionId(note: String, id: String?) = synchronized(reactionIds) {
+        if (id == null) reactionIds.remove(note) else reactionIds[note] = id
+        prefs.edit().putStringSet("reactionIds", reactionIds.entries.toList().takeLast(1000).map { "${it.key} ${it.value}" }.toSet()).apply()
+    }
+
+    /** Your recent reactions (newest first), from your own published ones, so every device has the same; kept here for speed. */
+    val recents = MutableStateFlow(prefs.getString("recentReactions", null)?.lines()?.filter { it.isNotBlank() }
+        ?.map { l -> l.split(' ', limit = 2).let { ReactionRules.Shown(it[0], it.getOrNull(1)) } } ?: emptyList())
+    @Volatile private var recentsAt = 0L
+    suspend fun knowRecents() {
+        val me = me ?: return
+        if (System.currentTimeMillis() - recentsAt < 10 * 60_000L) return
+        val mine = Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "limit" to 200), 6000).filter { it.pubkey == me }
+        if (mine.isEmpty()) return
+        recentsAt = System.currentTimeMillis()
+        recents.value = ReactionRules.recents(mine, me, 12)
+        prefs.edit().putString("recentReactions", recents.value.joinToString("\n") { it.emoji + (it.url?.let { u -> " $u" } ?: "") }).apply()
+    }
+
+    /** Your own emoji (NIP-30: kind 10030 and the 30030 sets it names), for the picker. */
+    val myEmoji = MutableStateFlow<List<ReactionRules.Shown>>(emptyList())
+    suspend fun knowMyEmoji() {
+        val me = me ?: return
+        if (myEmoji.value.isNotEmpty()) return
+        val relays = (writeRelays() + Sources.PROFILES).distinct().take(8)
+        val list = Fetch.query(relays, mapOf("kinds" to listOf(10030), "authors" to listOf(me), "limit" to 2), 5000).filter { it.pubkey == me }.maxByOrNull { it.createdAt } ?: return
+        fun emojis(e: Event) = e.tags.filter { it.size > 2 && it[0] == "emoji" && it[2].startsWith("https://") && Regex("^[A-Za-z0-9_+-]{1,60}$").matches(it[1]) }
+            .map { ReactionRules.Shown(":${it[1]}:", it[2]) }
+        val sets = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30030:") }.mapNotNull { t ->
+            t[1].split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.qrst.core.isHex32(it[1]) }?.let { mapOf("kinds" to listOf(30030), "authors" to listOf(it[1]), "#d" to listOf(it[2])) }
+        }.take(20)
+        val packs = if (sets.isEmpty()) emptyList() else Fetch.query(relays, sets, 6000).groupBy { it.pubkey + (it.firstTag("d") ?: "") }.values.map { l -> l.maxBy { it.createdAt } }
+        myEmoji.value = (emojis(list) + packs.flatMap(::emojis)).distinctBy { it.emoji }.take(300)
+    }
+
+    /** Who gave each reaction to an opened post, most first (ReactionRules.tally). */
+    val reactors = MutableStateFlow<Map<String, List<Pair<ReactionRules.Shown, List<String>>>>>(emptyMap())
+
     /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
-    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key }.take(3) + USUAL_EMOJIS).distinct().take(7)
+    fun topEmojis(): List<ReactionRules.Shown> = ReactionRules.tray(recents.value)
 
     // Counts under posts in a list (reactions with counts, as Jumble): each post on screen asks, and they're fetched together.
     private val wantCounts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
@@ -2361,7 +2432,6 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     // The usual six, the ones you use: like, love, haha, sad, eyes, the monocle. (Others' 😮 or 😡 still show as they are.)
-    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "🥲", "👀", "🫡", "🫂")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }

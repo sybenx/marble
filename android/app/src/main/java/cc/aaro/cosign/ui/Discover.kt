@@ -1105,7 +1105,7 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
                 }
             }
             if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
-                for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
+                for (e in social.topEmojis().filter { it.url == null }) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, cc.aaro.cosign.ReactionRules.wire(e.emoji)) }, contentAlignment = Alignment.Center) { Text(e.emoji, fontSize = 20.sp) }
             } else {
                 Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
                 // Repost a story: a public post that quotes its link (there's no plain repost of a page). Held, the same, with a tick.
@@ -1958,11 +1958,10 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
     Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
         // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
         // Feed 2: no counts in a list (the post itself has them, a tap in).
-        Heart(n, liked, nav.social, onLike, showCounts = true)
-        val eng = nav.social.engagement.collectAsState().value[n.id]
+        // (No counts under a post in a list: an opened post has them, under it.)
+        Heart(n, liked, nav.social, onLike)
         Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
             modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
-        eng?.replyTotal?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
         // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
         val reposted = n.id in nav.social.reposted.collectAsState().value
         var asking by remember { mutableStateOf(false) }
@@ -1980,7 +1979,6 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
                 } }, { asking = false; nav.social.repost(n) })
             }
         }
-        eng?.reposts?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
         // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
         // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
         Spacer(Modifier.weight(1f))
@@ -2096,7 +2094,8 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
 private fun Totals(e: Social.Engagement) {
     fun n(v: Long, one: String, many: String) = "$v ${if (v == 1L) one else many}"
     // (No zaps: showing payments is put off.)
-    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") }, n(e.likeTotal, "like", "likes"))
+    // (Reactions are the chips above it.)
+    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") })
     Text(parts.joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp))
 }
 
