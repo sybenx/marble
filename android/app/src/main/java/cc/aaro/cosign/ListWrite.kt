@@ -39,14 +39,15 @@ object ListWrite {
      * What one change does to your list. [expected]: this device has seen your list of this kind, or the account
      * shows one (a follows count): then no list found is a refusal, never a list started from empty.
      */
-    fun plan(found: List<Event>, me: String, kind: Int, d: String?, change: Change, expected: Boolean, now: Long): Plan {
+    fun plan(found: List<Event>, me: String, kind: Int, d: String?, change: Change, expected: Boolean, now: Long, title: String? = null): Plan {
         val old = newest(found, me, kind, d)
         val entry = change.add ?: change.remove ?: return Plan.Refuse("no change")
         val k = key(entry) ?: return Plan.Refuse("no change")
         if (old == null) {
             if (expected) return Plan.Refuse("no list found")
             if (change.add == null) return Plan.Nothing
-            return Plan.Write(kind, listOfNotNull(d?.let { listOf("d", it) }, change.add), "", now, null)
+            // A first list: just the entry (a new set: its d, then its title if it has one, then the entry).
+            return Plan.Write(kind, listOfNotNull(d?.let { listOf("d", it) }, title?.takeIf { d != null && it.isNotBlank() }?.let { listOf("title", it) }, change.add), "", now, null)
         }
         val has = old.tags.any { key(it) == k }
         val tags = when {

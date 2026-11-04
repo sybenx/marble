@@ -2506,7 +2506,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val old = d?.let { id -> relaySets.value.firstOrNull { it.d == id }?.event }
             val id = d ?: java.util.UUID.randomUUID().toString().take(12)
             val change = if (on) ListWrite.Change(add = listOf("relay", r.url)) else ListWrite.Change(remove = listOf("relay", r.url))
-            val res = changeList(30002, id, change, expected = d != null, have = old, firstTags = listOf(listOf("title", title.trim().take(80))))
+            val res = changeList(30002, id, change, expected = d != null, have = old, title = title.trim().take(80))
             (res as? ListResult.Sent)?.e?.let { sent ->
                 relaySets.update { l -> RelayFeeds.sets(l.map { it.event }.filter { it.firstTag("d") != sent.firstTag("d") } + sent, me) }
             }
@@ -2669,18 +2669,18 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /**
      * One change to one of your lists, by the shared rule (ListWrite, list-writes.md): planned from every version found,
-     * checked again before it's signed. [expected]: a list is known to exist (then none found is a refusal). [firstTags]:
-     * what a brand-new list starts with besides the entry (a new set's title).
+     * checked again before it's signed. [expected]: a list is known to exist (then none found is a refusal). [title]: a
+     * brand-new set's name.
      */
     private suspend fun changeList(kind: Int, d: String?, change: ListWrite.Change, expected: Boolean, have: Event? = null,
-                                   firstTags: List<List<String>> = emptyList()): ListResult {
+                                   title: String? = null): ListResult {
         val me = me ?: return ListResult.Refused("not signed in")
         val found = versions(kind, d, have)
-        return when (val p = ListWrite.plan(found, me, kind, d, change, expected, Clock.now())) {
+        return when (val p = ListWrite.plan(found, me, kind, d, change, expected, Clock.now(), title)) {
             is ListWrite.Plan.Refuse -> { message.value = "Couldn't change that list: your current one wasn't found. Try again in a moment."; ListResult.Refused(p.why) }
             ListWrite.Plan.Nothing -> ListResult.Unchanged(ListWrite.newest(found, me, kind, d))
             is ListWrite.Plan.Write -> {
-                val tags = if (p.old == null && firstTags.isNotEmpty()) p.tags.take(if (d != null) 1 else 0) + firstTags + p.tags.drop(if (d != null) 1 else 0) else p.tags
+                val tags = p.tags
                 p.old?.let { o -> ListWrite.guard(ListWrite.Version(o.kind, o.createdAt, o.content, o.tags), ListWrite.Version(kind, p.createdAt, p.content, tags)) }?.let { why ->
                     message.value = "Didn't change that list: it would have changed more than you asked."; return ListResult.Refused(why)
                 }

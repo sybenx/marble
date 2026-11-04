@@ -17,7 +17,7 @@ class ListWriteVectorsTest {
     private fun plan(c: JSONObject): ListWrite.Plan {
         val found = c.getJSONArray("found").let { a -> (0 until a.length()).map { event(a.getJSONObject(it)) } }
         val ch = c.getJSONObject("change")
-        return ListWrite.plan(found, me, c.getInt("kind"), c.optString("d").ifEmpty { null }, ListWrite.Change(strs(ch.optJSONArray("add")), strs(ch.optJSONArray("remove"))), c.getBoolean("expected"), now)
+        return ListWrite.plan(found, me, c.getInt("kind"), c.optString("d").ifEmpty { null }, ListWrite.Change(strs(ch.optJSONArray("add")), strs(ch.optJSONArray("remove"))), c.getBoolean("expected"), now, c.optString("title").ifEmpty { null })
     }
     private fun each(k: String, f: (JSONObject) -> Unit) { val a = v.getJSONArray(k); for (i in 0 until a.length()) f(a.getJSONObject(i)) }
 

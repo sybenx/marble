@@ -48,6 +48,9 @@
   { "name": "a new set: just its d and the entry",
     "found": [], "kind": 30002, "d": "new", "change": { "add": ["relay", "wss://a.example"] }, "expected": false,
     "write": { "tags": [["d", "new"], ["relay", "wss://a.example"]], "content": "", "created_at": 1000 } },
+  { "name": "a new set with a title: d, then its title, then the entry",
+    "found": [], "kind": 30002, "d": "new", "title": "Reading", "change": { "add": ["relay", "wss://a.example"] }, "expected": false,
+    "write": { "tags": [["d", "new"], ["title", "Reading"], ["relay", "wss://a.example"]], "content": "", "created_at": 1000 } },
   { "name": "a first list, when none is expected: just the entry",
     "found": [], "kind": 10003, "change": { "add": ["e", "E1"] }, "expected": false,
     "write": { "tags": [["e", "E1"]], "content": "", "created_at": 1000 } }
