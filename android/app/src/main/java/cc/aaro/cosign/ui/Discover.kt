@@ -242,6 +242,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val stack = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Route>, String>(
         save = { l -> l.map { it.save() } }, restore = { l -> mutableStateListOf<Route>().apply { addAll(l.mapNotNull { Route.of(it) }) } })) { mutableStateListOf() }
     val feedState = rememberLazyListState()
+    val readerState = rememberLazyListState()
     // Following's place: kept while you read a story, a post or a thread, and while you're on Search.
     val followingPlace = remember { FollowingPlace() }
     // The panes: Following on the left, Search (home) in the middle, Messages on the right.
@@ -344,7 +345,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.search.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
     // The panes stay composed under any screen on top of them, so Back to them is instant, with Following where it was.
-    Panes(phone, ui, social, nav, pager, feedState, followingPlace, covered = top != null)
+    Panes(phone, ui, social, nav, pager, feedState, followingPlace, covered = top != null, readerState = readerState)
     // A screen on top: its own ground, and every touch is its (none reaches the panes under it).
     if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
@@ -582,7 +583,7 @@ private fun MessagesPane() = Box(Modifier.fillMaxSize().windowInsetsPadding(andr
  */
 @Composable
 private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace,
-                  covered: Boolean = false) {
+                  covered: Boolean = false, readerState: LazyListState = rememberLazyListState()) {
     val people by People.known.collectAsState()
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
@@ -598,7 +599,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
                     // Following, tapped while you're on it: back to the top (a long way down: a jump, then the last bit animated).
                     Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable {
                         scope.launch {
-                            if (i == PANE_FOLLOWING && pager.currentPage == PANE_FOLLOWING) { if (feedState.firstVisibleItemIndex > 8) feedState.scrollToItem(8); feedState.animateScrollToItem(0) }
+                            if (i == PANE_FOLLOWING && pager.currentPage == PANE_FOLLOWING) { val l = if (social.feedVersion.value == 4) readerState else feedState; if (l.firstVisibleItemIndex > 8) l.scrollToItem(8); l.animateScrollToItem(0) }
                             else pager.animateScrollToPage(i)
                         }
                     }.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -614,7 +615,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
             when (page) {
-                PANE_FOLLOWING -> if (social.feedVersion.collectAsState().value == 4) ReaderPane(social, nav, current = pager.settledPage == PANE_FOLLOWING && !covered)
+                PANE_FOLLOWING -> if (social.feedVersion.collectAsState().value == 4) ReaderPane(social, nav, current = pager.settledPage == PANE_FOLLOWING && !covered, state = readerState)
                     else FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
                 PANE_MESSAGES -> MessagesPane()
                 else -> Home(phone, ui, social, nav)
@@ -4345,7 +4346,7 @@ private fun shortDate(t: Long): String {
 /** Reader: folders along the top (a dot when something's new, never a number), then a compact row per item. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderPane(social: Social, nav: Nav, current: Boolean) {
+private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyListState) {
     val items by social.readerItems.collectAsState()
     val list by social.readerList.collectAsState()
     social.readerReadAt.collectAsState().value
@@ -4361,7 +4362,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean) {
     val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } }.map { it.id to it.name }
     val folders = (listOf("all" to "All") + READER_FOLDERS + custom).filter { (id, _) -> id == "all" || all.any { it.folder == id } }
     val shown = if (folder == "all") all else all.filter { it.folder == folder }
-    fun unread(i: Social.ReaderItem) = !social.isRead(i.key, i.source, i.at)
+    fun unread(i: Social.ReaderItem) = !social.itemRead(i)
     val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
     val open = remember { androidx.compose.runtime.mutableStateListOf<String>() }
     Column(Modifier.fillMaxSize()) {
@@ -4385,7 +4386,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean) {
             Box {
                 IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "Folder", tint = Vault.Muted) }
                 if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
-                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(shown.map { it.source }.distinct(), shown.map { it.key }) })
+                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(shown.map { it.source }.distinct(), shown.flatMap { social.itemKeys(it) }) })
                     if (folder != "all") for ((v, label) in listOf("list" to "List view", "river" to "Expanded view")) DropdownMenuItem({ Text((if (view == v) "✓ " else "") + label, color = Vault.Text) }, {
                         menu = false
                         val name = folders.firstOrNull { it.first == folder }?.second ?: folder
@@ -4395,16 +4396,30 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean) {
             }
         }
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(loading && items != null, ::refresh, Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            // Expanded view: an item is read once it's been fully on screen for a second, not while flinging past it.
+            if (view == "river") LaunchedEffect(state, shown) {
+                val since = HashMap<String, Long>()
+                while (true) {
+                    delay(250)
+                    val now = System.currentTimeMillis()
+                    val info = state.layoutInfo
+                    val whole = if (state.isScrollInProgress) emptySet() else info.visibleItemsInfo
+                        .filter { it.offset >= info.viewportStartOffset && it.offset + it.size <= info.viewportEndOffset }.mapNotNull { it.key as? String }.toSet()
+                    since.keys.retainAll(whole)
+                    for (k in whole) {
+                        val t = since.getOrPut(k) { now }
+                        if (now - t >= 1000) shown.firstOrNull { it.key == k }?.let { if (!social.itemRead(it)) social.markItemRead(it) }
+                    }
+                }
+            }
+            LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 if (items == null) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
                 else if (shown.isEmpty()) item { Text(if (all.isEmpty()) "Add a site or a person with +." else "Nothing new here.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
                 items(shown, key = { it.key }) { i ->
                     val isOpen = view == "river" || i.key in open
                     ReaderRow(i, unread(i), social.starred(i, kept), isOpen, social, nav, onToggle = {
-                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markRead(i.key) }
+                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markItemRead(i) }
                     })
-                    // Expanded view: read once it's been on screen a moment.
-                    if (view == "river") LaunchedEffect(i.key) { delay(1000); social.markRead(i.key) }
                 }
             }
         }
@@ -4424,7 +4439,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
         Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }, onClick = onToggle).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
                 modifier = Modifier.size(36.dp).clip(CircleShape).clickable { social.star(i) }.padding(9.dp))
-            Text(i.sourceName, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 76.dp))
+            Text(i.sourceName, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(76.dp))
             Spacer(Modifier.width(8.dp))
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(i.title) }
@@ -4562,7 +4577,7 @@ private fun ShareWithNote(i: Social.ReaderItem, social: Social, onClose: () -> U
             else TextButton({
                 if (public) counting = 5
                 else { social.readerUrl(i)?.let { url -> social.later.keep(keepNote.ifBlank { i.title }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }; social.message.value = "Kept in your notes."; onClose() }
-            }, enabled = !public || postNote.isNotBlank()) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
+            }) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
         },
         dismissButton = { if (counting == 0) TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
 }

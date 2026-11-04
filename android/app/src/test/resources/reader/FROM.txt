@@ -1,1 +1,1 @@
-marble-content-fixtures f2bff8e plus Marble Web's uncommitted Reader changes of 2026-11-04 (tombstoned unread, addressKey, fitSeen, quotes and Blossom as items, content.json v2)
+marble-content-fixtures 9827072
