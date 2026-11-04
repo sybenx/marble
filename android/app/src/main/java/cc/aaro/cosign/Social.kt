@@ -1051,7 +1051,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         pullSeen(again = true)
         val now = Clock.now()
-        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW).filter { !it.first.startsWith("t") }, now), encrypt = true) ?: return
+        if (seenUnreadable) return
+        val keep = prefs.getString("seenOthers", null)?.let { try { org.json.JSONObject(it) } catch (_: Exception) { null } }
+        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW).filter { !it.first.startsWith("t") }, now, keep), encrypt = true) ?: return
         // NIP-40: relays may drop it two weeks after the last write, so it doesn't outlive your use of Marble (each write moves it on).
         val tags = listOf(listOf("d", SeenSync.TAG), listOf("expiration", (now + SeenSync.EXPIRES).toString()))
         val signed = try { phone.signOwn(Event(me, now, 30078, tags, text).withId()) } catch (_: Exception) { return }
@@ -1461,6 +1463,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun fromBot(bot: String, text: String): String? = null
 
     /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
+    /** The account's seen list didn't decrypt here: this phone doesn't write it. */
+    @Volatile private var seenUnreadable = false
     private suspend fun pullSeen(again: Boolean = false) {
         val me = me ?: return
         if (Sources.viewAs != null || (seenPulled && !again)) return
@@ -1469,7 +1473,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(SeenSync.TAG), "limit" to 4), 6000)
             .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return
         if (got.createdAt <= prefs.getLong("seenPulled", 0)) return
-        val keys = SeenSync.decode(toSelf(got.content, encrypt = false) ?: return)
+        // A copy this phone can't read: never written over (its other fields would be lost).
+        val plain = toSelf(got.content, encrypt = false) ?: run { seenUnreadable = true; return }
+        seenUnreadable = false
+        // What this version doesn't write (Reader's upto and unread): kept, and sent back as it was.
+        SeenSync.others(plain)?.let { prefs.edit().putString("seenOthers", it.toString()).apply() }
+        val keys = SeenSync.decode(plain)
         if (debuggable) android.util.Log.i("CosignSync", "seen pulled: ${keys.size} keys from ${relays.size} relays")
         var added = 0
         for ((k, t) in keys) if (seen.add(k, t)) added++

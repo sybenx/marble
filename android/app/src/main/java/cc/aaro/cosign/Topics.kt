@@ -421,12 +421,21 @@ object SeenSync {
     }
 
     /** The account's copy: {"v":1,"at":…,"days":{"<day number>":"key key …"}}, the newest [CAP] within [WINDOW] of [now]. */
-    fun encode(keys: List<Pair<String, Long>>, now: Long): String {
+    /** [keep]: fields of the account's copy this version doesn't write (Reader's upto and unread, reader.md §2): kept as they were. */
+    fun encode(keys: List<Pair<String, Long>>, now: Long, keep: org.json.JSONObject? = null): String {
         val recent = keys.filter { it.second > now - WINDOW }.sortedBy { it.second }.distinctBy { it.first }.takeLast(CAP)
         val days = org.json.JSONObject()
         recent.groupBy { it.second / 86_400 }.forEach { (d, l) -> days.put(d.toString(), l.joinToString(" ") { it.first }) }
-        return org.json.JSONObject().put("v", 1).put("at", now).put("days", days).toString()
+        val o = org.json.JSONObject()
+        keep?.keys()?.forEach { k -> if (k !in setOf("v", "at", "days")) o.put(k, keep.get(k)) }
+        return o.put("v", 1).put("at", now).put("days", days).toString()
     }
+
+    /** A copy's fields besides v, at and days (kept when this phone writes it again). */
+    fun others(json: String): org.json.JSONObject? = try {
+        val o = org.json.JSONObject(json)
+        if (o.optInt("v") != 1) null else org.json.JSONObject().apply { o.keys().forEach { k -> if (k !in setOf("v", "at", "days")) put(k, o.get(k)) } }
+    } catch (_: Exception) { null }
 
     /** The keys in a copy, each with the start of its day; empty if it isn't one (or is a later version). */
     fun decode(json: String): List<Pair<String, Long>> = try {
