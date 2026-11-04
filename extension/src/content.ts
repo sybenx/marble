@@ -22,7 +22,7 @@ const signedOut = () => { marble(false); window.dispatchEvent(new CustomEvent('m
 const loaded = new Promise<void>(ok => document.addEventListener('DOMContentLoaded', () => ok(), { once: true }));
 api.runtime.sendMessage({ type: 'site-status' }).then((st: any) => {
   if (st?.connected) marble(true);
-  // signed out here while this site wasn't open: it hears so now, once its own scripts are listening
+  // signed out here since this site was last loaded: it hears so now, once its own scripts are listening
   else if (st?.gone) void loaded.then(signedOut);
 }).catch(() => {});
 
