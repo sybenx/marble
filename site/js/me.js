@@ -48,9 +48,12 @@ function checked(err) {
 // The extension says so itself (the Marble extension, when it removes this site or signs out): at once.
 if (typeof window !== "undefined") window.addEventListener("marble:signedout", () => { if (state?.method === "extension") signedOutElsewhere(); });
 // On load, signed in by extension: one quiet check of which account it is, but only with an extension that promises
-// never to open a window without a click (the Marble extension's __marble); any other might ask every load.
+// never to open a window without a click (the Marble extension's __marble); any other might ask every load. __marble
+// shows only on sites connected in this browser, a moment after window.nostr (its background may be asleep): waited
+// for up to 2 s, and with none, no check.
 if (typeof window !== "undefined" && state?.method === "extension") setTimeout(async () => {
   for (let i = 0; i < 10 && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150)); // (extensions arrive late)
+  for (let i = 0; window.nostr && !window.nostr.__marble && i < 14; i++) await new Promise((r) => setTimeout(r, 150));
   if (!window.nostr?.__marble || state?.method !== "extension") return;
   try {
     const pk = String(await window.nostr.getPublicKey()).toLowerCase();
