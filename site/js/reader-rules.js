@@ -35,11 +35,22 @@ export const addressKey = (kind, pubkey, d) => "a" + hex(sha256(new TextEncoder(
 /** An event's key: by its address when it has one (kinds 30000–39999), else by its id. */
 export const eventKey = (e) => e.kind >= 30000 && e.kind < 40000 ? addressKey(e.kind, e.pubkey, e.tags.find((t) => t[0] === "d")?.[1] || "") : postKey(e.id);
 
-const seenKeys = (seen) => new Set(Object.values(seen?.days || {}).flatMap((s) => String(s).split(" ").filter(Boolean)));
-/** Whether an item ({key, source, at}) is read, by the seen list. */
+/** The keys in a seen list, each with the (latest) day it was read on. */
+const seenKeys = (seen) => {
+  const m = new Map();
+  for (const [d, s] of Object.entries(seen?.days || {})) for (const k of String(s).split(" ")) if (k && !(m.get(k) >= +d)) m.set(k, +d);
+  return m;
+};
+/**
+ * Whether an item ({key, source, at, folder?}) is read, by the seen list: its key read, or it's no newer than its
+ * source's read-up-to time or its folder's (`folder:<id>`, Mark all as read on a folder of people). Kept unread
+ * (unread[key] > 0) wins, unless the key was read on a later day than the mark (opened on another device after it).
+ */
 export function isRead(item, seen, keys = seenKeys(seen)) {
-  if (seen?.unread?.[item.key] > 0) return false; // (kept unread; a negative time: read again after that)
-  return keys.has(item.key) || item.at <= (seen?.upto?.[item.source] ?? -1);
+  const u = seen?.unread?.[item.key];
+  const day = keys.get(item.key);
+  if (u > 0 && !(day > Math.floor(u / 86400))) return false;
+  return day !== undefined || item.at <= (seen?.upto?.[item.source] ?? -1) || (!!item.folder && item.at <= (seen?.upto?.[`folder:${item.folder}`] ?? -1));
 }
 export { seenKeys };
 

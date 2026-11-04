@@ -5,7 +5,7 @@
 // On your account (signed in with the extension, as Notes): your sources and folders (kind 30078 d=marble/reader) and
 // what you've read (the seen list, d=discover/seen, with its upto and unread), each NIP-44 to yourself, merged with
 // what's there before every write; as Marble Android keeps them (reader.md, agreed 2026-11-04).
-import { req, relays, publish, FAST, INDEXERS, normalize, foundOn } from "./pool.js";
+import { req, relays, publish, FAST, INDEXERS, normalize, foundOn, testRelay } from "./pool.js";
 import { keep, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { esc, name, postPath, content, inApp } from "./render.js";
 import { decode, naddr, nevent } from "./ids.js";
@@ -13,6 +13,7 @@ import { current, method, myFollows, nip44Self, sign, myWriteRelays } from "./me
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
 import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen } from "./reader-rules.js";
+import { decide, completeRead } from "./sync-guard.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -34,11 +35,13 @@ function load() {
   keys = seenKeys(seen);
 }
 function saveList() { write(LIST(who), doc); changed("list"); }
+// This browser keeps 30 days of what you've read (so nothing read turns bold while it can still show); the copy on your
+// account keeps the last week, as Android's does (trimmed when it's sent: synced()).
 function saveSeen() {
-  // the last week of keys, as the seen list keeps them; unread marks for 30 days
-  const cut = Math.floor((now() - 7 * DAY) / DAY);
+  const t = now(), cut = Math.floor((t - UNREAD_FOR) / DAY);
   for (const d of Object.keys(seen.days)) if (+d < cut) delete seen.days[d];
-  seen = { ...fitSeen(seen, now()), at: now() };
+  seen = { ...seen, at: t, upto: Object.fromEntries(Object.entries(seen.upto).filter(([, x]) => x > t - UNREAD_FOR)),
+    unread: Object.fromEntries(Object.entries(seen.unread).filter(([, x]) => Math.abs(x) > t - UNREAD_FOR)) };
   keys = seenKeys(seen);
   write(SEEN(who), seen);
   changed("seen");
@@ -51,49 +54,57 @@ function markRead(key) {
   if (u > 0) seen.unread[key] = -now();
   const d = String(Math.floor(now() / DAY));
   seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
-  keys.add(key);
   saveSeen();
 }
 function keepUnread(key) { seen.unread[key] = now(); saveSeen(); }
-/** Everything from these sources read, now: their read-up-to time, and their items' Keep unread marks cleared. */
-function markAllRead(sources, list = []) {
+/**
+ * Everything here read, now: a folder of people (Your people, Read first) by the folder's read-up-to time (one entry,
+ * not one a person); any other by its sources'; their items' Keep unread marks cleared.
+ */
+function markAllRead(sources, list = [], folder = "") {
   const t = now(), these = new Set(sources);
-  for (const s of these) seen.upto[s] = t;
-  for (const i of list) if (these.has(i.source)) for (const k of [i.key, ...(i.keys || [])]) if (seen.unread[k] > 0) seen.unread[k] = -t;
+  if (folder === "people" || folder === "first") seen.upto[`folder:${folder}`] = t;
+  else for (const s of these) seen.upto[s] = t;
+  for (const i of list) if (these.has(i.source) || folder && i.folder === folder) for (const k of [i.key, ...(i.keys || [])]) if (seen.unread[k] > 0) seen.unread[k] = -t;
   saveSeen();
 }
 const muted = (id) => doc.muted.some((m) => m.source === id && !m.gone);
 function setSource(s) { doc.sources = doc.sources.filter((x) => x.id !== s.id).concat({ ...s, at: now() }); saveList(); }
 function ensureFolder(id, label) {
-  if (!doc.folders.some((f) => f.id === id && !f.gone)) { doc.folders.push({ id, name: label, order: doc.folders.length, view: "river", at: now() }); saveList(); }
+  if (!doc.folders.some((f) => f.id === id && !f.gone)) { doc.folders.push({ id, name: label, order: doc.folders.length, view: "list", at: now() }); saveList(); }
 }
 
 // ── Your account's copy ──────────────────────────────────────────────────────────────────────────────
-// Read when Reader opens; written 20 s after a change (and when you leave the page), from what's there merged with
-// this browser's: never over a copy that didn't decrypt. The seen list keeps the last week (2,000 keys at most) and
-// expires on relays two weeks after its last write, as Android writes it.
+// Read when Reader opens; written 20 s after a change (and when you leave the page), merged with what's there first,
+// and only when sync-guard.js says so: never over a copy that didn't decrypt, never from a read that missed one of
+// your write relays, never under a newer copy this browser has seen (until your relays have answered without it
+// three times, or it's past its expiration). The seen list on the account keeps the last week (2,000 keys, under
+// 48 KB) and expires two weeks after its last write, as Android writes it.
 
 const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
+const EXPIRES = { list: 0, seen: 14 * DAY };
 const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
-let account = { list: undefined, seen: undefined }, broken = new Set(), timer = null, dirty = new Set();
+let broken = new Set(), timer = null, wait = 60000;
+const dirty = new Set(), version = { list: 0, seen: 0 }; // (a change made while a copy is being sent is sent next)
 const onRead = new Set();
+const later = (ms) => { clearTimeout(timer); timer = setTimeout(() => { timer = null; pushAccount(); }, ms); };
 
+// your relays: your own list (waited for: a write always goes there), else a few fast ones
 async function where() {
-  const o = await Promise.race([outbox(current()), new Promise((r) => setTimeout(() => r({ write: [], read: [] }), 2000))]);
-  return { write: o.write.length ? o.write : FAST.slice(0, 3), both: relays(o.write, o.read, FAST.slice(0, 2)).slice(0, 8) };
+  const o = await outbox(current()).catch(() => ({ write: [], read: [] }));
+  // (testing on localhost: the local relay is where writes go, so it's the one that has to answer)
+  const write = testRelay() ? relays([testRelay()]) : relays(o.write.length ? o.write : FAST.slice(0, 3));
+  return { write, both: relays(write, o.read, FAST.slice(0, 2)).slice(0, 10) };
 }
-/** Your newest copy of each, decrypted: {event, body} (body null: it didn't decrypt); null if no relay answered. */
-// the newest account copy this browser has seen, by d: an answer without it (or with an older one) means the relay
-// that holds it didn't answer, not that it's gone, so nothing is written over it
-const SEEN_AT = (pk) => `marble.reader.copies.${pk}`;
-const copiesSeen = () => read(SEEN_AT(current()), {});
-const sawCopy = (d, at) => { const c = copiesSeen(); if ((c[d] || 0) < at) write(SEEN_AT(current()), { ...c, [d]: at }); };
+// the newest account copy this browser has seen, by d, and how many complete reads in a row have missed it
+const STATE = (pk) => `marble.reader.copies.${pk}`, MISSED = (pk) => `marble.reader.missed.${pk}`;
+const copiesSeen = () => read(STATE(current()), {});
+const sawCopy = (d, at) => { const c = copiesSeen(); if ((c[d] || 0) < at) write(STATE(current()), { ...c, [d]: at }); };
+/** Your newest copy of each, decrypted ({event, body}; body null: it didn't decrypt), and whether every write relay answered. */
 async function fetchMine(ds) {
-  const me = current();
-  const answer = await req((await where()).both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 5000, settle: 1000 });
-  if (!answer.answered) return null; // (no relay answered: unknown, not "no copy")
-  const got = answer.filter((e) => e.pubkey === me);
-  const out = {};
+  const me = current(), w = await where();
+  const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 6000 });
+  const got = answer.filter((e) => e.pubkey === me), out = {};
   for (const d of ds) {
     const e = got.filter((x) => x.tags.some((t) => t[0] === "d" && t[1] === d)).sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
     if (!e) continue;
@@ -102,34 +113,43 @@ async function fetchMine(ds) {
     out[d] = { event: e, body };
     if (body) sawCopy(d, e.created_at);
   }
-  return out;
+  return { copies: out, answered: answer.answered, complete: completeRead(w.write, answer.answeredBy), write: w.write };
 }
 
 /** The account's copies merged in here (and your old news feeds moved over once). */
 export async function pullAccount() {
   if (!syncs()) return;
   const me = current();
-  const got = await fetchMine([D.list, D.seen, OLD_FEEDS]);
-  if (!got || current() !== me) return;
+  const r = await fetchMine([D.list, D.seen, OLD_FEEDS]);
+  if (!r.answered || current() !== me) return;
   load();
-  const list = got[D.list], old = got[OLD_FEEDS], sn = got[D.seen];
+  const list = r.copies[D.list], old = r.copies[OLD_FEEDS], sn = r.copies[D.seen];
   broken = new Set([list && !list.body && "list", sn && !sn.body && "seen"].filter(Boolean));
-  if (list?.body?.v === 1) { account.list = list; doc = mergeReader(doc, list.body); write(LIST(who), doc); }
-  else if (!list && old?.body) {
+  if (list?.body?.v === 1) { doc = mergeReader(doc, list.body); write(LIST(who), doc); }
+  else if (!list && old?.body && r.complete) {
     // first time: your news feeds (Account › News sources on the phone) as sources in News
     for (const f of old.body.own || []) if (f.url && !f.gone && !doc.sources.some((s) => s.id === `feed:${f.url}`)) doc.sources.push({ id: `feed:${f.url}`, type: "feed", value: f.url, name: f.name || hostOf(f.url), folder: "news", at: f.at || now() });
     write(LIST(who), doc);
     if (doc.sources.length) changed("list");
   }
-  if (sn?.body?.v === 1) { account.seen = sn; seen = mergeSeen(seen, sn.body); keys = seenKeys(seen); write(SEEN(who), seen); }
+  if (sn?.body?.v === 1) { seen = mergeSeen(seen, sn.body); keys = seenKeys(seen); write(SEEN(who), seen); }
   onRead.forEach((fn) => fn());
 }
 
 function changed(what) {
   if (!syncs()) return;
   dirty.add(what);
-  clearTimeout(timer);
-  timer = setTimeout(pushAccount, 20000);
+  version[what]++;
+  wait = 60000;
+  later(20000);
+}
+// the seen list as the account keeps it: the last week, the newest 2,000 keys, under 48 KB
+function synced(s, t) {
+  const cut = Math.floor((t - 7 * DAY) / DAY), all = [];
+  for (const [d, ks] of Object.entries(s.days)) if (+d >= cut) for (const key of String(ks).split(" ").filter(Boolean)) all.push([+d, key]);
+  const days = {};
+  for (const [d, key] of all.sort((a, b) => a[0] - b[0]).slice(-2000)) days[d] = days[d] ? `${days[d]} ${key}` : key;
+  return fitSeen({ ...s, at: t, days }, t);
 }
 let pushing = false;
 /** What changed here, merged with what's there now, to your account. */
@@ -137,17 +157,19 @@ export async function pushAccount() {
   if (!syncs() || pushing || !dirty.size) return;
   pushing = true;
   const me = current();
+  let retry = false;
   try {
     const todo = [...dirty];
-    const got = await fetchMine(todo.map((k) => D[k]));
-    // no relay answered: what's there is unknown, so nothing is written over it; tried again in a minute
-    if (!got) { clearTimeout(timer); timer = setTimeout(pushAccount, 60000); return; }
+    const r = await fetchMine(todo.map((k) => D[k]));
     for (const k of todo) {
-      const there = got[D[k]];
-      // this browser has seen a newer copy than any relay gave: the one that holds it didn't answer; tried again later
-      if ((there?.event.created_at ?? 0) < (copiesSeen()[D[k]] || 0)) { clearTimeout(timer); timer = setTimeout(pushAccount, 60000); continue; }
-      if (there && !there.body) { broken.add(k); continue; } // (never over a copy that didn't decrypt)
       if (current() !== me) return;
+      const there = r.copies[D[k]], v = version[k];
+      if (there && !there.body) { broken.add(k); dirty.delete(k); continue; } // (never over a copy that didn't decrypt)
+      const missed = read(MISSED(me), {});
+      const g = decide({ complete: r.complete, found: there?.event.created_at || 0, seenAt: copiesSeen()[D[k]] || 0, misses: missed[k] || 0, expires: EXPIRES[k], now: now() });
+      write(MISSED(me), { ...missed, [k]: g.misses });
+      if (g.do === "wait") { retry = true; continue; }
+      if (g.do === "rebase") write(STATE(me), { ...copiesSeen(), [D[k]]: there?.event.created_at || 0 }); // (your relays have what they have)
       const t = now();
       let body;
       if (k === "list") {
@@ -159,28 +181,27 @@ export async function pushAccount() {
         body = doc;
       } else {
         seen = there?.body?.v === 1 ? mergeSeen(seen, there.body) : seen;
-        // the last week, the newest 2,000 keys
-        const cut = Math.floor((t - 7 * DAY) / DAY), all = [];
-        for (const [d, ks] of Object.entries(seen.days)) if (+d >= cut) for (const key of String(ks).split(" ").filter(Boolean)) all.push([+d, key]);
-        const kept = all.sort((a, b) => a[0] - b[0]).slice(-2000), days = {};
-        for (const [d, key] of kept) days[d] = days[d] ? `${days[d]} ${key}` : key;
-        seen = fitSeen({ ...seen, at: t, days }, t);
         keys = seenKeys(seen);
         write(SEEN(who), seen);
-        body = seen;
+        body = synced(seen, t);
       }
-      if (there && JSON.stringify(there.body) === JSON.stringify(body)) { dirty.delete(k); continue; }
-      const tags = [["d", D[k]], ...(k === "seen" ? [["expiration", String(t + 14 * DAY)]] : [])];
+      if (there && JSON.stringify(there.body) === JSON.stringify(body)) { if (version[k] === v) dirty.delete(k); continue; }
       const json = JSON.stringify(body);
-      // NIP-44 takes at most 65,535 bytes: the seen list is kept well under (fit), the Reader list never gets near
-      if (new TextEncoder().encode(json).length > 60000) { console.warn("Reader: too big to sync", k); continue; }
+      // NIP-44 takes at most 65,535 bytes: the seen list is fitted to 48 KB, the Reader list never gets near
+      if (new TextEncoder().encode(json).length > 60000) { console.warn("Reader: too big to sync", k); dirty.delete(k); continue; }
+      const tags = [["d", D[k]], ...(EXPIRES[k] ? [["expiration", String(t + EXPIRES[k])]] : [])];
       const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(json, true) });
-      const sent = await publish((await where()).write, ev);
-      if (sent.ok.length) { dirty.delete(k); sawCopy(D[k], ev.created_at); } // (only once a relay took it: until then it's sent again)
+      const sent = await publish(r.write, ev);
+      if (sent.ok.length) { sawCopy(D[k], ev.created_at); if (version[k] === v) dirty.delete(k); } else retry = true;
     }
-  } catch (err) { console.warn("Reader: not synced", err); } finally { pushing = false; if (dirty.size && !timer) timer = setTimeout(pushAccount, 60000); }
+  } catch (err) { console.warn("Reader: not synced", err); retry = true; }
+  finally {
+    pushing = false;
+    // tried again, waiting longer each time (a minute, then two, up to ten), until it's sent or nothing's left
+    if (dirty.size) { later(retry ? wait : 20000); if (retry) wait = Math.min(wait * 2, 600000); }
+  }
 }
-if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(timer); pushAccount(); } });
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pushAccount(); });
 
 // ── Sources: what each brings ────────────────────────────────────────────────────────────────────────
 
@@ -251,20 +272,33 @@ async function newsItems(sources) {
 }
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
 
-/** A post's words as one line: drawn by the shared renderer (people as @names, a quoted post or article left out,
- *  never a raw nostr: or blossom: reference), then read as text. */
+/** A post as one line (content-rules §9): drawn by the shared renderer, then flattened: people as @names, a post or
+ *  article it points to as "↪ quoted" / "↪ an article", custom emoji as their :name:, pictures and videos left out
+ *  ("A picture" / "A video" when that's all there is), never a raw nostr: or blossom: reference. */
 export function plainText(e) {
   // a content warning (NIP-36): its reason, never the words
   const cw = (e.tags || []).find((t) => t[0] === "content-warning");
   if (cw) return `${cw[1] || "Sensitive"}: show`;
   const el = document.createElement("div");
   el.innerHTML = content(e);
-  for (const x of el.querySelectorAll(".media, .quote-slot, .link-preview, .blossom-file")) x.remove();
+  const media = el.querySelector(".media");
+  const only = media ? (media.querySelector("video") ? "A video" : "A picture") : "";
+  for (const x of el.querySelectorAll(".media, .link-preview")) x.remove();
+  for (const q of el.querySelectorAll(".quote-slot")) { const d = decode(q.dataset.quote); q.textContent = ` ↪ ${d?.type === "address" && d.kind === 30023 ? "an article" : "quoted"} `; }
+  for (const img of el.querySelectorAll("img.emoji")) img.replaceWith(img.alt);
   // a link to a post on another viewer (njump.me/nevent1…) opens here: "a post" (a person's, their @name)
   for (const a of el.querySelectorAll("a[data-link]")) { const d = decode(a.getAttribute("href").slice(1)); a.textContent = d?.type === "profile" ? `@${name(d.pubkey)}` : "a post"; }
   // a reference written short (↪ …) by the renderer stays as it says; anything raw left is dropped
   for (const a of el.querySelectorAll("a")) if (/\b(npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,}/.test(a.textContent)) a.textContent = "a post";
-  return el.textContent.replace(/\s+/g, " ").trim();
+  return el.textContent.replace(/\s+/g, " ").trim() || only;
+}
+
+/** A post's own link out (the first link to another site, as the renderer drew it), for v ("the original"), or "". */
+function originalOf(e) {
+  if (e.kind !== 1) return "";
+  const el = document.createElement("div");
+  el.innerHTML = content(e, { quotes: false });
+  return el.querySelector('a[target="_blank"]:not(.mention)')?.getAttribute("href") || "";
 }
 
 // people's posts: articles and posts with a link or media as items; short posts as one row per person a day
@@ -284,9 +318,8 @@ async function peopleItems(pks, folder) {
     const k = kindOf(e);
     if (k === "reply") continue;
     if (k === "item") {
-      const link = e.kind === 1 ? (e.content.match(/https?:\/\/[^\s<>"']+/g) || []).find((u) => !isMedia(u)) : "";
-      const title = e.kind === 30023 ? e.tags.find((t) => t[0] === "title")?.[1] || "Untitled" : plainText(e) || (link ? hostOf(link) : "A picture");
-      out.push({ key: eventKey(e), source: `people:${e.pubkey}`, author: e.pubkey, kind: e.kind === 30023 ? "article" : "people", at: e.created_at, title, summary: e.kind === 30023 ? (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240) : "", event: e, folder });
+      const title = e.kind === 30023 ? e.tags.find((t) => t[0] === "title")?.[1] || "Untitled" : plainText(e) || "A post";
+      out.push({ key: eventKey(e), source: `people:${e.pubkey}`, author: e.pubkey, kind: e.kind === 30023 ? "article" : "people", at: e.created_at, title, summary: e.kind === 30023 ? (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240) : "", event: e, folder, original: originalOf(e) });
       continue;
     }
     const dk = digestKey(e.pubkey, e.created_at, OFFSET);
@@ -328,7 +361,7 @@ async function relayItems(sources) {
   for (const s of sources.filter((x) => x.type === "relay" && !muted(x.id))) {
     const got = await req([s.value], { kinds: [1], since: now() - 2 * DAY, limit: 60 }, { timeout: 5000, settle: 700, onEvent: keep });
     await profilesOf([...new Set(got.map((e) => e.pubkey))].slice(0, 100), 1200);
-    for (const e of got) if (kindOf(e) !== "reply") out.push({ key: eventKey(e), source: s.id, sourceName: s.name || hostOf(s.value.replace(/^wss?/, "https")), author: e.pubkey, kind: "people", at: e.created_at, title: plainText(e) || "A picture", event: e });
+    for (const e of got) if (kindOf(e) !== "reply") out.push({ key: eventKey(e), source: s.id, sourceName: s.name || hostOf(s.value.replace(/^wss?/, "https")), author: e.pubkey, kind: "people", at: e.created_at, title: plainText(e) || "A post", event: e, original: originalOf(e) });
   }
   return out;
 }
@@ -343,7 +376,7 @@ async function firstPeople(me) {
 
 // ── Read, new, aged out ──────────────────────────────────────────────────────────────────────────────
 
-const itemRead = (i) => i.kind === "digest" ? i.keys.every((k) => isRead({ key: k, source: i.source, at: i.at }, seen, keys)) && !(seen.unread[i.key] > 0) : isRead(i, seen, keys);
+const itemRead = (i) => i.kind === "digest" ? i.keys.every((k) => isRead({ key: k, source: i.source, at: i.at, folder: i.folder }, seen, keys)) && !(seen.unread[i.key] > 0) : isRead(i, seen, keys);
 const ageOf = (i) => i.kind === "news" ? AGE.news : i.kind === "article" ? AGE.article : AGE.people;
 // a star is a link to the item at marble.syb.lol (the same on every device and host; an article by its address)
 const SITE = "https://marble.syb.lol";
@@ -352,16 +385,19 @@ const starred = (i) => !!starUrl(i) && notes.items().some((n) => n.url === starU
 /** What a folder shows: unread (up to 30 days), then read ones not aged out; starred never age out. */
 function shown(items) {
   const t = now();
+  const all = items.filter((i) => !muted(i.source)).map((i) => ({ ...i, read: itemRead(i) }));
+  // a source whose items are all read up to one that's aged out: read up to there (so they stay read on a device that
+  // only has the last week of keys); never past an older one you haven't read
   let raised = false;
-  const out = items.filter((i) => !muted(i.source)).map((i) => ({ ...i, read: itemRead(i) })).filter((i) => {
-    if (!i.read) return t - i.at < UNREAD_FOR;
-    if (t - i.at < ageOf(i) || starred(i)) return true;
-    // aged out: its source is read up to here, so it stays read once its key has left the seen list
-    if ((seen.upto[i.source] || 0) < i.at) { seen.upto[i.source] = i.at; raised = true; }
-    return false;
-  }).sort((a, b) => (a.read - b.read) || b.at - a.at);
+  const bySource = new Map();
+  for (const i of all) bySource.set(i.source, [...(bySource.get(i.source) || []), i]);
+  for (const [src, list] of bySource) {
+    let upto = 0;
+    for (const i of list.sort((a, b) => a.at - b.at)) { if (!i.read) break; if (t - i.at >= ageOf(i)) upto = i.at; }
+    if (upto > (seen.upto[src] || 0)) { seen.upto[src] = upto; raised = true; }
+  }
   if (raised) saveSeen();
-  return out;
+  return all.filter((i) => !i.read ? t - i.at < UNREAD_FOR : t - i.at < ageOf(i) || starred(i)).sort((a, b) => (a.read - b.read) || b.at - a.at);
 }
 let shownKeys = new Set();
 
@@ -395,10 +431,18 @@ const entityOf = (i) => {
   return e.kind >= 30000 && e.kind < 40000 ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === "d")?.[1] || "", relays: foundOn(e.id).slice(0, 2) })
     : nevent(e.id, { relays: foundOn(e.id).slice(0, 2), author: e.pubkey });
 };
+// (a Nostr link a feed gave, already a path here, or a viewer or Marble link: here; anything else: the site)
+const hereOf = (url) => (/^\/(?:note|nevent|naddr|npub|nprofile)1/.test(url || "") ? url : inApp(url));
 const openOf = (i) => i.event ? { href: pathOf(i.event), here: true } : i.posts ? { href: postPath(i.posts[0]), here: true }
-  : inApp(i.link) ? { href: inApp(i.link), here: true } : { href: i.link || "", here: false };
+  : hereOf(i.link) ? { href: hereOf(i.link), here: true } : { href: i.link || "", here: false };
 
-export function showReader(root, signal, { page, card, fillLater }) {
+let active = null; // the Reader on screen (its root, and what the document's click and keys do there)
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (ev) => { if (active?.root.isConnected) active.click(ev); });
+  document.addEventListener("keydown", (ev) => { if (active?.root.isConnected) active.key(ev); });
+}
+
+export function showReader(root, signal, { page, card, fillLater, openTarget }) {
   page("reader", "Reader");
   load();
   const me = current();
@@ -451,10 +495,17 @@ export function showReader(root, signal, { page, card, fillLater }) {
         <button type="button" class="r-open" data-toggle aria-expanded="false">
           <span class="r-src">${esc(source)}</span><span class="r-text"><span class="r-title">${esc(title)}</span>${snip ? `<span class="r-snip"> — ${esc(snip)}</span>` : ""}</span><time class="r-date">${esc(shortDate(i.at))}</time>
         </button>
+        ${lineOpen(i)}
       </div>
       <div class="r-item" hidden></div>
     </article>`;
   }
+  // Open in… on the line too (reader.md §5): a Nostr item's list, or a story's site
+  const lineOpen = (i) => {
+    if (entityOf(i)) return `<button type="button" class="ic r-line-open" aria-label="Open in…" data-openin>${ICON.out}</button>`;
+    const o = openOf(i);
+    return o.href ? `<a class="ic r-line-open" href="${esc(o.href)}"${o.here ? "" : ' target="_blank" rel="noopener noreferrer"'} aria-label="Open in…" data-open>${ICON.out}</a>` : "";
+  };
   // the item, opened: the article or post (the shared renderer: references, media, quotes), and what you can do
   function opened(i) {
     const o = openOf(i), ext = o.here ? "" : ' target="_blank" rel="noopener noreferrer"';
@@ -530,6 +581,7 @@ export function showReader(root, signal, { page, card, fillLater }) {
         if (en.isIntersecting) timers.set(key, setTimeout(() => looked.add(key), 1000));
         else {
           clearTimeout(timers.get(key));
+          if (!en.target.isConnected || !en.rootBounds) continue; // (the page left, not scrolled past)
           if (looked.has(key) && en.boundingClientRect.bottom <= (en.rootBounds?.top ?? 0) + 1) { readItem(byKey.get(key)); en.target.classList.add("read"); io.unobserve(en.target); }
         }
       }
@@ -547,19 +599,20 @@ export function showReader(root, signal, { page, card, fillLater }) {
     if (have) notes.remove(have); else notes.keepPage(starUrl(i), i.kind === "digest" ? `${name(i.author)} · ${i.posts.length} posts` : i.title);
     b.classList.toggle("on", !have); b.setAttribute("aria-pressed", !have); b.setAttribute("aria-label", have ? "Star" : "Starred");
   };
+  // v: the original: a post's own link out when it has one (its article, say), else the item itself
   const original = (el) => {
-    const i = byKey.get(el.dataset.key), o = i && openOf(i);
+    const i = byKey.get(el.dataset.key), o = i && (i.original ? (hereOf(i.original) ? { href: hereOf(i.original), here: true } : { href: i.original, here: false }) : openOf(i));
     if (!o?.href) return;
     readItem(i);
     if (o.here) { const a = document.createElement("a"); a.href = o.href; el.append(a); a.click(); a.remove(); } // (Marble's own page, as a link click: Back comes here)
     else open(o.href, "_blank", "noopener");
   };
-  const allRead = () => { const list = items.get(folder) || []; markAllRead([...new Set(list.map((i) => i.source))], list); drawRiver(); };
+  const allRead = () => { const list = items.get(folder) || [...byKey.values()]; markAllRead([...new Set(list.map((i) => i.source))], list, folder); drawRiver(); };
 
-  async function fill(f) {
+  async function fill(f, { quiet = false } = {}) {
     if (busy.has(f) || gone()) return;
     busy.add(f);
-    if (f === folder) drawRiver();
+    if (f === folder && !(quiet && byKey.size)) drawRiver();
     try {
       const srcs = sourcesIn(f);
       let got = [];
@@ -637,15 +690,25 @@ export function showReader(root, signal, { page, card, fillLater }) {
     openMenu(el.querySelector(".r-open") || el, [["Keep unread", () => unread(el)], ["Share with a note", () => share(i)], [`Mute ${label}`, () => mute(i.source, true, label)]]);
   };
   // Open in… for a Nostr item: Marble, your Nostr app (a nostr: link), or a web viewer, njump.me always last
-  const openIn = (el, anchor) => {
-    const i = byKey.get(el.dataset.key), ent = i && entityOf(i);
+  // Open in… for a Nostr item (spec §10): the app your follows recommend for it (NIP-89), your Nostr app (a nostr:
+  // link), Marble, and njump.me always last
+  const openIn = async (el, anchor) => {
+    const i = byKey.get(el.dataset.key), ent = i && entityOf(i), e = i && (i.event || i.posts?.[0]);
     if (!ent) return;
     readItem(i);
-    openMenu(anchor, [
+    const rest = [
+      ["Your Nostr app", () => {
+        location.href = `nostr:${ent}`;
+        // nothing opened it (no app for nostr: links here): said, not silent
+        setTimeout(() => { if (document.visibilityState === "visible" && document.hasFocus()) said("No app opened it. Try njump.me, or Marble."); }, 1500);
+      }],
       ["Marble", () => { const a = document.createElement("a"); a.href = `/${ent}`; el.append(a); a.click(); a.remove(); }],
-      ["Your Nostr app", () => { location.href = `nostr:${ent}`; }],
       ["njump.me", () => open(`https://njump.me/${ent}`, "_blank", "noopener")],
-    ]);
+    ];
+    openMenu(anchor, rest);
+    // the app your follows recommend, at the top once it's known (the list doesn't wait for it)
+    const shownNow = menu, rec = e && openTarget ? await openTarget(e, ent).catch(() => null) : null;
+    if (rec && /^https:/.test(rec.url) && menu === shownNow && menu) openMenu(anchor, [[rec.label.replace(/ ›$/, ""), () => open(rec.url, "_blank", "noopener")], ...rest]);
   };
 
   // ── Share with a note (spec §5's guards: never prefilled, the button says it posts publicly, a few seconds to undo
@@ -691,11 +754,8 @@ export function showReader(root, signal, { page, card, fillLater }) {
     };
   }
 
-  // (on the document, not this page's signal: they still work after Back brings this page back as it was)
-  const live = () => root.isConnected;
-  document.addEventListener("click", (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); });
-  document.addEventListener("keydown", (ev) => {
-    if (!live()) return;
+  // (the document's listeners are added once, for whichever Reader is on screen: this one, also after Back)
+  active = { root, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); }, key: (ev) => {
     if (ev.key === "Escape") return closeMenu();
     if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest?.("input, textarea, [contenteditable]") || document.querySelector("dialog[open]")) return;
     const all = rowsEl(), el = all[cur];
@@ -709,7 +769,7 @@ export function showReader(root, signal, { page, card, fillLater }) {
     else if (k === "A" && ev.shiftKey) allRead();
     else return;
     ev.preventDefault();
-  });
+  } };
 
   root.addEventListener("click", (ev) => {
     const t = ev.target;
@@ -755,7 +815,13 @@ export function showReader(root, signal, { page, card, fillLater }) {
   const redraw = () => { if (gone()) return onRead.delete(redraw); if (root.isConnected) { drawFolders(); refresh(); } };
   onRead.add(redraw);
   signal.addEventListener("abort", () => pushAccount());
-  pullAccount().finally(() => { pulled = true; }).then(() => { for (const f of new Set(doc.sources.filter((s) => !s.gone).map((s) => s.folder))) if (f && f !== folder) items.delete(f); if (doc.sources.some((s) => s.folder === folder)) { items.delete(folder); fill(folder); } else if (!byKey.size) drawRiver(); drawFolders(); }).catch(() => {});
+  // your account's list in: its sources fetched in the background (what's on screen stays; new items wait behind
+  // "Show new items")
+  pullAccount().finally(() => { pulled = true; }).then(() => {
+    for (const f of new Set(doc.sources.filter((s) => !s.gone).map((s) => s.folder))) if (f) fill(f, { quiet: true });
+    if (!byKey.size) drawRiver();
+    drawFolders();
+  }).catch(() => {});
   // the other folders, quietly, for their dots
   setTimeout(() => { for (const f of folders()) if (f.id !== folder) fill(f.id); }, 1500);
 }

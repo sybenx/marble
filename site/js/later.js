@@ -6,19 +6,20 @@
 // Notes, Searches and Tabs belong to the account signed in (and those from while nobody was, to nobody): another
 // account never sees them or gets them merged in, and signing out leaves none of them on the page
 // (~/igloo/signin-signout-audit.md, fix 3).
-import { req, relays, publish, FAST } from "./pool.js";
+import { req, relays, publish, FAST, testRelay } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
 import * as packs from "./notes-v3.js";
+import { decide, completeRead } from "./sync-guard.js";
 
 export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
 const KEY = (pk) => pk ? `marble.later.${pk}` : "marble.later", TABS = (pk) => pk ? `marble.tabs.${pk}` : "marble.tabs";
 const DIRTY = (pk) => pk ? `marble.later.dirty.${pk}` : "marble.later.dirty", SYNCED = (pk) => `marble.later.synced.${pk}`;
-// the newest account copy this browser has seen (its created_at): an answer without it, or with an older one, means
-// the relay holding it didn't answer, so nothing is sent over it
-const COPY_AT = (pk) => `marble.later.copy-at.${pk}`;
+// the newest account copy this browser has seen (its created_at), and how many complete reads in a row missed it
+// (sync-guard.js: an answer without it means the relay holding it may be down, until three in a row say otherwise)
+const COPY_AT = (pk) => `marble.later.copy-at.${pk}`, MISSED = (pk) => `marble.later.missed.${pk}`;
 const now = () => Math.floor(Date.now() / 1000);
 const MONTH = 30 * 86400;
 const listeners = new Set();
@@ -145,41 +146,61 @@ const failed = (err) => {
   else failing = true;
   listeners.forEach((fn) => fn());
 };
-let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false);
+let lastPull = 0, sendTimer = null, dirty = read(DIRTY(who), false), wait = 60000, stopped = false, found = 0;
 function changed() {
   dirty = true;
   write(DIRTY(who), true);
   if (!syncs()) return;
+  wait = 60000;
   clearTimeout(sendTimer);
   sendTimer = setTimeout(send, 10000);
 }
 
+// your relays: your own list (waited for: a send always goes there), else a few fast ones
 async function where() {
-  const o = await Promise.race([outbox(current()), new Promise((r) => setTimeout(() => r({ write: [], read: [] }), 2000))]);
-  return { write: o.write.length ? o.write : FAST.slice(0, 3), both: relays(o.write, o.read, FAST.slice(0, 2)).slice(0, 8) };
+  const o = await outbox(current()).catch(() => ({ write: [], read: [] }));
+  // (testing on localhost: the local relay is where writes go, so it's the one that has to answer)
+  const write = testRelay() ? relays([testRelay()]) : relays(o.write.length ? o.write : FAST.slice(0, 3));
+  return { write, both: relays(write, o.read, FAST.slice(0, 2)).slice(0, 10) };
 }
 
-/** Reads your account's copy and merges it in (at most once a minute unless forced). */
-export async function pull({ force = false } = {}) {
-  if (!syncs() || (!force && Date.now() - lastPull < 60000)) return false;
+/**
+ * Reads your account's copy and merges it in (at most once a minute unless forced). Returns null when nothing may be
+ * sent now (sync-guard.js: a read that missed one of your write relays, or one without the newest copy this browser has
+ * seen, until three complete reads in a row have missed it; or a copy that won't decrypt), else true or false.
+ */
+let pulling = null;
+export function pull({ force = false } = {}) {
+  if (!syncs() || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(false);
+  // (one read at a time: two asks at once would be two decrypt prompts)
+  return pulling ||= pullNow().finally(() => { pulling = null; });
+}
+async function pullNow() {
   lastPull = Date.now();
-  const me = current();
-  const answer = await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 });
+  const me = current(), w = await where();
+  const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 6000 });
   const got = answer.filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return null; // (signed out or in as someone else meanwhile)
   if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); return null; } // (couldn't ask: not "nothing there")
-  if ((got?.created_at || 0) < read(COPY_AT(me), 0)) { failing = true; listeners.forEach((fn) => fn()); return null; }
-  if (!got) { if (dirty) setTimeout(send, 0); readPacks(me); return false; } // (nothing there yet: yours goes now)
-  let theirs;
-  try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return null; } // (never sent over)
-  if (me !== who) return null;
-  if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
-  const ahead = merge(theirs);
-  failing = false;
-  write(SYNCED(me), true);
-  if (ahead || dirty) changed();
+  found = got?.created_at || 0;
+  let theirs = null;
+  if (got) {
+    try { theirs = JSON.parse(await nip44Self(got.content, false)); }
+    catch (err) { stopped = true; failed(err); return null; } // (never sent over; and not asked again and again: next visit)
+    if (me !== who) return null;
+    stopped = false;
+    if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
+  }
+  const g = decide({ complete: completeRead(w.write, answer.answeredBy), found, seenAt: read(COPY_AT(me), 0), misses: read(MISSED(me), 0) });
+  write(MISSED(me), g.misses);
+  if (g.do === "rebase") write(COPY_AT(me), found); // (your relays have what they have: from here on, that's the copy)
+  const ahead = theirs ? merge(theirs) : false;
+  if (theirs) write(SYNCED(me), true);
   readPacks(me);
-  return true;
+  if (g.do === "wait") { failing = true; listeners.forEach((fn) => fn()); return null; }
+  failing = false;
+  if (ahead || (dirty && !theirs)) changed();
+  return !!theirs;
 }
 
 // Android's packs, read (never written): one NIP-44 decrypt per pack not taken yet
@@ -209,10 +230,14 @@ export async function send() {
   const me = who;
   try {
     lastPull = 0;
-    // read first: if your relays couldn't be asked, nothing is sent (it would go over what another device has)
-    if ((await pull({ force: true }).catch(() => null)) === null) { if (me === who) setTimeout(changed, 60000); return; }
+    // read first: if it says not now, nothing is sent (it would go over what another device has); tried again,
+    // waiting longer each time (a minute, two, up to ten), but not when the copy won't decrypt (next visit)
+    if ((await pull({ force: true }).catch(() => null)) === null) {
+      if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, wait); wait = Math.min(wait * 2, 600000); }
+      return;
+    }
     const content = await nip44Self(JSON.stringify(doc), true);
-    const ev = await sign({ kind: 30078, tags: [["d", TAG]], content });
+    const ev = await sign({ kind: 30078, created_at: Math.max(Math.floor(Date.now() / 1000), found + 1), tags: [["d", TAG]], content });
     const sent = await publish((await where()).write, ev);
     if (sent.ok.length && me === who) { write(COPY_AT(me), ev.created_at); dirty = false; failing = false; write(DIRTY(me), false); write(SYNCED(me), true); listeners.forEach((fn) => fn()); }
     else if (!sent.ok.length) failed(new Error("not sent"));
@@ -232,7 +257,7 @@ function switchTo(pk) {
   who = pk;
   doc = load(pk);
   dirty = read(DIRTY(pk), false);
-  noEncrypt = failing = false;
+  noEncrypt = failing = stopped = false;
   lastPull = 0;
   clearTimeout(sendTimer);
   listeners.forEach((fn) => fn());

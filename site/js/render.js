@@ -10,11 +10,13 @@ const IMAGE = /\.(jpe?g|png|gif|webp|avif|svg)(\?.*)?$/i;
 const VIDEO = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
 const TOKEN = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}])|(?:nostr:|@)?\b((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\b|(^|[\s(])#([\p{L}\p{N}_]{1,60})|:([\w-]{1,40}):|(blossom:[0-9a-f]{64}\.[a-z0-9]{1,8}(?:\?[^\s<>"']*[^\s<>"'.,;:!?)\]}])?)/giu;
 
-// Links to another Nostr viewer (njump.me, primal.net/e/…, nostr.at…) open the post or person here instead.
-const VIEWER = /^https?:\/\/(?:www\.)?(?:njump\.me|nostr\.at|nostr\.com|snort\.social\/[ep]|primal\.net\/[epa]|iris\.to|coracle\.social)\/((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\/?$/i;
+// Links to another Nostr viewer (njump.me, primal.net/e/…, nostr.at…), and to Marble itself (marble.syb.lol, or this
+// site), open the post or person here instead.
+const VIEWER = /^https?:\/\/(?:www\.)?(?:njump\.me|nostr\.at|nostr\.com|snort\.social\/[ep]|primal\.net\/[epa]|iris\.to|coracle\.social|marble\.syb\.lol)\/((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\/?$/i;
 /** This site's path for a link to a post or person on another viewer ("https://njump.me/nevent1…" → "/nevent1…"), or null. */
 export function inApp(url) {
-  const m = VIEWER.exec(url || "");
+  let m = VIEWER.exec(url || "");
+  if (!m && typeof location !== "undefined") { try { const u = new URL(url); if (u.host === location.host) m = /^\/((?:npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,})\/?$/i.exec(u.pathname); } catch {} }
   return m && decode(m[1]) ? `/${m[1].toLowerCase()}` : null;
 }
 const linkTo = (url, text) => {

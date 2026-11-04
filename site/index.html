@@ -672,6 +672,9 @@
   .r-line { display: flex; align-items: center; min-height: 30px; }
   .r-line .r-star { width: 32px; height: 32px; }
   .r-line .r-star svg { width: 16px; height: 16px; }
+  .r-line .r-line-open { width: 32px; height: 32px; opacity: .55; }
+  .r-line .r-line-open svg { width: 15px; height: 15px; }
+  .r-row:hover .r-line-open, .r-line-open:focus-visible { opacity: 1; }
   .r-open { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; background: none; border: 0; padding: 5px 8px 5px 2px; font: inherit; font-size: 14px; line-height: 1.35; color: var(--ink); text-align: left; cursor: pointer; }
   .r-open:hover { background: var(--accent-soft); }
   .r-src { flex: none; width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }

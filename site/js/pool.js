@@ -142,7 +142,8 @@ export function warm(urls) {
  * Options: {timeout, onEvent, signal, stopOnFirst, settle, unsigned}. settle: once one relay has answered,
  * wait at most this long for the rest (one that can't connect would otherwise hold everything up).
  * unsigned is for Primal's counts, which nobody signs. The array it resolves with says how many relays answered
- * (`answered`, end of stored events): none, and an empty answer means "couldn't ask", not "there's nothing".
+ * (`answered`, end of stored events) and which (`answeredBy`): none, and an empty answer means "couldn't ask", not
+ * "there's nothing".
  */
 export function req(urls, filters, { timeout = 5000, onEvent = null, signal = null, stopOnFirst = false, settle = 0, unsigned = false } = {}) {
   filters = Array.isArray(filters) ? filters : [filters];
@@ -153,6 +154,7 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
     const events = new Map();
     const waiting = new Set(list);
     let finished = false, settleTimer = null, answered = 0;
+    const answeredBy = new Set();
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -162,7 +164,7 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
         const r = sockets.get(u);
         if (r?.subs.has(id)) { r.subs.delete(id); if (r.open) r.send(["CLOSE", id]); }
       }
-      resolve(Object.assign([...events.values()], { answered }));
+      resolve(Object.assign([...events.values()], { answered, answeredBy }));
     };
     const sub = {
       event(e, url) {
@@ -173,7 +175,7 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
         if (stopOnFirst) finish();
       },
       done(url, ok = true) {
-        if (waiting.delete(url) && ok) answered++;
+        if (waiting.delete(url) && ok) { answered++; answeredBy.add(url); }
         if (!waiting.size) finish();
         else if (settle && !settleTimer) settleTimer = setTimeout(finish, settle);
       },
