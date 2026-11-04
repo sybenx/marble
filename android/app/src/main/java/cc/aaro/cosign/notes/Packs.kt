@@ -200,8 +200,6 @@ class Vault(val layout: Layout) {
      * never written over, since that would lose what's in it. Until a readable copy comes back, changes there wait.
      */
     val unreadable = HashSet<String>()
-    /** Each note as last sent (a hash of it), kept with the state: a note held that differs is sent again after a restart. */
-    val sent = HashMap<String, Int>()
     /** The newest checkpoint taken. */
     var checkpoint: Checkpoint? = null
 
@@ -365,7 +363,6 @@ object Cycle {
                     if (!write(d, at, content)) { took = false; break }
                     written++
                     v.seen[d] = at
-                    p.items.forEach { v.sent[it.id] = it.fingerprint() }
                     // Read back: the newest copy should be ours.
                     val back = read(d)?.maxByOrNull { it.createdAt }
                     if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
@@ -425,7 +422,9 @@ fun Vault.state(): String = JSONObject()
     .put("markers", JSONArray(markers.values.map { it.toJson() }))
     .put("retired", JSONArray(retired.toList())).put("dirty", JSONArray(dirty.toList()))
     .put("seen", JSONObject().apply { seen.forEach { (k, v) -> put(k, v) } })
-    .put("sent", JSONObject().apply { sent.forEach { (k, v) -> put(k, v) } })
+    // Every note not waiting to be sent, as it is now (sent, pulled, or from the base file alike): a held note that
+    // differs after a restart was changed and never sent.
+    .put("sent", JSONObject().apply { notes.values.filter { layout.owner(it.id, retired) !in dirty }.forEach { put(it.id, it.fingerprint()) } })
     .put("checkpoint", checkpoint?.toJson()).toString()
 
 fun Vault.restore(json: String?, held: List<Note>) {
@@ -438,6 +437,6 @@ fun Vault.restore(json: String?, held: List<Note>) {
     o.optString("checkpoint").takeIf { it.isNotEmpty() && it != "null" }?.let(Checkpoint::parse)?.let { checkpoint = it }
     // A change taken in but never sent (the app stopped before its state was saved): to send. (A state from before this
     // was kept has no record: nothing is assumed.)
-    o.optJSONObject("sent")?.let { s -> s.keys().forEach { sent[it] = s.optInt(it) }
-        for (n in held) if (n.id !in markers && sent[n.id] != n.fingerprint()) dirty += layout.owner(n.id, retired) }
+    o.optJSONObject("sent")?.let { s ->
+        for (n in held) if (n.id !in markers && (!s.has(n.id) || s.optInt(n.id) != n.fingerprint()) && layout.owner(n.id, retired) !in dirty) dirty += layout.owner(n.id, retired) }
 }

@@ -26,6 +26,8 @@ class NotesSyncTest {
         var drop = 0
         private var shouts = 0
         var pageReads = 0
+        var writes = 0
+        var packWrites = 0
         /** Reads that don't reach the account (null), and writes most relays don't take (false), by tag and value. */
         var unread: (String, List<String>) -> Boolean = { _, _ -> false }
         var untaken: (String) -> Boolean = { false }
@@ -56,6 +58,7 @@ class NotesSyncTest {
             }
             override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
                 if (down || untaken(d)) return false
+                writes++; if (w != null) packWrites++
                 val e = Ev("%08d".format(++n), d, w, createdAt, content)
                 val have = held[d]
                 if (have == null || createdAt > have.at || (createdAt == have.at && e.id < have.id)) held[d] = e
@@ -322,4 +325,37 @@ class NotesSyncTest {
         assertEquals(pulled, tablet.store.m["notesPulled"])
     }
 
+
+    /** 0.12.28 gate (b): a restart doesn't send again what was sent, pulled or put in the base file. */
+    @Test fun aBigNotebookUploadsOnceAcrossRestarts() {
+        val relay = Relay()
+        val mac = Device(relay); big(mac); mac.flush()
+        assertEquals(1, relay.blobs.size)
+        var items = mac.items
+        repeat(3) { clock += 100; val again = Device(relay, items, mac.store); again.pull(full = false); again.flush(); items = again.items }
+        assertEquals(1, relay.blobs.size)
+    }
+
+    @Test fun anUpgradeResendsNothing() {
+        val relay = Relay()
+        val phone = Device(relay); (0 until 20).forEach { phone.add("n$it", "note $it") }; phone.flush()
+        // A state saved by 0.12.27: no "sent" record.
+        val saved = JSONObject(phone.store.m["notesVault"]!!)
+        saved.put("state", JSONObject(saved.getString("state")).apply { remove("sent") }.toString())
+        phone.store.m["notesVault"] = saved.toString()
+        val before = relay.packWrites
+        var items = phone.items
+        repeat(2) { clock += 100; val again = Device(relay, items, phone.store); again.flush(); items = again.items }
+        assertEquals(before, relay.packWrites)
+    }
+
+    @Test fun aPulledNoteIsntResent() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.add("b", "bread"); phone.flush()
+        val tablet = Device(relay); tablet.pull(); tablet.flush()
+        val before = relay.packWrites
+        clock += 100
+        val again = Device(relay, tablet.items, tablet.store); again.flush()
+        assertEquals(before, relay.packWrites)
+    }
 }
