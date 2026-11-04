@@ -95,7 +95,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
             if (!caughtUp) base()
             if (!caughtUp) net.read("d", listOf(vault.layout.checkpointD)).also { if (it == null) missed = true }
                 ?.maxByOrNull { it.createdAt }?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
-            if (!missed) store.put(PULLED, now().toString())
+            // Only after every page came, all of them (no cap reached, no later page missing) and nothing halted.
+            if (!missed && !partial && !halted) store.put(PULLED, now().toString())
         }
         save()
         items()
@@ -114,16 +115,20 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         // The checkpoint after reading the one there (a higher seq, newer than it); none written if it couldn't be read.
         if (written > 0) net.read("d", listOf(vault.layout.checkpointD))?.let { there ->
             val newest = there.maxByOrNull { it.createdAt }
+            // Never over one this device can't read, or a later version.
+            if (newest != null && (newest.content == null || Checkpoint.parse(newest.content) == null)) return@let
             newest?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
             // Not taken: the checkpoint seq goes back to the one held (the next flush tries again).
             val held = vault.checkpoint
             if (!net.write(vault.layout.checkpointD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), vault.nextCheckpoint().toJson())) vault.checkpoint = held
         }
         // The old list: never over a copy that wasn't read, or isn't v1 (a later version, or "moved").
-        val v1 = v1Json()
+        var v1 = v1Json()
         if (v1 != v1Last) net.read("d", listOf(OLD))?.let { there ->
             val newest = there.maxByOrNull { it.createdAt }
             val v = newest?.let { n -> n.content?.let { c -> try { JSONObject(c).optInt("v", 1) } catch (_: Exception) { 0 } } ?: 0 }
+            // A v1 copy there (an older Marble's changes since): merged first, so they aren't written over.
+            if (v == 1) { newest.content?.let(::fromV1); v1 = v1Json() }
             // A later version there (or "moved"): left as it is, and nothing waits to go (it isn't ours to write over).
             // (One that didn't decrypt here is left too, and not waited on: it's tried again at the next change.)
             if (newest != null && (newest.content == null || v != 1)) { v1Last = v1; store.put(V1, v1) }
@@ -297,7 +302,7 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         val all = LinkedHashMap<String, Stored>()
         var until: Long? = null
         repeat(20) {
-            val got = net.read("w", listOf(w), until, since) ?: return if (all.isEmpty()) null else all.values.toList()
+            val got = net.read("w", listOf(w), until, since) ?: run { partial = true; return if (all.isEmpty()) null else all.values.toList() }
             if (got.count { all.put(it.id, it) == null } == 0) return all.values.toList()
             until = got.minOf { it.createdAt }
         }

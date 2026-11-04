@@ -358,4 +358,45 @@ class NotesSyncTest {
         val again = Device(relay, tablet.items, tablet.store); again.flush()
         assertEquals(before, relay.packWrites)
     }
+
+    /** (b): a pull whose later page didn't come doesn't move "pulled up to". */
+    @Test fun aLaterPageMissingKeepsPulledUpTo() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        val tablet = Device(relay); tablet.pull()
+        val pulled = tablet.store.m["notesPulled"]
+        clock += 5000
+        var wReads = 0
+        relay.unread = { tag, _ -> tag == "w" && ++wReads > 1 }
+        tablet.pull(full = false)
+        assertEquals(pulled, tablet.store.m["notesPulled"])
+    }
+
+    /** (c): an older Marble's change in the single list since the last pull is merged before the list is written again. */
+    @Test fun anOlderMarblesChangeIsMergedFirst() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        // An older Marble adds a note to the single list.
+        val list = relay.v1()!!
+        list.getJSONArray("items").put(cc.aaro.cosign.Later.itemJson(LaterItem("old", "from the old app", clock + 1, clock + 1)))
+        clock += 10
+        runBlocking { relay.net.write("marble/later", null, clock, list.toString()) }
+        // This phone (not pulled since) adds one too and flushes: both are in the list.
+        clock += 10
+        phone.add("b", "bread"); phone.flush()
+        val ids = relay.v1()!!.getJSONArray("items").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("id") } }
+        assertTrue(ids.toString(), "old" in ids && "b" in ids && "a" in ids)
+    }
+
+    /** (d): the checkpoint isn't written over a later version this device can't read. */
+    @Test fun theCheckpointIsntWrittenOverALaterVersion() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        val k = Keys.parse(relay.held[Keys.D]!!.content)!!.primary!!
+        val cp = Layout(k.kid, k.k.unhex()).checkpointD
+        runBlocking { relay.net.write(cp, null, clock + 100, """{"v":4,"seq":99}""") }
+        clock += 200
+        phone.add("b", "bread"); phone.flush()
+        assertEquals("""{"v":4,"seq":99}""", relay.held[cp]!!.content)
+    }
 }
