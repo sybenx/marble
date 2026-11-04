@@ -219,4 +219,11 @@ class LaterTest {
         assertEquals(recipe.id to false, r.first.id to r.second)
         assertEquals(listOf(recipe.id), l.shown().map { it.id })   // one note, no duplicate
     }
+
+    /** home-rules.md: a note's words are its text before a "\n→ " next step; search, the bookmark and Go to use only them. */
+    @Test fun aNotesWordsLeaveOutItsNextStep() {
+        assertEquals("fix the bike", Later.wordsOf("fix the bike\n→ buy a tube"))
+        assertTrue(Later.same("fix the bike\n→ buy a tube", "Fix the bike"))
+        assertFalse(Later.same("fix the bike\n→ buy a tube", "buy a tube"))
+    }
 }

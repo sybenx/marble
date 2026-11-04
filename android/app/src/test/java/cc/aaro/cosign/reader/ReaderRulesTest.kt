@@ -92,4 +92,12 @@ class ReaderRulesTest {
         assertEquals(mapOf("a" to 19L, "b" to 30L), ReaderRules.ageUpto(items, emptyMap(), mapOf("a" to listOf(20L))))
         assertEquals(mapOf("a" to 19L, "b" to 19L), ReaderRules.ageUpto(items, emptyMap(), mapOf("" to listOf(20L))))
     }
+
+    /** A merged-in read-up-to never passes a Keep unread mark made after that copy was written; one written later wins. */
+    @Test fun aMergeKeepsAMarkTheOtherCopyCouldntKnow() {
+        // This phone's mark at 200; the other copy (written at 150) says read up to 300: clamped to 199.
+        assertEquals(mapOf("s" to 199L), ReaderRules.mergeUpto(mapOf("s" to 10L), Long.MAX_VALUE, mapOf("s" to 300L), 150, emptyList(), listOf(200L)))
+        // Written at 250, after the mark: it wins.
+        assertEquals(mapOf("s" to 300L), ReaderRules.mergeUpto(mapOf("s" to 10L), Long.MAX_VALUE, mapOf("s" to 300L), 250, emptyList(), emptyList()))
+    }
 }

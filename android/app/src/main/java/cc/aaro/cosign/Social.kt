@@ -1102,10 +1102,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         keepRead()
     }
     /** The account's copy's read-up-to and kept-unread, merged in (the larger, the newer). */
-    private fun takeReadState(others: org.json.JSONObject) {
-        others.optJSONObject("upto")?.let { o -> readerUpto.update { m -> m + o.keys().asSequence().associateWith { k -> maxOf(m[k] ?: 0, o.getLong(k)) } } }
+    /** [theirAt]: when the other copy was written. */
+    private fun takeReadState(others: org.json.JSONObject, theirAt: Long) {
+        // Marks first, then read-up-to: a rise from the other copy never passes a Keep unread mark still standing.
         others.optJSONObject("unread")?.let { o -> readerUnread.update { m -> m + o.keys().asSequence().map { k -> k to o.getLong(k) }
             .filter { (k, t) -> m[k]?.let { Math.abs(t) > Math.abs(it) } ?: true }.toMap() } }
+        // The other copy's read-up-to doesn't pass a mark made here after it was written.
+        others.optJSONObject("upto")?.let { o -> readerUpto.update { m ->
+            val marks = readerUnread.value.values.filter { it > 0 && it > theirAt }
+            cc.aaro.cosign.reader.ReaderRules.mergeUpto(m, Long.MAX_VALUE, o.keys().asSequence().associateWith { o.getLong(it) }, theirAt, emptyList(), marks) } }
         prefs.edit().putString("readerUpto", org.json.JSONObject(readerUpto.value as Map<*, *>).toString())
             .putString("readerUnread", org.json.JSONObject(readerUnread.value as Map<*, *>).toString()).apply()
         readerReadAt.value = System.currentTimeMillis()
@@ -1149,9 +1154,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
-    init { NewsSources.load(CosignApp.instance); OnDevice.load(); NotesTrial.load(CosignApp.instance) }
-    /** This account is the one on screen: news-source changes made now are its own (not the last-created account's). */
-    fun shown() { NewsSources.changed = { newsChanged() } }
+    init { OnDevice.load(); NotesTrial.load(CosignApp.instance) }
+    /** This account is the one on screen: its own news sources, and changes made now go to it. */
+    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it) }; NewsSources.changed = { newsChanged() } }
+    /** The news sources loaded are this account's (another account's are never pulled into them or sent). */
+    private fun newsMine() = me != null && NewsSources.account == me
     /** What you searched, on this phone only (not synced), 30 days. */
     val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
@@ -1180,11 +1187,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private val notesNet = object : NotesNet {
         override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
             val me = me ?: return null
-            val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-            if (relays.isEmpty()) return null
+            // The sync guard (reader.md §6): your configured write relays; a read that didn't reach most of them is no read.
+            if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+            val w = listTargets().ifEmpty { return null }
+            val relays = if (Sources.localOnly) w else (w + readRelays().take(3)).distinct()
             val f = mutableMapOf<String, Any>("kinds" to listOf(30078), "authors" to listOf(me), "#$tag" to values, "limit" to limit)
             until?.let { f["until"] = it }; since?.let { f["since"] = it }
-            return Fetch.query(relays, f, 8000).filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
+            val (found, answered) = Fetch.queryAnswered(relays, f, 8000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
+            if (!cc.aaro.cosign.reader.SyncGuard.complete(w, answered)) return null
+            return found.filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
                 .map { Stored(it.id, it.firstTag("d") ?: "", it.createdAt, toSelf(it.content, encrypt = false)) }
         }
         override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
@@ -1193,8 +1204,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val signed = try { phone.signOwn(Event(me, createdAt, 30078, listOfNotNull(listOf("d", d), w?.let { listOf("w", it) }), text).withId()) } catch (e: Exception) {
                 if (debuggable) android.util.Log.i("CosignSync", "notes not sent: ${e.javaClass.simpleName}"); return false
             }
-            val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
-            return Fetch.publish(to, signed) > 0
+            // Done only when most of your write relays took it (one relay's OK can be missed by the next read).
+            val to = listTargets().ifEmpty { return false }
+            return cc.aaro.cosign.reader.SyncGuard.written(to, Fetch.publishOk(to, signed))
         }
         override suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? { val me = me ?: return null; return Blossom.fetch((servers + Blossom.mine(me)).distinct(), sha256) }
         override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> { val me = me ?: return emptyList(); return Blossom.upload(Blossom.mine(me), bytes, sha256, seed) }
@@ -1456,14 +1468,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private suspend fun pullNews(): Boolean {
         val me = me ?: return false
-        if (Sources.viewAs != null) return false
+        if (Sources.viewAs != null || !newsMine()) { newsWritable = false; return false }
         val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
         if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
         val (found, answered) = Fetch.queryAnswered((relays + listTargets()).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(NewsSources.TAG), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
         val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
         // Written only after reaching the account, and never over a copy that wasn't read here; and only this
         // account's own sources (the list is shared by the accounts on this phone).
-        newsWritable = cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), answered) && NewsSources.ownerOf(CosignApp.instance) in setOf(null, me)
+        newsWritable = cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), answered) && newsMine()
         val before = NewsSources.json()
         val plain = got?.let { toSelf(it.content, encrypt = false) ?: run { newsWritable = false; return false } }
         if (plain != null && (try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) { newsWritable = false; return false }
@@ -1480,7 +1492,6 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val text = toSelf(NewsSources.json(), encrypt = true) ?: return
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
         Fetch.publish(listTargets(), signed)
-        NewsSources.claim(CosignApp.instance, me)
     }
 
     @Volatile private var namesWritable = false
@@ -1585,7 +1596,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if ((try { org.json.JSONObject(plain).optInt("v") } catch (_: Exception) { 0 }) != 1) { seenUnreadable = true; return }
         seenUnreadable = false
         // What this version doesn't write (Reader's upto and unread): kept, and sent back as it was.
-        SeenSync.others(plain)?.let { prefs.edit().putString("seenOthers", it.toString()).apply(); takeReadState(it) }
+        SeenSync.others(plain)?.let { prefs.edit().putString("seenOthers", it.toString()).apply(); takeReadState(it, (try { org.json.JSONObject(plain).optLong("at") } catch (_: Exception) { 0L }).takeIf { a -> a > 0 } ?: got.createdAt) }
         val keys = SeenSync.decode(plain)
         if (debuggable) android.util.Log.i("CosignSync", "seen pulled: ${keys.size} keys from ${relays.size} relays")
         var added = 0
@@ -2633,7 +2644,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val theirs = toSelf(got.content, encrypt = false)?.let(cc.aaro.cosign.reader.ReaderList::parse) ?: run { readerUnreadable = true; readerUnreadableId = got.id; return }
             readerUnreadable = false
             readerList.value = readerList.value.merge(theirs)
-        } else if (got == null && readerReached && !prefs.getBoolean("readerMoved", false) && seenAt == 0L && NewsSources.ownerOf(CosignApp.instance) in setOf(null, me)) {
+        } else if (got == null && readerReached && !prefs.getBoolean("readerMoved", false) && seenAt == 0L && newsMine()) {
             var l = readerList.value
             val now = Clock.now()
             NewsSources.shownOwn().forEach { f -> l = l.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("feed", f.url), "feed", f.url, f.name, "news", now, false)) }
@@ -2681,10 +2692,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** Where copies of your account lists go (and so, whose answer counts before writing one). */
     private fun listTargets(): List<String> = if (Sources.localOnly) Sources.extra.value.map(::normRelay).distinct() else accountRelays ?: emptyList()
     /** A relay's address as both apps count it: no trailing slash, lower case. */
-    private fun normRelay(u: String) = u.trim().trimEnd('/').lowercase()
+    private fun normRelay(u: String) = cc.aaro.cosign.reader.SyncGuard.normRelay(u)
     /** A 10002 list's write relays: every one (no cap; .onion and LAN ones too: one that can't be reached counts as not answering). */
-    private fun writesOf(l: Event) = l.tags.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "read" && (it[1].startsWith("wss://") || it[1].startsWith("ws://")) }
-        .map { normRelay(it[1]) }.distinct()
+    private fun writesOf(l: Event) = cc.aaro.cosign.reader.SyncGuard.writeList(l.tags)
 
     /** When each write relay last answered a read (EOSE), for Settings' quiet note about ones that never do. */
     private fun heardFrom(answered: Set<String>) {
@@ -2713,12 +2723,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     @Volatile private var accountRelays: List<String>? = null
     private suspend fun knowAccountRelays() {
         val me = me ?: return
-        phone.latest("10002")?.let { l -> accountRelays = writesOf(l); return }
+        phone.latest("10002")?.let { l -> accountRelays = writesOf(l).ifEmpty { Sources.GENERAL.map(::normRelay) }; return }
         if (prefs.getBoolean("noRelayList", false)) { accountRelays = Sources.GENERAL.map(::normRelay); return }
         val (found, answered) = Fetch.queryAnswered((listOf("wss://purplepag.es", "wss://user.kindpag.es") + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 2), 6000)
         val list = found.filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt }
         accountRelays = when {
-            list != null -> writesOf(list)
+            list != null -> writesOf(list).ifEmpty { Sources.GENERAL.map(::normRelay) }
             answered.size >= 3 -> { prefs.edit().putBoolean("noRelayList", true).apply(); Sources.GENERAL.map(::normRelay) }
             else -> null
         }

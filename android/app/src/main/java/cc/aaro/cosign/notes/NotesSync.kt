@@ -11,9 +11,9 @@ data class Stored(val id: String, val d: String, val createdAt: Long, val conten
 
 /** The relays, as Social reaches them: your own events only, checked and decrypted on the way in, encrypted and signed on the way out. */
 interface NotesNet {
-    /** By `#d` or `#w` ([tag]); paged with [until], or only newer than [since]. Null: no relay could be asked. */
+    /** By `#d` or `#w` ([tag]); paged with [until], or only newer than [since]. Null: the read didn't reach your account (most of your write relays didn't answer). */
     suspend fun read(tag: String, values: List<String>, until: Long? = null, since: Long? = null, limit: Int = 500): List<Stored>?
-    /** [d], and [w] for packs (so they page together). True: a relay took it. */
+    /** [d], and [w] for packs (so they page together). True: it's done (more than half of your write relays took it). */
     suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean
     /** A Blossom blob from the first of [servers] that has it, checked against [sha256]. Null: none had it. */
     suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? = null
@@ -106,7 +106,7 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (vault.dirty.sumOf { p -> vault.notes.values.filter { vault.layout.owner(it.id, vault.retired) == p }.sumOf { it.toJson().toString().length } } > BASE_AT * Layout.LIMIT / 2) writeBase()
         cleanUp()
         val w = vault.layout.w
-        val written = Cycle.flush(vault, now(), read = { d -> net.read("d", listOf(d)).orEmpty().map { Vault.Incoming(it.d, it.createdAt, it.content) } },
+        val written = Cycle.flush(vault, now(), read = { d -> net.read("d", listOf(d))?.map { Vault.Incoming(it.d, it.createdAt, it.content) } },
             write = { d, at, content -> net.write(d, w, at, content) }, device = device)
         if (written > 0) net.write(vault.layout.checkpointD, null, now(), vault.nextCheckpoint().toJson())
         val v1 = v1Json()

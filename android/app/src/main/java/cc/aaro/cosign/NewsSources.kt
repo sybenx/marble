@@ -33,12 +33,26 @@ object NewsSources {
     var changed: () -> Unit = {}
     private var prefs: android.content.SharedPreferences? = null
 
-    /** The account these sources were first written to (they're kept for the phone): another account's never get them. Null: none yet. */
-    fun ownerOf(c: Context): String? = c.getSharedPreferences("news-sources-owner", Context.MODE_PRIVATE).getString("owner", null)
-    fun claim(c: Context, me: String) { if (ownerOf(c) == null) c.getSharedPreferences("news-sources-owner", Context.MODE_PRIVATE).edit().putString("owner", me).apply() }
+    /** Whose sources these are: one account's, as everything else (kept under that account's name). */
+    @Volatile var account: String? = null; private set
 
-    fun load(c: Context) {
-        val p = c.getSharedPreferences("news-sources", Context.MODE_PRIVATE).also { prefs = it }
+    /** The shown account's sources (loaded again when you switch). */
+    fun load(c: Context, account: String) = load(account) { c.getSharedPreferences(it, Context.MODE_PRIVATE) }
+
+    /**
+     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to the account signed in when
+     * this version first loads, and no other account ever gets it, or a copy merged from another account.
+     */
+    fun load(account: String, prefsFor: (String) -> android.content.SharedPreferences) {
+        if (this.account == account && prefs != null) return
+        val p = prefsFor("news-sources.$account")
+        val legacy = prefsFor("news-sources")
+        if (!p.contains("state") && legacy.getString("movedTo", null) == null) {
+            legacy.getString("state", null)?.let { p.edit().putString("state", it).apply() }
+            legacy.edit().putString("movedTo", account).apply()
+        }
+        own.value = emptyList(); off.value = emptyMap()
+        prefs = p; this.account = account
         p.getString("state", null)?.let { take(it) }
     }
 

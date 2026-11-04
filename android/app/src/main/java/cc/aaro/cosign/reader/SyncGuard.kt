@@ -45,6 +45,18 @@ object SyncGuard {
     }
     const val MISSES = 3
 
+    /** A relay's address as both apps write it: scheme://lowercase-host + path, no trailing slash. */
+    fun normRelay(u: String): String {
+        val t = u.trim().trimEnd('/')
+        val i = t.indexOf("://").takeIf { it > 0 } ?: return t
+        val rest = t.substring(i + 3); val cut = rest.indexOf('/').let { if (it < 0) rest.length else it }
+        return t.substring(0, i).lowercase() + "://" + rest.substring(0, cut).lowercase() + rest.substring(cut)
+    }
+
+    /** A 10002 list's write relays (reader.md §6): every r tag not marked read, ws:// or wss://, once each, no cap. */
+    fun writeList(tags: List<List<String>>): List<String> = tags.filter { it.size > 1 && it[0] == "r" && it.getOrNull(2) != "read" && (it[1].trim().startsWith("wss://", true) || it[1].trim().startsWith("ws://", true)) }
+        .map { normRelay(it[1]) }.distinct()
+
     /** Misses count against one copy: once the newest seen moves on ([countedFor] isn't [seenAt]), they start again. */
     fun misses(countedFor: Long, seenAt: Long, misses: Int): Int = if (countedFor == seenAt) misses else 0
 }

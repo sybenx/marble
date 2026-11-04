@@ -314,7 +314,7 @@ object Cycle {
      * `created_at = max(now, newest seen + 1)` ([write]), and read it back; if another device's copy is there instead,
      * merge again and write again (three tries). Returns how many packs were written.
      */
-    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>, write: suspend (d: String, createdAt: Long, content: String) -> Unit,
+    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>?, write: suspend (d: String, createdAt: Long, content: String) -> Unit,
               device: String = "another device"): Int {
         var written = 0
         val todo = ArrayDeque(v.dirty.toList())
@@ -324,7 +324,8 @@ object Cycle {
             val prefix = todo.removeFirst()
             if (!done.add(prefix)) continue
             for (attempt in 0 until 3) {
-                val before = read(v.layout.d(prefix))
+                // A read that didn't reach your account (null) tells nothing: the change waits for one that does.
+                val before = read(v.layout.d(prefix)) ?: run { v.dirty += prefix; return written }
                 val applied = v.apply(before, device)
                 if (applied.halted) { v.dirty += prefix; return written }
                 val packs = v.packsFor(prefix)
@@ -338,7 +339,7 @@ object Cycle {
                     write(d, at, content); written++
                     v.seen[d] = at
                     // Read back: the newest copy should be ours.
-                    val back = read(d).maxByOrNull { it.createdAt }
+                    val back = read(d)?.maxByOrNull { it.createdAt }
                     if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
                 }
                 v.dirty.removeAll(packs.map { it.prefix }.toSet())

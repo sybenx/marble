@@ -3088,7 +3088,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val pasted = remember(t) { Ref.parse(t) }
     // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
-    val place = remember(t, laterItems) { cc.aaro.cosign.HomeRules.goTo(t, PLACES, laterItems.filter { it.deleted == null && it.done == null }.map { it.text }) }
+    val place = remember(t, laterItems) { cc.aaro.cosign.HomeRules.goTo(t, PLACES, laterItems.filter { it.deleted == null && it.done == null }.map { cc.aaro.cosign.Later.wordsOf(it.text) }) }
     // A handle (alice@example.com, @name.bsky.social, @name): rows for what a quick lookup confirms, once it's whole and
     // you've stopped typing (at once for a paste). "@" is no mode: Enter searches the web all the same.
     val handle = remember(t) { cc.aaro.cosign.Handles.kind(t) }
@@ -3120,7 +3120,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     deciding?.let { n -> NoteDecision(n, social) { deciding = null } }
     val own = remember(t, searchList, laterItems) {
         val s = searchList.filter { t.isEmpty() || (it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t)) }.map { it.text to null as cc.aaro.cosign.LaterItem? }
-        val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { it.text to it }
+        val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && cc.aaro.cosign.Later.wordsOf(it.text).contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { cc.aaro.cosign.Later.wordsOf(it.text) to it }
         (s + n).distinctBy { it.first.lowercase() }.take(2)
     }
     // A search: into Searches (an edit of this one takes its place); its results are already here, so the keyboard goes.
@@ -3182,7 +3182,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         val top: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
             // Go to a place by its name (home-rules.md), never above your own note that's exactly what's typed.
             place?.let { (name, below) ->
-                if (below) laterItems.firstOrNull { it.deleted == null && it.done == null && it.text.trim().equals(t, ignoreCase = true) }?.let { n ->
+                if (below) laterItems.firstOrNull { it.deleted == null && it.done == null && cc.aaro.cosign.Later.same(it.text, t) }?.let { n ->
                     item(key = "exact") { OwnRow(n.text, n, t) { if (n.url != null) openInBrowser(context, n.url, "l:" + n.id) else searchFor(n.text) } }
                 }
                 item(key = "place") { GoToPlace(name) { goToPlace(name, nav, context) } }
@@ -3597,7 +3597,7 @@ private fun FocusList(social: Social, nav: Nav, laterItems: List<cc.aaro.cosign.
         val offered = held?.let { it[0] to (it[1].toLongOrNull() ?: 0) }
         val seen = open.associate { it.id to maxOf(cc.aaro.cosign.NotesTrial.seen(it.id), it.updated) }.toMutableMap()
         held?.let { h -> if (h[0] in seen) seen[h[0]] = maxOf(h[2].toLongOrNull() ?: 0, byId[h[0]]?.updated ?: 0) }
-        cc.aaro.cosign.HomeRules.focus(if (trial) shelf else emptyList(), open.map { cc.aaro.cosign.HomeRules.Note(it.id, it.text, it.created) },
+        cc.aaro.cosign.HomeRules.focus(if (trial) shelf else emptyList(), open.map { cc.aaro.cosign.HomeRules.Note(it.id, cc.aaro.cosign.Later.wordsOf(it.text), it.created) },
             searchList.map { cc.aaro.cosign.HomeRules.Search(it.text, it.at) }, System.currentTimeMillis() / 1000, seen, offered, older = trial)
     }
     LaunchedEffect(rows) { rows.firstOrNull { it.kind == "older" }?.let { r -> if (prefs.getString(offerKey, "")?.substringBefore(' ') != r.id)
@@ -3613,10 +3613,10 @@ private fun FocusList(social: Social, nav: Nav, laterItems: List<cc.aaro.cosign.
                 "search" -> FocusRow(Glyphs.clock, "Search", r.id, Vault.Muted) { onSearch(r.id) }
                 else -> if (note != null) {
                     if (r.kind != "note") LaunchedEffect(note.id) { cc.aaro.cosign.NotesTrial.shown(note.id, "box") }
-                    FocusRow(if (r.kind == "inView") Glyphs.saveOn else Glyphs.save, when (r.kind) { "inView" -> "Kept in view"; "older" -> "An older note"; else -> "Note" }, note.text,
+                    FocusRow(if (r.kind == "inView") Glyphs.saveOn else Glyphs.save, when (r.kind) { "inView" -> "Kept in view"; "older" -> "An older note"; else -> "Note" }, cc.aaro.cosign.Later.wordsOf(note.text),
                         if (r.kind == "older") Vault.Field else Vault.Muted, more = if (r.kind == "older") { { onDecide(note) } } else null) {
                         cc.aaro.cosign.NotesTrial.opened(note.id, "box")
-                        if (note.url != null) openInBrowser(context, note.url, "l:" + note.id) else onSearch(note.text)
+                        if (note.url != null) openInBrowser(context, note.url, "l:" + note.id) else onSearch(cc.aaro.cosign.Later.wordsOf(note.text))
                     }
                 }
             }

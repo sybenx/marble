@@ -197,4 +197,18 @@ class PacksTest {
         assertTrue(flush(b, relay, 4000) > 0)
         assertFalse(d in b.unreadable)
     }
+
+    /** recheck5: a read that didn't reach your account (null, most write relays didn't answer) writes nothing; the change waits. */
+    @Test fun aReadThatDidntReachTheAccountWritesNothing() {
+        val relay = Relay(); val a = Vault(layout())
+        a.put(note("n", "the other device's")); flush(a, relay, 1000)
+        val before = relay.held.toMap()
+        val b = Vault(layout()); b.put(note("n", "an edit here", 2000))
+        val wrote = runBlocking { Cycle.flush(b, 3000, { null }, { d, at, c -> relay.write(d, at, c) }) }
+        assertEquals(0, wrote)
+        assertEquals(before, relay.held.toMap())
+        assertTrue(b.dirty.isNotEmpty())
+        // Once a read reaches it: merged and sent.
+        assertTrue(flush(b, relay, 4000) > 0)
+    }
 }

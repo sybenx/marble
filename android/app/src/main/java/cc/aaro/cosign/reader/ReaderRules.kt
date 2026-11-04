@@ -63,6 +63,21 @@ object ReaderRules {
     /** How long a read-again mark (−t) is kept: long enough to beat any Keep unread still on its way; a positive mark stays [UNREAD_FOR]. */
     const val CLEARED_FOR = 7 * 86_400L
 
+    /**
+     * Two copies' read-up-to times (reader.md §2 "Merging read-up-to"): per source the larger, except that one copy's
+     * never passes a Keep unread mark the other copy made after it was written ([marksAfterA]: marks in b newer than a's
+     * `at`; [marksAfterB] the other way): clamped to the mark − 1, never below the other copy's own.
+     */
+    fun mergeUpto(a: Map<String, Long>, aAt: Long, b: Map<String, Long>, bAt: Long, marksAfterA: Collection<Long>, marksAfterB: Collection<Long>): Map<String, Long> {
+        val capA = marksAfterA.minOrNull()?.let { it - 1 }; val capB = marksAfterB.minOrNull()?.let { it - 1 }
+        return (a.keys + b.keys).associateWith { src ->
+            val va = a[src]; val vb = b[src]
+            val ca = va?.let { v -> if (capA != null && v > capA) maxOf(capA, vb ?: Long.MIN_VALUE) else v }
+            val cb = vb?.let { v -> if (capB != null && v > capB) maxOf(capB, va ?: Long.MIN_VALUE) else v }
+            maxOf(ca ?: Long.MIN_VALUE, cb ?: Long.MIN_VALUE)
+        }
+    }
+
     /** A Reader item for [ageUpto]: its source, its time, whether it's read, and whether it has aged out. */
     data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
 
@@ -115,11 +130,14 @@ object ReaderRules {
             val have = days.optString(k).split(' ').filter { it.isNotEmpty() }
             days.put(k, (have + d.optString(k).split(' ').filter { it.isNotEmpty() }).distinct().joinToString(" "))
         } }
-        fun join(name: String) = JSONObject().also { r -> for (o in listOf(a, b)) o.optJSONObject(name)?.let { m -> m.keys().forEach { k -> r.put(k, maxOf(r.optLong(k, Long.MIN_VALUE), m.getLong(k))) } } }
         // Kept unread: the later of the two by size (a negative time is "read again then").
         val unread = JSONObject().also { r -> for (o in listOf(a, b)) o.optJSONObject("unread")?.let { m -> m.keys().forEach { k ->
             val t = m.getLong(k); if (!r.has(k) || Math.abs(t) > Math.abs(r.getLong(k))) r.put(k, t) } } }
-        return out.put("v", 1).put("at", maxOf(a.optLong("at"), b.optLong("at"))).put("days", days).put("upto", join("upto")).put("unread", unread)
+        // Read-up-to: the larger, but a copy's never passes a mark the other made after it was written (it couldn't know).
+        fun longs(o: JSONObject?) = o?.keys()?.asSequence()?.associateWith { o.getLong(it) } ?: emptyMap()
+        fun marksAfter(o: JSONObject, at: Long) = longs(o.optJSONObject("unread")).filter { (k, t) -> t > 0 && t > at && unread.optLong(k) == t }.values
+        val upto = mergeUpto(longs(a.optJSONObject("upto")), a.optLong("at"), longs(b.optJSONObject("upto")), b.optLong("at"), marksAfter(b, a.optLong("at")), marksAfter(a, b.optLong("at")))
+        return out.put("v", 1).put("at", maxOf(a.optLong("at"), b.optLong("at"))).put("days", days).put("upto", JSONObject(upto as Map<*, *>)).put("unread", unread)
     }
 
     /** Two copies of the Reader list (sources, folders, mutes): per entry the newest `at` wins; the toggle too; other fields kept. */

@@ -354,7 +354,7 @@
    "name": "days joined, read up to the larger, unread the newer, unknown fields kept",
    "a": {
     "v": 1,
-    "at": 10,
+    "at": 400,
     "days": {
      "1": "k1 k2"
     },
@@ -369,7 +369,7 @@
    },
    "b": {
     "v": 1,
-    "at": 20,
+    "at": 500,
     "days": {
      "1": "k2 k3",
      "2": "k4"
@@ -462,6 +462,99 @@
     "upto": {},
     "unread": {
      "k": -200
+    }
+   }
+  },
+  {
+   "name": "another copy's read-up-to, written before this copy's Keep unread mark, doesn't pass the mark",
+   "a": {
+    "v": 1,
+    "at": 300,
+    "days": {},
+    "upto": {
+     "s": 100
+    },
+    "unread": {
+     "k": 250
+    }
+   },
+   "b": {
+    "v": 1,
+    "at": 200,
+    "days": {},
+    "upto": {
+     "s": 400
+    }
+   },
+   "out": {
+    "days": {},
+    "upto": {
+     "s": 249
+    },
+    "unread": {
+     "k": 250
+    }
+   }
+  },
+  {
+   "name": "…but one written after the mark (Mark all as read there, later) wins",
+   "a": {
+    "v": 1,
+    "at": 300,
+    "days": {},
+    "upto": {
+     "s": 100
+    },
+    "unread": {
+     "k": 250
+    }
+   },
+   "b": {
+    "v": 1,
+    "at": 500,
+    "days": {},
+    "upto": {
+     "s": 400
+    }
+   },
+   "out": {
+    "days": {},
+    "upto": {
+     "s": 400
+    },
+    "unread": {
+     "k": 250
+    }
+   }
+  },
+  {
+   "name": "the same from the other side (the mark in b, the read-up-to in a)",
+   "a": {
+    "v": 1,
+    "at": 200,
+    "days": {},
+    "upto": {
+     "s": 400
+    }
+   },
+   "b": {
+    "v": 1,
+    "at": 300,
+    "days": {},
+    "upto": {
+     "s": 100
+    },
+    "unread": {
+     "k": 250
+    }
+   },
+   "out": {
+    "days": {},
+    "upto": {
+     "s": 249
+    },
+    "unread": {
+     "k": 250
     }
    }
   }

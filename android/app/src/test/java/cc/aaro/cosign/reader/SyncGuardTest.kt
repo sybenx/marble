@@ -38,4 +38,14 @@ class SyncGuardTest {
         repeat(2) { m = SyncGuard.decide(true, true, 300, 900, m, 0, 1000).also { assertEquals(SyncGuard.Do.WAIT, it.doThis) }.misses }
         assertEquals(SyncGuard.Do.REBASE, SyncGuard.decide(true, true, 300, 900, m, 0, 1000).doThis)
     }
+
+    @Test fun writeList() = each("writeList") { c ->
+        val t = c.getJSONArray("tags").let { a -> (0 until a.length()).map { strings(a.getJSONArray(it)) } }
+        assertEquals(c.getString("name"), strings(c.getJSONArray("write")), SyncGuard.writeList(t))
+    }
+
+    @Test fun missesAgainst() = each("missesAgainst") { c ->
+        val st = c.optJSONObject("stored")
+        assertEquals(c.getString("name"), c.getInt("misses"), SyncGuard.misses(st?.getLong("at") ?: -1, c.getLong("seenAt"), st?.getInt("n") ?: 0))
+    }
 }

@@ -1,5 +1,5 @@
 {
- "about": "When a device may write a synced copy on the account (Notes' marble/later, Reader's marble/reader and discover/seen), and when a write is done: reader.md §6, sync-guard.js. Write relays are the configured list (kind 10002), every one counted: one that failed to connect, answered CLOSED or never sent EOSE didn't answer. complete: more than half sent EOSE (reached). full: all of them did (only full reads count toward the escape). found: the newest copy's created_at the relays gave (0: none); seenAt: the newest this device has seen; misses: full reads in a row that missed it; expires: how long a copy lives (0: for good). written: more than half sent OK. retryAfter: the wait after the n-th failure in a row.",
+ "about": "When a device may write a synced copy on the account (Notes' marble/later, Reader's marble/reader and discover/seen), and when a write is done: reader.md §6, sync-guard.js. Write relays are the configured list (kind 10002), every one counted: one that failed to connect, answered CLOSED or never sent EOSE didn't answer. complete: more than half sent EOSE (reached). full: all of them did (only full reads count toward the escape). found: the newest copy's created_at the relays gave (0: none); seenAt: the newest this device has seen; misses: full reads in a row that missed it; expires: how long a copy lives (0: for good). written: more than half sent OK. retryAfter: the wait after the n-th failure in a row. writeList: your write relays from your relay list's tags, every one (no cap; .onion, LAN and ws:// count, as no answer when unreachable); none at all means the fast defaults. missesAgainst: misses are counted against one copy seen and start again when a newer one is seen.",
  "cases": [
   {
    "name": "not reached (most write relays didn't answer): wait",
@@ -269,6 +269,151 @@
     "wss://x"
    ],
    "written": false
+  }
+ ],
+ "writeList": [
+  {
+   "name": "every write relay counts, none capped: ten of them",
+   "tags": [
+    [
+     "r",
+     "wss://r0.example"
+    ],
+    [
+     "r",
+     "wss://r1.example"
+    ],
+    [
+     "r",
+     "wss://r2.example"
+    ],
+    [
+     "r",
+     "wss://r3.example"
+    ],
+    [
+     "r",
+     "wss://r4.example"
+    ],
+    [
+     "r",
+     "wss://r5.example"
+    ],
+    [
+     "r",
+     "wss://r6.example"
+    ],
+    [
+     "r",
+     "wss://r7.example"
+    ],
+    [
+     "r",
+     "wss://r8.example"
+    ],
+    [
+     "r",
+     "wss://r9.example"
+    ]
+   ],
+   "write": [
+    "wss://r0.example",
+    "wss://r1.example",
+    "wss://r2.example",
+    "wss://r3.example",
+    "wss://r4.example",
+    "wss://r5.example",
+    "wss://r6.example",
+    "wss://r7.example",
+    "wss://r8.example",
+    "wss://r9.example"
+   ]
+  },
+  {
+   "name": "read-only ones don't; unmarked and write ones do; once each, written alike",
+   "tags": [
+    [
+     "r",
+     "wss://A.example/"
+    ],
+    [
+     "r",
+     "wss://b.example",
+     "read"
+    ],
+    [
+     "r",
+     "wss://c.example",
+     "write"
+    ],
+    [
+     "r",
+     "wss://a.example"
+    ]
+   ],
+   "write": [
+    "wss://a.example",
+    "wss://c.example"
+   ]
+  },
+  {
+   "name": ".onion, your own network and ws:// count too (a browser just never hears from them)",
+   "tags": [
+    [
+     "r",
+     "ws://abcdef.onion"
+    ],
+    [
+     "r",
+     "ws://192.168.1.5:7777"
+    ],
+    [
+     "r",
+     "wss://relay.example"
+    ]
+   ],
+   "write": [
+    "ws://abcdef.onion",
+    "ws://192.168.1.5:7777",
+    "wss://relay.example"
+   ]
+  },
+  {
+   "name": "no write relays at all (every one read-only)",
+   "tags": [
+    [
+     "r",
+     "wss://a.example",
+     "read"
+    ]
+   ],
+   "write": []
+  }
+ ],
+ "missesAgainst": [
+  {
+   "name": "counted against the copy seen now: kept",
+   "stored": {
+    "n": 2,
+    "at": 600
+   },
+   "seenAt": 600,
+   "misses": 2
+  },
+  {
+   "name": "a newer copy seen since: starts again (else misses against an older copy rebase a newer one)",
+   "stored": {
+    "n": 2,
+    "at": 600
+   },
+   "seenAt": 900,
+   "misses": 0
+  },
+  {
+   "name": "nothing stored",
+   "stored": null,
+   "seenAt": 600,
+   "misses": 0
   }
  ]
 }

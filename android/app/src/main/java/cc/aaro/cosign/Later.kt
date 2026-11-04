@@ -180,7 +180,9 @@ class Later(private val prefs: android.content.SharedPreferences) {
 
     companion object {
         const val TAG = "marble/later"
-        private fun words(s: String) = s.trim().replace(Regex("\\s+"), " ")
+        /** A note's words (home-rules.md): its text before a "\n→ " next step, which shows under them. */
+        fun wordsOf(text: String) = text.substringBefore("\n→ ").trim()
+        private fun words(s: String) = wordsOf(s).replace(Regex("\\s+"), " ")
         fun same(a: String, b: String) = words(a).equals(words(b), ignoreCase = true)
         private fun newId() = java.security.SecureRandom().let { r -> ByteArray(8).also(r::nextBytes) }.joinToString("") { "%02x".format(it) }
         fun itemJson(i: LaterItem) = i.toJson()
