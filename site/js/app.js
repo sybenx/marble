@@ -8,7 +8,7 @@ import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
-import { heart, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
+import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import * as notes from "./later.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
@@ -436,9 +436,9 @@ async function showEvent(d, signal, { hex = false } = {}) {
     list.innerHTML = tree(e.id, 0);
     fillLater(list);
   };
-  const tally = { reposts: 0, likes: 0, zaps: 0 };
+  const tally = { reposts: 0, zaps: 0 };
   engagement(e, { hints: found, signal, onEvent: (r) => {
-    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 7) { addReaction(e.id, r); return; }
     if (r.kind === 9735) { tally.zaps++; return; }
     if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
     if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
@@ -449,7 +449,7 @@ async function showEvent(d, signal, { hex = false } = {}) {
     if (markSpam(e, inflated(e.id, got))) recue();
     if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
     else draw();
-    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
+    $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0) });
     mark("replies", { n: all.size, counts });
   });
 }
@@ -523,12 +523,11 @@ function kindOf(r, e) {
   return "mention";
 }
 
-// "N replies · N reposts · N likes", the same line as the app's (quotes have their own section; zaps only when there are some)
-// (no zap counts: showing payments was put off, 2026-11-02)
-const totals = ({ replies, reposts, likes }) => [
+// "N replies · N reposts", on an opened post only (quotes have their own section; reactions are counted by emoji, under
+// it; no zap counts: showing payments was put off, 2026-11-02)
+const totals = ({ replies, reposts }) => [
   replies && `${replies} ${replies === 1 ? "reply" : "replies"}`,
   reposts && `${reposts} ${reposts === 1 ? "repost" : "reposts"}`,
-  likes && `${likes} ${likes === 1 ? "like" : "likes"}`,
 ].filter(Boolean).join(" · ");
 
 // ── A pasted post or person: it at the top, then what points at it ───────────────────────────────────
@@ -547,12 +546,12 @@ async function showFound(parsed, signal) {
   if (!e && await asPerson && !signal.aborted) return foundPerson(d.id, [], top, rest, signal);
   if (!e) { top.innerHTML = `<div class="empty"><p>Couldn't find this post.</p><p class="muted">It may have been deleted, or the places that keep it aren't answering right now.</p></div>`; return; }
   const found = foundOn(e.id);
-  top.innerHTML = card(e, { context: true }).replace('class="card', 'class="card lead') + `<p class="totals"></p>`;
+  top.innerHTML = card(e, { context: true }).replace('class="card', 'class="card lead').replace(/<div class="actions">/, `${reactionsRow(e)}$&`) + `<p class="totals"></p>`;
   document.title = `${name(e.pubkey)}: “${(e.content || "").replace(/\s+/g, " ").slice(0, 60)}” · Marble`;
   mark("post", { relay: found[0] || "kept" });
   fillLater(top);
 
-  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, likes: 0, zaps: 0 };
+  const got = { quote: new Map(), reply: new Map(), mention: new Map() }, tally = { reposts: 0, zaps: 0 };
   const opened = new Set();
   let timer = null;
   const section = (id, title, items, n, draw, more) => !items.length ? "" : `<section><h2>${title}</h2><div class="list">
@@ -575,7 +574,7 @@ async function showFound(parsed, signal) {
   };
   rest.onclick = (ev) => { const o = ev.target.closest("[data-open]"); if (o) { opened.add(o.dataset.open); draw(); } };
   const { counts = {} } = await engagement(e, { hints: found, signal, onEvent: (r) => {
-    if (r.kind === 7) { if (r.content !== "-") tally.likes++; return; }
+    if (r.kind === 7) { addReaction(e.id, r); return; }
     if (r.kind === 9735) { tally.zaps++; return; }
     if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
     if (!(r.content || "").trim() || warning(r)) return;
@@ -586,7 +585,7 @@ async function showFound(parsed, signal) {
   clearTimeout(timer);
   draw();
   if (!rest.innerHTML.trim()) rest.innerHTML = `<p class="muted loading-text">Nothing points at this post yet.</p>`;
-  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0), likes: Math.max(tally.likes, counts.likes || 0), zaps: tally.zaps });
+  $(".totals", top).innerHTML = totals({ replies: Math.max(got.reply.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0) });
   mark("engagement", { replies: got.reply.size, quotes: got.quote.size, mentions: got.mention.size, ...tally, counts });
 }
 
@@ -638,6 +637,7 @@ function mainPost(e) {
     ${who(e.pubkey, null, { big: true })}
     ${spamSlot(e)}
     ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
+    ${reactionsRow(e)}
     <p class="totals"></p>
     <div class="meta"><span class="meta-left">${heart(e)}<time datetime="${new Date(e.created_at * 1000).toISOString()}">${esc(fullDate(e.created_at))}</time></span>
     <button type="button" class="link" data-copy="${esc(location.origin + postPath(e, foundOn(e.id).slice(0, 2)))}">Copy link</button></div>

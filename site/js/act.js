@@ -1,6 +1,7 @@
 // Doing things as you: signing in (the extension, or your phone's code), liking and reacting, replying.
 // What you do shows at once and is taken back if it can't be sent.
-import { publish, req, count, relays, foundOn, FAST } from "./pool.js";
+import { publish, req, relays, foundOn, FAST } from "./pool.js";
+import { openPicker, closePicker, pickerOpen, drawEmoji, loadMine, seedRecent, LIKE } from "./emoji-picker.js";
 import { outbox, keep, profile, profiles, onProfile } from "./data.js";
 import { esc, avatar } from "./render.js";
 import { npub } from "./ids.js";
@@ -243,178 +244,158 @@ function canAct() {
 }
 
 // ── Reactions ────────────────────────────────────────────────────────────────────────────────────────
+// As Jumble does them (emoji-picker.js): in a list of posts only the button, filled with your own reaction (no counts of
+// anything); a tap opens the picker. On an opened post, every reaction with how many gave it, yours marked; a tap on one
+// gives it too.
 
-const HEART = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.3-9.5C1.4 7.4 3.7 4 7.2 4c2 0 3.6 1.1 4.8 2.8C13.2 5.1 14.8 4 16.8 4c3.5 0 5.8 3.4 4.5 7-1.8 4.9-9.3 9.5-9.3 9.5z"/></svg>`;
-const DEFAULTS = ["❤️", "😂", "😮", "😢", "🔥", "🤙"];
-const mine = new Map(); // post id → your reaction's content (your newest)
+const SMILE_PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 11v1a10 10 0 1 1-9-10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01M16 5h6M19 2v6"/></svg>`;
+const mine = new Map(); // post id → your reaction (newest): "+", "😂", or {shortcode, url}
 const mineAt = new Map(); // post id → when you reacted
 const checked = new Set(); // post ids already looked up
-const tallies = new Map(); // post id → {top: [emoji], likes: n}: everyone else's, beside the heart
-let favourites = []; // your most-used reactions, from your own history
+const everyone = new Map(); // opened post id → reactor → their newest reaction event
 
-/** The heart under a post: filled when you've reacted (your emoji if it wasn't a plain like). */
-export function heart(e) {
-  return `<button type="button" class="heart" data-react="${e.id}" data-author="${e.pubkey}" data-kind="${e.kind}" aria-label="Like" aria-pressed="false">${HEART}</button>`
-    + `<span class="tally" data-tally="${e.id}"></span>`;
+// a reaction event's emoji: the plain like ("+" or empty), a character, or someone's own (":name:" and its emoji tag)
+function emojiOf(r) {
+  const c = (r.content || "").trim();
+  if (!c || c === "+") return LIKE;
+  const custom = /^:([\w-]+):$/.exec(c);
+  if (custom) {
+    const url = r.tags?.find((t) => t[0] === "emoji" && t[1] === custom[1])?.[2];
+    return /^https:\/\//.test(url || "") ? { shortcode: custom[1], url } : null;
+  }
+  return [...c].length <= 8 ? c : null;
 }
+const same = (a, b) => (typeof a === "string" || typeof b === "string" ? a === b : a.shortcode === b.shortcode && a.url === b.url);
 
-function paintHearts(root = document) {
+/** The reaction button under a post: filled with your reaction once you've given one. */
+export function heart(e) {
+  return `<button type="button" class="heart" data-react="${e.id}" data-author="${e.pubkey}" data-kind="${e.kind}" aria-label="React" aria-pressed="false" aria-haspopup="dialog">${SMILE_PLUS}</button>`;
+}
+/** On an opened post: everyone's reactions, each with how many gave it. */
+export const reactionsRow = (e) => `<div class="reactions" data-reactions="${e.id}" data-author="${e.pubkey}" data-kind="${e.kind}"></div>`;
+
+function paint(root = document) {
   for (const b of root.querySelectorAll("[data-react]")) {
     const r = mine.get(b.dataset.react);
     b.setAttribute("aria-pressed", r ? "true" : "false");
-    b.classList.toggle("emoji", !!r && r !== "+" && r !== "❤️");
-    b.innerHTML = r && r !== "+" && r !== "❤️" ? `<span>${esc(r.startsWith(":") ? "★" : r)}</span>` : HEART;
-    b.setAttribute("aria-label", r ? "You reacted: change it" : "Like");
+    b.classList.toggle("emoji", !!r && r !== LIKE);
+    b.innerHTML = r ? drawEmoji(r) : SMILE_PLUS;
+    b.setAttribute("aria-label", r ? "You reacted: change it" : "React");
   }
-  // others' top three reactions (not plain likes or custom ones) and the total, as the app shows them: "🔥🤙 45"
-  for (const el of root.querySelectorAll("[data-tally]")) {
-    const t = tallies.get(el.dataset.tally);
-    el.textContent = t?.likes ? `${t.top.join("")} ${t.likes}`.trim() : "";
+  for (const el of root.querySelectorAll("[data-reactions]")) {
+    const id = el.dataset.reactions, me = current();
+    const counts = [];
+    for (const [pk, r] of everyone.get(id) || []) {
+      const e = pk === me && mine.has(id) ? mine.get(id) : emojiOf(r);
+      if (!e) continue;
+      const c = counts.find((x) => same(x.e, e)) || (counts.push({ e, n: 0, yours: false }), counts.at(-1));
+      c.n++;
+      if (pk === me) c.yours = true;
+    }
+    // (yours, before the relays have it)
+    if (me && mine.has(id) && !everyone.get(id)?.has(me)) {
+      const e = mine.get(id), c = counts.find((x) => same(x.e, e));
+      if (c) { c.n++; c.yours = true; } else counts.push({ e, n: 1, yours: true });
+    }
+    counts.sort((a, b) => b.n - a.n);
+    el.pills = counts;
+    el.innerHTML = counts.map((c, i) => `<button type="button" class="pill${c.yours ? " yours" : ""}" data-pill="${i}" aria-pressed="${c.yours}"
+      aria-label="${c.yours ? "You and others gave" : "Give"} ${esc(typeof c.e === "string" ? (c.e === LIKE ? "a like" : c.e) : `:${c.e.shortcode}:`)}: ${c.n}">${drawEmoji(c.e)}<span>${c.n}</span></button>`).join("");
   }
+}
+
+/** On an opened post: a reaction to it came in. */
+export function addReaction(post, r) {
+  if (r.kind !== 7 || r.content === "-" || (r.tags.filter((t) => t[0] === "e").pop() || [])[1] !== post) return;
+  if (!everyone.has(post)) everyone.set(post, new Map());
+  const old = everyone.get(post).get(r.pubkey);
+  if (old && old.created_at >= r.created_at) return;
+  everyone.get(post).set(r.pubkey, r);
+  if (r.pubkey === current() && !(mineAt.get(post) > r.created_at)) { const e = emojiOf(r); if (e) { mine.set(post, e); mineAt.set(post, r.created_at); } }
+  clearTimeout(addReaction.t);
+  addReaction.t = setTimeout(() => paint(document), 120);
 }
 
 /** After a page draws: which of its posts you've already reacted to (one request for all of them). */
 export async function markReactions(root) {
-  paintHearts(root);
+  paint(root);
+  const me = current();
+  if (!me) return;
   const ids = [...root.querySelectorAll("[data-react]")].map((b) => b.dataset.react).filter((id) => !checked.has(id));
   if (!ids.length) return;
   ids.forEach((id) => checked.add(id));
-  const me = current();
-  const where = me ? await myWriteRelays().catch(() => []) : [];
-  // Everyone's reactions to these posts (one request), and the servers' own like counts (NIP-45).
-  const found = new Map(ids.map((id) => [id, new Map()])); // post id → reactor → newest reaction
-  const counted = Promise.all(ids.map((id) => count(ALSO, { kinds: [7], "#e": [id] }).then((n) => [id, n])));
-  await req(relays(ALSO, where, me ? FAST.slice(2, 4) : []), { kinds: [7], "#e": ids, limit: 3000 }, { timeout: 4000, settle: 800, onEvent: (r) => {
+  const where = await myWriteRelays().catch(() => []);
+  await req(relays(where, ALSO, FAST.slice(2, 4)), { kinds: [7], authors: [me], "#e": ids, limit: 500 }, { timeout: 4000, settle: 600, onEvent: (r) => {
     const id = (r.tags.filter((t) => t[0] === "e").pop() || [])[1];
-    if (!found.has(id) || r.content === "-") return;
-    const old = found.get(id).get(r.pubkey);
-    if (!old || old.created_at < r.created_at) found.get(id).set(r.pubkey, r);
+    const e = emojiOf(r);
+    if (!ids.includes(id) || r.content === "-" || !e || mineAt.get(id) > r.created_at) return;
+    mine.set(id, e); mineAt.set(id, r.created_at);
   } });
-  for (const [id, n] of await counted) {
-    const theirs = [...found.get(id).values()].filter((r) => r.pubkey !== me);
-    const counts = new Map();
-    for (const r of theirs) if (r.content && r.content !== "+" && !/^:.*:$/.test(r.content)) counts.set(r.content, (counts.get(r.content) || 0) + 1);
-    const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([c]) => c);
-    tallies.set(id, { top, likes: Math.max(theirs.length, (n || 0) - (found.get(id).has(me) ? 1 : 0)) });
-    const own = me && found.get(id).get(me);
-    if (own && !(mineAt.get(id) > own.created_at)) { mine.set(id, own.content || "+"); mineAt.set(id, own.created_at); }
-  }
-  paintHearts(document);
+  paint(document);
 }
 
-async function loadFavourites() {
+// what you've reacted with before, for "Recently used" in a browser that hasn't any yet
+async function loadHistory() {
   const me = current();
-  favourites = [];
   if (!me) return;
+  loadMine(me);
   const where = await myWriteRelays().catch(() => []);
   const list = await req(relays(where, ALSO), { kinds: [7], authors: [me], limit: 300 }, { timeout: 4000, settle: 800 });
   const counts = new Map();
-  for (const r of list) if (r.content && !["+", "-"].includes(r.content) && !r.content.startsWith(":") && [...r.content].length <= 4) counts.set(r.content, (counts.get(r.content) || 0) + 1);
-  favourites = [...counts].sort((a, b) => b[1] - a[1]).map(([c]) => c).filter((c) => !DEFAULTS.includes(c)).slice(0, 4);
+  for (const r of list) { const e = emojiOf(r); if (e && e !== LIKE) { const k = JSON.stringify(e); counts.set(k, (counts.get(k) || 0) + 1); } }
+  seedRecent([...counts].sort((a, b) => b[1] - a[1]).map(([k]) => JSON.parse(k)));
 }
-onMe(() => { mine.clear(); checked.clear(); loadFavourites(); markReactions(document); });
-loadFavourites();
+onMe(() => { mine.clear(); mineAt.clear(); checked.clear(); closePicker(); loadMine(current()); loadHistory(); markReactions(document); });
+loadHistory();
 
 // Reacting again replaces your reaction: a new one is sent, and the newest is what shows (as in the app).
-async function react(b, content) {
+async function react(on, emoji) {
   if (!canAct()) return;
-  const id = b.dataset.react, author = b.dataset.author;
+  const { id, author, kind } = on;
   const before = mine.get(id), beforeAt = mineAt.get(id);
-  if (before === content) return;
-  mine.set(id, content);
+  if (before && same(before, emoji)) return;
+  mine.set(id, emoji);
   mineAt.set(id, Math.floor(Date.now() / 1000));
-  paintHearts(document);
+  paint(document);
   try {
-    const ev = await approving(sign({ kind: 7, content, tags: [["e", id, foundOn(id)[0] || "", author], ["p", author], ["k", String(b.dataset.kind || 1)]] }));
+    const content = typeof emoji === "string" ? emoji : `:${emoji.shortcode}:`;
+    const tags = [["e", id, foundOn(id)[0] || "", author], ["p", author], ["k", String(kind || 1)]];
+    if (typeof emoji !== "string") tags.push(["emoji", emoji.shortcode, emoji.url]);
+    const ev = await approving(sign({ kind: 7, content, tags }));
     const theirs = await Promise.race([outbox(author).then((o) => o.read.slice(0, 3)), new Promise((r) => setTimeout(() => r([]), 1500))]);
     const sent = await publish(relays(await myWriteRelays(), theirs, ALSO), ev);
     if (!sent.ok.length) throw new Error("nowhere took it");
+    if (everyone.has(id)) addReaction(id, ev);
   } catch (err) {
     if (before) { mine.set(id, before); mineAt.set(id, beforeAt); } else { mine.delete(id); mineAt.delete(id); }
-    paintHearts(document);
+    paint(document);
     // (signed out meanwhile, somewhere else: that's what to say, and it was said)
     if (!current()) return toast("Signed out");
     toast(/refus|reject|denied|cancel/i.test(String(err?.message)) ? "Not sent: you said no." : "Couldn't send your reaction. Try again.");
   }
 }
 
-// The row of reactions: long-press (touch) or hover (mouse) on a heart.
-let row = null, hoverTimer = null, leaveTimer = null, pressTimer = null, pressed = false;
-function openRow(b) {
-  closeRow();
-  row = document.createElement("div");
-  row.className = "emoji-row";
-  row.setAttribute("role", "menu");
-  row.innerHTML = [...favourites, ...DEFAULTS].map((c) => `<button type="button" role="menuitem" data-emoji="${esc(c)}">${esc(c)}</button>`).join("")
-    + `<button type="button" role="menuitem" class="any" data-any aria-label="Any emoji">+</button>`;
-  row.target = b;
-  document.body.append(row);
-  const r = b.getBoundingClientRect();
-  const w = row.offsetWidth;
-  row.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2 + scrollX))}px`;
-  row.style.top = `${r.top + scrollY - row.offsetHeight - 8}px`;
-}
-function closeRow() { row?.remove(); row = null; }
-
 document.addEventListener("click", (ev) => {
-  const pick = ev.target.closest(".emoji-row [data-emoji]");
-  if (pick) { const b = row.target; closeRow(); return react(b, pick.dataset.emoji); }
-  if (ev.target.closest(".emoji-row [data-any]")) {
-    const b = row.target;
-    row.innerHTML = `<input type="text" inputmode="text" maxlength="8" placeholder="Any emoji" aria-label="Any emoji"><button type="button" data-any-ok>OK</button>`;
-    $("input", row).focus();
-    row.target = b;
-    return;
-  }
-  if (ev.target.closest(".emoji-row [data-any-ok]")) {
-    const v = $("input", row).value.trim();
-    const b = row.target;
-    closeRow();
-    if (v) react(b, v);
-    return;
-  }
   const b = ev.target.closest("[data-react]");
   if (b) {
     ev.preventDefault();
-    clearTimeout(hoverTimer); // a click is a like: no row popping up under the resting mouse after it
-    if (row?.target !== b || !pressed) closeRow();
-    if (pressed) { pressed = false; return; } // the long-press opened the row
-    if (mine.has(b.dataset.react)) return openRow(b); // already reacted: pick another to change it
-    return react(b, "+");
+    ev.stopPropagation(); // (not opening the post it's on)
+    if (pickerOpen() && b.getAttribute("aria-expanded") === "true") { closePicker(); b.setAttribute("aria-expanded", "false"); return; }
+    if (!canAct()) return;
+    const on = { id: b.dataset.react, author: b.dataset.author, kind: b.dataset.kind };
+    document.querySelectorAll("[data-react][aria-expanded=true]").forEach((x) => x.setAttribute("aria-expanded", "false"));
+    b.setAttribute("aria-expanded", "true");
+    openPicker(b, (emoji) => { b.setAttribute("aria-expanded", "false"); react(on, emoji); });
+    return;
   }
-  if (row && !ev.target.closest(".emoji-row")) closeRow();
+  const pill = ev.target.closest("[data-pill]");
+  if (pill) {
+    ev.stopPropagation();
+    const row = pill.closest("[data-reactions]"), c = row.pills?.[+pill.dataset.pill];
+    if (c && !c.yours) react({ id: row.dataset.reactions, author: row.dataset.author, kind: row.dataset.kind }, c.e);
+  }
 }, true);
-document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeRow();
-  if (ev.key === "Enter" && ev.target.closest?.(".emoji-row input")) $(".emoji-row [data-any-ok]")?.click();
-});
-document.addEventListener("pointerdown", (ev) => {
-  const b = ev.target.closest("[data-react]");
-  if (!b || ev.pointerType === "mouse") return;
-  pressed = false;
-  pressTimer = setTimeout(() => { pressed = true; openRow(b); }, 450);
-});
-document.addEventListener("pointerup", () => clearTimeout(pressTimer));
-document.addEventListener("pointercancel", () => clearTimeout(pressTimer));
 document.addEventListener("contextmenu", (ev) => { if (ev.target.closest("[data-react]")) ev.preventDefault(); });
-if (matchMedia("(hover: hover)").matches) {
-  // (one timer for leaving, whatever was left: the heart, or the row on the way to an emoji)
-  document.addEventListener("mouseover", (ev) => {
-    const b = ev.target.closest?.("[data-react]");
-    if (b || ev.target.closest?.(".emoji-row")) clearTimeout(leaveTimer);
-    if (!b || row?.target === b) return;
-    if (row) closeRow();
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => openRow(b), 500);
-  });
-  document.addEventListener("mouseout", (ev) => {
-    const from = ev.target.closest?.("[data-react], .emoji-row");
-    if (!from || from.contains(ev.relatedTarget)) return;
-    clearTimeout(hoverTimer);
-    clearTimeout(leaveTimer);
-    leaveTimer = setTimeout(closeRow, 400);
-  });
-}
 
 // ── Replies ──────────────────────────────────────────────────────────────────────────────────────────
 
