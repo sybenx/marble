@@ -107,7 +107,18 @@ class Later(private val prefs: android.content.SharedPreferences) {
     /** Undo of a save just made: gone as if it never was (other devices may not have it yet; a tombstone tells them). */
     fun unsave(item: LaterItem) = remove(item)
 
+    /** A note's words changed by you (the trial's Next step: a step written into it). */
+    fun setText(item: LaterItem, text: String) {
+        val t = text.trim().take(500).ifEmpty { return }
+        if (t != item.text) put(item.copy(text = t, updated = next(item)))
+    }
+
     private fun put(item: LaterItem) {
+        // The notes trial's log (this phone only): an edit, or done, made here.
+        items.value.firstOrNull { it.id == item.id }?.let { was ->
+            if (was.text != item.text && item.deleted == null) NotesTrial.edited(item.id)
+            if (was.done == null && item.done != null) NotesTrial.done(item.id)
+        }
         // Each changed field's time, and what an edit started from, ride along for notes sync (cc.aaro.cosign.notes).
         items.update { l -> (l.filter { it.id != item.id } + cc.aaro.cosign.notes.LaterNotes.touched(l.firstOrNull { it.id == item.id }, item)).sortedByDescending { it.created } }
         store(); changed()

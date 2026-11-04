@@ -711,6 +711,14 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 if (ui.relaysUp == 0) Text("No relay connection. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             }
             if (m.group.threshold >= 4) item { TextButton({ phone.chooseServer() }, contentPadding = PaddingValues(0.dp)) { Text("Add a server", color = Vault.Accent) } }
+            // The notes trial's summary, to send on at its end (from this phone's log; nothing in it is shown in Marble).
+            item {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                TextButton({
+                    val text = cc.aaro.cosign.NotesTrial.summary(social.later.items.value)
+                    context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text), null))
+                }, contentPadding = PaddingValues(0.dp)) { Text("Share the notes trial summary", color = Vault.Accent) }
+            }
             item { TakeOutEntry(phone, onScan) }
             item { Heading("On this phone") }
             items(ui.log.take(20)) { LogLine(it) }

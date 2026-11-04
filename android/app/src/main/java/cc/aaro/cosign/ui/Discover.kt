@@ -195,13 +195,15 @@ private sealed class Route {
     data object RelayList : Route()
     /** A relay, read like a channel. */
     data class Relay(val address: String) : Route()
+    /** Everything waiting for your key, in one place (marble-2009-spec step 3): what the bell's first half was. */
+    data object Approvals : Route()
     /** One of your relay sets, its relays read together. */
     data class RelaySet(val d: String) : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"
         is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
@@ -219,6 +221,7 @@ private sealed class Route {
             s == "special" -> SpecialList
             s == "news" -> News
             s == "relays" -> RelayList
+            s == "approvals" -> Approvals
             s.startsWith("relay:") -> Relay(s.removePrefix("relay:"))
             s.startsWith("relayset:") -> RelaySet(s.removePrefix("relayset:"))
             else -> null
@@ -359,6 +362,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.SpecialList -> SpecialListScreen(social, nav)
             Route.News -> NewsSourcesScreen(social, nav)
             Route.RelayList -> RelayListScreen(social, nav)
+            Route.Approvals -> ApprovalsScreen(phone, ui, social, nav)
             is Route.Relay -> RelayScreen(top.address, social, nav)
             is Route.RelaySet -> RelaySetScreen(top.d, social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
@@ -507,7 +511,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         }
         // What needs you (an approval, say), and a passing error, under the panes' bar.
         Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
-            NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
+            NeedsYou(phone, ui, social) { nav.open(Route.Approvals) }
             // (The Tomorrow card is hidden: no nightly marbles to veto.)
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
@@ -655,7 +659,8 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
     if (open.isEmpty()) return
     val context = LocalContext.current
     Column(Modifier.padding(horizontal = 24.dp).widthIn(max = 600.dp).fillMaxWidth()) {
-        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        LaunchedEffect(open.take(max).map { it.id }) { open.take(max).forEach { cc.aaro.cosign.NotesTrial.shown(it.id, "home") } }
+        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.NotesTrial.opened(item.id, "home"); FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable(onClickLabel = "Done") { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
@@ -3073,6 +3078,9 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
     // Your own, first: up to two of your searches and notes with these words (your latest searches, with the box empty).
     val searchList by social.searches.all.collectAsState()
+    // The notes trial's choices for an old note held in the results (Next step / Keep in view / Let go).
+    var deciding by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
+    deciding?.let { n -> NoteDecision(n, social) { deciding = null } }
     val own = remember(t, searchList, laterItems) {
         val s = searchList.filter { t.isEmpty() || (it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t)) }.map { it.text to null as cc.aaro.cosign.LaterItem? }
         val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { it.text to it }
@@ -3141,7 +3149,12 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
             }
             items(own, key = { "o:" + it.first }) { (text, note) ->
-                OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text) }
+                note?.let { n -> LaunchedEffect(n.id) { cc.aaro.cosign.NotesTrial.shown(n.id, "search") } }
+                OwnRow(text, note, t, onLong = note?.takeIf { cc.aaro.cosign.NotesTrial.on && it.done == null && System.currentTimeMillis() / 1000 - it.created > 30 * 86_400L }
+                    ?.let { n -> { deciding = n } }) {
+                    note?.let { cc.aaro.cosign.NotesTrial.opened(it.id, "search") }
+                    if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text)
+                }
             }
         }
         when {
@@ -3295,8 +3308,20 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
                     .clickable { show = k }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
+    val shelf by cc.aaro.cosign.NotesTrial.shelf.collectAsState()
+    val answer by cc.aaro.cosign.NotesTrial.answer.collectAsState()
+    val trial = cc.aaro.cosign.NotesTrial.on
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        val list = if (show == "done") done else open
+        // Day 28 of the notes trial: the one question, asked once.
+        if (cc.aaro.cosign.NotesTrial.ask && answer == null) item(key = "ask") { TrialQuestion() }
+        // The trial (from day 15): Keep in view at the top (no number), then the rest, the ones you haven't seen lower.
+        val inView = if (trial && show != "done") shelf.mapNotNull { id -> open.firstOrNull { it.id == id } } else emptyList()
+        if (inView.isNotEmpty()) {
+            item(key = "kh") { Text("Keep in view", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp)) }
+            items(inView, key = { "v" + it.id }) { item -> LaterRow(item, f, emptyList(), social, nav) }
+            item(key = "kd") { Spacer(Modifier.height(10.dp)) }
+        }
+        val list = if (show == "done") done else if (trial) cc.aaro.cosign.NotesTrial.order(open.filter { it.id !in shelf }) else open
         items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, emptyList(), social, nav) }
         if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing matches “$f”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
     }
@@ -3394,7 +3419,8 @@ private fun SiteIcon(url: String, size: Int) {
 private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<cc.aaro.cosign.Page>, social: Social, nav: Nav) {
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
+    LaunchedEffect(item.id) { cc.aaro.cosign.NotesTrial.shown(item.id, "notes") }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { cc.aaro.cosign.NotesTrial.opened(item.id, "notes"); FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
         .padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
         IconButton({ social.later.done(item, item.done == null) }) {
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)
@@ -3416,6 +3442,12 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
             Text(listOfNotNull(site, if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)).joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+            if (cc.aaro.cosign.NotesTrial.on && item.done == null) {
+                val inView = item.id in cc.aaro.cosign.NotesTrial.shelf.collectAsState().value
+                DropdownMenuItem({ Text(if (inView) "Take out of Keep in view" else "Keep in view", color = Vault.Text) }, {
+                    menu = false; cc.aaro.cosign.NotesTrial.keepInView(item.id, !inView); if (!inView) cc.aaro.cosign.NotesTrial.decided(item.id, "view")
+                })
+            }
             DropdownMenuItem({ Text("Remove from Later", color = Vault.Danger) }, { menu = false; social.later.remove(item) })
         }
     }
@@ -3504,9 +3536,10 @@ private fun HandleRow(r: cc.aaro.cosign.Handles.Row, onOpen: () -> Unit) = Row(
 }
 
 /** One of your own in the box's list: a past search (the clock) or a note (the bookmark). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun OwnRow(text: String, note: cc.aaro.cosign.LaterItem?, typed: String, onClick: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+private fun OwnRow(text: String, note: cc.aaro.cosign.LaterItem?, typed: String, onLong: (() -> Unit)? = null, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().combinedClickable(onLongClick = onLong, onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
     Icon(if (note != null) Glyphs.save else Glyphs.clock, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
@@ -3710,9 +3743,16 @@ private fun BellScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(
     if (ui.asks.isNotEmpty() || ui.batchAsks.isNotEmpty() || ui.deleting.isNotEmpty()) LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val cards = needs(phone, ui)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (cards.isNotEmpty()) {
-            item(key = "ch") { Heading("For your key") }
-            items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }
+        // What's waiting for your key has its own screen now (Approvals): one line to it here.
+        if (cards.isNotEmpty()) item(key = "ch") {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                .clickable { nav.open(Route.Approvals) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (cards.size == 1) "Something is waiting for your key" else "${cards.size} things are waiting for your key", color = Vault.Text, style = MaterialTheme.typography.titleSmall)
+                    Text("Open Approvals", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("›", color = Vault.Muted, fontSize = 20.sp)
+            }
         }
         item(key = "nh") { Heading("Replies, mentions and likes") }
         if (notices.list.isEmpty()) item(key = "empty") {
@@ -4201,5 +4241,57 @@ private fun RelayFeed(relays: List<cc.aaro.cosign.RelayFeeds.Relay>, social: Soc
                 }
             }
         }
+    }
+}
+
+/** The notes trial, held on an old note in search: write one next step into it, keep it in view, or let it go (done). */
+@Composable
+private fun NoteDecision(n: cc.aaro.cosign.LaterItem, social: Social, onClose: () -> Unit) {
+    var step by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(onDismissRequest = onClose, containerColor = Vault.Surface,
+        title = { Text(n.text, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                if (step == null) {
+                    for ((label, act) in listOf<Pair<String, () -> Unit>>(
+                        "Next step" to { step = "" },
+                        "Keep in view" to { cc.aaro.cosign.NotesTrial.keepInView(n.id, true); cc.aaro.cosign.NotesTrial.decided(n.id, "view"); onClose() },
+                        "Let go" to { cc.aaro.cosign.NotesTrial.decided(n.id, "go"); social.later.done(n, true); onClose() })) {
+                        Text(label, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().clickable(onClick = act).padding(vertical = 12.dp))
+                    }
+                } else {
+                    androidx.compose.material3.OutlinedTextField(step!!, { step = it }, Modifier.fillMaxWidth(), placeholder = { Text("One next step", color = Vault.Muted) })
+                }
+            }
+        },
+        confirmButton = { if (step != null) TextButton({
+            cc.aaro.cosign.NotesTrial.decided(n.id, "step"); social.later.setText(n, n.text + "\n→ " + step!!.trim()); onClose()
+        }, enabled = !step.isNullOrBlank()) { Text("Add it", color = Vault.Accent) } },
+        dismissButton = { TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** Day 28 of the notes trial: the one question, asked once. */
+@Composable
+private fun TrialQuestion() = Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface).padding(14.dp)) {
+    Text("These last weeks, has Notes felt calmer, the same, or worse?", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((k, label) in listOf("calmer" to "Calmer", "same" to "The same", "worse" to "Worse"))
+            OutlinedButton({ cc.aaro.cosign.NotesTrial.answered(k) }, border = BorderStroke(1.dp, Vault.Line)) { Text(label, color = Vault.Text) }
+    }
+}
+
+/**
+ * Approvals: everything waiting for your key (requests to sign, a deletion you can still undo, recovery, a device
+ * joining, the paper backup), each with what it needs from you. Reached from home's "more waiting" and from the bell.
+ */
+@Composable
+private fun ApprovalsScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Waiting for you", nav)
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
+    val cards = needs(phone, ui)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (cards.isEmpty()) item { Text("Nothing is waiting for you.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }
     }
 }
