@@ -28,12 +28,37 @@ object ReactionRules {
         return if (oneEmoji(c)) Shown(c) else null
     }
 
-    /** One emoji (with its modifiers and joiners), not words. */
+    /**
+     * Exactly one emoji, as one picture: a flag (two regional letters), a keycap (#, * or 0–9, U+FE0F, U+20E3), or an
+     * emoji with its variation selector, skin tone and tag letters, joined to more by U+200D (👨‍👩‍👧 is one). Not two, not words.
+     */
     fun oneEmoji(s: String): Boolean {
-        if (s.isEmpty() || s.length > 32 || s.any { it.isLetterOrDigit() && it.code < 0x2000 }) return false
-        val cps = s.codePoints().toArray().filter { it != 0xFE0F && it != 0x200D && it !in 0x1F3FB..0x1F3FF && it !in 0xE0020..0xE007F }
-        // Flags are two regional letters; keycaps a digit then U+20E3; otherwise, joined by ZWJ, still one picture.
-        return cps.isNotEmpty() && cps.all { it >= 0x2000 || it == 0x20E3 } && (s.contains('‍') || cps.size <= 2)
+        val cps = s.codePoints().toArray()
+        if (cps.isEmpty() || cps.size > 40) return false
+        fun pictograph(c: Int) = c in 0x1F000..0x1FAFF || c in 0x2600..0x27BF || c in 0x2B00..0x2BFF || c in 0x2190..0x21FF || c in 0x2300..0x23FF ||
+            c in 0x25A0..0x25FF || c in 0x2900..0x297F || c in 0x3030..0x303D || c == 0x00A9 || c == 0x00AE || c == 0x203C || c == 0x2049 || c == 0x2122 || c == 0x2139 || c == 0x3297 || c == 0x3299
+        fun regional(c: Int) = c in 0x1F1E6..0x1F1FF
+        // A flag.
+        if (cps.size == 2 && regional(cps[0]) && regional(cps[1])) return true
+        // A keycap.
+        if (cps.size in 2..3 && (cps[0] == '#'.code || cps[0] == '*'.code || cps[0] in '0'.code..'9'.code) && cps.last() == 0x20E3 && (cps.size == 2 || cps[1] == 0xFE0F)) return true
+        // One or more pictographs joined by ZWJ, each with optional VS16, skin tone, tag letters.
+        var i = 0
+        while (true) {
+            if (i >= cps.size || !pictograph(cps[i]) || regional(cps[i])) return false
+            i++
+            while (i < cps.size && (cps[i] == 0xFE0F || cps[i] in 0x1F3FB..0x1F3FF || cps[i] in 0xE0020..0xE007F)) i++
+            if (i == cps.size) return true
+            if (cps[i] != 0x200D) return false
+            i++
+        }
+    }
+
+    /** What a change sends: [to] (null: take it back) given your reactions to the post so far ([before], their ids). */
+    data class Send(val kind: Int, val content: String, val tags: List<List<String>>)
+    fun sends(before: List<String>, to: Shown?, note: Event): List<Send> {
+        val delete = if (before.isEmpty()) emptyList() else listOf(Send(5, "", before.map { listOf("e", it) } + listOf(listOf("k", "7"))))
+        return if (to == null) delete else listOf(Send(7, wire(to.emoji), tags(note, to))) + delete
     }
 
     /** What goes in a reaction's content (❤️ as "+", so other apps count it as a like). */

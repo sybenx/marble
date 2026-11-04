@@ -1,0 +1,426 @@
+{
+ "name": "Reaction counts on the opened post only",
+ "rule": "§10",
+ "why": "Lists of posts show no counts: only the reaction button. The opened post shows each emoji with how many gave it: one per person (their newest); '+' and empty are ❤️ (so they count with ❤️); '-', two emoji, and words are ignored; a custom emoji only with its emoji tag.",
+ "source": "synthetic",
+ "event": {
+  "created_at": 1793700000,
+  "tags": [],
+  "kind": 1,
+  "content": "Counts only where the post is open: here, under this one, each reaction with how many gave it. In a list, none.",
+  "pubkey": "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204",
+  "id": "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368",
+  "sig": "63550a0f538eda3cfffcf487c6fd2c442045937cefe71d1b7ee36ee9d9b5ea2bbbc69c9ab772dbc98f2c7306a5c2209e25a6d0620f8995d93ecc5878d39fc934"
+ },
+ "related": [
+  {
+   "created_at": 1793700060,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368",
+     "",
+     "root"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ]
+   ],
+   "kind": 1,
+   "content": "A reply that people reacted to (its reactions mustn't show in the list).",
+   "pubkey": "c63208407fbf65d103a043654391341a0a90a59ab80169fc3a8d4eb5074a3744",
+   "id": "10f3e7c00f31641c924ac30946edc8375edfb36732f125efba05c67320e5dcf0",
+   "sig": "a7b511c9472a6076a6c7d955aa006f5fd8946558eca86ab8d45747174403c0e70d26fcd59cbdf444f210c7b39c0c84e83f771c0da3f9e67b16d19b3d84cf5e26"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😂",
+   "pubkey": "6c2a23da67a6e65cc72a5ea06d24533e64fd6bc682c847b5601ce5e6174f77c2",
+   "id": "8df4e743a723b0b0c8d0f994e04a9150a244b55c24e44d93a94cdb00841047e6",
+   "sig": "5d749456b3bfdb9d06418269113d4aa426b67822bba258c9ea46ca77b0a73132c2c94908b2d76be3ca339491a6e4af1527cc626c0509fbefbc14c6ad2450f2b4"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😂",
+   "pubkey": "87845feeeecd760092fdb42b8bdb14bf9407c2fdbcafdeae76bfecfed65f4319",
+   "id": "2c2c918b6e00e2db06b5e1b72253bae2f202dc082490709434702c77a6786ef5",
+   "sig": "5a404345d4cdd83e6ccc71b576d62c286ee50623e5b14b912dcfabd4912e302f787ba375c9584e774ede9081249f533a4e0f477563e395280e937b077478f6cd"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😂",
+   "pubkey": "e24a46c3b7022d64380709628c29d2ecf75ac8990c4543559f69705568f6a3fe",
+   "id": "180ebf5e18dc9829b2e1bd73c9254a3271c82fd7485ddfa50851887c5874bc84",
+   "sig": "e1ad22b407c5caa85aca1f4118f389f89b144f2d30ac6fc5c774c35359934c7f0d4746b49cdf026bd5affcf2c5ffe61264e3ae0d2118909186ccc05dbab390fc"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "+",
+   "pubkey": "60b49836da1e1d8bafd30a08312641208638e0f51ead6a8cbd316ef7f4470ef7",
+   "id": "403ea3a295cb18ec127edae3ee18b688f433c072f88eb2a21581da0e9c4cfe8f",
+   "sig": "ec20f8dce09120e61f48eb110fceb58408aac062833259a6872936d3071d881ea1bf4c00bf146c07aa3bfaeee0d37a447956d7ddab308295f76f1241c27d848e"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "",
+   "pubkey": "8277e01047346116f894e289a211d1386ec52e168587322ab85a412c90cfb9a8",
+   "id": "53dca104d415b3224aa9602c53fe8a4fef385537bdc9514cded6da93caec8457",
+   "sig": "612a640576d822db6296a0bfab038224b164bdd7b8adc118f859768e527e0a68a757616d81beee78b3f0b71439444cdff43cfae1230d9e79315a11f5ae41add5"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "❤️",
+   "pubkey": "5228fa7cb0bf21f4956104868995c67bcffb3cce00d4027ff7704edc225ad50f",
+   "id": "dd78c8569188f409ee575633ae2849e6c4ec8373a1ce79e446ed46ffced439cc",
+   "sig": "b2383236c938d52c89b7d48bb6d5dae50e0c4876a92c634709ac1adf96f587f30c779587e13e4c6c27e6fed5a1cd6cf2932d654f86fc62b161bf4b24760eb1f4"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "❤️",
+   "pubkey": "f63f9b58c45a63cb0971d0c607322c2dda15b0a3df1be9df3d299326a8f3de46",
+   "id": "99e42c4a1437de71a3eabaf36efd110d79960018435f42ee559c93809eec6dc6",
+   "sig": "2aad618f0a6be82c106337ed6f63ea50c67b4dfb7f0acbd626d172aac25d642e40cf6bb0870a5ff437c591863d35ddd398bb6b168f8e6e351abdee5a8f5b2d93"
+  },
+  {
+   "created_at": 1793700100,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😢",
+   "pubkey": "3787332ce5cac15d6ff5157fcc0b9fdb8651a2c27fb518b0299e2974e8abc7a5",
+   "id": "6ab6100685e4af7b5dabb926bd1825c33cabde1228136623306a15c6518a5e7c",
+   "sig": "5981bfb73bb6e1dfc5bb5c4951fbbb5cc80fd61e177a9badaa088fcd34a9c56536ae48da18950ba55a8b0a7a5889ef0b887f023b0ae0621db0a3b508f93619fd"
+  },
+  {
+   "created_at": 1793700200,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "🔥",
+   "pubkey": "3787332ce5cac15d6ff5157fcc0b9fdb8651a2c27fb518b0299e2974e8abc7a5",
+   "id": "4894ea015bb0e910a79d90f6287bbce32d5ece29f14ff0dd97d65adf4e6e8a24",
+   "sig": "7679e48d1b846a3ec20c078ab807813e2a5cfee6ba52c77e79dae9d348635a354006a17afad7ff2c9720ecb71e2ee9bcec0a14d441b9b87264efa4765d95d0bf"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "-",
+   "pubkey": "1c01d3cbc225e8235a1cb9b4ec48383b27b2b0e5e03e438eafbf043ab2aaf063",
+   "id": "21d556c1241f8a75011069a732e5f6d6dbebfc74446df134557f730070bc96a7",
+   "sig": "69a6cb06078fea76e2373b5ae97dda8e4417fdae09f205d6afa058c24690efa2afd093f762744159970b0287a1618d708bd137b72e6c63c48cdcd691d1dd3e77"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ],
+    [
+     "emoji",
+     "marble",
+     "https://marble.syb.lol/icon.svg"
+    ]
+   ],
+   "kind": 7,
+   "content": ":marble:",
+   "pubkey": "0b4b3e701401856804c48b0efa75fca8a841ac216755ebeddcbcd8e93f6c9147",
+   "id": "8178846ab088cc2b10a24db99dea8a098e44383ee67852b278ce3498c44d649a",
+   "sig": "98b0f1b52925be9463e18b7859bcecd5c1497c71bd490d50e2b3c45e44861391545f7b8aefc34b08b4b0245279dd45c96a87b81dcedfe9e8708fbf8b0854cb9f"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": ":nourl:",
+   "pubkey": "6e03cfbbc4b6ad7c7ae2d59dc96b97ba1aa1d64e0130f27428bdc35eb17b22e2",
+   "id": "a0545d19d74c7e8247ab505c838d525c1faab9afdbc84d637b8be6cfa2a0467b",
+   "sig": "c99c8e0e5b71889d2ae7a88e5d40c0c9944e3c341b05fb840de075da4a4843e3db6c387c62c48a041bfcb739242e32010a4d2642e839a862499ede62063c4693"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "🤙🤙",
+   "pubkey": "d12470da186035202a276ec17767d9f55ecfca41c30095d6a24933bfd1b665e1",
+   "id": "d23c013e916a3b18b1fa4e93c0f4f8c2c2be0d713434dbc3e9045161aa683019",
+   "sig": "c40fde296a462296669eee12b04fff1c0c05d75839b1f8f406a0cb453395bf85decbb2298ec2b9f259f707585202936d733e68365162ea575256e98d7c5a0e16"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "be84e336731284a9d18b03e695b0a6be3f56c4de13a7e64d51a6040453172368"
+    ],
+    [
+     "p",
+     "5d5f0fd424ce1b382ce4d83e2e086af5c8022f4610e6dc2ca5281b98c974a204"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "lol",
+   "pubkey": "85724a1a75c7850917caf29dcb45c2633d17c92ee976c9183f1e3d831f8e36db",
+   "id": "0d691e9debc3acb10332f943e509450f10228c7555d983eb056af990eef1d7c7",
+   "sig": "2281a87a861992ef69bd3e22cf3b8e28c8c02e77ca39bc40059f46256e134aef60656355517ece6e01a9114f26046f7b28f2a669ef936417cf69001d65a37637"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "10f3e7c00f31641c924ac30946edc8375edfb36732f125efba05c67320e5dcf0"
+    ],
+    [
+     "p",
+     "c63208407fbf65d103a043654391341a0a90a59ab80169fc3a8d4eb5074a3744"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😂",
+   "pubkey": "1a6da0e46ef6a1c8fbcd01719ae9f7601f8e125b626925094e61f319f8fc9193",
+   "id": "a996a6841e41fc368afc1b0a935d47fa671eacbea04860127abedaeadd436469",
+   "sig": "ff7321d63592df0a22c956d256a9774851512ba373ddfc3cf843f63c9d35e676650467c8808002ba6a21fdd7b7358f2780b30c6f2470be99a9eb43e9ae794256"
+  },
+  {
+   "created_at": 1793700120,
+   "tags": [
+    [
+     "e",
+     "10f3e7c00f31641c924ac30946edc8375edfb36732f125efba05c67320e5dcf0"
+    ],
+    [
+     "p",
+     "c63208407fbf65d103a043654391341a0a90a59ab80169fc3a8d4eb5074a3744"
+    ],
+    [
+     "k",
+     "1"
+    ]
+   ],
+   "kind": 7,
+   "content": "😂",
+   "pubkey": "fff46acfcc8ca6f456299066159e83eed5fec259f84176d6d522f9401e15c730",
+   "id": "b3fb19582f0babe6abb6a621998ff9cd06732d14f14894ed15555e9c350af583",
+   "sig": "229b6fc5c95662de89ef52464c7e547084c4514015b0df1efdfc3c9b59a286fa5602bb920e2c53dfe8552c26e753805e057f54a27d2d57a4a576f2b9c1561198"
+  }
+ ],
+ "expect": {
+  "inline": [
+   {
+    "text": "Counts only where the post is open"
+   }
+  ],
+  "cards": [],
+  "media": [],
+  "warning": null,
+  "never": [],
+  "reactions": {
+   "opened": [
+    [
+     "❤️",
+     4
+    ],
+    [
+     "😂",
+     3
+    ],
+    [
+     "🔥",
+     1
+    ],
+    [
+     ":marble:",
+     1
+    ]
+   ],
+   "inList": 0
+  }
+ }
+}

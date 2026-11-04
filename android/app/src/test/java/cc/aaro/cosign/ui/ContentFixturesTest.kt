@@ -19,7 +19,7 @@ class ContentFixturesTest {
     private class Card(val card: String, val ref: String, val text: String, val open: String?)
     private class Got(val inline: List<Pair<String, String>>, val cards: List<Card>, val media: List<String>, val warning: String?, val visible: String,
                       val mentionRun: Map<String, Int>? = null, val tables: List<Map<String, Int>> = emptyList(), val headings: List<String> = emptyList(),
-                      val preview: String? = null)
+                      val preview: String? = null, val opened: List<Pair<String, Int>> = emptyList())
 
     private fun draw(e: Event, related: List<Event>): Got {
         // An article, as the reader draws it (its Markdown); anything else as a post in a list.
@@ -44,7 +44,9 @@ class ContentFixturesTest {
             ?.let { q -> Card(OtherApps.card(q.kind), "${c.a.kind}:${c.a.pubkey}:${c.a.d}", cardText(q), open(q, related)) } })
         val media = body.media.map { m -> when (m) { is Body.Img -> "image ${m.url}"; is Body.Vid -> "video ${m.v.url}" } }
         val run = body.trailing.takeIf { it.isNotEmpty() }?.let { mapOf("shown" to minOf(4, it.size), "more" to maxOf(0, it.size - 4)) }
-        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.text }, run, preview = body.previewLink?.url)
+        // Its reactions, as the opened post shows them (a list shows none: Heart draws no counts).
+        val opened = cc.aaro.cosign.ReactionRules.tally(related, e.id).map { (s, who) -> s.emoji to who.size }
+        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.text }, run, preview = body.previewLink?.url, opened = opened)
     }
 
     /** Where a card's Open goes (OtherBox: Social.openTarget, here offline from [related]); a post or article opens in Marble. */
@@ -93,6 +95,12 @@ class ContentFixturesTest {
         (expect["mentionRun"] as? Map<*, *>)?.let { w -> val m = w.mapKeys { it.key as String }.mapValues { (it.value as Number).toInt() }; if (m != got.mentionRun) problems += "mention run: want $m got ${got.mentionRun}" }
         (expect["tables"] as? List<*>)?.let { w -> val t = w.map { (it as Map<*, *>).mapKeys { e -> e.key as String }.mapValues { e -> (e.value as Number).toInt() } }; if (t != got.tables) problems += "tables: want $t got ${got.tables}" }
         (expect["notHeading"] as? String)?.let { if (it in got.headings) problems += "heading \"$it\" shown twice" }
+        (expect["reactions"] as? Map<*, *>)?.let { r ->
+            fun key(l: List<Pair<String, Int>>) = l.map { "${it.first}×${it.second}" }.sorted().joinToString(" ")
+            val want = (r["opened"] as? List<*>).orEmpty().map { (it as List<*>).let { p -> p[0] as String to (p[1] as Number).toInt() } }
+            if (key(got.opened) != key(want)) problems += "reactions: want ${key(want)} got ${key(got.opened)}"
+            if (got.opened.zipWithNext().any { (a, b) -> b.second > a.second }) problems += "reactions not most first"
+        }
         if (expect.containsKey("preview") && expect["preview"] as String? != got.preview) problems += "preview: want ${expect["preview"]} got ${got.preview ?: "none"}"
         for (s in (expect["never"] as? List<*>).orEmpty().map { it as String }) if (s in got.visible) problems += "shows \"$s\""
         return problems

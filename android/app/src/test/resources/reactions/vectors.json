@@ -1,0 +1,51 @@
+{
+ "about": "The Marble reactions design (content-rules.md §10): the tray's order, ❤️ and + both ways, and what changing or taking back a reaction sends. Reactions here are only {content, tags, created_at}: what the rules read. Emoji are characters, or {shortcode, url}.",
+ "defaults": ["👍", "❤️", "😂", "😢", "👀", "🧐"],
+ "tray": [
+  { "name": "a new account: the six defaults", "own": [], "recents": [], "tray": ["👍", "❤️", "😂", "😢", "👀", "🧐"] },
+  { "name": "recents first (most recently used), then the defaults without repeats; + is ❤️",
+    "own": [{ "content": "🦀", "created_at": 100 }, { "content": "🎉", "created_at": 200 }, { "content": "🦀", "created_at": 300 }, { "content": "+", "created_at": 50 }],
+    "recents": ["🦀", "🎉", "❤️"], "tray": ["🦀", "🎉", "❤️", "👍", "😂", "😢"] },
+  { "name": "a recent that's a default moves up; the rest of the defaults follow",
+    "own": [{ "content": "👀", "created_at": 500 }],
+    "recents": ["👀"], "tray": ["👀", "👍", "❤️", "😂", "😢", "🧐"] },
+  { "name": "used at the same moment: the more often used first",
+    "own": [{ "content": "🔥", "created_at": 400 }, { "content": "🤙", "created_at": 400 }, { "content": "🤙", "created_at": 10 }],
+    "recents": ["🤙", "🔥"], "tray": ["🤙", "🔥", "👍", "❤️", "😂", "😢"] },
+  { "name": "six or more recents: six of them, no defaults",
+    "own": [{ "content": "🍕", "created_at": 9 }, { "content": "🌮", "created_at": 8 }, { "content": "🍣", "created_at": 7 }, { "content": "🥐", "created_at": 6 }, { "content": "🍩", "created_at": 5 }, { "content": "🍔", "created_at": 4 }, { "content": "🥗", "created_at": 3 }],
+    "recents": ["🍕", "🌮", "🍣", "🥐", "🍩", "🍔", "🥗"], "tray": ["🍕", "🌮", "🍣", "🥐", "🍩", "🍔"] },
+  { "name": "ignored: -, two emoji, words, a :shortcode: without its tag",
+    "own": [{ "content": "-", "created_at": 9 }, { "content": "🤙🤙", "created_at": 8 }, { "content": "lol", "created_at": 7 }, { "content": ":blob:", "created_at": 6 }, { "content": "😮", "created_at": 1 }],
+    "recents": ["😮"], "tray": ["😮", "👍", "❤️", "😂", "😢", "👀"] },
+  { "name": "someone's own emoji is a recent too",
+    "own": [{ "content": ":blob:", "tags": [["emoji", "blob", "https://example.com/blob.png"]], "created_at": 9 }],
+    "recents": [{ "shortcode": "blob", "url": "https://example.com/blob.png" }], "tray": [{ "shortcode": "blob", "url": "https://example.com/blob.png" }, "👍", "❤️", "😂", "😢", "👀"] }
+ ],
+ "incoming": [
+  { "content": "+", "shows": "❤️" },
+  { "content": "", "shows": "❤️" },
+  { "content": "❤️", "shows": "❤️" },
+  { "content": "-", "shows": null },
+  { "content": "😂", "shows": "😂" },
+  { "content": "👍🏽", "shows": "👍🏽" },
+  { "content": "🇯🇵", "shows": "🇯🇵" },
+  { "content": "👨‍👩‍👧", "shows": "👨‍👩‍👧" },
+  { "content": "🤙🤙", "shows": null },
+  { "content": "lol", "shows": null },
+  { "content": "🔥 nice", "shows": null },
+  { "content": ":blob:", "shows": null },
+  { "content": ":blob:", "tags": [["emoji", "blob", "https://example.com/blob.png"]], "shows": { "shortcode": "blob", "url": "https://example.com/blob.png" } },
+  { "content": ":blob:", "tags": [["emoji", "blob", "http://example.com/blob.png"]], "shows": null }
+ ],
+ "outgoing": [
+  { "emoji": "❤️", "content": "+", "tags": [] },
+  { "emoji": "😂", "content": "😂", "tags": [] },
+  { "emoji": { "shortcode": "blob", "url": "https://example.com/blob.png" }, "content": ":blob:", "tags": [["emoji", "blob", "https://example.com/blob.png"]] }
+ ],
+ "changes": [
+  { "name": "reacting the first time: only the reaction", "before": [], "to": "😂", "sends": [{ "kind": 7, "content": "😂" }] },
+  { "name": "changing it: the new reaction, then the old one deleted", "before": ["a1"], "to": "❤️", "sends": [{ "kind": 7, "content": "+" }, { "kind": 5, "tags": [["e", "a1"], ["k", "7"]] }] },
+  { "name": "taking it back: only the deletion (every reaction of yours to the post)", "before": ["a1", "a2"], "to": null, "sends": [{ "kind": 5, "tags": [["e", "a1"], ["e", "a2"], ["k", "7"]] }] }
+ ]
+}

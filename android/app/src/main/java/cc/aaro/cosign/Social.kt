@@ -2279,7 +2279,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (reactions.value[note.id] == s.emoji && note.id in liked.value) return
         val first = note.id !in liked.value
         val before = reactions.value[note.id]
-        val oldId = reactionIds[note.id]
+        val known = synchronized(reactionIds) { reactionIds[note.id] }?.split(',').orEmpty()
         FeedLog.act(note.id, if (s.emoji == ReactionRules.LIKE) "like" else "react", "emoji" to s.emoji.takeIf { it != ReactionRules.LIKE }, "first" to first)
         mark(note.id, true)
         setReaction(note.id, s.emoji)
@@ -2290,41 +2290,45 @@ class Social private constructor(private val phone: Phone, context: Context) {
             newsletterTaste(reposted(note) ?: note, 1)
         }
         scope.launch {
-            val sent = actEvent(Event(me, Clock.now(), 7, ReactionRules.tags(note, s), ReactionRules.wire(s.emoji)).withId())
+            // Yours to it so far (here and on your relays): replaced by the new one (ReactionRules.sends).
+            val old = if (first && known.isEmpty()) emptyList() else (known + findMyReactions(me, note.id)).distinct()
+            val plan = ReactionRules.sends(old, s, note)
+            val sent = actEvent(Event(me, Clock.now(), plan[0].kind, plan[0].tags, plan[0].content).withId())
             if (sent == null) { if (first) mark(note.id, false); setReaction(note.id, before); return@launch }
-            keepReactionId(note.id, sent.id)
-            oldId?.let { deleteReaction(me, it) }
+            keepReactionId(note.id, listOf(sent.id))
+            plan.drop(1).forEach { d -> actEvent(Event(me, Clock.now(), d.kind, d.tags, d.content).withId()) }
         }
     }
 
     /** Your reaction taken back: its event deleted (NIP-09); the button is ☺+ again. */
     fun unreact(note: Event) {
         val me = me ?: return
-        val id = reactionIds[note.id]
+        val known = synchronized(reactionIds) { reactionIds[note.id] }?.split(',').orEmpty()
         val before = reactions.value[note.id]
         FeedLog.act(note.id, "unreact")
         mark(note.id, false); setReaction(note.id, null)
         scope.launch {
-            val old = id ?: findMyReaction(me, note.id)
-            if (old == null || !deleteReaction(me, old)) { mark(note.id, true); setReaction(note.id, before); return@launch }
+            // Every one of yours to it, in one deletion.
+            val all = (known + findMyReactions(me, note.id)).distinct()
+            val plan = ReactionRules.sends(all, null, note)
+            if (plan.isEmpty() || actEvent(Event(me, Clock.now(), plan[0].kind, plan[0].tags, plan[0].content).withId()) == null) {
+                mark(note.id, true); setReaction(note.id, before); return@launch
+            }
             keepReactionId(note.id, null)
         }
     }
 
-    private suspend fun deleteReaction(me: String, id: String): Boolean =
-        actEvent(Event(me, Clock.now(), 5, listOf(listOf("e", id), listOf("k", "7")), "").withId()) != null
-
-    /** Your reaction to [noteId] on your relays (one made on another device, say). */
-    private suspend fun findMyReaction(me: String, noteId: String): String? =
-        Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "#e" to listOf(noteId), "limit" to 5), 5000)
-            .filter { it.pubkey == me }.maxByOrNull { it.createdAt }?.id
+    /** Your reactions to [noteId] on your relays (ones made on another device, say). */
+    private suspend fun findMyReactions(me: String, noteId: String): List<String> =
+        Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "#e" to listOf(noteId), "limit" to 20), 5000)
+            .filter { it.pubkey == me }.map { it.id }
 
     /** Your reaction's event, per post (to replace or take back). */
     private val reactionIds = HashMap<String, String>().apply {
         prefs.getStringSet("reactionIds", emptySet())!!.forEach { s -> s.split(' ', limit = 2).takeIf { it.size == 2 }?.let { put(it[0], it[1]) } }
     }
-    private fun keepReactionId(note: String, id: String?) = synchronized(reactionIds) {
-        if (id == null) reactionIds.remove(note) else reactionIds[note] = id
+    private fun keepReactionId(note: String, ids: List<String>?) = synchronized(reactionIds) {
+        if (ids.isNullOrEmpty()) reactionIds.remove(note) else reactionIds[note] = ids.joinToString(",")
         prefs.edit().putStringSet("reactionIds", reactionIds.entries.toList().takeLast(1000).map { "${it.key} ${it.value}" }.toSet()).apply()
     }
 
