@@ -16,6 +16,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/.well-known/assetlinks.json") return assetLinks(env);
     if (url.pathname === "/api/preview") return preview(url.searchParams.get("url"), ctx);
+    if (url.pathname === "/api/feed") return feed(url.searchParams.get("url"), ctx);
     const m = SHARED.exec(url.pathname);
     const d = m && decode(m[2]);
     if (!d || !["GET", "HEAD"].includes(request.method)) return env.ASSETS.fetch(request);
@@ -64,12 +65,14 @@ async function preview(target, ctx) {
   ctx.waitUntil(caches.default.put(key, out.clone()).catch(() => {}));
   return out;
 }
-async function headOf(res, max) {
+async function headOf(res, max, head = true) {
   const reader = res.body.getReader(), parts = [];
   let size = 0;
-  while (size < max) { const { done, value } = await reader.read(); if (done) break; parts.push(value); size += value.length; if (/<\/head>/i.test(new TextDecoder().decode(value))) break; }
+  while (size < max) { const { done, value } = await reader.read(); if (done) break; parts.push(value); size += value.length; if (head && /<\/head>/i.test(new TextDecoder().decode(value))) break; }
   reader.cancel().catch(() => {});
-  return new TextDecoder().decode(new Uint8Array(parts.flatMap((p) => [...p])).slice(0, max));
+  const all = new Uint8Array(size);
+  parts.reduce((at, p) => (all.set(p, at), at + p.length), 0);
+  return new TextDecoder().decode(all.slice(0, max));
 }
 function readMeta(html, base) {
   const ent = (s) => String(s || "").replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos|#39);/gi, (m, c) => c[0] === "#" ? String.fromCodePoint(parseInt(c.slice(c[1] === "x" || c[1] === "X" ? 2 : 1), c[1] === "x" || c[1] === "X" ? 16 : 10)) : ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" })[c.toLowerCase()] || m).trim();
@@ -90,6 +93,41 @@ function readMeta(html, base) {
     site: (metas["og:site_name"] || "").slice(0, 80),
     icon: abs(icon || "/favicon.ico"),
   };
+}
+
+// ── A news site's feed, for Reader (browsers can't fetch most feeds themselves) ──────────────────────
+// /api/feed?url=<a site or its feed>: {url: the feed's address, xml}, or {error}. A page is looked through for the feed
+// it names (<link rel="alternate" type="application/rss+xml|atom+xml">). Public addresses only, at most 2 MB, kept at
+// the edge 15 minutes. No CORS header: only marble.syb.lol's own pages can read it.
+async function feed(target, ctx) {
+  const json = (body, ttl) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json", "cache-control": `public, max-age=${ttl}` } });
+  const ok = (u) => /^https?:$/.test(u.protocol) && !PRIVATE.test(u.hostname) && (!u.port || ["80", "443"].includes(u.port));
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(target || "") ? target : `https://${target}`); } catch { return json({ error: "not a link" }, 60); }
+  if (!ok(u)) return json({ error: "not a public page" }, 60);
+  const key = new Request(`${SITE}/__feed/${encodeURIComponent(u.href)}`);
+  const hit = await caches.default.match(key).catch(() => null);
+  if (hit) return hit;
+  const get = async (at) => {
+    const res = await fetch(at.href, { headers: { "user-agent": "Mozilla/5.0 (compatible; MarbleBot/1.0; +https://marble.syb.lol)", accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8" }, redirect: "follow", signal: AbortSignal.timeout(8000) });
+    if (!res.ok || !ok(new URL(res.url || at.href))) { res.body?.cancel(); return null; }
+    return { type: res.headers.get("content-type") || "", text: await headOf(res, 2 * 1024 * 1024, false), url: res.url || at.href };
+  };
+  const isFeed = (r) => /xml|rss|atom/.test(r.type) && !/html/.test(r.type) || /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<(rss|feed|rdf:RDF)\b/i.test(r.text);
+  let found = { error: "no feed there" };
+  try {
+    let r = await get(u);
+    if (r && !isFeed(r)) {
+      const link = [...r.text.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]).find((l) => /type\s*=\s*["']application\/(rss|atom)\+xml/i.test(l));
+      const href = link && /href\s*=\s*["']([^"']+)/i.exec(link)?.[1]?.replace(/&amp;/g, "&");
+      const next = href && new URL(href, r.url);
+      r = next && ok(next) ? await get(next) : null;
+    }
+    if (r && isFeed(r)) found = { url: r.url, xml: r.text };
+  } catch {}
+  const out = json(found, found.xml ? 900 : 300);
+  ctx.waitUntil(caches.default.put(key, out.clone()).catch(() => {}));
+  return out;
 }
 
 // ── What the link names, from the relays (kept at the edge) ──────────────────────────────────────────
