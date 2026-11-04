@@ -1,0 +1,28 @@
+{
+ "about": "home-rules.md: focusList (the focused, empty box) and goTo (a place for what's typed). Times in seconds; now = 2000000.",
+ "now": 2000000,
+ "places": [{ "name": "Reader" }, { "name": "Notes" }, { "name": "Searches" }, { "name": "Settings" }, { "name": "Approvals" }, { "name": "Devices" }, { "name": "About" }],
+ "focus": [
+  { "name": "nothing yet: only Notes and searches", "in": { "inView": [], "notes": [], "searches": [] }, "rows": ["all"] },
+  { "name": "Keep in view (3 at most, in order), an older note, the 2 latest, Notes and searches",
+    "in": { "inView": ["n5", "n2", "n4", "n1"],
+      "notes": [{ "id": "n1", "text": "fix the bike", "created": 100 }, { "id": "n2", "text": "call mum", "created": 200 }, { "id": "n3", "text": "old idea", "created": 300 },
+        { "id": "n4", "text": "tax forms", "created": 400 }, { "id": "n5", "text": "plant bulbs", "created": 1990000 }, { "id": "n6", "text": "latest note", "created": 1999000 }],
+      "searches": [{ "text": "bike shops", "at": 1999500 }] },
+    "rows": ["inView:n5", "inView:n2", "inView:n4", "older:n1", "search:bike shops", "note:n6", "all"] },
+  { "name": "a note seen 10 days ago isn't older yet", "in": { "inView": [], "notes": [{ "id": "a", "text": "seen lately", "created": 100 }], "seen": { "a": 1136000 }, "searches": [] }, "rows": ["note:a", "all"] },
+  { "name": "the older note offered earlier today comes again, not another", "in": { "inView": [], "notes": [{ "id": "a", "text": "first", "created": 100 }, { "id": "b", "text": "second", "created": 50 }], "offered": { "id": "a", "at": 1990000 }, "searches": [] }, "rows": ["older:a", "note:b", "all"] },
+  { "name": "with the older note off (Android before trial week 3)", "in": { "inView": [], "notes": [{ "id": "a", "text": "old", "created": 100 }], "searches": [], "older": false }, "rows": ["note:a", "all"] },
+  { "name": "a search with the same words as a note above isn't repeated", "in": { "inView": ["a"], "notes": [{ "id": "a", "text": "Call Mum", "created": 1999000 }], "searches": [{ "text": "call mum", "at": 1999900 }, { "text": "weather", "at": 1999800 }] }, "rows": ["inView:a", "search:weather", "all"] }
+ ],
+ "goTo": [
+  { "typed": "set", "notes": [{ "text": "reset the router" }], "place": null },
+  { "typed": "sett", "notes": [], "place": "Settings", "below": false },
+  { "typed": "reader", "notes": [], "place": "Reader", "below": false },
+  { "typed": "Notes", "notes": [{ "text": "notes" }], "place": "Notes", "below": true },
+  { "typed": "abo", "notes": [], "place": null },
+  { "typed": "about", "notes": [], "place": "About", "below": false },
+  { "typed": "approv", "notes": [], "place": "Approvals", "below": false },
+  { "typed": "reading list", "notes": [], "place": null }
+ ]
+}
