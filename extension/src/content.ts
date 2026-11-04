@@ -8,10 +8,23 @@ const TAG = '__cosign';
 // window.nostr has to exist before the site looks for it.
 const s = document.createElement('script');
 s.src = api.runtime.getURL('inpage.js');
-s.onload = () => s.remove();
+const injected = new Promise<void>(ok => { s.onload = () => { s.remove(); ok(); }; });
 (document.head ?? document.documentElement).appendChild(s);
 
 const target = () => (location.origin === 'null' ? '*' : location.origin);
+
+// Marble's own names (window.nostr.__marble) are for sites you've let in here only: any other page sees the standard
+// window.nostr. Asked as the page loads; set when a request goes through or the popup lets the site in; gone when
+// it's signed out.
+const marble = (on: boolean) => void injected.then(() => window.postMessage({ [TAG]: 'marble', on }, target()));
+const signedOut = () => { marble(false); window.dispatchEvent(new CustomEvent('marble:signedout')); };
+// The page's own scripts (modules too) have run by DOMContentLoaded; "interactive" alone is too soon to tell.
+const loaded = new Promise<void>(ok => document.addEventListener('DOMContentLoaded', () => ok(), { once: true }));
+api.runtime.sendMessage({ type: 'site-status' }).then((st: any) => {
+  if (st?.connected) marble(true);
+  // signed out here while this site wasn't open: it hears so now, once its own scripts are listening
+  else if (st?.gone) void loaded.then(signedOut);
+}).catch(() => {});
 
 // A browser without navigator.userActivation (Safari before 16.4): a click or key the browser itself saw in the last
 // 5 s. The page can't fake one (what it dispatches isn't trusted), nor hide one: this listens first, in capture.
@@ -28,7 +41,7 @@ window.addEventListener('message', e => {
   // `gesture`: the page was just clicked or typed in (seen from here, where the page can't fake it): a
   // Sign in you clicked asks again even if you once said Not now.
   api.runtime.sendMessage({ type: 'nip07', method, params, narrow: isNarrow(), gesture: gesture() })
-    .then((r: any) => window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Marble.' }) }, target()))
+    .then((r: any) => { if (r && !r.error) marble(true); window.postMessage({ [TAG]: 'res', id, ...(r ?? { error: 'No answer from Marble.' }) }, target()); })
     .catch((err: Error) => window.postMessage({ [TAG]: 'res', id, error: err?.message ?? 'Marble isn’t answering. Reload the page.' }, target()));
 });
 
@@ -117,7 +130,8 @@ window.addEventListener('message', e => {
 
 api.runtime.onMessage.addListener((msg: any) => {
   // this site was removed, or Marble signed out here: the page hears it at once (it signs itself out)
-  if (msg?.type === 'signedout') { if (!msg.origin || msg.origin === location.origin) window.dispatchEvent(new CustomEvent('marble:signedout')); return; }
+  if (msg?.type === 'signedout') { if (msg.origins?.includes(location.origin)) signedOut(); return; }
+  if (msg?.type === 'connected') { if (msg.origins?.includes(location.origin)) marble(true); return; }
   if (msg?.type !== 'card') return;
   if (msg.url) showCard(msg.id, msg.url);
   else if (msg.id === shownId) hideCard();

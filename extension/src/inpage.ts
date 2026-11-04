@@ -6,7 +6,16 @@ const pending = new Map<string, Pending>();
 const TAG = '__cosign';
 
 window.addEventListener('message', e => {
-  if (e.source !== window || e.data?.[TAG] !== 'res') return;
+  if (e.source !== window) return;
+  // Only on a site you've let in (the content script says so): Marble's promise to it, that it never opens a window or
+  // a card without a click on the page, so the site may ask quietly which account this is on load. The page could
+  // send this itself, and only tell itself something.
+  if (e.data?.[TAG] === 'marble') {
+    if (e.data.on) Object.defineProperty(nostr, '__marble', { value: true, configurable: true, enumerable: true });
+    else delete (nostr as any).__marble;
+    return;
+  }
+  if (e.data?.[TAG] !== 'res') return;
   const p = pending.get(e.data.id);
   if (!p) return;
   pending.delete(e.data.id);
@@ -22,9 +31,6 @@ function call(method: string, params: unknown = {}): Promise<any> {
 }
 
 const nostr = {
-  // Marble's promise to sites: it never opens a window or a card without a click on the page (a request with none,
-  // from a site it hasn't let in, gets `not-connected:`), so a site may ask quietly which account this is on load.
-  __marble: true,
   getPublicKey: () => call('getPublicKey'),
   signEvent: (event: object) => call('signEvent', { event }),
   getRelays: () => call('getRelays'),

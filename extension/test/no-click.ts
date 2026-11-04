@@ -50,6 +50,12 @@ const quiet = (fake = false) => site.evaluate(fake => new Promise(res => setTime
   b.remove();
 }, 5500)), fake);
 const me = () => site.evaluate(() => { try { return JSON.parse(localStorage.getItem('marble.me'))?.pubkey ?? null; } catch { return null; } });
+// Marble's own name: only on a site let in here. It's set a moment after the page loads (the background is asked).
+const marbleOn = async (p, want, label) => {
+  for (const end = Date.now() + 3000; Date.now() < end && (await p.evaluate(() => '__marble' in window.nostr)) !== want;) await wait(100);
+  const has = await p.evaluate(() => '__marble' in window.nostr);
+  check(has === want, `${label}: window.nostr ${has ? 'has' : 'has no'} __marble`);
+};
 async function nothingOpened(label) {
   await wait(2000);
   check(!win(), `${label}: no window`);
@@ -60,7 +66,8 @@ async function nothingOpened(label) {
 // 1. Signed out of Marble, no click.
 await site.goto(SITE);
 await site.waitForFunction(() => !!window.nostr, null, { timeout: 10000 });
-check(await site.evaluate(() => window.nostr.__marble === true), 'window.nostr.__marble is true');
+await wait(1500);
+await marbleOn(site, false, '1 signed out of Marble');
 let r = await quiet();
 log(`1 signed out of Marble, no click: ${r}`);
 check(/^error: not-connected:/.test(r), '1 not-connected at once');
@@ -81,6 +88,7 @@ r = await quiet(true);
 log(`2b a click and a key the page made up: ${r}`);
 check(/^error: not-connected:/.test(r), '2b a made-up click: not-connected at once');
 await nothingOpened('2b');
+await marbleOn(site, false, '2 the site not let in');
 if (process.env.NO_ACTIVATION) {
   // Playwright's evaluate is an activation with no click event: userActivation would count it, the fallback doesn't
   // (shows the fallback is what decides here).
@@ -97,11 +105,13 @@ check(!!win(), `3 a click: the window opened${win() ? ' (' + win().url().split('
 if (win()) { await win().waitForSelector('#yes:not([disabled])', { timeout: 10000 }).catch(() => {}); await win().click('#yes').catch(e => log('yes click: ' + e.message)); }
 for (const end = Date.now() + 15000; !(await me()) && Date.now() < end;) await wait(300);
 check((await me()) === pubkey, `3 Allow: the site is signed in as ${(await me())?.slice(0, 8)}`);
+await marbleOn(site, true, '3 let in');
 await site.reload(); await site.waitForFunction(() => !!window.nostr, null, { timeout: 10000 });
 r = await quiet();
 check(r === 'pk ' + pubkey, `3 let in: a request with no click gets the pubkey (${r.slice(0, 11)})`);
 await wait(1500);
 check((await me()) === pubkey, '3 still signed in after a reload (its quiet check on load)');
+await marbleOn(site, true, '3 let in, after a reload');
 
 // 4. Remove in the popup: the open page hears it at once.
 await site.evaluate(() => { window.__heard = 0; window.addEventListener('marble:signedout', () => window.__heard++); });
@@ -110,6 +120,7 @@ for (const end = Date.now() + 5000; !(await site.evaluate(() => window.__heard))
 check((await site.evaluate(() => window.__heard)) === 1, '4 Remove: the page got marble:signedout');
 check((await me()) === null, '4 the site signed itself out');
 check(await site.isVisible('button.sign-in'), '4 the site shows Sign in');
+await marbleOn(site, false, '4 removed');
 
 // 5. Afterwards, no click.
 await site.reload(); await site.waitForFunction(() => !!window.nostr, null, { timeout: 10000 });
@@ -117,22 +128,47 @@ r = await quiet();
 log(`5 removed, no click: ${r}`);
 check(/^error: not-connected:/.test(r), '5 not-connected at once');
 await nothingOpened('5');
+await marbleOn(site, false, '5 removed, after a reload');
 
-// 6. Another site's tab doesn't hear this site's Remove; every tab hears Marble signing out.
+// 6. Only sites let in hear anything: another site's tab sees no __marble and hears no Remove or Sign out.
 const other = await ctx.newPage(); await other.goto(`http://127.0.0.1:${new URL(SITE).port || 80}/`);
 await other.waitForFunction(() => !!window.nostr, null, { timeout: 10000 });
 for (const p of [site, other]) await p.evaluate(() => { window.__heard = 0; window.addEventListener('marble:signedout', () => window.__heard++); });
-await pop.evaluate(o => chrome.runtime.sendMessage({ type: 'remove-site', origin: o }), origin); // (already gone: says nothing)
-await ctx.serviceWorkers()[0].evaluate(o => chrome.storage.local.get('sites').then(({ sites }) => chrome.storage.local.set({ sites: { ...sites, [o]: { added: Date.now(), lastUsed: Date.now() } } })), origin);
-await pop.evaluate(o => chrome.runtime.sendMessage({ type: 'remove-site', origin: o }), origin);
+const allow = () => pop.evaluate(o => chrome.runtime.sendMessage({ type: 'allow-site', origin: o }), origin);
+const remove = () => pop.evaluate(o => chrome.runtime.sendMessage({ type: 'remove-site', origin: o }), origin);
+await remove(); // (already gone: says nothing)
+await allow();
+await marbleOn(site, true, '6 Allow here in the popup, with the page open');
+await marbleOn(other, false, '6 another site');
+await remove();
 await wait(1500);
 const heard = async () => `site ${await site.evaluate(() => window.__heard)}, other ${await other.evaluate(() => window.__heard)}`;
 log(`6 heard: ${await heard()}`);
 check((await site.evaluate(() => window.__heard)) === 1 && (await other.evaluate(() => window.__heard)) === 0, '6 a Remove is heard by that site only (and only when there was something to remove)');
+await allow();
+await marbleOn(site, true, '6 let in again');
 await pop.evaluate(() => chrome.runtime.sendMessage({ type: 'sign-out' }));
 await wait(3000);
 log(`6 heard: ${await heard()}`);
-check((await site.evaluate(() => window.__heard)) === 2 && (await other.evaluate(() => window.__heard)) === 1, '6 Sign out: every tab heard it');
+check((await site.evaluate(() => window.__heard)) === 2 && (await other.evaluate(() => window.__heard)) === 0, '6 Sign out: the site let in heard it, the other one nothing');
+await marbleOn(site, false, '6 signed out');
+await marbleOn(other, false, '6 another site, throughout');
+
+// 7. Removed while the site wasn't open: it hears so on its next load, once.
+await allow();
+await marbleOn(site, true, '7 let in again');
+await site.evaluate(pk => localStorage.setItem('marble.me', JSON.stringify({ pubkey: pk, method: 'extension' })), pubkey); // as signed in
+await site.close();
+await remove();
+const back = await ctx.newPage();
+await back.addInitScript(() => { window.__heard = 0; window.addEventListener('marble:signedout', () => window.__heard++); });
+await back.goto(SITE); await back.waitForFunction(() => !!window.nostr, null, { timeout: 10000 });
+for (const end = Date.now() + 3000; !(await back.evaluate(() => window.__heard)) && Date.now() < end;) await wait(100);
+check((await back.evaluate(() => window.__heard)) === 1, '7 the next load heard marble:signedout');
+check((await back.evaluate(() => localStorage.getItem('marble.me'))) === null, '7 and the site signed itself out');
+await back.reload(); await back.waitForFunction(() => !!window.nostr, null, { timeout: 10000 }); await wait(2000);
+check((await back.evaluate(() => window.__heard)) === 0, '7 the load after that hears nothing');
+await marbleOn(back, false, '7 removed');
 
 log(failed ? `${failed} FAILED` : 'all passed');
 await ctx.close(); process.exit(failed ? 1 : 0);
