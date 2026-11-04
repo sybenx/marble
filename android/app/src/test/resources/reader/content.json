@@ -4,12 +4,24 @@
   "ana": "Ana Quote",
   "ben": "Ben Builder",
   "cy": "Cy Writer",
-  "dee": "Dee Linker"
+  "dee": "Dee Linker",
+  "eve": "Eve Warns",
+  "fay": "Fay Emoji",
+  "gus": "Gus Pictures",
+  "hal": "Hal Quotes",
+  "ivy": "Ivy Marble",
+  "jon": "Jon Links"
  },
  "follow": [
   "ana",
   "cy",
-  "dee"
+  "dee",
+  "eve",
+  "fay",
+  "gus",
+  "hal",
+  "ivy",
+  "jon"
  ],
  "events": [
   {
@@ -63,13 +75,75 @@
    "kind": 1,
    "ago": 1000,
    "content": "See https://njump.me/{nevent:quoted}"
+  },
+  {
+   "ref": "withWarning",
+   "by": "eve",
+   "kind": 1,
+   "ago": 1100,
+   "content": "The ending was a surprise",
+   "tags": [
+    [
+     "content-warning",
+     "spoilers"
+    ]
+   ]
+  },
+  {
+   "ref": "withEmoji",
+   "by": "fay",
+   "kind": 1,
+   "ago": 1200,
+   "content": "Party time :blobcat:",
+   "tags": [
+    [
+     "emoji",
+     "blobcat",
+     "https://example.com/blobcat.png"
+    ]
+   ]
+  },
+  {
+   "ref": "pictureNoExt",
+   "by": "gus",
+   "kind": 1,
+   "ago": 1300,
+   "content": "https://image.example.com/abc",
+   "tags": [
+    [
+     "imeta",
+     "url https://image.example.com/abc",
+     "m image/jpeg"
+    ]
+   ]
+  },
+  {
+   "ref": "quoteOnly",
+   "by": "hal",
+   "kind": 1,
+   "ago": 1400,
+   "content": "nostr:{nevent:quoted}"
+  },
+  {
+   "ref": "marbleLink",
+   "by": "ivy",
+   "kind": 1,
+   "ago": 1500,
+   "content": "Look https://marble.syb.lol/{nevent:quoted}"
+  },
+  {
+   "ref": "linkPost",
+   "by": "jon",
+   "kind": 1,
+   "ago": 1600,
+   "content": "Great essay https://example.org/essay"
   }
  ],
  "expect": {
   "lines": [
    {
     "source": "Ana Quote",
-    "title": "Look at this so good"
+    "title": "Look at this ↪ quoted so good"
    },
    {
     "source": "Ana Quote",
@@ -80,7 +154,7 @@
    },
    {
     "source": "Ana Quote",
-    "title": "Read this:"
+    "title": "Read this: ↪ an article"
    },
    {
     "source": "Cy Writer",
@@ -93,6 +167,39 @@
    {
     "source": "Dee Linker",
     "title": "See a post"
+   },
+   {
+    "source": "Eve Warns",
+    "title": "1 post",
+    "has": [
+     "spoilers: show"
+    ],
+    "hasNot": [
+     "ending"
+    ]
+   },
+   {
+    "source": "Fay Emoji",
+    "title": "1 post",
+    "has": [
+     "Party time :blobcat:"
+    ]
+   },
+   {
+    "source": "Gus Pictures",
+    "title": "A picture"
+   },
+   {
+    "source": "Hal Quotes",
+    "title": "↪ quoted"
+   },
+   {
+    "source": "Ivy Marble",
+    "title": "Look a post"
+   },
+   {
+    "source": "Jon Links",
+    "title": "Great essay example.org/essay"
    }
   ],
   "noRaw": "nostr:|blossom:|\\b(npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,}",
@@ -100,12 +207,12 @@
    {
     "line": [
      "Ana Quote",
-     "Look at this so good"
+     "Look at this ↪ quoted so good"
     ],
     "quote": "The original post, quoted below.",
     "openIn": [
-     "Marble",
      "Your Nostr app",
+     "Marble",
      "njump.me"
     ]
    },
@@ -119,7 +226,7 @@
    {
     "line": [
      "Ana Quote",
-     "Read this:"
+     "Read this: ↪ an article"
     ],
     "article": "Field notes on soil"
    },
@@ -129,8 +236,8 @@
      "Field notes on soil"
     ],
     "openIn": [
-     "Marble",
      "Your Nostr app",
+     "Marble",
      "njump.me"
     ]
    },
@@ -147,7 +254,29 @@
      "See a post"
     ],
     "linkHref": "^/nevent1"
+   },
+   {
+    "line": [
+     "Eve Warns",
+     "1 post"
+    ],
+    "warningGate": "spoilers"
+   },
+   {
+    "line": [
+     "Ivy Marble",
+     "Look a post"
+    ],
+    "linkHref": "^/nevent1"
+   },
+   {
+    "line": [
+     "Jon Links",
+     "Great essay example.org/essay"
+    ],
+    "vOpens": "^https://example.org/essay"
    }
-  ]
+  ],
+  "openInNote": "With an app your follows recommend for the kind (NIP-89, 31989/31990), it comes first; these test people recommend none."
  }
 }

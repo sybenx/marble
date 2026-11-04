@@ -56,17 +56,6 @@ object ReaderRules {
         return o
     }
 
-    /**
-     * Whether this device may write its copy of an account list (marble/reader, discover/seen): a majority of the write
-     * relays (where copies go) said they were done, and none of what came back is older than a copy this device has seen.
-     */
-    fun mayWrite(writeRelays: Collection<String>, answered: Collection<String>, gotAt: Long?, seenAt: Long): Boolean {
-        val w = writeRelays.map { it.trimEnd('/') }.toSet()
-        if (w.isEmpty()) return false
-        val a = answered.map { it.trimEnd('/') }.count { it in w }
-        return a * 2 > w.size && (gotAt ?: 0) >= seenAt
-    }
-
     /** Still in Reader (§4): unread (up to 30 days, filtered before this), read but not aged yet, or starred. */
     fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long): Boolean = !read || now - at < keepFor(type) || starred
 
@@ -74,8 +63,8 @@ object ReaderRules {
     data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
 
     /**
-     * Read-up-to rises when read items age out (so they stay read once their keys leave the seen list), but never to
-     * or past an unread item from that source: that one, and anything older, stays unread. Only the sources that rise.
+     * Read-up-to as items age out (reader.md §2, vectors readUpTo): to the newest aged-out read item's time, but never
+     * to or past an unread item of that source (at most the oldest unread one's time − 1). Only the sources that rise.
      */
     fun ageUpto(items: List<Aged>, upto: Map<String, Long>): Map<String, Long> = items.groupBy { it.source }.mapNotNull { (src, l) ->
         val to = l.filter { it.read && it.aged }.maxOfOrNull { it.at } ?: return@mapNotNull null
@@ -85,21 +74,24 @@ object ReaderRules {
     const val MAX_SEEN = 48_000
 
     /** Open in… for a post or an article (reader.md §5): in this order. */
-    val OPEN_IN = listOf("Marble", "Your Nostr app", "njump.me")
+    val OPEN_IN = listOf("Your Nostr app", "Marble", "njump.me")
 
     /** A Nostr post's read-state key (as the seen list has always used): its id's first 16 hex. */
     fun postKey(id: String) = id.take(16)
 
-    /** The read state, from the seen list: keys seen by day, each source's "read up to", and kept-unread items. */
-    data class Seen(val days: Set<String>, val upto: Map<String, Long>, val unread: Map<String, Long>)
+    /** The read state, from the seen list: keys seen (key to its day number), each source's (and people folder's) "read up to", and kept-unread items. */
+    data class Seen(val days: Map<String, Long>, val upto: Map<String, Long>, val unread: Map<String, Long>)
 
-    /** Read: seen, or older than its source's read-up-to; unless kept unread. */
-    fun isRead(key: String, source: String, at: Long, s: Seen): Boolean {
-        // Kept unread: a positive time; read again after it, the time made negative (so a merge can't bring it back);
-        // and Mark all as read after it (the source's read-up-to later than the mark) reads it too.
+    /**
+     * Read (reader.md §2): seen, or no newer than its source's read-up-to, or (in a folder of people) the folder's.
+     * Kept unread (a positive time) wins, unless the mark is no newer than that read-up-to (Mark all as read came
+     * after it). A read-again mark is negative.
+     */
+    fun isRead(key: String, source: String, at: Long, s: Seen, folder: String? = null): Boolean {
+        val upto = maxOf(s.upto[source] ?: Long.MIN_VALUE, folder?.let { s.upto["folder:$it"] } ?: Long.MIN_VALUE)
         val u = s.unread[key] ?: 0
-        if (u > 0 && u > (s.upto[source] ?: 0)) return false
-        return key in s.days || (s.upto[source]?.let { at <= it } ?: false)
+        if (u > 0 && u > upto) return false
+        return key in s.days || at <= upto
     }
 
     /** Two copies of the seen list: days joined, read-up-to the larger, kept-unread the newer, other fields kept. */

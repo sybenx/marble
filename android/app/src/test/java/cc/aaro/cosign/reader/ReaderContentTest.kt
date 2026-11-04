@@ -25,7 +25,9 @@ import java.io.File
 class ReaderContentTest {
     private val fx = JSONObject(File(javaClass.getResource("/reader/content.json")!!.toURI()).readText())
     private val now = 1_800_000_000L
-    private val keys = fx.getJSONObject("people").keys().asSequence().toList().withIndex().associate { (n, k) -> k to "%064x".format(n + 1) }
+    // Each person's key: distinct from the first character (a digest's key uses the first 8).
+    private val keys = fx.getJSONObject("people").keys().asSequence().toList().associateWith { k ->
+        java.security.MessageDigest.getInstance("SHA-256").digest(k.toByteArray()).joinToString("") { "%02x".format(it) } }
     private val people = fx.getJSONObject("people").let { p -> keys.entries.associate { (k, pk) -> pk to Person(pk, p.getString(k), null, null, null, 0) } }
     private val events = LinkedHashMap<String, Event>()
     init {
@@ -42,7 +44,8 @@ class ReaderContentTest {
                     else -> "blossom:" + "ab".repeat(32) + "." + ref
                 }
             }
-            val tags = if (kind == 30023) listOf(listOf("d", o.getString("d")), listOf("title", o.getString("title")), listOf("summary", o.getString("summary"))) else emptyList()
+            val extra = o.optJSONArray("tags")?.let { a -> (0 until a.length()).map { t -> a.getJSONArray(t).let { x -> (0 until x.length()).map { x.getString(it) } } } } ?: emptyList()
+            val tags = (if (kind == 30023) listOf(listOf("d", o.getString("d")), listOf("title", o.getString("title")), listOf("summary", o.getString("summary"))) else emptyList()) + extra
             events[o.getString("ref")] = Event(pk, now - o.getLong("ago"), kind, tags, content).withId()
         }
     }
@@ -60,6 +63,7 @@ class ReaderContentTest {
             val r = rows.firstOrNull { it.sourceName == w.getString("source") && it.title == w.getString("title") }
             assertNotNull("line ${w.getString("source")} | ${w.getString("title")} in ${rows.map { "${it.sourceName} | ${it.title}" }}", r)
             w.optJSONArray("has")?.let { h -> for (j in 0 until h.length()) assertTrue("\"${h.getString(j)}\" in ${r!!.title} ${r.snippet}", (r!!.title + " " + r.snippet).contains(h.getString(j))) }
+            w.optJSONArray("hasNot")?.let { h -> for (j in 0 until h.length()) assertFalse("\"${h.getString(j)}\" in ${r!!.title} ${r.snippet}", (r!!.title + " " + r.snippet).contains(h.getString(j))) }
         }
     }
 
@@ -88,6 +92,8 @@ class ReaderContentTest {
                 assertEquals((0 until want.length()).map { want.getString(it) }, ReaderRules.OPEN_IN)
                 if (r.event!!.kind == 30023) assertTrue(marbleLink(r.event!!).startsWith("https://marble.syb.lol/naddr1"))
             }
+            w.optString("warningGate").takeIf { it.isNotEmpty() }?.let { want -> assertTrue("$src | $title: veiled", posts.any { Body.warning(it) == want }) }
+            w.optString("vOpens").takeIf { it.isNotEmpty() }?.let { want -> assertTrue("$src | $title: its page ${r.link}", r.link != null && inAppRef(r.link!!) == null && Regex(want).containsMatchIn(r.link!!)) }
             w.optString("linkHref").takeIf { it.isNotEmpty() }?.let { want ->
                 val here = inAppRef(r.link!!)
                 assertTrue("$src | $title: opens here", here is Ref.Note && here.id == events.getValue("quoted").id)

@@ -27,8 +27,9 @@ class ReaderVectorsTest {
     @Test fun read() = each("read") { c ->
         val s = c.getJSONObject("seen"); val i = c.getJSONObject("item")
         fun longs(o: JSONObject?) = o?.keys()?.asSequence()?.associateWith { o.getLong(it) } ?: emptyMap()
-        val days = s.optJSONObject("days")?.let { d -> d.keys().asSequence().flatMap { d.getString(it).split(' ').filter { k -> k.isNotEmpty() } }.toSet() } ?: emptySet()
-        assertEquals(c.getString("name"), c.getBoolean("read"), ReaderRules.isRead(i.getString("key"), i.getString("source"), i.getLong("at"), ReaderRules.Seen(days, longs(s.optJSONObject("upto")), longs(s.optJSONObject("unread")))))
+        val days = s.optJSONObject("days")?.let { d -> d.keys().asSequence().flatMap { day -> d.getString(day).split(' ').filter { k -> k.isNotEmpty() }.map { it to day.toLong() } }.toMap() } ?: emptyMap()
+        assertEquals(c.getString("name"), c.getBoolean("read"), ReaderRules.isRead(i.getString("key"), i.getString("source"), i.getLong("at"),
+            ReaderRules.Seen(days, longs(s.optJSONObject("upto")), longs(s.optJSONObject("unread"))), i.optString("folder").takeIf { it.isNotEmpty() }))
     }
 
     @Test fun mergeSeen() = each("mergeSeen") { c ->
@@ -64,5 +65,11 @@ class ReaderVectorsTest {
             assertEquals("${c.getString("name")} $name", (0 until w.length()).map { w.getString(it) }.toSet(), out.optJSONObject(name)?.keys()?.asSequence()?.toSet() ?: emptySet<String>())
         }
         if (want.has("maxBytes")) assertTrue(c.getString("name"), out.toString().toByteArray().size <= want.getInt("maxBytes"))
+    }
+
+    @Test fun readUpTo() = each("readUpTo") { c ->
+        val a = c.getJSONArray("items")
+        val items = (0 until a.length()).map { a.getJSONObject(it).let { o -> ReaderRules.Aged("s", o.getLong("at"), o.getBoolean("read"), o.getBoolean("aged")) } }
+        assertEquals(c.getString("name"), c.getLong("upto"), ReaderRules.ageUpto(items, emptyMap())["s"] ?: 0L)
     }
 }

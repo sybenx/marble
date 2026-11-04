@@ -379,18 +379,21 @@ class Seen(private val file: File) {
     private val at = java.util.Collections.synchronizedMap(LinkedHashMap<String, Long>())
     /** Every key's short form: a post seen here and the same post from another phone are one. */
     private val shorts = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** When each was seen (by its short form): the day it was opened decides against a Keep unread mark. */
+    private val times = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    fun timeOf(id: String): Long? = times[SeenSync.short(id)]
     init {
         try {
             val now = System.currentTimeMillis() / 1000
-            file.readLines().filter { it.isNotBlank() }.forEach { l -> val k = l.substringBefore(' '); at[k] = l.substringAfter(' ', "").toLongOrNull() ?: now; shorts += SeenSync.short(k) }
+            file.readLines().filter { it.isNotBlank() }.forEach { l -> val k = l.substringBefore(' '); val t = l.substringAfter(' ', "").toLongOrNull() ?: now; at[k] = t; shorts += SeenSync.short(k); times.merge(SeenSync.short(k), t, ::maxOf) }
         } catch (_: Exception) {}
     }
     /** Seen here, or on another of your phones. */
     operator fun contains(id: String) = SeenSync.short(id) in shorts
     /** Seen just now; true if it's new. */
     fun add(id: String, time: Long = System.currentTimeMillis() / 1000): Boolean {
-        if (!shorts.add(SeenSync.short(id))) return false
-        at[id] = time
+        if (!shorts.add(SeenSync.short(id))) { times.merge(SeenSync.short(id), time, ::maxOf); return false }
+        at[id] = time; times.merge(SeenSync.short(id), time, ::maxOf)
         try {
             // Room for Reader's month of keys too (unread items show for 30 days), beside the feed's.
             if (at.size > 60_000) { val keep = synchronized(at) { at.entries.toList().takeLast(50_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }

@@ -2408,28 +2408,35 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         private const val TRAILING = ".,;:!?)]}'\""
 
         /**
-         * A post as one line of text (content-rules §9; reader.md §5): people as @names, a quoted post or article left
-         * out, a viewer's link as "a post", web links and media left out, never a raw reference. Cut after this, not before.
+         * A post as one line of text (content-rules §9; reader.md §5): people as @names, a quoted post or article as
+         * "↪ quoted" / "↪ an article", a viewer's link as "a post", other links shortened, custom emoji as :name:,
+         * pictures and video left out ("A picture" when that's all), never a raw reference. Cut after this, not before.
          */
         fun line(e: Event, people: Map<String, Person> = emptyMap()): String {
             warning(e)?.let { return it.ifEmpty { "Sensitive" } + ": show" }
             val b = of(e)
             fun name(pk: String) = "@" + (people[pk]?.shown ?: shortNpub(pk))
+            fun ref(r: Ref) = when (r) { is Ref.Note -> "↪ quoted"; is Ref.Profile -> name(r.pubkey); is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" }
             val sb = StringBuilder()
             for (p in b.parts) when (p) {
                 is Part.Plain -> sb.append(p.s)
+                // A viewer's link (njump, primal, marble.syb.lol…) is "a post"; any other link, shortened.
                 is Part.Link -> when (val r = if (p.url.startsWith("blossom:")) null else cc.aaro.cosign.inAppRef(p.url)) {
                     is Ref.Note -> sb.append("a post")
                     is Ref.Profile -> sb.append(name(r.pubkey))
                     is Ref.Addr -> sb.append(if (r.kind == 30023) "an article" else "a post")
-                    null -> p.text?.takeIf { !p.url.startsWith("blossom:") }?.let { sb.append(it) }
+                    null -> sb.append(p.text ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it })
                 }
                 is Part.Mention -> sb.append(name(p.pubkey))
                 is Part.Tag -> sb.append("#" + p.tag)
-                is Part.Quote, is Part.QuoteAddr, is Part.Emoji -> {}
+                is Part.Emoji -> sb.append(":" + p.code + ":")
+                is Part.Quote -> sb.append("↪ quoted")
+                is Part.QuoteAddr -> sb.append(ref(p.a))
             }
             for (pk in b.trailing) sb.append(" " + name(pk))
-            return sb.toString().replace(Regex("\\s+"), " ").replace(Regex(" ([.,;:!?])"), "$1").trim()
+            val text = sb.toString().replace(Regex("\\s+"), " ").replace(Regex(" ([.,;:!?])(?=\\s|$)"), "$1").trim()
+            // Nothing but its pictures or video: says so.
+            return text.ifEmpty { if (b.media.any { it is Vid }) "A video" else if (b.media.isNotEmpty()) "A picture" else "A post" }
         }
 
         /** [s] cut to about [n] characters, at a space where there is one. */
@@ -2470,7 +2477,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 if (blossom != null) at = m.range.first + blossom.raw.length
                 when {
                     url != null && isVideo(url) -> images += video(url)
-                    url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
+                    url != null && (IMAGE.containsMatchIn(url) || meta[url]?.get("m")?.startsWith("image/") == true) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
                     url != null -> parts += Part.Link(url)
                     ref != null -> when (val r = Ref.parse(ref)) {
                         is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }
@@ -4394,7 +4401,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
             Box {
                 IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "Folder", tint = Vault.Muted) }
                 if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
-                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(shown.map { it.source }.distinct(), shown.flatMap { social.itemKeys(it) }) })
+                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) }) })
                     if (folder != "all") for ((v, label) in listOf("list" to "List view", "river" to "Expanded view")) DropdownMenuItem({ Text((if (view == v) "✓ " else "") + label, color = Vault.Text) }, {
                         menu = false
                         val name = folders.firstOrNull { it.first == folder }?.second ?: folder
@@ -4506,22 +4513,23 @@ private fun ReaderOpenIn(i: Social.ReaderItem, social: Social, nav: Nav, size: I
         Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(size.dp).clip(CircleShape).clickable {
             when {
                 post != null -> opener = true
-                here != null -> scope.launch { nav.ref(here, context) }
-                page != null -> openInBrowser(context, page, i.key)
+                here != null -> { social.markItemRead(i, opened = true); scope.launch { nav.ref(here, context) } }
+                page != null -> { social.markItemRead(i, opened = true); openInBrowser(context, page, i.key) }
             }
         }.padding((size / 4).dp))
         if (opener && post != null) DropdownMenu(true, { opener = false }, containerColor = Vault.Surface) {
             val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
-            val (marble, app, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
-            DropdownMenuItem({ Text(marble, color = Vault.Text) }, { opener = false; social.markItemRead(i, opened = true); nav.thread(post.id) })
+            val (app, marble, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
             DropdownMenuItem({ Text(app, color = Vault.Text) }, {
                 opener = false
+                social.markItemRead(i, opened = true)
                 try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
             })
-            DropdownMenuItem({ Text(njump, color = Vault.Text) }, { opener = false; openInBrowser(context, "https://njump.me/$ref", i.key) })
+            DropdownMenuItem({ Text(marble, color = Vault.Text) }, { opener = false; social.markItemRead(i, opened = true); nav.thread(post.id) })
+            DropdownMenuItem({ Text(njump, color = Vault.Text) }, { opener = false; social.markItemRead(i, opened = true); openInBrowser(context, "https://njump.me/$ref", i.key) })
             // A post about a page: the page too.
-            page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { opener = false; openInBrowser(context, u, i.key) }) }
+            page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { opener = false; social.markItemRead(i, opened = true); openInBrowser(context, u, i.key) }) }
         }
     }
 }

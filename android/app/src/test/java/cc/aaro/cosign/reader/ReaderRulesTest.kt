@@ -11,24 +11,12 @@ import org.junit.Test
 class ReaderRulesTest {
     private val w = listOf("wss://a", "wss://b", "wss://c")
 
-    @Test fun writesOnlyWhenMostWriteRelaysAnswered() {
-        assertTrue(ReaderRules.mayWrite(w, setOf("wss://a", "wss://b/"), null, 0))
-        // One fast relay, or read relays that never hold the copy, isn't enough.
-        assertFalse(ReaderRules.mayWrite(w, setOf("wss://a"), null, 0))
-        assertFalse(ReaderRules.mayWrite(w, setOf("wss://read1", "wss://read2", "wss://read3"), null, 0))
-        assertFalse(ReaderRules.mayWrite(emptyList(), setOf("wss://a"), null, 0))
-        // Never under a newer copy this device has seen: none came back, or an older one did.
-        assertFalse(ReaderRules.mayWrite(w, w.toSet(), null, 100))
-        assertFalse(ReaderRules.mayWrite(w, w.toSet(), 90, 100))
-        assertTrue(ReaderRules.mayWrite(w, w.toSet(), 100, 100))
-    }
-
     @Test fun ageingOutNeverReadsAnUnreadItem() {
         val day = 86_400L
         // A (older, never opened) and B (opened, aged out): upto rises only to just before A.
         val got = ReaderRules.ageUpto(listOf(ReaderRules.Aged("s", 5 * day, read = false, aged = false), ReaderRules.Aged("s", 7 * day, read = true, aged = true)), emptyMap())
         assertEquals(mapOf("s" to 5 * day - 1), got)
-        val seen = ReaderRules.Seen(emptySet(), got, emptyMap())
+        val seen = ReaderRules.Seen(emptyMap(), got, emptyMap())
         assertFalse(ReaderRules.isRead("A", "s", 5 * day, seen))
         // Nothing unread: up to the aged item. Not lower than it already is.
         assertEquals(mapOf("s" to 7 * day), ReaderRules.ageUpto(listOf(ReaderRules.Aged("s", 7 * day, true, true)), emptyMap()))
@@ -38,9 +26,14 @@ class ReaderRulesTest {
 
     @Test fun markAllReadAfterAKeptUnreadMarkReadsIt() {
         // Kept unread at 100 on another device; this one marked the source all read at 200 without having seen the mark.
-        assertTrue(ReaderRules.isRead("k", "s", 50, ReaderRules.Seen(emptySet(), mapOf("s" to 200), mapOf("k" to 100))))
-        // Kept unread after the mark-all: unread.
-        assertFalse(ReaderRules.isRead("k", "s", 50, ReaderRules.Seen(emptySet(), mapOf("s" to 200), mapOf("k" to 300))))
+        assertTrue(ReaderRules.isRead("k", "s", 50, ReaderRules.Seen(emptyMap(), mapOf("s" to 200), mapOf("k" to 100))))
+        assertFalse(ReaderRules.isRead("k", "s", 50, ReaderRules.Seen(emptyMap(), mapOf("s" to 200), mapOf("k" to 300))))
+    }
+
+    @Test fun aPeopleFolderIsReadUpToOnce() {
+        // Mark all as read on Your people: one folder entry, read for everyone in it.
+        assertTrue(ReaderRules.isRead("k", "people:P", 50, ReaderRules.Seen(emptyMap(), mapOf("folder:people" to 100), emptyMap()), "people"))
+        assertFalse(ReaderRules.isRead("k", "people:P", 50, ReaderRules.Seen(emptyMap(), mapOf("folder:people" to 100), emptyMap()), "first"))
     }
 
     @Test fun fitSeenKeepsTheNewestDayAndThenTrimsMarks() {
