@@ -1156,7 +1156,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val later = Later(prefs).also { it.changed = { laterChanged() } }
     init { OnDevice.load(); NotesTrial.load(CosignApp.instance) }
     /** This account is the one on screen: its own news sources, and changes made now go to it. */
-    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it, signedInAtStart) }; NewsSources.changed = { newsChanged() } }
+    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it, signedInAtStart) }; NewsSources.changed = { newsChanged() }; if (newsPending) newsChanged() }
     /** The news sources loaded are this account's (another account's are never pulled into them or sent). */
     private fun newsMine() = me != null && NewsSources.account == me
     /** What you searched, on this phone only (not synced), 30 days. */
@@ -1487,26 +1487,44 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     @Volatile private var newsWritable = false
+    /** A send that stopped because another account was loaded: it goes when this one is shown again. */
+    @Volatile private var newsPending = false
     private suspend fun sendNews() {
         val me = me ?: return
         if (pullNews().not() && NewsSources.own.value.isEmpty() && NewsSources.off.value.isEmpty()) return
-        if (!newsWritable || NewsSources.account != me) return
-        // Taken now, checked again before signing: a switch of account in between sends nothing.
-        val json = NewsSources.json()
+        if (!newsWritable) return
+        // This account's list and the load it came from, taken together; a load in between (a switch, even back again) sends nothing.
+        val (json, gen) = NewsSources.snapshot(me) ?: run { newsPending = true; return }
         val text = toSelf(json, encrypt = true) ?: return
-        if (NewsSources.account != me) return
+        if (NewsSources.generation != gen) { newsPending = true; return }
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
-        if (NewsSources.account != me) return
-        Fetch.publish(listTargets(), signed)
+        if (NewsSources.generation != gen) { newsPending = true; return }
+        if (cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))) newsPending = false
+        else { newsPending = true; newsSending = scope.launch { delay(60_000); sendNews() } }
     }
 
     @Volatile private var namesWritable = false
+    /** Read the account's names again just before writing them: written only after a reached read of a copy this phone can read. */
+    private suspend fun namesStillWritable(): Boolean {
+        val me = me ?: return false
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val w = listTargets().ifEmpty { return false }
+        val (found, answered) = Fetch.queryAnswered((w + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(DEVICE_NAMES), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
+        if (!cc.aaro.cosign.reader.SyncGuard.complete(w, answered)) return false
+        val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return true
+        val plain = toSelf(got.content, encrypt = false) ?: return false
+        if ((try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) return false
+        // What's there now joins what's here, so a name set elsewhere since isn't written over.
+        val theirs = namesFrom(plain); val mine = deviceNames.value
+        deviceNames.value = (theirs.keys + mine.keys).associateWith { k -> listOfNotNull(theirs[k], mine[k]).maxBy { it.at } }
+        return true
+    }
     private suspend fun sendDeviceNames() {
         val me = me ?: return
-        if (!namesWritable) return
+        if (!namesWritable || !namesStillWritable()) return
         val text = toSelf(namesJson(deviceNames.value), encrypt = true) ?: return
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", DEVICE_NAMES)), text).withId()) } catch (_: Exception) { return }
-        Fetch.publish(listTargets(), signed)
+        cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))
     }
 
     // --- Tomorrow's marble: the pipeline's owner sees it a day early, and can veto it -----------
@@ -2653,8 +2671,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         } else if (got == null && readerReached && !prefs.getBoolean("readerMoved", false) && seenAt == 0L && newsMine()) {
             var l = readerList.value
             val now = Clock.now()
-            NewsSources.shownOwn().forEach { f -> l = l.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("feed", f.url), "feed", f.url, f.name, "news", now, false)) }
-            NewsSources.off.value.filterValues { it.first }.keys.forEach { l = l.withMute("marble:$it", true, now) }
+            // This account's own, read together (a switch can't put another account's feeds in its Reader).
+            val (feeds, offIds) = NewsSources.shownFor(me) ?: return
+            feeds.forEach { f -> l = l.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("feed", f.url), "feed", f.url, f.name, "news", now, false)) }
+            offIds.forEach { l = l.withMute("marble:$it", true, now) }
             readerList.value = l
             prefs.edit().putBoolean("readerMoved", true).apply()
             readerChanged()
@@ -2730,12 +2750,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun knowAccountRelays() {
         val me = me ?: return
         phone.latest("10002")?.let { l -> accountRelays = writesOf(l).ifEmpty { Sources.GENERAL.map(::normRelay) }; return }
-        if (prefs.getBoolean("noRelayList", false)) { accountRelays = Sources.GENERAL.map(::normRelay); return }
         val (found, answered) = Fetch.queryAnswered((listOf("wss://purplepag.es", "wss://user.kindpag.es") + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 2), 6000)
         val list = found.filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt }
         accountRelays = when {
             list != null -> writesOf(list).ifEmpty { Sources.GENERAL.map(::normRelay) }
-            answered.size >= 3 -> { prefs.edit().putBoolean("noRelayList", true).apply(); Sources.GENERAL.map(::normRelay) }
+            // (Asked again each session: a list made later is found.)
+            answered.size >= 3 -> Sources.GENERAL.map(::normRelay)
             else -> null
         }
     }
@@ -3328,8 +3348,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         private val all = HashMap<String, Social>()
         /** The account on screen when the app started (as it was before an upgrade): who the old shared news list goes to. */
         @Volatile var signedInAtStart: String? = null; private set
+        private var startTaken = false
         fun of(phone: Phone): Social = synchronized(all) {
-            if (signedInAtStart == null) signedInAtStart = try { CosignApp.instance.accounts.active.ui.value.member?.group?.groupX } catch (_: Exception) { null }
+            // Once, at the first call: if nobody was signed in then, the old list goes to no one (never to a later switch).
+            if (!startTaken) { startTaken = true; signedInAtStart = try { CosignApp.instance.accounts.active.ui.value.member?.group?.groupX } catch (_: Exception) { null } }
             all.getOrPut(phone.slot + "/" + phone.ui.value.member?.group?.groupX) { People.init(CosignApp.instance); Social(phone, CosignApp.instance).also { it.restoreFeed() } }
         }
     }
@@ -3363,6 +3385,13 @@ internal object ReaderRows {
         val media = cc.aaro.cosign.ui.Body.of(e).media.map { m -> when (m) { is cc.aaro.cosign.ui.Body.Img -> m.url; is cc.aaro.cosign.ui.Body.Vid -> m.v.url } }.toSet()
         return WEB.findAll(e.content).map { it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"') }.firstOrNull { it !in media }
     }
+
+    /**
+     * What a row's Open in… (or a tap) opens: the post [tapped] (one of a day's posts), else the row's own post or
+     * article, else a day of one post's. A day of several posts has no one post for the row: null.
+     */
+    fun openTarget(i: Social.ReaderItem, tapped: Event? = null): Event? = tapped?.takeIf { t -> i.posts.any { it.id == t.id } || i.event?.id == t.id }
+        ?: i.event ?: i.posts.singleOrNull()
 
     /** A row's title and snippet drawn now, with the names known now (stored ones were made at load). */
     fun text(i: Social.ReaderItem, people: Map<String, Person>): Pair<String, String> = when {

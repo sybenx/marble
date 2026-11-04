@@ -37,4 +37,19 @@ class ReaderRowsTest {
         assertTrue(before, !before.contains("Ben Builder"))
         assertTrue(after, after.contains("@Ben Builder"))
     }
+
+    /** User bug (0.12.27): a day's second post opened its first. Each post of a day opens itself; the row opens none of them. */
+    @Test fun aDaysSecondPostOpensItself() {
+        val posts = listOf(post("first", at = 1000), post("second", at = 1100), post("third", at = 1200))
+        val day = ReaderRows.people(posts, emptyMap(), { "people:$it" }, "people").single()
+        assertEquals(3, day.posts.size)
+        val second = posts[1]
+        assertEquals(second.id, ReaderRows.openTarget(day, second)!!.id)
+        assertEquals(null, ReaderRows.openTarget(day))
+        // A post from elsewhere isn't this row's.
+        assertEquals(null, ReaderRows.openTarget(day, post("other", at = 1300)))
+        // A day of one post: that post.
+        val one = ReaderRows.people(listOf(posts[0]), emptyMap(), { "people:$it" }, "people").single()
+        assertEquals(posts[0].id, ReaderRows.openTarget(one)!!.id)
+    }
 }

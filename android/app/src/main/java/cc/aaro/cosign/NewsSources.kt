@@ -35,21 +35,31 @@ object NewsSources {
 
     /** Whose sources these are: one account's, as everything else (kept under that account's name). */
     @Volatile var account: String? = null; private set
+    /** One lock for loading, taking in and reading out, so a switch of account can't fall between them. */
+    private val lock = Any()
+    /** Moves on with every load: a send that began under another load sends nothing. */
+    @Volatile var generation = 0L; private set
+
+    /** This account's list as JSON, and the load it came from; null if [account] isn't the one loaded. */
+    fun snapshot(account: String): Pair<String, Long>? = synchronized(lock) { if (this.account != account) null else json() to generation }
+    /** This account's own feeds and Marble's sources it took out, read together; null if it isn't the one loaded. */
+    fun shownFor(account: String): Pair<List<OwnFeed>, Set<String>>? = synchronized(lock) {
+        if (this.account != account) null else shownOwn() to off.value.filterValues { it.first }.keys }
 
     /** The shown account's sources (loaded again when you switch). */
     fun load(c: Context, account: String, signedIn: String?) = load(account, signedIn) { c.getSharedPreferences(it, Context.MODE_PRIVATE) }
 
     /**
-     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to its owner, the account
-     * recorded as having written it, else the one signed in ([signedIn]: the account on screen when the app started,
+     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to the account recorded
+     * for it, else the one signed in ([signedIn]: the account on screen when the app started,
      * as before the upgrade), recorded the first time this runs. No other account ever gets it, or a copy merged from another.
      */
-    fun load(account: String, signedIn: String?, prefsFor: (String) -> android.content.SharedPreferences) {
+    fun load(account: String, signedIn: String?, prefsFor: (String) -> android.content.SharedPreferences) = synchronized(lock) {
         val p = prefsFor("news-sources.$account")
-        if (this.account == account && prefs === p) return
+        if (this.account == account && prefs === p) return@synchronized
         val legacy = prefsFor("news-sources")
         if (legacy.getString("movedTo", null) == null && legacy.contains("state")) {
-            val owner = prefsFor("news-sources-owner").getString("owner", null) ?: legacy.getString("upgradeAccount", null)
+            val owner = legacy.getString("upgradeAccount", null)
                 ?: signedIn?.also { legacy.edit().putString("upgradeAccount", it).apply() }
             if (owner == account && !p.contains("state")) {
                 p.edit().putString("state", legacy.getString("state", null)).apply()
@@ -57,7 +67,7 @@ object NewsSources {
             }
         }
         own.value = emptyList(); off.value = emptyMap()
-        prefs = p; this.account = account
+        prefs = p; this.account = account; generation++
         p.getString("state", null)?.let { take(it) }
     }
 
@@ -76,7 +86,7 @@ object NewsSources {
 
     /** Another copy merged in (the account's): per feed and per source, the newest change. True if this one has something it hasn't. */
     /** [take], only if [account]'s list is the one loaded (an account switched mid-pull takes nothing). */
-    fun takeFor(account: String, json: String): Boolean = if (this.account != account) false else take(json)
+    fun takeFor(account: String, json: String): Boolean = synchronized(lock) { if (this.account != account) false else take(json) }
 
     fun take(json: String): Boolean {
         val o = try { JSONObject(json) } catch (_: Exception) { return false }

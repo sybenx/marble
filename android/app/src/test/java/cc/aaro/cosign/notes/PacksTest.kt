@@ -255,4 +255,32 @@ class PacksTest {
         assertTrue("0000" in v.retired)
         assertTrue("written before being read: $writtenBeforeRead", writtenBeforeRead.isEmpty())
     }
+
+    /** gate2: a split pack, sent again (a write that didn't take), sends its marker and parts, never an empty live pack over the marker. */
+    @Test fun aSplitPackResentKeepsItsMarker() {
+        val l = layout(); val v = Vault(l)
+        val ids = (0 until 4000).map { "n$it" }.filter { l.owner(it, emptySet()) == "0000" }.take(60)
+        ids.forEach { v.put(note(it, "x".repeat(400))) }
+        val relay = Relay()
+        // The first try: the marker goes, then a part doesn't take.
+        var n = 0
+        runBlocking { Cycle.flush(v, 1000, { relay.read(it) }, { d, at, c -> if (n++ == 1) false else relay.write(d, at, c) }) }
+        assertTrue("0000" in v.retired)
+        assertTrue(v.dirty.isNotEmpty())
+        flush(v, relay, 2000)
+        val marker = Pack.parse(relay.held[l.d("0000")]!!.content!!)!!
+        assertTrue("the marker stays a marker", marker.retired)
+        val fresh = Vault(l); pullAll(fresh, relay)
+        assertEquals(ids.toSet(), fresh.notes.keys)
+    }
+
+    /** gate2: anything thrown mid-flush (a cancel, the network) puts back every pack not finished. */
+    @Test fun aFlushThatThrowsKeepsItsPacks() {
+        val l = layout(); val v = Vault(l)
+        val ids = (0 until 200).map { "note-$it" }.groupBy { l.owner(it, emptySet()) }.values.take(3).map { it[0] }
+        ids.forEach { v.put(note(it, "text $it")) }
+        val before = v.dirty.toSet()
+        try { runBlocking { Cycle.flush(v, 1000, { throw IllegalStateException("gone") }, { _, _, _ -> true }) } } catch (_: IllegalStateException) {}
+        assertEquals(before, v.dirty.toSet())
+    }
 }

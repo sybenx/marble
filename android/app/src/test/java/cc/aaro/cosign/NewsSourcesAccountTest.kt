@@ -2,6 +2,7 @@ package cc.aaro.cosign
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,11 +28,11 @@ class NewsSourcesAccountTest {
         assertEquals(listOf("https://a.example/feed"), NewsSources.shownOwn().map { it.url })
     }
 
-    /** Gate check 3: the old list goes to its recorded owner, never to whoever happens to load first. */
+    /** Gate check 3: the old list goes to the account recorded for it, never to whoever happens to load first. */
     @Test fun theOldListGoesToItsOwner() {
         val f = HashMap<String, FakePrefs>(); fun p(n: String) = f.getOrPut(n) { FakePrefs() }
         p("news-sources").edit().putString("state", """{"v":1,"own":[{"url":"https://b.example/feed","name":"B's","site":"b.example","topic":"","at":10}],"off":{}}""").apply()
-        p("news-sources-owner").edit().putString("owner", "B").apply()
+        p("news-sources").edit().putString("upgradeAccount", "B").apply()
         NewsSources.load("A", "A", ::p)
         assertTrue(NewsSources.shownOwn().isEmpty())
         NewsSources.load("B", "A", ::p)
@@ -52,5 +53,16 @@ class NewsSourcesAccountTest {
         NewsSources.load("B", "A", ::p)
         assertFalse(NewsSources.takeFor("A", """{"v":1,"own":[{"url":"https://a.example/feed","name":"A's","site":"a.example","topic":"","at":10}],"off":{}}"""))
         assertTrue(NewsSources.shownOwn().isEmpty())
+    }
+
+    /** gate2: a send takes the list and its load together; any load after (a switch, even back) is seen, so nothing is sent. */
+    @Test fun aSendSeesAnyLoadInBetween() {
+        val f = HashMap<String, FakePrefs>(); fun p(n: String) = f.getOrPut(n) { FakePrefs() }
+        NewsSources.load("A", "A", ::p)
+        val (_, gen) = NewsSources.snapshot("A")!!
+        assertNull(NewsSources.snapshot("B"))
+        NewsSources.load("B", "A", ::p); NewsSources.load("A", "A", ::p)
+        assertTrue(NewsSources.generation != gen)
+        assertNull(NewsSources.shownFor("B"))
     }
 }

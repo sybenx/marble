@@ -115,7 +115,9 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (written > 0) net.read("d", listOf(vault.layout.checkpointD))?.let { there ->
             val newest = there.maxByOrNull { it.createdAt }
             newest?.content?.let(Checkpoint::parse)?.let(vault::takeCheckpoint)
-            net.write(vault.layout.checkpointD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), vault.nextCheckpoint().toJson())
+            // Not taken: the checkpoint seq goes back to the one held (the next flush tries again).
+            val held = vault.checkpoint
+            if (!net.write(vault.layout.checkpointD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), vault.nextCheckpoint().toJson())) vault.checkpoint = held
         }
         // The old list: never over a copy that wasn't read, or isn't v1 (a later version, or "moved").
         val v1 = v1Json()

@@ -291,6 +291,8 @@ class Vault(val layout: Layout) {
      * notes into two packs by one more bit, again while either is still too big). Each entry: a pack to publish.
      */
     fun packsFor(prefix: String): List<Pack> {
+        // Already split: its marker again, and its parts (never an empty live pack over the marker).
+        if (prefix in retired) return listOf(Pack(prefix, layout.kid, retired = true)) + packsFor(prefix + "0") + packsFor(prefix + "1")
         val pack = Pack(prefix, layout.kid, notes.values.filter { layout.owner(it.id, retired) == prefix }, markers.values.filter { layout.owner(it.id, retired) == prefix })
         if (pack.bytes <= Layout.LIMIT || pack.items.size + pack.markers.size <= 1) return listOf(pack)
         retired += prefix
@@ -322,9 +324,13 @@ object Cycle {
         v.dirty.clear()
         // Stopping early (a read that didn't reach the account, a halt): this pack and every one not reached yet stay to send.
         fun stop(prefix: String): Int { v.dirty += prefix; v.dirty += todo.filter { it !in done }; return written }
+        // Anything thrown (a cancel, the network) puts back what wasn't finished, as an early stop does.
+        var current: String? = null
+        try {
         while (todo.isNotEmpty()) {
             val prefix = todo.removeFirst()
             if (!done.add(prefix)) continue
+            current = prefix
             for (attempt in 0 until 3) {
                 // A read that didn't reach your account (null) tells nothing: the change waits for one that does.
                 val before = read(v.layout.d(prefix)) ?: return stop(prefix)
@@ -363,7 +369,9 @@ object Cycle {
             }
             // What merging just made (a conflict's copy in another pack) goes in this flush too.
             v.dirty.filter { it !in done }.forEach { todo.addLast(it) }
+            current = null
         }
+        } catch (e: Throwable) { current?.let { v.dirty += it }; v.dirty += todo.filter { it !in done }; throw e }
         return written
     }
 }
