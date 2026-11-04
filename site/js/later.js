@@ -16,6 +16,9 @@ export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
 const KEY = (pk) => pk ? `marble.later.${pk}` : "marble.later", TABS = (pk) => pk ? `marble.tabs.${pk}` : "marble.tabs";
 const DIRTY = (pk) => pk ? `marble.later.dirty.${pk}` : "marble.later.dirty", SYNCED = (pk) => `marble.later.synced.${pk}`;
+// the newest account copy this browser has seen (its created_at): an answer without it, or with an older one, means
+// the relay holding it didn't answer, so nothing is sent over it
+const COPY_AT = (pk) => `marble.later.copy-at.${pk}`;
 const now = () => Math.floor(Date.now() / 1000);
 const MONTH = 30 * 86400;
 const listeners = new Set();
@@ -161,13 +164,16 @@ export async function pull({ force = false } = {}) {
   if (!syncs() || (!force && Date.now() - lastPull < 60000)) return false;
   lastPull = Date.now();
   const me = current();
-  const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 }))
-    .filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
-  if (me !== who) return false; // (signed out or in as someone else meanwhile)
+  const answer = await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 });
+  const got = answer.filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
+  if (me !== who) return null; // (signed out or in as someone else meanwhile)
+  if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); return null; } // (couldn't ask: not "nothing there")
+  if ((got?.created_at || 0) < read(COPY_AT(me), 0)) { failing = true; listeners.forEach((fn) => fn()); return null; }
   if (!got) { if (dirty) setTimeout(send, 0); readPacks(me); return false; } // (nothing there yet: yours goes now)
   let theirs;
-  try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return false; }
-  if (me !== who) return false;
+  try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return null; } // (never sent over)
+  if (me !== who) return null;
+  if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
   const ahead = merge(theirs);
   failing = false;
   write(SYNCED(me), true);
@@ -203,11 +209,12 @@ export async function send() {
   const me = who;
   try {
     lastPull = 0;
-    await pull({ force: true }).catch(() => {});
+    // read first: if your relays couldn't be asked, nothing is sent (it would go over what another device has)
+    if ((await pull({ force: true }).catch(() => null)) === null) { if (me === who) setTimeout(changed, 60000); return; }
     const content = await nip44Self(JSON.stringify(doc), true);
     const ev = await sign({ kind: 30078, tags: [["d", TAG]], content });
     const sent = await publish((await where()).write, ev);
-    if (sent.ok.length && me === who) { dirty = false; failing = false; write(DIRTY(me), false); write(SYNCED(me), true); listeners.forEach((fn) => fn()); }
+    if (sent.ok.length && me === who) { write(COPY_AT(me), ev.created_at); dirty = false; failing = false; write(DIRTY(me), false); write(SYNCED(me), true); listeners.forEach((fn) => fn()); }
     else if (!sent.ok.length) failed(new Error("not sent"));
   } catch (err) { failed(err); } finally { sending = false; }
 }

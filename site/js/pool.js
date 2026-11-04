@@ -102,7 +102,7 @@ class Relay {
     if (!this.open) down.add(this.url);
     if (sockets.get(this.url) === this) sockets.delete(this.url);
     try { this.ws?.close(); } catch {}
-    for (const sub of this.subs.values()) sub.done(this.url);
+    for (const sub of this.subs.values()) sub.done(this.url, false);
     this.subs.clear();
     for (const ok of this.oks.values()) ok(false, "no connection");
     this.oks.clear();
@@ -121,7 +121,7 @@ class Relay {
     if (!sub) return;
     if (m[0] === "EVENT") sub.event(m[2], this.url);
     else if (m[0] === "COUNT") { this.subs.delete(m[1]); sub.count?.(m[2]?.count, this.url); sub.done(this.url); }
-    else if (m[0] === "CLOSED" || (m[0] === "EOSE" && !sub.live)) { this.subs.delete(m[1]); sub.done(this.url); }
+    else if (m[0] === "CLOSED" || (m[0] === "EOSE" && !sub.live)) { this.subs.delete(m[1]); sub.done(this.url, m[0] === "EOSE"); }
   }
 }
 
@@ -141,7 +141,8 @@ export function warm(urls) {
  * as it arrives; the promise resolves with all of them once every relay has answered, or at the timeout.
  * Options: {timeout, onEvent, signal, stopOnFirst, settle, unsigned}. settle: once one relay has answered,
  * wait at most this long for the rest (one that can't connect would otherwise hold everything up).
- * unsigned is for Primal's counts, which nobody signs.
+ * unsigned is for Primal's counts, which nobody signs. The array it resolves with says how many relays answered
+ * (`answered`, end of stored events): none, and an empty answer means "couldn't ask", not "there's nothing".
  */
 export function req(urls, filters, { timeout = 5000, onEvent = null, signal = null, stopOnFirst = false, settle = 0, unsigned = false } = {}) {
   filters = Array.isArray(filters) ? filters : [filters];
@@ -151,7 +152,7 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
     const id = `m${(nextId++).toString(36)}`;
     const events = new Map();
     const waiting = new Set(list);
-    let finished = false, settleTimer = null;
+    let finished = false, settleTimer = null, answered = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -161,7 +162,7 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
         const r = sockets.get(u);
         if (r?.subs.has(id)) { r.subs.delete(id); if (r.open) r.send(["CLOSE", id]); }
       }
-      resolve([...events.values()]);
+      resolve(Object.assign([...events.values()], { answered }));
     };
     const sub = {
       event(e, url) {
@@ -171,8 +172,8 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
         onEvent?.(e, url);
         if (stopOnFirst) finish();
       },
-      done(url) {
-        waiting.delete(url);
+      done(url, ok = true) {
+        if (waiting.delete(url) && ok) answered++;
         if (!waiting.size) finish();
         else if (settle && !settleTimer) settleTimer = setTimeout(finish, settle);
       },

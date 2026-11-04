@@ -632,6 +632,7 @@
   .follow-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
   .follow-btn:disabled { opacity: .6; cursor: default; }
   .follow-said { font-size: 14px; }
+  .pill[hidden] { display: none; }
   /* Reader (reader.js): folders | river on a wide screen; folder chips over the river on a phone */
   #view > div:has(> .reader-page) { max-width: 1040px; }
   .reader-page { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; }
@@ -697,6 +698,17 @@
   .r-earlier { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin: 10px 0 0; }
   .r-earlier::before, .r-earlier::after { content: ""; flex: 1; height: 1px; background: var(--line); }
   .r-river { padding: 0; }
+  .r-share { border: 0; border-radius: 16px; padding: 0; width: min(460px, calc(100vw - 32px)); background: var(--card); color: var(--ink); box-shadow: 0 12px 40px var(--shadow); }
+  .r-share::backdrop { background: rgba(0, 0, 0, .35); }
+  .r-share form { padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .r-share h2 { margin: 0; font-size: 18px; }
+  .r-share-what { margin: 0; color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r-share textarea { font: inherit; font-size: 15px; border: 1px solid var(--field-line); border-radius: 10px; background: var(--field); color: var(--ink); padding: 10px; resize: vertical; }
+  .r-share-who { margin: 0; font-size: 13px; }
+  .r-share-go { display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
+  .r-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 14px; z-index: 40; display: flex; gap: 10px; align-items: center; }
+  .r-toast .link { color: var(--bg); text-decoration: underline; }
+  .r-source .link { font-size: 12px; padding: 2px 6px; }
   .r-empty, .r-wait { color: var(--muted); padding: 24px 0; }
   .r-menu { position: absolute; z-index: 30; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px var(--shadow); padding: 6px; display: flex; flex-direction: column; }
   .r-menu button { text-align: left; background: none; border: 0; padding: 10px 12px; border-radius: 8px; color: var(--ink); font: inherit; font-size: 15px; cursor: pointer; }
@@ -744,7 +756,7 @@
   <nav class="pills" aria-label="Yours">
     <a class="pill" href="/notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"/></svg><span id="n-notes">Notes</span></a>
     <a class="pill" href="/reader"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg><span>Reader</span></a>
-    <a class="pill" href="/notes?tab=tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg><span id="n-tabs">Tabs</span></a>
+    <a class="pill" href="/notes?tab=tabs" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg><span id="n-tabs">Tabs</span></a>
   </nav>
   <div class="account" id="account"></div>
 </header>

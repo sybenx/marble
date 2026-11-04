@@ -5,14 +5,14 @@
 // On your account (signed in with the extension, as Notes): your sources and folders (kind 30078 d=marble/reader) and
 // what you've read (the seen list, d=discover/seen, with its upto and unread), each NIP-44 to yourself, merged with
 // what's there before every write; as Marble Android keeps them (reader.md, agreed 2026-11-04).
-import { req, relays, publish, FAST, INDEXERS, normalize } from "./pool.js";
+import { req, relays, publish, FAST, INDEXERS, normalize, foundOn } from "./pool.js";
 import { keep, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { esc, name, postPath, content, inApp } from "./render.js";
-import { decode, naddr } from "./ids.js";
-import { current, method, myFollows, nip44Self, sign } from "./me.js";
+import { decode, naddr, nevent } from "./ids.js";
+import { current, method, myFollows, nip44Self, sign, myWriteRelays } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, postKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf } from "./reader-rules.js";
+import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen } from "./reader-rules.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -38,21 +38,30 @@ function saveSeen() {
   // the last week of keys, as the seen list keeps them; unread marks for 30 days
   const cut = Math.floor((now() - 7 * DAY) / DAY);
   for (const d of Object.keys(seen.days)) if (+d < cut) delete seen.days[d];
-  for (const [k, t] of Object.entries(seen.unread)) if (t < now() - UNREAD_FOR) delete seen.unread[k];
-  seen.at = now();
+  seen = { ...fitSeen(seen, now()), at: now() };
+  keys = seenKeys(seen);
   write(SEEN(who), seen);
   changed("seen");
 }
+// Keep unread: unread[key] = when (positive); read again after that: unread[key] = -when (so a merge can't bring the
+// mark back: the newer of the two times wins, reader-rules.js mergeSeen)
 function markRead(key) {
-  if (keys.has(key) && seen.unread[key] == null) return;
-  delete seen.unread[key];
+  const u = seen.unread[key];
+  if (keys.has(key) && !(u > 0)) return;
+  if (u > 0) seen.unread[key] = -now();
   const d = String(Math.floor(now() / DAY));
   seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
   keys.add(key);
   saveSeen();
 }
 function keepUnread(key) { seen.unread[key] = now(); saveSeen(); }
-function markAllRead(sources) { for (const s of sources) seen.upto[s] = now(); seen.unread = Object.fromEntries(Object.entries(seen.unread).filter(([k]) => !shownKeys.has(k))); saveSeen(); }
+/** Everything from these sources read, now: their read-up-to time, and their items' Keep unread marks cleared. */
+function markAllRead(sources, list = []) {
+  const t = now(), these = new Set(sources);
+  for (const s of these) seen.upto[s] = t;
+  for (const i of list) if (these.has(i.source)) for (const k of [i.key, ...(i.keys || [])]) if (seen.unread[k] > 0) seen.unread[k] = -t;
+  saveSeen();
+}
 const muted = (id) => doc.muted.some((m) => m.source === id && !m.gone);
 function setSource(s) { doc.sources = doc.sources.filter((x) => x.id !== s.id).concat({ ...s, at: now() }); saveList(); }
 function ensureFolder(id, label) {
@@ -73,10 +82,17 @@ async function where() {
   const o = await Promise.race([outbox(current()), new Promise((r) => setTimeout(() => r({ write: [], read: [] }), 2000))]);
   return { write: o.write.length ? o.write : FAST.slice(0, 3), both: relays(o.write, o.read, FAST.slice(0, 2)).slice(0, 8) };
 }
-/** Your newest copy of each, decrypted: {event, body} (body null: it didn't decrypt). */
+/** Your newest copy of each, decrypted: {event, body} (body null: it didn't decrypt); null if no relay answered. */
+// the newest account copy this browser has seen, by d: an answer without it (or with an older one) means the relay
+// that holds it didn't answer, not that it's gone, so nothing is written over it
+const SEEN_AT = (pk) => `marble.reader.copies.${pk}`;
+const copiesSeen = () => read(SEEN_AT(current()), {});
+const sawCopy = (d, at) => { const c = copiesSeen(); if ((c[d] || 0) < at) write(SEEN_AT(current()), { ...c, [d]: at }); };
 async function fetchMine(ds) {
   const me = current();
-  const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 5000, settle: 1000 })).filter((e) => e.pubkey === me);
+  const answer = await req((await where()).both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 5000, settle: 1000 });
+  if (!answer.answered) return null; // (no relay answered: unknown, not "no copy")
+  const got = answer.filter((e) => e.pubkey === me);
   const out = {};
   for (const d of ds) {
     const e = got.filter((x) => x.tags.some((t) => t[0] === "d" && t[1] === d)).sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
@@ -84,6 +100,7 @@ async function fetchMine(ds) {
     let body = null;
     try { body = JSON.parse(await nip44Self(e.content, false)); } catch {}
     out[d] = { event: e, body };
+    if (body) sawCopy(d, e.created_at);
   }
   return out;
 }
@@ -93,7 +110,7 @@ export async function pullAccount() {
   if (!syncs()) return;
   const me = current();
   const got = await fetchMine([D.list, D.seen, OLD_FEEDS]);
-  if (current() !== me) return;
+  if (!got || current() !== me) return;
   load();
   const list = got[D.list], old = got[OLD_FEEDS], sn = got[D.seen];
   broken = new Set([list && !list.body && "list", sn && !sn.body && "seen"].filter(Boolean));
@@ -122,10 +139,13 @@ export async function pushAccount() {
   const me = current();
   try {
     const todo = [...dirty];
-    dirty.clear();
     const got = await fetchMine(todo.map((k) => D[k]));
+    // no relay answered: what's there is unknown, so nothing is written over it; tried again in a minute
+    if (!got) { clearTimeout(timer); timer = setTimeout(pushAccount, 60000); return; }
     for (const k of todo) {
       const there = got[D[k]];
+      // this browser has seen a newer copy than any relay gave: the one that holds it didn't answer; tried again later
+      if ((there?.event.created_at ?? 0) < (copiesSeen()[D[k]] || 0)) { clearTimeout(timer); timer = setTimeout(pushAccount, 60000); continue; }
       if (there && !there.body) { broken.add(k); continue; } // (never over a copy that didn't decrypt)
       if (current() !== me) return;
       const t = now();
@@ -144,19 +164,21 @@ export async function pushAccount() {
         for (const [d, ks] of Object.entries(seen.days)) if (+d >= cut) for (const key of String(ks).split(" ").filter(Boolean)) all.push([+d, key]);
         const kept = all.sort((a, b) => a[0] - b[0]).slice(-2000), days = {};
         for (const [d, key] of kept) days[d] = days[d] ? `${days[d]} ${key}` : key;
-        seen = { ...seen, at: t, days };
+        seen = fitSeen({ ...seen, at: t, days }, t);
         keys = seenKeys(seen);
         write(SEEN(who), seen);
         body = seen;
       }
-      const same = there && JSON.stringify(there.body) === JSON.stringify(body);
-      if (same) continue;
+      if (there && JSON.stringify(there.body) === JSON.stringify(body)) { dirty.delete(k); continue; }
       const tags = [["d", D[k]], ...(k === "seen" ? [["expiration", String(t + 14 * DAY)]] : [])];
-      const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(JSON.stringify(body), true) });
+      const json = JSON.stringify(body);
+      // NIP-44 takes at most 65,535 bytes: the seen list is kept well under (fit), the Reader list never gets near
+      if (new TextEncoder().encode(json).length > 60000) { console.warn("Reader: too big to sync", k); continue; }
+      const ev = await sign({ kind: 30078, created_at: Math.max(t, (there?.event.created_at ?? 0) + 1), tags, content: await nip44Self(json, true) });
       const sent = await publish((await where()).write, ev);
-      if (!sent.ok.length) dirty.add(k);
+      if (sent.ok.length) { dirty.delete(k); sawCopy(D[k], ev.created_at); } // (only once a relay took it: until then it's sent again)
     }
-  } catch { } finally { pushing = false; }
+  } catch (err) { console.warn("Reader: not synced", err); } finally { pushing = false; if (dirty.size && !timer) timer = setTimeout(pushAccount, 60000); }
 }
 if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(timer); pushAccount(); } });
 
@@ -186,11 +208,17 @@ export function parseFeed(xml, base) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   if (doc.querySelector("parsererror")) return { title: "", items: [] };
   const one = (el, ...names) => { for (const n of names) { const x = el.getElementsByTagName(n)[0]; if (x?.textContent?.trim()) return x.textContent.trim(); } return ""; };
-  const abs = (u) => { try { const r = new URL(u, base); return /^https?:$/.test(r.protocol) ? r.href : ""; } catch { return ""; } };
+  // a link: an http(s) address, or a Nostr post or article (nostr:nevent1…, nostr:naddr1…) as its path here
+  const abs = (u) => {
+    const n = /^nostr:((?:note|nevent|naddr|npub|nprofile)1[02-9ac-hj-np-z]{6,})$/i.exec((u || "").trim());
+    if (n) return decode(n[1]) ? `/${n[1].toLowerCase()}` : "";
+    try { const r = new URL(u, base); return /^https?:$/.test(r.protocol) ? r.href : ""; } catch { return ""; }
+  };
   const atom = !!doc.getElementsByTagName("feed")[0] && !doc.getElementsByTagName("channel")[0];
   const entries = [...doc.getElementsByTagName(atom ? "entry" : "item")].slice(0, 40);
   const items = entries.map((el) => {
-    const link = atom ? ([...el.getElementsByTagName("link")].find((l) => (l.getAttribute("rel") || "alternate") === "alternate")?.getAttribute("href") || "") : one(el, "link");
+    const link = (atom ? ([...el.getElementsByTagName("link")].find((l) => (l.getAttribute("rel") || "alternate") === "alternate")?.getAttribute("href") || "") : one(el, "link"))
+      || (/^nostr:/i.test(one(el, "guid", "id")) ? one(el, "guid", "id") : "");
     const body = one(el, "description", "summary", "content", "content:encoded");
     const media = [...el.getElementsByTagName("media:content"), ...el.getElementsByTagName("media:thumbnail"), ...el.getElementsByTagName("enclosure")]
       .find((m) => m.getAttribute("url") && (/^image\//.test(m.getAttribute("type") || m.getAttribute("medium") || "") || isMedia(m.getAttribute("url"))))?.getAttribute("url")
@@ -226,6 +254,9 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); 
 /** A post's words as one line: drawn by the shared renderer (people as @names, a quoted post or article left out,
  *  never a raw nostr: or blossom: reference), then read as text. */
 export function plainText(e) {
+  // a content warning (NIP-36): its reason, never the words
+  const cw = (e.tags || []).find((t) => t[0] === "content-warning");
+  if (cw) return `${cw[1] || "Sensitive"}: show`;
   const el = document.createElement("div");
   el.innerHTML = content(e);
   for (const x of el.querySelectorAll(".media, .quote-slot, .link-preview, .blossom-file")) x.remove();
@@ -249,13 +280,13 @@ async function peopleItems(pks, folder) {
   for (const e of got) for (const m of e.content.matchAll(/(?:nostr:)?((?:npub|nprofile)1[02-9ac-hj-np-z]{6,})/g)) { const d = decode(m[1]); if (d?.pubkey) named.add(d.pubkey); }
   await profilesOf([...named], 1800);
   const out = [], days = new Map();
-  for (const e of new Map(got.map((e) => [e.id, e])).values()) {
+  for (const e of newestOnly(got)) {
     const k = kindOf(e);
     if (k === "reply") continue;
     if (k === "item") {
       const link = e.kind === 1 ? (e.content.match(/https?:\/\/[^\s<>"']+/g) || []).find((u) => !isMedia(u)) : "";
       const title = e.kind === 30023 ? e.tags.find((t) => t[0] === "title")?.[1] || "Untitled" : plainText(e) || (link ? hostOf(link) : "A picture");
-      out.push({ key: postKey(e.id), source: `people:${e.pubkey}`, author: e.pubkey, kind: e.kind === 30023 ? "article" : "people", at: e.created_at, title, summary: e.kind === 30023 ? (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240) : "", event: e, folder });
+      out.push({ key: eventKey(e), source: `people:${e.pubkey}`, author: e.pubkey, kind: e.kind === 30023 ? "article" : "people", at: e.created_at, title, summary: e.kind === 30023 ? (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240) : "", event: e, folder });
       continue;
     }
     const dk = digestKey(e.pubkey, e.created_at, OFFSET);
@@ -265,10 +296,23 @@ async function peopleItems(pks, folder) {
   for (const d of days.values()) {
     d.posts.sort((a, b) => b.created_at - a.created_at);
     d.at = d.posts[0].created_at;
-    d.keys = d.posts.map((p) => postKey(p.id));
+    d.keys = d.posts.map(eventKey);
     out.push(d);
   }
   return out;
+}
+
+/** One of each: by id, and an article only its newest version (by kind:pubkey:d). */
+function newestOnly(events) {
+  const by = new Map();
+  for (const e of events) { const k = eventKey(e), o = by.get(k); if (!o || e.created_at > o.created_at) by.set(k, e); }
+  return [...by.values()];
+}
+/** One row per item: the same story from Marble's sources and yours, once (yours kept). */
+function once(list) {
+  const by = new Map();
+  for (const i of list) { const o = by.get(i.key); if (!o || o.source.startsWith("marble:")) by.set(i.key, i); }
+  return [...by.values()];
 }
 
 async function writerItems(sources) {
@@ -276,7 +320,7 @@ async function writerItems(sources) {
   if (!pks.length) return [];
   const got = await req(relays(FAST, INDEXERS), { kinds: [30023], authors: pks, since: now() - 30 * DAY, limit: 100 }, { timeout: 5000, settle: 900, onEvent: keep });
   await profilesOf(pks, 1500);
-  return got.map((e) => ({ key: postKey(e.id), source: `writer:${e.pubkey}`, author: e.pubkey, kind: "article", at: e.created_at, title: e.tags.find((t) => t[0] === "title")?.[1] || "Untitled", summary: (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240), event: e }));
+  return newestOnly(got).map((e) => ({ key: eventKey(e), source: `writer:${e.pubkey}`, author: e.pubkey, kind: "article", at: e.created_at, title: e.tags.find((t) => t[0] === "title")?.[1] || "Untitled", summary: (e.tags.find((t) => t[0] === "summary")?.[1] || "").slice(0, 240), event: e }));
 }
 
 async function relayItems(sources) {
@@ -284,7 +328,7 @@ async function relayItems(sources) {
   for (const s of sources.filter((x) => x.type === "relay" && !muted(x.id))) {
     const got = await req([s.value], { kinds: [1], since: now() - 2 * DAY, limit: 60 }, { timeout: 5000, settle: 700, onEvent: keep });
     await profilesOf([...new Set(got.map((e) => e.pubkey))].slice(0, 100), 1200);
-    for (const e of got) if (kindOf(e) !== "reply") out.push({ key: postKey(e.id), source: s.id, sourceName: s.name || hostOf(s.value.replace(/^wss?/, "https")), author: e.pubkey, kind: "people", at: e.created_at, title: plainText(e) || "A picture", event: e });
+    for (const e of got) if (kindOf(e) !== "reply") out.push({ key: eventKey(e), source: s.id, sourceName: s.name || hostOf(s.value.replace(/^wss?/, "https")), author: e.pubkey, kind: "people", at: e.created_at, title: plainText(e) || "A picture", event: e });
   }
   return out;
 }
@@ -299,16 +343,25 @@ async function firstPeople(me) {
 
 // ── Read, new, aged out ──────────────────────────────────────────────────────────────────────────────
 
-const itemRead = (i) => i.kind === "digest" ? i.keys.every((k) => isRead({ key: k, source: i.source, at: i.at }, seen, keys)) && seen.unread[i.key] == null : isRead(i, seen, keys);
+const itemRead = (i) => i.kind === "digest" ? i.keys.every((k) => isRead({ key: k, source: i.source, at: i.at }, seen, keys)) && !(seen.unread[i.key] > 0) : isRead(i, seen, keys);
 const ageOf = (i) => i.kind === "news" ? AGE.news : i.kind === "article" ? AGE.article : AGE.people;
-const starUrl = (i) => i.link || (i.event ? location.origin + pathOf(i.event) : i.posts ? location.origin + postPath(i.posts[0]) : "");
+// a star is a link to the item at marble.syb.lol (the same on every device and host; an article by its address)
+const SITE = "https://marble.syb.lol";
+const starUrl = (i) => i.link && !i.link.startsWith("/") ? i.link : i.link ? SITE + i.link : i.event ? SITE + pathOf(i.event) : i.posts ? SITE + postPath(i.posts[0]) : "";
 const starred = (i) => !!starUrl(i) && notes.items().some((n) => n.url === starUrl(i));
 /** What a folder shows: unread (up to 30 days), then read ones not aged out; starred never age out. */
 function shown(items) {
   const t = now();
-  return items.filter((i) => !muted(i.source)).map((i) => ({ ...i, read: itemRead(i) }))
-    .filter((i) => i.read ? t - i.at < ageOf(i) || starred(i) : t - i.at < UNREAD_FOR)
-    .sort((a, b) => (a.read - b.read) || b.at - a.at);
+  let raised = false;
+  const out = items.filter((i) => !muted(i.source)).map((i) => ({ ...i, read: itemRead(i) })).filter((i) => {
+    if (!i.read) return t - i.at < UNREAD_FOR;
+    if (t - i.at < ageOf(i) || starred(i)) return true;
+    // aged out: its source is read up to here, so it stays read once its key has left the seen list
+    if ((seen.upto[i.source] || 0) < i.at) { seen.upto[i.source] = i.at; raised = true; }
+    return false;
+  }).sort((a, b) => (a.read - b.read) || b.at - a.at);
+  if (raised) saveSeen();
+  return out;
 }
 let shownKeys = new Set();
 
@@ -335,6 +388,13 @@ const shortDate = (t) => {
 };
 // where an item opens: a Nostr thing in Marble (its post view), a site's story on the site (a viewer link here)
 const pathOf = (e) => e.kind >= 30000 && e.kind < 40000 ? `/${naddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === "d")?.[1] || "", relays: [] })}` : postPath(e);
+// a Nostr item's own address (nevent, or naddr for an article), for Open in… and sharing
+const entityOf = (i) => {
+  const e = i.event || i.posts?.[0];
+  if (!e) return /^\/((?:note|nevent|naddr)1\w+)$/.exec(i.link || "")?.[1] || "";
+  return e.kind >= 30000 && e.kind < 40000 ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === "d")?.[1] || "", relays: foundOn(e.id).slice(0, 2) })
+    : nevent(e.id, { relays: foundOn(e.id).slice(0, 2), author: e.pubkey });
+};
 const openOf = (i) => i.event ? { href: pathOf(i.event), here: true } : i.posts ? { href: postPath(i.posts[0]), here: true }
   : inApp(i.link) ? { href: inApp(i.link), here: true } : { href: i.link || "", here: false };
 
@@ -342,7 +402,7 @@ export function showReader(root, signal, { page, card, fillLater }) {
   page("reader", "Reader");
   load();
   const me = current();
-  let folder = new URLSearchParams(location.search).get("f") || (me ? "people" : "news"), items = new Map(), busy = new Set();
+  let folder = new URLSearchParams(location.search).get("f") || (me ? "people" : "news"), items = new Map(), busy = new Set(), pulled = !syncs();
   root.innerHTML = `<div class="reader-page">
     <nav class="r-folders" aria-label="Reader">
       <form class="r-add"><span class="r-add-icon">${ICON.plus}</span><input type="text" placeholder="A site, a person, or a search" aria-label="Add a site, a person, or a search" autocomplete="off" spellcheck="false"></form>
@@ -351,7 +411,7 @@ export function showReader(root, signal, { page, card, fillLater }) {
     </nav>
     <section class="r-river"><div class="r-head"><h1></h1>
       <div class="r-views" role="group" aria-label="View"><button type="button" data-view="list">List</button><button type="button" data-view="river">Expanded</button></div>
-      <button type="button" class="link r-all">Mark all as read</button></div><div class="r-rows"></div></section>
+      <button type="button" class="link r-new" hidden>Show new items</button><button type="button" class="link r-all">Mark all as read</button></div><div class="r-rows"></div></section>
   </div>`;
   const $ = (s) => root.querySelector(s);
   const said = (text) => { const p = $(".r-said"); p.textContent = text; p.hidden = !text; };
@@ -375,7 +435,8 @@ export function showReader(root, signal, { page, card, fillLater }) {
       return `<a class="r-folder${f.id === folder ? " on" : ""}" href="/reader?f=${esc(f.id)}" data-folder="${esc(f.id)}">${esc(f.name)}${fresh(f.id) ? '<span class="r-dot" aria-label="new"></span>' : ""}${toggle}</a>`;
     }).join("");
     const srcs = doc.sources.filter((s) => !s.gone).map((s) => `<div class="r-source${muted(s.id) ? " muted" : ""}" data-source="${esc(s.id)}"><span>${esc(s.name || s.value)}</span><button type="button" class="ic r-src-more" aria-label="More for ${esc(s.name || s.value)}">${ICON.more}</button></div>`).join("");
-    $(".r-list").innerHTML = list + (srcs ? `<div class="r-sep"></div>${srcs}` : "");
+    const others = doc.muted.filter((m) => !m.gone && !doc.sources.some((x) => x.id === m.source)).map((m) => `<div class="r-source muted"><span>${esc(sourceName(m.source))}</span><button type="button" class="link" data-unmute="${esc(m.source)}">Unmute</button></div>`).join("");
+    $(".r-list").innerHTML = list + (srcs || others ? `<div class="r-sep"></div>${srcs}${others}` : "");
   }
 
   // the line
@@ -405,16 +466,19 @@ export function showReader(root, signal, { page, card, fillLater }) {
     else body = card(i.event, { compact: true });
     return `<div class="r-body">${body}</div>
       <div class="r-acts">
-        ${o.href ? `<a class="ic" href="${esc(o.href)}"${ext} aria-label="Open in…" data-open>${ICON.out}</a>` : ""}
+        ${entityOf(i) ? `<button type="button" class="ic" aria-label="Open in…" data-openin>${ICON.out}</button>`
+          : o.href ? `<a class="ic" href="${esc(o.href)}"${ext} aria-label="Open in…" data-open>${ICON.out}</a>` : ""}
         ${i.discussion ? `<a class="ic" href="${esc(i.discussion)}" target="_blank" rel="noopener noreferrer" aria-label="Discussion">${ICON.talk}</a>` : ""}
         <button type="button" class="link" data-unread>Keep unread</button>
+        <button type="button" class="link" data-share>Share with a note</button>
       </div>`;
   }
 
   let byKey = new Map(), cur = -1;
   const rowsEl = () => [...root.querySelectorAll(".r-row")];
   function drawRiver() {
-    const f = folders().find((x) => x.id === folder) || folders()[0];
+    // a folder of yours this browser hasn't heard of yet (your account's list is still coming): kept, and shown when it comes
+    const f = folders().find((x) => x.id === folder) || (!pulled ? { id: folder, name: "Reader" } : folders()[0]);
     folder = f.id;
     $(".r-head h1").textContent = f.name;
     for (const b of root.querySelectorAll("[data-view]")) b.setAttribute("aria-pressed", b.dataset.view === viewOf(folder));
@@ -430,6 +494,7 @@ export function showReader(root, signal, { page, card, fillLater }) {
     rows.className = `r-rows ${viewOf(folder)}`;
     rows.innerHTML = html || (busy.has(folder) ? '<p class="r-wait">Getting the newest…</p>' : `<p class="r-empty">${esc(empty)}</p>`);
     $(".r-all").hidden = !list.some((i) => !i.read);
+    $(".r-new").hidden = true;
     cur = -1;
     if (viewOf(folder) === "river") { for (const el of rowsEl()) openRow(el, true, false); watch(); } else io?.disconnect();
   }
@@ -454,21 +519,25 @@ export function showReader(root, signal, { page, card, fillLater }) {
     all[cur].scrollIntoView({ block: "nearest" });
   }
 
-  // expanded view: read as you scroll past (on screen for a second; a fling doesn't count)
+  // expanded view: read once scrolled past (it was on screen for a second, then went off the top; a fling doesn't count)
   let io;
   function watch() {
     io?.disconnect();
-    const timers = new Map();
+    const timers = new Map(), looked = new Set();
     io = new IntersectionObserver((entries) => {
       for (const en of entries) {
         const key = en.target.dataset.key;
-        if (en.isIntersecting) timers.set(key, setTimeout(() => { readItem(byKey.get(key)); en.target.classList.add("read"); }, 1000));
-        else clearTimeout(timers.get(key));
+        if (en.isIntersecting) timers.set(key, setTimeout(() => looked.add(key), 1000));
+        else {
+          clearTimeout(timers.get(key));
+          if (looked.has(key) && en.boundingClientRect.bottom <= (en.rootBounds?.top ?? 0) + 1) { readItem(byKey.get(key)); en.target.classList.add("read"); io.unobserve(en.target); }
+        }
       }
-    }, { threshold: 0.6 });
+    }, { threshold: 0.2 });
     for (const el of root.querySelectorAll(".r-row:not(.read)")) io.observe(el);
   }
-  signal.addEventListener("abort", () => io?.disconnect());
+  // (left for a post and brought back by Back, this page goes on as it was: only a page no longer shown stops)
+  const gone = () => signal.aborted && !root.isConnected;
   const readItem = (i) => { if (!i) return; for (const k of i.keys || [i.key]) markRead(k); if (i.kind === "digest") markRead(i.key); drawFolders(); };
   const unread = (el) => { const i = byKey.get(el.dataset.key); if (!i) return; for (const k of [i.key, ...(i.keys || [])]) keepUnread(k); el.classList.remove("read"); drawFolders(); };
   const star = (el) => {
@@ -485,10 +554,10 @@ export function showReader(root, signal, { page, card, fillLater }) {
     if (o.here) { const a = document.createElement("a"); a.href = o.href; el.append(a); a.click(); a.remove(); } // (Marble's own page, as a link click: Back comes here)
     else open(o.href, "_blank", "noopener");
   };
-  const allRead = () => { const list = items.get(folder) || []; markAllRead([...new Set(list.map((i) => i.source))]); drawRiver(); };
+  const allRead = () => { const list = items.get(folder) || []; markAllRead([...new Set(list.map((i) => i.source))], list); drawRiver(); };
 
   async function fill(f) {
-    if (busy.has(f) || signal.aborted) return;
+    if (busy.has(f) || gone()) return;
     busy.add(f);
     if (f === folder) drawRiver();
     try {
@@ -500,13 +569,19 @@ export function showReader(root, signal, { page, card, fillLater }) {
       else if (f === "writers") got = await writerItems(srcs);
       else if (f === "relays") got = await relayItems(srcs);
       else got = [...await newsItems(srcs.filter((s) => s.type === "feed")).then((l) => l.filter((i) => !i.source.startsWith("marble:"))), ...await writerItems(srcs), ...await relayItems(srcs)];
-      items.set(f, got);
+      items.set(f, once(got));
     } catch { items.set(f, items.get(f) || []); }
     busy.delete(f);
-    if (signal.aborted) return;
+    if (gone()) return;
     drawFolders();
-    // (what's open stays open: new items come in only when nothing in this folder is open)
-    if (f === folder && !root.querySelector(".r-row.open, .r-row.current") || f === folder && !byKey.size) drawRiver();
+    if (f === folder) refresh();
+  }
+  // new items for the folder on screen: drawn at once only when it's empty; otherwise nothing moves under you, and a
+  // quiet "Show new items" brings them in
+  function refresh() {
+    if (!byKey.size) return drawRiver();
+    const latest = shown(items.get(folder) || []), had = new Set(byKey.keys());
+    $(".r-new").hidden = !latest.some((i) => !had.has(i.key));
   }
 
   // ── Adding a source: a site (its feed), a person (their articles), a relay ──
@@ -553,11 +628,72 @@ export function showReader(root, signal, { page, card, fillLater }) {
     menu.onclick = (ev) => { const b = ev.target.closest("[data-n]"); if (b) { entries[+b.dataset.n][1](); closeMenu(); } };
     menu.querySelector("button")?.focus();
   }
-  const rowMenu = (el) => openMenu(el.querySelector(".r-open") || el, [["Keep unread", () => unread(el)]]);
+  const sourceName = (id) => id.startsWith("people:") ? name(id.slice(7)) : doc.sources.find((x) => x.id === id)?.name || doc.muted.find((m) => m.source === id)?.name || id.replace(/^\w+:/, "");
+  const mute = (id, on, label) => { doc.muted = doc.muted.filter((m) => m.source !== id).concat({ source: id, at: now(), gone: !on, ...(label ? { name: label } : {}) }); saveList(); drawFolders(); drawRiver(); };
+  const rowMenu = (el) => {
+    const i = byKey.get(el.dataset.key);
+    if (!i) return;
+    const label = i.source.startsWith("people:") ? name(i.author) : i.sourceName || sourceName(i.source);
+    openMenu(el.querySelector(".r-open") || el, [["Keep unread", () => unread(el)], ["Share with a note", () => share(i)], [`Mute ${label}`, () => mute(i.source, true, label)]]);
+  };
+  // Open in… for a Nostr item: Marble, your Nostr app (a nostr: link), or a web viewer, njump.me always last
+  const openIn = (el, anchor) => {
+    const i = byKey.get(el.dataset.key), ent = i && entityOf(i);
+    if (!ent) return;
+    readItem(i);
+    openMenu(anchor, [
+      ["Marble", () => { const a = document.createElement("a"); a.href = `/${ent}`; el.append(a); a.click(); a.remove(); }],
+      ["Your Nostr app", () => { location.href = `nostr:${ent}`; }],
+      ["njump.me", () => open(`https://njump.me/${ent}`, "_blank", "noopener")],
+    ]);
+  };
+
+  // ── Share with a note (spec §5's guards: never prefilled, the button says it posts publicly, a few seconds to undo
+  // before anything is signed) ──
+  function share(i) {
+    if (!me) return said("Sign in to share.");
+    const ent = entityOf(i), ref = ent ? `nostr:${ent}` : i.link && !i.link.startsWith("/") ? i.link : "";
+    if (!ref) return;
+    const box = document.createElement("dialog");
+    box.className = "r-share";
+    box.innerHTML = `<form method="dialog"><h2>Share with a note</h2>
+      <p class="r-share-what">${esc(i.kind === "digest" ? `${name(i.author)}'s post` : i.title)}</p>
+      <textarea rows="3" maxlength="600" placeholder="Add a note (optional)" aria-label="Your note"></textarea>
+      <p class="muted r-share-who">This posts publicly, as you, with a link to it.</p>
+      <div class="r-share-go"><button type="button" class="link" value="cancel" data-cancel>Cancel</button><button type="button" class="follow-btn" data-post>Post publicly</button></div></form>`;
+    document.body.append(box);
+    box.showModal();
+    box.querySelector("textarea").focus();
+    const close = () => { box.close(); box.remove(); };
+    box.querySelector("[data-cancel]").onclick = close;
+    box.addEventListener("cancel", close);
+    box.querySelector("[data-post]").onclick = () => {
+      const note = box.querySelector("textarea").value.trim();
+      close();
+      const e = i.event || i.posts?.[0];
+      const tags = e ? [e.kind >= 30000 && e.kind < 40000 ? ["q", `${e.kind}:${e.pubkey}:${e.tags.find((t) => t[0] === "d")?.[1] || ""}`, foundOn(e.id)[0] || "", e.pubkey] : ["q", e.id, foundOn(e.id)[0] || "", e.pubkey], ["p", e.pubkey]] : [];
+      // a few seconds to change your mind: nothing is signed until then
+      let undone = false;
+      const toast = document.createElement("div");
+      toast.className = "r-toast";
+      toast.innerHTML = `Posting… <button type="button" class="link">Undo</button>`;
+      document.body.append(toast);
+      toast.querySelector("button").onclick = () => { undone = true; toast.textContent = "Not posted."; setTimeout(() => toast.remove(), 2000); };
+      setTimeout(async () => {
+        if (undone) return;
+        try {
+          const ev = await sign({ kind: 1, tags, content: note ? `${note}\n\n${ref}` : ref });
+          const sent = await publish(await myWriteRelays(), ev);
+          toast.textContent = sent.ok.length ? "Shared." : "Couldn't reach your relays. Not shared.";
+        } catch { toast.textContent = "Not shared: it wasn't signed."; }
+        setTimeout(() => toast.remove(), 2500);
+      }, 5000);
+    };
+  }
 
   // (on the document, not this page's signal: they still work after Back brings this page back as it was)
   const live = () => root.isConnected;
-  document.addEventListener("click", (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more")) closeMenu(); });
+  document.addEventListener("click", (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); });
   document.addEventListener("keydown", (ev) => {
     if (!live()) return;
     if (ev.key === "Escape") return closeMenu();
@@ -582,22 +718,27 @@ export function showReader(root, signal, { page, card, fillLater }) {
     if (fl) { ev.preventDefault(); folder = fl.dataset.folder; history.replaceState(history.state, "", `/reader?f=${encodeURIComponent(folder)}`); drawFolders(); drawRiver(); if (!items.has(folder)) fill(folder); return; }
     const v = t.closest("[data-view]");
     if (v) { setView(folder, v.dataset.view); return drawRiver(); }
+    const um = t.closest("[data-unmute]");
+    if (um) return mute(um.dataset.unmute, false);
     const more = t.closest(".r-src-more");
     if (more) {
       const id = more.closest("[data-source]").dataset.source, s = doc.sources.find((x) => x.id === id);
       return openMenu(more, [
-        ["Mark all as read", () => { markAllRead([id]); drawFolders(); drawRiver(); }],
+        ["Mark all as read", () => { markAllRead([id], items.get(folder) || []); drawFolders(); drawRiver(); }],
         [muted(id) ? "Unmute" : "Mute", () => { doc.muted = doc.muted.filter((m) => m.source !== id).concat({ source: id, at: now(), gone: muted(id) }); saveList(); drawFolders(); drawRiver(); }],
         ["Unsubscribe", () => { setSource({ ...s, gone: true }); drawFolders(); items.delete(s.folder || LABELS[s.type][0]); fill(folder); }],
       ]);
     }
     if (t.closest(".r-all")) return allRead();
+    if (t.closest(".r-new")) { $(".r-new").hidden = true; return drawRiver(); }
     const el = t.closest(".r-row");
     if (!el || !byKey.has(el.dataset.key)) return;
     cur = rowsEl().indexOf(el);
     for (const x of rowsEl()) x.classList.toggle("current", x === el);
     if (t.closest("[data-star]")) return star(el);
     if (t.closest("[data-unread]")) return unread(el);
+    if (t.closest("[data-share]")) return share(byKey.get(el.dataset.key));
+    if (t.closest("[data-openin]")) return openIn(el, t.closest("[data-openin]"));
     if (t.closest("[data-toggle]")) return openRow(el, !el.classList.contains("open"));
     if (t.closest("[data-open]")) readItem(byKey.get(el.dataset.key)); // (the link itself is followed: Marble's own page, or the site)
   });
@@ -611,10 +752,10 @@ export function showReader(root, signal, { page, card, fillLater }) {
   drawFolders();
   drawRiver();
   fill(folder);
-  const redraw = () => { if (!signal.aborted && !root.querySelector(".r-row.open")) { drawFolders(); drawRiver(); } };
+  const redraw = () => { if (gone()) return onRead.delete(redraw); if (root.isConnected) { drawFolders(); refresh(); } };
   onRead.add(redraw);
-  signal.addEventListener("abort", () => { onRead.delete(redraw); pushAccount(); });
-  pullAccount().then(() => { for (const f of new Set(doc.sources.filter((s) => !s.gone).map((s) => s.folder))) if (f && f !== folder) items.delete(f); if (doc.sources.some((s) => s.folder === folder)) { items.delete(folder); fill(folder); } }).catch(() => {});
+  signal.addEventListener("abort", () => pushAccount());
+  pullAccount().finally(() => { pulled = true; }).then(() => { for (const f of new Set(doc.sources.filter((s) => !s.gone).map((s) => s.folder))) if (f && f !== folder) items.delete(f); if (doc.sources.some((s) => s.folder === folder)) { items.delete(folder); fill(folder); } else if (!byKey.size) drawRiver(); drawFolders(); }).catch(() => {});
   // the other folders, quietly, for their dots
   setTimeout(() => { for (const f of folders()) if (f.id !== folder) fill(f.id); }, 1500);
 }

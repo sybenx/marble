@@ -15,7 +15,10 @@ export async function follow(pk, on) {
   pending.add(pk);
   try {
     const own = await Promise.race([outbox(me), new Promise((r) => setTimeout(() => r({ write: [], read: [] }), 2000))]);
-    const got = (await req(relays(own.write, FAST, INDEXERS), [{ kinds: [3], authors: [me] }, { kinds: [0], authors: [me], limit: 1 }], { timeout: 5000, settle: 1200 })).filter((e) => e.pubkey === me);
+    const answer = await req(relays(own.write, FAST, INDEXERS), [{ kinds: [3], authors: [me] }, { kinds: [0], authors: [me], limit: 1 }], { timeout: 5000, settle: 1200 });
+    // no relay answered: nothing is known about your list, so nothing is written (never a list started from nothing)
+    if (!answer.answered) return { error: "Couldn't reach your relays. Nothing changed." };
+    const got = answer.filter((e) => e.pubkey === me);
     const local = contactsSeen(me);
     const found = [...got.filter((e) => e.kind === 3), ...(local ? [local] : [])];
     const expected = !!local || got.some((e) => e.kind === 0);

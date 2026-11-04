@@ -1344,12 +1344,8 @@ addEventListener("keydown", (ev) => {
   }
 });
 
-// The counts under the box: your open notes, and the tabs Marble opened in this browser.
-function counts() {
-  const n = notes.open().length, t = notes.tabs().length;
-  $("#n-notes").textContent = n ? `Notes · ${n}` : "Notes";
-  $("#n-tabs").textContent = t ? `Tabs · ${t}` : "Tabs";
-}
+// Under the box: no counts (marble-2009-spec: nothing to clear); Tabs hidden, its data kept (step 2: no tabs).
+function counts() {}
 notes.onNotes(() => { counts(); if (!drop.hidden || input.value) boxState(); });
 counts();
 
@@ -1379,7 +1375,7 @@ function marbleOfTheDay() {
     try { localStorage.setItem("marble.today", JSON.stringify({ date: today, image: d.image, name: d.name })); } catch {}
   }).catch(() => {});
 }
-marbleOfTheDay();
+// (not called: Marble's mark is one fixed marble now, marble-2009-spec §7; the daily marbles stopped)
 
 /** "just now", "5 minutes ago", "yesterday", "3 weeks ago", "2 months ago", as the app says it. */
 function agoWords(sec) {
@@ -1402,7 +1398,7 @@ const TICK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12
 function showNotes(signal, tab) {
   page("notes", "Notes");
   const root = pageEl;
-  let show = tab === "tabs" || tab === "done" ? tab : "notes";
+  let show = tab === "done" ? tab : "notes"; // (Tabs: hidden, marble-2009-spec step 2; its data and code kept)
   root.innerHTML = `<div class="notes">
     <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes</h1><span class="only-you"></span></div>
     <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
@@ -1444,14 +1440,14 @@ function showNotes(signal, tab) {
     const all = notes.items().filter((i) => hit(i.text, f) || hit(i.quote, f));
     const open = all.filter((i) => !i.done), doneList = all.filter((i) => i.done);
     const tabs = notes.tabs().filter((p) => hit(p.title, f) || hit(p.url, f) || hit(p.from, f));
-    chips.innerHTML = [["notes", `Notes · ${open.length}`], ["tabs", `Tabs · ${tabs.length}`], ["done", "Done"]]
+    chips.innerHTML = [["notes", "Notes"], ["done", "Done"]]
       .map(([k, label]) => `<button type="button" role="tab" aria-selected="${show === k}" data-show="${k}">${label}</button>`).join("");
     const these = show === "done" ? doneList : open;
     const empty = `<p class="empty-line">${f ? `Nothing in Later matches “${esc(f)}”.` : "Nothing yet."}</p>`;
     list.innerHTML = show === "tabs"
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : (these.length ? these.map((i) => noteRow(i, f)).join("") : empty)
-        + (show === "notes" && tabs.length ? `<div class="tabs-under">${tabs.slice(0, 5).map(tabRow).join("")}</div>` : "");
+        ;
     $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
     const strays = notes.strays(), bar = $(".strays", root);

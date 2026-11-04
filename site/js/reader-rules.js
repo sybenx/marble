@@ -1,17 +1,22 @@
 // Reader's shared rules (marble-content-fixtures/reader.md, fixtures/reader/): what a person's post is in Reader, its
 // digest key, whether an item is read, and how two seen lists or two Reader lists merge. The same as Marble Android.
 // No page, no network, so the fixtures can run it as it is.
+import { sha256 } from "./vendor/noble.js";
 
 const MEDIA = /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?\S*)?$/i;
 const URLS = /https?:\/\/[^\s<>"']+/gi;
+// a Blossom picture or video (BUD-10), and a post or article pointed to (a quote): media and a link, as http ones
+const BLOSSOM_MEDIA = /blossom:[0-9a-f]{64}\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)\b/i;
+const QUOTE = /(?:^|[^\w])(?:nostr:)?(nevent|note|naddr)1[02-9ac-hj-np-z]{6,}/i;
 
-/** A person's post in Reader: "item" (an article, or a post with a link or media), "short", or "reply" (not shown). */
+/** A person's post in Reader: "item" (an article, or a post with a link, media or a quote), "short", or "reply" (not shown). */
 export function kindOf(e) {
   if (e.kind === 30023) return "item";
   const tags = e.tags || [];
   if (tags.some((t) => t[0] === "e" && (t[3] === "reply" || t[3] === "root" || t[3] === undefined || t[3] === ""))) return "reply";
-  if (tags.some((t) => t[0] === "imeta")) return "item";
-  return (String(e.content || "").match(URLS) || []).length ? "item" : "short";
+  if (tags.some((t) => t[0] === "imeta" || t[0] === "q")) return "item";
+  const text = String(e.content || "");
+  return (text.match(URLS) || []).length || BLOSSOM_MEDIA.test(text) || QUOTE.test(text) ? "item" : "short";
 }
 export const isMedia = (url) => MEDIA.test(url);
 
@@ -25,11 +30,15 @@ const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, 
 export const feedItemKey = async (link, guid = "") => "r" + hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(link || guid))).slice(0, 16);
 /** A Nostr post's key: its id's first 16 hex. */
 export const postKey = (id) => id.slice(0, 16);
+/** An article's (or any addressable event's) key: "a" + 16 hex of SHA-256 of kind:pubkey:d, so an edit is the same item. */
+export const addressKey = (kind, pubkey, d) => "a" + hex(sha256(new TextEncoder().encode(`${kind}:${pubkey}:${d}`))).slice(0, 16);
+/** An event's key: by its address when it has one (kinds 30000–39999), else by its id. */
+export const eventKey = (e) => e.kind >= 30000 && e.kind < 40000 ? addressKey(e.kind, e.pubkey, e.tags.find((t) => t[0] === "d")?.[1] || "") : postKey(e.id);
 
 const seenKeys = (seen) => new Set(Object.values(seen?.days || {}).flatMap((s) => String(s).split(" ").filter(Boolean)));
 /** Whether an item ({key, source, at}) is read, by the seen list. */
 export function isRead(item, seen, keys = seenKeys(seen)) {
-  if (seen?.unread?.[item.key] != null) return false;
+  if (seen?.unread?.[item.key] > 0) return false; // (kept unread; a negative time: read again after that)
   return keys.has(item.key) || item.at <= (seen?.upto?.[item.source] ?? -1);
 }
 export { seenKeys };
@@ -45,8 +54,9 @@ export function mergeSeen(a, b) {
   }
   const upto = { ...(b?.upto || {}) };
   for (const [k, t] of Object.entries(a?.upto || {})) upto[k] = Math.max(t, upto[k] ?? 0);
+  // a Keep unread mark (t) or its clearing (-t): the later of the two wins
   const unread = { ...(b?.unread || {}) };
-  for (const [k, t] of Object.entries(a?.unread || {})) unread[k] = Math.max(t, unread[k] ?? 0);
+  for (const [k, t] of Object.entries(a?.unread || {})) if (unread[k] == null || Math.abs(t) > Math.abs(unread[k])) unread[k] = t;
   return { ...out, days, upto, unread };
 }
 
@@ -74,4 +84,18 @@ export function discussionOf({ link = "", comments = "", replies = "", guid = ""
   const said = /Comments URL:?\s*(?:<a[^>]+href=["']([^"']+)["']|(https?:\/\/\S+?))(?=["'<\s]|$)/i.exec(description || "");
   const found = http(comments) || http(replies) || [guid, link].map(http).find(isDiscussion) || http(said?.[1] || said?.[2]) || "";
   return found && found !== link ? found : "";
+}
+
+/**
+ * The seen list kept small (NIP-44 holds at most 65,535 bytes): read-up-to times and Keep unread marks older than the
+ * window (30 days) go, nothing that old shows; then while it's over maxBytes, the oldest day of keys goes.
+ */
+export function fitSeen(s, now, { window = 30 * 86400, maxBytes = 48000 } = {}) {
+  const old = now - window;
+  const out = { ...s, days: { ...(s.days || {}) }, upto: Object.fromEntries(Object.entries(s.upto || {}).filter(([, x]) => x > old)),
+    unread: Object.fromEntries(Object.entries(s.unread || {}).filter(([, x]) => Math.abs(x) > old)) };
+  const size = () => new TextEncoder().encode(JSON.stringify(out)).length;
+  const days = Object.keys(out.days).sort((a, b) => a - b);
+  while (size() > maxBytes && days.length > 1) delete out.days[days.shift()];
+  return out;
 }
