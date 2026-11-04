@@ -1392,14 +1392,15 @@ function showNotes(signal, tab) {
   };
   const host = (u) => notes.hostOf(u);
   const noteRow = (i, f) => `<div class="note-row${i.done ? " is-done" : ""}" data-id="${i.id}">
-      <button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>
+      ${i.readOnly ? `<span class="tick read-only" aria-hidden="true">${i.done ? TICK : "<span></span>"}</span>`
+        : `<button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>`}
       <a class="note-main" href="${i.url ? esc(i.url) : "#"}" data-open ${i.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
         <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(i.text, f)}</span>
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
-          <span class="nm">${esc([i.url ? host(i.url) : i.from, i.done ? `done ${agoWords(i.done)}` : agoWords(i.created)].filter(Boolean).join(" · "))}</span></span>
+          <span class="nm">${esc([i.url ? host(i.url) : i.from, i.done ? `done ${agoWords(i.done)}` : agoWords(i.created), i.readOnly && "change it in Marble on your phone"].filter(Boolean).join(" · "))}</span></span>
       </a>
-      <button type="button" class="remove" data-remove aria-label="Remove from Later"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      ${i.readOnly ? "" : `<button type="button" class="remove" data-remove aria-label="Remove from Later"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}
     </div>`;
   const tabRow = (p) => {
     const kept = notes.items().some((i) => i.url === p.url);

@@ -9,6 +9,8 @@
 import { req, relays, publish, FAST } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
+// Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
+import * as packs from "./notes-v3.js";
 
 export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
@@ -43,8 +45,20 @@ export const same = (a, b) => words(a) === words(b);
 const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, "0")).join("");
 const next = (item) => Math.max(now(), (item.updated || 0) + 1);
 
-/** The notes you see (not removed), newest first. */
-export const items = () => doc.items.filter((i) => !i.deleted).sort((a, b) => b.created - a.created);
+/**
+ * The notes you see (not removed), newest first: this browser's, and the ones only in Android's packs (readOnly). A
+ * note the packs have newer shows as the packs have it; one removed there doesn't show.
+ */
+export function items() {
+  const fromPacks = new Map(packs.packNotes().map((n) => [n.id, n]));
+  const mine = doc.items.filter((i) => !packs.removedInPacks(i.id)).map((i) => {
+    const p = fromPacks.get(i.id);
+    fromPacks.delete(i.id);
+    return p && (p.updated > (i.updated || 0) || i.long) ? { ...i, text: p.text, done: p.updated > (i.updated || 0) ? p.done ?? null : i.done, url: p.url ?? i.url, quote: p.quote ?? i.quote } : i;
+  });
+  const only = [...fromPacks.values()].map((n) => ({ id: n.id, text: n.text, created: n.created, updated: n.updated, done: n.done ?? null, deleted: null, url: n.url, quote: n.quote, from: n.from, readOnly: true }));
+  return [...mine, ...only].filter((i) => !i.deleted && String(i.text || "").trim()).sort((a, b) => b.created - a.created);
+}
 export const open = () => items().filter((i) => !i.done);
 export const doneItems = () => items().filter((i) => i.done);
 /** These words, typed and kept, not ticked: what the filled bookmark shows. */
@@ -91,9 +105,11 @@ export function searched(text) {
   write(SEARCHES(who), [{ text: t, at: now() }, ...list.slice(edit ? 1 : 0).filter((x) => words(x.text) !== a)].slice(0, 200));
 }
 
-export const tick = (item, on) => put({ ...item, done: on ? now() : null, updated: next(item) });
+// Changes go to this browser's own copy of the note only (never one only in Android's packs, or the packs' text).
+const own = (item) => doc.items.find((i) => i.id === item.id);
+export const tick = (item, on) => { const i = own(item); if (i) put({ ...i, done: on ? now() : null, updated: next(i) }); };
 /** Removed: only a marker stays (no text), for a month, so other devices learn it. */
-export const remove = (item) => put({ ...item, text: "", deleted: now(), updated: next(item) });
+export const remove = (item) => { const i = own(item); if (i) put({ ...i, text: "", deleted: now(), updated: next(i) }); };
 
 /** The account's copy merged in; true if this browser has something the copy hasn't (so it should be sent). */
 function merge(theirs) {
@@ -148,7 +164,7 @@ export async function pull({ force = false } = {}) {
   const got = (await req((await where()).both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 5000, settle: 1000 }))
     .filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return false; // (signed out or in as someone else meanwhile)
-  if (!got) { if (dirty) setTimeout(send, 0); return false; } // (nothing there yet: yours goes now)
+  if (!got) { if (dirty) setTimeout(send, 0); readPacks(me); return false; } // (nothing there yet: yours goes now)
   let theirs;
   try { theirs = JSON.parse(await nip44Self(got.content, false)); } catch (err) { failed(err); return false; }
   if (me !== who) return false;
@@ -156,7 +172,27 @@ export async function pull({ force = false } = {}) {
   failing = false;
   write(SYNCED(me), true);
   if (ahead || dirty) changed();
+  readPacks(me);
   return true;
+}
+
+// Android's packs, read (never written): one NIP-44 decrypt per pack not taken yet
+function readPacks(me) {
+  where().then(({ both }) => packs.readPacks(me, {
+    req: (urls, filter) => req(urls, filter, { timeout: 6000, settle: 1200 }),
+    relays: both,
+    decrypt: (text) => nip44Self(text, false),
+    fetchBlob,
+  })).catch(() => {});
+}
+async function fetchBlob(sha256, servers) {
+  for (const s of [...servers, "https://blossom.syb.lol"]) {
+    try {
+      const r = await fetch(`${s.replace(/\/+$/, "")}/${sha256}`, { signal: AbortSignal.timeout(15000) });
+      if (r.ok) return new Uint8Array(await r.arrayBuffer());
+    } catch {}
+  }
+  return null;
 }
 
 let sending = false;
@@ -184,6 +220,8 @@ function switchTo(pk) {
   if (pk === who) return;
   const was = who;
   if (was && !pk && read(SYNCED(was), false) && !dirty) for (const k of [KEY(was), DIRTY(was)]) try { localStorage.removeItem(k); } catch {}
+  if (was) packs.forget(was); // (what was read from the packs is only ever a copy: it goes on any switch)
+  if (pk) packs.show(pk);
   who = pk;
   doc = load(pk);
   dirty = read(DIRTY(pk), false);
@@ -211,6 +249,8 @@ if (typeof document !== "undefined") {
     if (document.visibilityState === "visible") pull();
   });
   onMe((pk) => { switchTo(pk); pull(); });
+  packs.onPacks(() => listeners.forEach((fn) => fn()));
+  if (who) packs.show(who);
   // when the page starts (the extension may arrive a moment later): your account's copy in, and yours out if unsent
   setTimeout(async () => {
     for (let i = 0; i < 10 && current() && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150));
