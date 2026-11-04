@@ -10,6 +10,8 @@ import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import * as notes from "./later.js";
+import { showReader } from "./reader.js";
+import { follow, following } from "./follow.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
 import { fillBlossom } from "./blossom.js";
@@ -97,6 +99,7 @@ function route(state, back = false) {
     return r ? showRelay(r, signal) : showMissing("That doesn't look like a relay's address.");
   }
   if (path === "/notes") return showNotes(signal, new URLSearchParams(location.search).get("tab"));
+  if (path === "/reader") return showReader(pageEl, signal, { page });
   if (path === "/about") { page("about", "About"); return; }
   if (path === "/" || path === "/index.html") {
     if (q) {
@@ -718,7 +721,18 @@ async function showProfile(d, signal) {
       ${p.about ? `<div class="about">${content({ content: p.about, tags: [] }, { quotes: false })}</div>` : ""}
       <p class="links">${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer nofollow">${esc(site.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))}</a>` : ""}
       <button type="button" class="link" data-copy="${esc(location.origin + personPath(pk))}">Copy link</button></p>
+      ${currentMe() && currentMe() !== pk ? `<p class="follow-row"><button type="button" class="follow-btn" data-follow aria-pressed="false" hidden>Follow</button><span class="follow-said muted" role="status"></span></p>` : ""}
     </div>`;
+  };
+  // Follow: shown once your follow list says which it is
+  const followButton = async () => {
+    const b = $("[data-follow]", root);
+    if (!b) return;
+    const on = await following(pk).catch(() => null);
+    if (on == null || !b.isConnected) return;
+    b.hidden = false;
+    b.setAttribute("aria-pressed", on);
+    b.textContent = on ? "Following" : "Follow";
   };
   const root = pageEl;
   root.innerHTML = `<div class="person"><div id="person-head">${draw()}</div>
@@ -726,18 +740,31 @@ async function showProfile(d, signal) {
       <input type="search" class="their-search" placeholder="Search their posts" aria-label="Search their posts" autocomplete="off"></div>
     <div class="list" id="posts"><p class="muted loading-text">Loading posts…</p></div></div>`;
   const head = $("#person-head", root);
+  followButton();
+  head.addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-follow]");
+    if (!b || b.disabled) return;
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.disabled = true;
+    $(".follow-said", root).textContent = "";
+    const r = await follow(pk, on);
+    b.disabled = false;
+    if (r.error) $(".follow-said", root).textContent = r.error;
+    followButton();
+  });
   if (!profiles.has(pk)) {
     profile(pk, d.relays).then((p) => {
       if (signal.aborted) return;
       if (!p) return;
       head.innerHTML = draw();
+      followButton();
       page("view", name(pk));
       mark("profile");
     });
   } else mark("profile");
 
   signal.addEventListener("abort", onProfile((who2) => {
-    if (who2 === pk) head.innerHTML = draw();
+    if (who2 === pk) { head.innerHTML = draw(); followButton(); }
   }));
 
   const box = $("#posts", root);

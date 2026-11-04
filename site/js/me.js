@@ -205,6 +205,17 @@ export async function myWriteRelays() {
 }
 
 let follows = null;
+// Your newest follow list as this browser has seen it (so a Follow here never starts from an empty one by mistake)
+const CONTACTS = (pk) => `marble.contacts.${pk}`;
+export function seenContacts(pk, e) {
+  try {
+    const had = JSON.parse(localStorage.getItem(CONTACTS(pk)) || "null");
+    if (!had || e.created_at > had.created_at) localStorage.setItem(CONTACTS(pk), JSON.stringify(e));
+  } catch {}
+}
+export const contactsSeen = (pk) => { try { return JSON.parse(localStorage.getItem(CONTACTS(pk)) || "null"); } catch { return null; } };
+/** After a Follow here: the follows as they are now. */
+export const followsNow = (set) => { follows = Promise.resolve(set); };
 /** The people the signed-in account follows (its newest kind 3), read once a visit. */
 export function myFollows() {
   if (!state) return Promise.resolve(new Set());
@@ -213,7 +224,8 @@ export function myFollows() {
     follows = (async () => {
       const own = await Promise.race([outbox(who).then((o) => o.write), new Promise((r) => setTimeout(() => r([]), 1200))]);
       const got = await req(relays(own, FAST, INDEXERS), [{ kinds: [3], authors: [who] }, { kinds: [0], authors: [who] }], { timeout: 3000, settle: 700, onEvent: keep });
-      const list = got.filter((e) => e.kind === 3).sort((a, b) => b.created_at - a.created_at)[0];
+      const list = got.filter((e) => e.kind === 3 && e.pubkey === who).sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
+      if (list) seenContacts(who, list);
       return new Set((list?.tags || []).filter((t) => t[0] === "p" && isHex64(t[1])).map((t) => t[1]));
     })();
   }
