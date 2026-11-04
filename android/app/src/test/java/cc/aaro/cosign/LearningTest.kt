@@ -7,6 +7,7 @@ import org.junit.Test
 
 /** What Marble learns from you, for Today's news: light, on this phone where it should be, merged where it's synced. */
 class LearningTest {
+    init { LEARNING = true }
     /** SharedPreferences in memory: only what Interests uses. */
     private class Prefs : android.content.SharedPreferences {
         val m = HashMap<String, Any?>()

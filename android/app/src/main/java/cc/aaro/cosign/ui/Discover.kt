@@ -239,7 +239,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // Following's place: kept while you read a story, a post or a thread, and while you're on Search.
     val followingPlace = remember { FollowingPlace() }
     // The panes: Following on the left, Search (home) in the middle, Messages on the right.
-    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 3 }
+    // (Messages, the third pane, is hidden until messages work: marble-2009-spec §6. MessagesPane is kept.)
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 2 }
     // How far the header had folded, kept with the list's place when Android recreates Marble.
     val header = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<TopCollapse, Float>({ it.px }, { TopCollapse().apply { px = it } })) { TopCollapse() }
     // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
@@ -289,7 +290,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         // Your profile and follows on the relays your relay list names (when that list changed, or never had them).
         social.spreadIdentity()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
-        Daily.refresh(context).invokeOnCompletion { social.claimToday() }
+        Daily.refresh(context)
     }
     // And every 30 minutes while it's open: new things come in above what you're reading, never moving it.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -507,7 +508,7 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
         // What needs you (an approval, say), and a passing error, under the panes' bar.
         Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
             NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
-            tomorrow?.let { TomorrowCard(it, social) }
+            // (The Tomorrow card is hidden: no nightly marbles to veto.)
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
         // Your notes, below: swipe up, or tap.
@@ -583,7 +584,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         Box(Modifier.fillMaxWidth().height(56.dp)) {
             Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search", PANE_MESSAGES to "Messages")) {
+                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search")) {
                     val on = pager.currentPage == i
                     val c = if (on) Vault.Text else Vault.Muted
                     // Following, tapped while you're on it: back to the top (a long way down: a jump, then the last bit animated).
@@ -778,7 +779,8 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             // then Today's news, then your people (newest first) with beyond your people at its end. Nothing is reordered.
             val starred = shown.filter { it.reason.startsWith("★") }
             val others = shown.filter { !it.reason.startsWith("★") }
-            val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
+            // (Beyond your people is off: strangers belong in Search, not in your chosen sources.)
+            val outside = emptyList<Pick>()
             // Relays, a tap away (the sections below are as they were).
             item(key = "s:relays") {
                 Text("Relays ›", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, textAlign = androidx.compose.ui.text.style.TextAlign.End,
@@ -1443,7 +1445,7 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         val todays = big.marble == null && Marbles.shift == 0L
         val first = remember { todays && social.kept.keep(day) }
         // Claimed (now or before): its award from the issuer, quietly.
-        LaunchedEffect(Unit) { if (todays) social.claimToday() }
+        // (New collecting stopped, 2026-11-04: nothing is claimed.)
         var removing by remember { mutableStateOf(false) }
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp).graphicsLayer { alpha = shown.value }, horizontalAlignment = Alignment.CenterHorizontally) {
             NameChip(marble.name, big.date ?: java.time.LocalDate.parse(day), flourish = first && !still, count = all.values.count { it.here }.takeIf { it > 0 }, onClick = onShelf, modifier = Modifier)
@@ -1947,7 +1949,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (card == null && !veiled && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
-            PostActions(n, liked, nav, onLike, full, author, onReply, saved, onSave, onShare)
+            PostActions(n, liked, nav, onLike, full, author, onReply, saved, onSave, onShare, reader = pick != null)
         }
     }
 }
@@ -1957,12 +1959,14 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, full: Boolean, author: Person?, onReply: (() -> Unit)? = null,
-                        saved: Boolean = false, onSave: (() -> Unit)? = null, onShare: (() -> Unit)? = null) {
+                        saved: Boolean = false, onSave: (() -> Unit)? = null, onShare: (() -> Unit)? = null, reader: Boolean = false) {
     val context = LocalContext.current
     // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
     Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
         // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
         // Feed 2: no counts in a list (the post itself has them, a tap in).
+        // A row in Following (Reader): no reacting, replying or reposting there; an opened post and Search have them.
+        if (!reader) {
         // (No counts under a post in a list: an opened post has them, under it.)
         Heart(n, liked, nav.social, onLike)
         Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
@@ -1983,6 +1987,7 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
                     Text("Everyone who follows you sees it", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 } }, { asking = false; nav.social.repost(n) })
             }
+        }
         }
         // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
         // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.

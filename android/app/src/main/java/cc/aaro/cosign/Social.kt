@@ -719,7 +719,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600 && !snoozedNow(e.pubkey)
         }
         val starred = sp.await()
-        scope.launch { beyond.value = try { beyondPosts(now) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; beyond.value } }
+        // (Beyond your people is off, marble-2009-spec §8: beyondPosts is kept, not asked.)
         posts.map { e -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (e.pubkey in starred) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
@@ -1556,7 +1556,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // The user asked to try Feed 3 (27 Oct): this build starts in it, once; the switch takes it back in one tap.
     val feedVersion = MutableStateFlow(prefs.let { p ->
         if (!p.getBoolean("feed3Tried", false)) p.edit().putInt("feedVersion", 3).putBoolean("feed3Tried", true).apply()
-        p.getInt("feedVersion", 2)
+        // Feed 1 and 2 move to Feed 3 once (marble-2009-spec §8); the old choice is kept, and Advanced can go back this release.
+        if (!p.getBoolean("feed3For2009", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 3)).putInt("feedVersion", 3).putBoolean("feed3For2009", true).apply()
+        p.getInt("feedVersion", 3)
     }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {
         if (v == feedVersion.value) return

@@ -223,7 +223,11 @@ object TopicGuess {
  * A copy goes to your own account encrypted to yourself, so your other phones have it too; no
  * server reads or ranks it. [changed]: it changed here (time to save that copy).
  */
+/** Off (marble-2009-spec §8): sources are picked, so nothing needs learning. What was learned stays, inert. (Tests of the kept code turn it on.) */
+@Volatile internal var LEARNING = false
+
 class Interests(private val prefs: android.content.SharedPreferences, private val changed: () -> Unit = {}) {
+
     private val weights = HashMap<String, Double>()
     val followed: MutableSet<String> = LinkedHashSet()
     private val lessTopic = HashMap<String, Int>()
@@ -236,13 +240,13 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
 
     init { prefs.getString("interests", null)?.let { try { read(org.json.JSONObject(it)) } catch (_: Exception) {} } }
 
-    @Synchronized fun learn(topics: List<String>, by: Double) {
+    @Synchronized fun learn(topics: List<String>, by: Double) { if (!LEARNING) return
         if (topics.isEmpty()) return
         topics.take(2).forEachIndexed { i, t -> weights[t] = ((weights[t] ?: 0.0) + by / (i + 1)).coerceAtLeast(0.0) }
         save()
     }
     /** Learned in one go, from what you liked before up to [likesTo] (seconds): the 90 days at first, then what's new since. */
-    @Synchronized fun seed(votes: Map<String, Double>, likesTo: Long? = null) {
+    @Synchronized fun seed(votes: Map<String, Double>, likesTo: Long? = null) { if (!LEARNING) return
         votes.forEach { (t, v) -> weights[t] = (weights[t] ?: 0.0) + v }
         likesTo?.let { extra.put("likesTo", it) }
         prefs.edit().putBoolean("interestsSeeded", true).apply(); save()
@@ -253,7 +257,7 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
      */
     val likesTo: Long? @Synchronized get() = extra.optLong("likesTo", 0).takeIf { it > 0 }
     /** A like made here, learned at once: counted, as far as the next catch-up is concerned, if likes were caught up to now. */
-    @Synchronized fun liked(topics: List<String>, caughtUp: Boolean) {
+    @Synchronized fun liked(topics: List<String>, caughtUp: Boolean) { if (!LEARNING) return
         if (caughtUp) extra.put("likesTo", System.currentTimeMillis() / 1000)
         learn(topics, 1.0)
     }
@@ -264,7 +268,7 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     private val entities = HashMap<String, Double>().apply {
         prefs.getString("entities", null)?.let { try { val o = org.json.JSONObject(it); o.keys().forEach { k -> put(k, o.optDouble(k)) } } catch (_: Exception) {} }
     }
-    @Synchronized fun noticed(text: String, by: Double = 1.0) {
+    @Synchronized fun noticed(text: String, by: Double = 1.0) { if (!LEARNING) return
         val words = Entities.of(text)
         if (words.isEmpty()) return
         entities.replaceAll { _, v -> v * 0.98 }

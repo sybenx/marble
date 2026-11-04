@@ -47,6 +47,8 @@ object FeedLog {
         val p = prefs(c)
         files = LogFiles(File(c.filesDir, "feedlog"))
         app = try { c.packageManager.getPackageInfo(c.packageName, 0).versionName ?: "" } catch (_: Exception) { "" }
+        // Off once (marble-2009-spec, question 22): with no ranked feed it has nothing to teach. The switch stays in Advanced.
+        if (!p.getBoolean("off2009", false)) p.edit().putBoolean("on", false).putBoolean("off2009", true).apply()
         on.value = p.getBoolean("on", false)
         unlocked.value = p.getBoolean("unlocked", false) || on.value
         io.execute { bytes.value = files?.bytes() ?: 0 }
