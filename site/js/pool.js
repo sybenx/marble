@@ -52,13 +52,14 @@ export function relays(...lists) {
   const out = [];
   for (const list of lists) for (const r of list || []) {
     const n = normalize(r);
-    if (n && !out.includes(n) && !down.has(n)) out.push(n);
+    if (n && !out.includes(n) && !isDown(n)) out.push(n);
   }
   return out;
 }
 
 const sockets = new Map(); // url → Relay
-const down = new Set(); // relays that failed to connect this visit
+const down = new Map(); // relays that failed to connect lately → when (left out for a minute, then tried again)
+const isDown = (u) => { const t = down.get(u); if (t && Date.now() - t > 60000) down.delete(u); return down.has(u); };
 // A phone drops a background page's connections, and whatever it tries meanwhile fails: back on screen (or back
 // online), every relay gets another chance.
 if (typeof document !== "undefined") {
@@ -99,7 +100,7 @@ class Relay {
     if (this.dead) return;
     this.dead = true;
     clearTimeout(this.timer);
-    if (!this.open) down.add(this.url);
+    if (!this.open) down.set(this.url, Date.now());
     if (sockets.get(this.url) === this) sockets.delete(this.url);
     try { this.ws?.close(); } catch {}
     for (const sub of this.subs.values()) sub.done(this.url, false);

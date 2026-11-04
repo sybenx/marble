@@ -36,5 +36,24 @@ export function decide({ complete, full = false, found = 0, seenAt = 0, misses =
   return { do: "wait", misses: misses + 1 };
 }
 
+/**
+ * Your write relays from your relay list's tags (kind 10002): every r tag not marked "read", ws:// or wss://, once each,
+ * none dropped (an .onion or a relay on your own network counts too: a browser just never hears from it). Written as a
+ * relay pool writes them: scheme and host in lower case, no trailing slash.
+ */
+export function writeList(tags) {
+  const out = [];
+  for (const t of tags || []) {
+    if (t[0] !== "r" || t[2] === "read" || !/^wss?:\/\//i.test(t[1] || "")) continue;
+    let u;
+    try { const p = new URL(t[1].trim()); u = `${p.protocol}//${p.host.toLowerCase()}${p.pathname.replace(/\/+$/, "")}`; } catch { continue; }
+    if (!out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
+/** Misses as stored ({n, at}: counted against the copy seen at `at`), for the copy seen now: a newer copy seen starts again. */
+export const missesAgainst = (stored, seenAt) => (stored && typeof stored === "object" ? (stored.at === seenAt ? stored.n : 0) : 0);
+
 /** The wait before trying a write again after the n-th failure in a row (1, 2, …): a minute, doubling, at most ten. */
 export const retryAfter = (n) => Math.min(60 * 2 ** Math.max(0, n - 1), 600);

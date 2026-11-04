@@ -13,6 +13,7 @@ import * as notes from "./later.js";
 import { showReader } from "./reader.js";
 import { follow, following } from "./follow.js";
 import { focusList, goTo } from "./home-rules.js";
+import { silenceLine } from "./account-relays.js";
 import { handleOf, keyOf, lookUp } from "./handles.js";
 import { relayOf, relayInfo, relayAnswered, relayPath } from "./relay.js";
 import { fillBlossom } from "./blossom.js";
@@ -1679,6 +1680,7 @@ function drawAccount() {
         <a href="${personPath(me)}" class="who-row-me" role="menuitem">${avatar(me, 32)}<span><b data-name="${me}">${esc(name(me))}</b><small>Your profile</small></span></a>
         <a href="/notes" role="menuitem">Notes and searches</a>
         <a href="/about" role="menuitem">About Marble</a>
+        <p class="sheet-note" role="note" hidden></p>
         <button type="button" data-sign-out role="menuitem">Sign out</button></div>`;
     document.body.dataset.signed = "1";
   } else { account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`; delete document.body.dataset.signed; }
@@ -1689,7 +1691,12 @@ account.addEventListener("click", async (ev) => {
   else if (ev.target.closest(".me")) {
     menu.hidden = !menu.hidden;
     $(".me", account).setAttribute("aria-expanded", !menu.hidden);
-    if (!menu.hidden) menu.querySelector("a, button")?.focus(); // (a menu: focus goes in, arrows move, Esc closes)
+    if (!menu.hidden) {
+      // a quiet line when your write relays haven't been answering (why sync waits; the rule doesn't change)
+      const line = silenceLine(currentMe()), p = menu.querySelector(".sheet-note");
+      if (p) { p.textContent = line; p.hidden = !line; }
+      menu.querySelector("a, button")?.focus(); // (a menu: focus goes in, arrows move, Esc closes)
+    }
   } else if (ev.target.closest("[data-sign-out]")) signOut();
 
   else if (ev.target.closest("a") && menu) menu.hidden = true;

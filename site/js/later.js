@@ -11,8 +11,8 @@ import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
 import * as packs from "./notes-v3.js";
-import { decide, completeRead, fullRead, written, retryAfter } from "./sync-guard.js";
-import { accountRelays } from "./account-relays.js";
+import { decide, completeRead, fullRead, written, retryAfter, missesAgainst } from "./sync-guard.js";
+import { accountRelays, heard } from "./account-relays.js";
 
 export const TAG = "marble/later";
 // this browser's copies, by account ("" while nobody's signed in)
@@ -208,21 +208,27 @@ async function where() {
  * sent now (sync-guard.js: a read that missed one of your write relays, or one without the newest copy this browser has
  * seen, until three complete reads in a row have missed it; or a copy that won't decrypt), else true or false.
  */
-let pulling = null;
+let pulling = null, pullingFor = null, pullRetry = null, pullFails = 0;
 export function pull({ force = false } = {}) {
   // (a copy that won't decrypt isn't asked about again, not even on coming back to the tab, until you change something)
   if (!syncs() || stopped || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(stopped ? null : false);
   // (one read at a time: two asks at once would be two decrypt prompts)
-  return pulling ||= pullNow().finally(() => { pulling = null; });
+  if (pulling && pullingFor === current()) return pulling;
+  pullingFor = current();
+  const p = pullNow().finally(() => { if (pulling === p) pulling = null; });
+  return (pulling = p);
 }
+function retryPull() { clearTimeout(pullRetry); pullRetry = setTimeout(() => { pullRetry = null; pull({ force: true }); }, retryAfter(++pullFails) * 1000); }
 async function pullNow() {
   lastPull = Date.now();
   const me = current(), w = await where();
-  if (!w) { failing = true; listeners.forEach((fn) => fn()); return null; } // (your relay list isn't known yet)
+  if (!w) { failing = true; listeners.forEach((fn) => fn()); retryPull(); return null; } // (your relay list isn't known yet)
   const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": [TAG], limit: 4 }, { timeout: 6000 });
+  heard(me, w.write, answer.answeredBy);
   const got = answer.filter((e) => e.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
   if (me !== who) return null; // (signed out or in as someone else meanwhile)
-  if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); return null; } // (couldn't ask: not "nothing there")
+  if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); retryPull(); return null; } // (couldn't ask: not "nothing there")
+  pullFails = 0;
   readPacks(me); // (Android's packs, read only: whatever the old list says, even "moved")
   found = got?.created_at || 0;
   let theirs = null;
@@ -235,8 +241,9 @@ async function pullNow() {
     stopped = false;
     if (got.created_at > read(COPY_AT(me), 0)) write(COPY_AT(me), got.created_at);
   }
-  const g = decide({ complete: completeRead(w.write, answer.answeredBy), full: fullRead(w.write, answer.answeredBy), found, seenAt: read(COPY_AT(me), 0), misses: read(MISSED(me), 0) });
-  write(MISSED(me), g.misses);
+  const seenAt = read(COPY_AT(me), 0);
+  const g = decide({ complete: completeRead(w.write, answer.answeredBy), full: fullRead(w.write, answer.answeredBy), found, seenAt, misses: missesAgainst(read(MISSED(me), null), seenAt) });
+  write(MISSED(me), { n: g.misses, at: seenAt });
   if (g.do === "rebase") write(COPY_AT(me), found); // (your relays have what they have: from here on, that's the copy)
   const ahead = theirs ? merge(theirs) : false;
   if (theirs) write(SYNCED(me), true);
@@ -296,6 +303,7 @@ export async function send() {
       listeners.forEach((fn) => fn());
     } else throw new Error("not sent");
   } catch (err) {
+    if (me !== who) return; // (finished after a switch: nothing to say about the account now here)
     failed(err);
     // tried again, waiting longer each time (a minute, doubling, up to ten)
     if (me === who && !stopped) { clearTimeout(sendTimer); sendTimer = setTimeout(send, retryAfter(++failures) * 1000); }

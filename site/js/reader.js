@@ -13,8 +13,8 @@ import { current, method, myFollows, nip44Self, sign, myWriteRelays, onMe } from
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
 import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo, CLEARED_FOR } from "./reader-rules.js";
-import { decide, completeRead, fullRead, written, retryAfter } from "./sync-guard.js";
-import { accountRelays } from "./account-relays.js";
+import { decide, completeRead, fullRead, written, retryAfter, missesAgainst } from "./sync-guard.js";
+import { accountRelays, heard } from "./account-relays.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -56,7 +56,7 @@ function markRead(key, opened = false) {
   if (keys.has(key) && !(u > 0) && !opened) return;
   if (u > 0 || opened) seen.unread[key] = -now(); // (an open always writes a fresh clearing)
   const d = String(Math.floor(now() / DAY));
-  seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
+  if (!` ${seen.days[d] || ""} `.includes(` ${key} `)) seen.days[d] = [seen.days[d], key].filter(Boolean).join(" ");
   saveSeen();
 }
 function keepUnread(key) { seen.unread[key] = now(); saveSeen(); }
@@ -87,7 +87,7 @@ function ensureFolder(id, label) {
 const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
 const EXPIRES = { list: 0, seen: 14 * DAY };
 const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
-let broken = new Set(), timer = null, failures = 0, unreached = 0;
+let broken = new Set(), timer = null, failures = 0, unreached = 0, pullTimer = null, pullFails = 0;
 /** Why your account's copy isn't being written, said quietly in Reader (or ""): your relays can't be reached or read. */
 export const syncTrouble = () => unreached >= 3 ? "Your relays aren't answering, so what you read here is kept in this browser for now." : broken.size ? "Your Reader copy on the account is in a format this page can't change, so changes stay here." : "";
 const dirty = new Set(), version = { list: 0, seen: 0 }; // (a change made while a copy is being sent is sent next)
@@ -109,6 +109,7 @@ async function fetchMine(ds) {
   const me = current(), w = await where();
   if (!w) return { copies: {}, answered: 0, complete: false, full: false, write: [] };
   const answer = await req(w.both, { kinds: [30078], authors: [me], "#d": ds, limit: 12 }, { timeout: 6000 });
+  heard(me, w.write, answer.answeredBy);
   const got = answer.filter((e) => e.pubkey === me), out = {};
   for (const d of ds) {
     const e = got.filter((x) => x.tags.some((t) => t[0] === "d" && t[1] === d)).sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
@@ -126,7 +127,9 @@ export async function pullAccount() {
   if (!syncs()) return;
   const me = current();
   const r = await fetchMine([D.list, D.seen, OLD_FEEDS]);
-  if (!r.answered || current() !== me) return;
+  if (current() !== me) return;
+  if (!r.answered) { clearTimeout(pullTimer); pullTimer = setTimeout(() => { pullTimer = null; pullAccount(); }, retryAfter(++pullFails) * 1000); return; }
+  pullFails = 0;
   load();
   const list = r.copies[D.list], old = r.copies[OLD_FEEDS], sn = r.copies[D.seen];
   broken = new Set([list && !list.body && "list", sn && !sn.body && "seen"].filter(Boolean));
@@ -172,9 +175,9 @@ export async function pushAccount() {
       const there = r.copies[D[k]], v = version[k];
       if (there && !there.body) { broken.add(k); dirty.delete(k); continue; } // (never over a copy that didn't decrypt)
       if (there && there.body.v !== 1) { broken.add(k); dirty.delete(k); continue; } // (nor over a newer format this doesn't know)
-      const missed = read(MISSED(me), {});
-      const g = decide({ complete: r.complete, full: r.full, found: there?.event.created_at || 0, seenAt: copiesSeen()[D[k]] || 0, misses: missed[k] || 0, expires: EXPIRES[k], now: now() });
-      write(MISSED(me), { ...missed, [k]: g.misses });
+      const missed = read(MISSED(me), {}), seenAt = copiesSeen()[D[k]] || 0;
+      const g = decide({ complete: r.complete, full: r.full, found: there?.event.created_at || 0, seenAt, misses: missesAgainst(missed[k], seenAt), expires: EXPIRES[k], now: now() });
+      write(MISSED(me), { ...missed, [k]: { n: g.misses, at: seenAt } });
       unreached = r.complete ? 0 : unreached + 1;
       if (g.do === "wait") { retry = true; onRead.forEach((fn) => fn()); continue; }
       if (g.do === "rebase") write(STATE(me), { ...copiesSeen(), [D[k]]: there?.event.created_at || 0 }); // (your relays have what they have)
@@ -417,7 +420,8 @@ function shown(items) {
   for (const [src, list] of bySource) {
     // a day's posts count by their oldest unread post; the source's standing Keep unread marks cap it too
     const at = (i) => i.kind === "digest" && !i.read ? Math.min(...i.posts.filter((p) => !isRead({ key: eventKey(p), source: i.source, at: p.created_at, folder: i.folder }, seen, keys)).map((p) => p.created_at), i.at) : i.at;
-    const marks = list.flatMap((i) => [i.key, ...(i.keys || [])]).map((k) => seen.unread[k]).filter((x) => x > 0);
+    // (a mark doesn't say whose it is: every standing one caps it, loaded or not, so none is ever passed)
+    const marks = Object.values(seen.unread).filter((x) => x > 0);
     const upto = readUpTo(list.map((i) => ({ at: at(i), read: i.read, aged: t - i.at >= ageOf(i) })), marks);
     if (upto > (seen.upto[src] || 0)) { seen.upto[src] = upto; raised = true; }
   }
@@ -656,7 +660,7 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
       items.set(f, once(got));
     } catch { items.set(f, items.get(f) || []); }
     busy.delete(f);
-    if (gone()) return;
+    if (gone()) return; // (a refill asked for meanwhile stays in `again`: Back brings this page back, and runs it)
     drawFolders();
     if (f === folder) refresh();
     if (again.delete(f)) fill(f, { quiet: true });
@@ -790,7 +794,12 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
 
   // (the document's listeners are added once, for whichever Reader is on screen: this one, also after Back)
   // brought back by Back (app.js route): this one is on screen again: its keys, and what came in while away
-  root.addEventListener("marble:restored", () => { active = me_; drawFolders(); if (!root.querySelector(".r-row")) drawRiver(); else refresh(); });
+  root.addEventListener("marble:restored", () => {
+    active = me_;
+    if (!onRead.has(redraw)) onRead.add(redraw);
+    for (const f of [...again]) { again.delete(f); fill(f, { quiet: true }); }
+    drawFolders(); if (!root.querySelector(".r-row")) drawRiver(); else refresh();
+  });
   const me_ = active = { root, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-src-more, [data-openin]")) closeMenu(); }, key: (ev) => {
     if (ev.key === "Escape") return closeMenu();
     if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest?.("input, textarea, [contenteditable]") || document.querySelector("dialog[open]")) return;
@@ -848,7 +857,8 @@ export function showReader(root, signal, { page, card, fillLater, openTarget }) 
   drawFolders();
   drawRiver();
   fill(folder);
-  const redraw = () => { if (gone()) return onRead.delete(redraw); if (root.isConnected) { drawFolders(); refresh(); } };
+  // (while this page is away it waits; Back brings it back, marble:restored above)
+  function redraw() { if (root.isConnected) { drawFolders(); refresh(); } }
   onRead.add(redraw);
   signal.addEventListener("abort", () => pushAccount());
   // your account's list in: its sources fetched in the background (what's on screen stays; new items wait behind
