@@ -125,7 +125,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
             val newest = there.maxByOrNull { it.createdAt }
             val v = newest?.let { n -> n.content?.let { c -> try { JSONObject(c).optInt("v", 1) } catch (_: Exception) { 0 } } ?: 0 }
             // A later version there (or "moved"): left as it is, and nothing waits to go (it isn't ours to write over).
-            if (newest != null && newest.content != null && v != 1) { v1Last = v1; store.put(V1, v1) }
+            // (One that didn't decrypt here is left too, and not waited on: it's tried again at the next change.)
+            if (newest != null && (newest.content == null || v != 1)) { v1Last = v1; store.put(V1, v1) }
             else if ((newest == null || v == 1) && net.write(OLD, null, maxOf(now(), (newest?.createdAt ?: 0) + 1), v1Event(v1))) { v1Last = v1; store.put(V1, v1) }
         }
         save()
@@ -278,7 +279,12 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
         if (k.keys.isEmpty()) { if (!create || got.isNotEmpty()) return null; k = Keys.fresh(now()) }
         if (k.keys.toSet() != there.keys.toSet() && parsed.none { it == null }) {
             // Not taken by most of your write relays: not used (packs under a key no other device has would be lost to them).
-            if (!net.write(Keys.D, null, maxOf(now(), (got.maxOfOrNull { it.createdAt } ?: 0) + 1), k.toJson())) return keys
+            if (!net.write(Keys.D, null, maxOf(now(), (got.maxOfOrNull { it.createdAt } ?: 0) + 1), k.toJson())) {
+                // What's there, and what this device already had: never the new key that wasn't taken.
+                val known = (keys ?: Keys(emptyList())).union(there).takeIf { it.keys.isNotEmpty() } ?: return null
+                if (known != keys) { keys = known; store.put(KEYS, known.toJson()) }
+                return known
+            }
             // Read back: another device may have written its own key at the same moment.
             net.read("d", listOf(Keys.D))?.mapNotNull { Keys.parse(it.content) }?.forEach { k = k.union(it) }
         }

@@ -200,6 +200,8 @@ class Vault(val layout: Layout) {
      * never written over, since that would lose what's in it. Until a readable copy comes back, changes there wait.
      */
     val unreadable = HashSet<String>()
+    /** Each note as last sent (a hash of it), kept with the state: a note held that differs is sent again after a restart. */
+    val sent = HashMap<String, Int>()
     /** The newest checkpoint taken. */
     var checkpoint: Checkpoint? = null
 
@@ -336,15 +338,21 @@ object Cycle {
                 val before = read(v.layout.d(prefix)) ?: return stop(prefix)
                 val applied = v.apply(before, device)
                 if (applied.halted) return stop(prefix)
-                var packs = v.packsFor(prefix)
-                // Split: each new pack is read (and merged) first, as the parent was, so none is written over unread.
+                // Every pack about to be written is read (and merged) first, as the parent was. A part read back as
+                // itself split (another device went deeper) is drawn again, and its parts read, until none is unread.
                 val heard = HashMap<String, List<Vault.Incoming>>().apply { put(v.layout.d(prefix), before) }
-                for (p in packs) { val d = v.layout.d(p.prefix); if (d in heard) continue
-                    val got = read(d) ?: return stop(prefix)
-                    if (v.apply(got, device).halted) return stop(prefix)
-                    heard[d] = got }
-                // (What those reads merged in goes in: each new pack drawn again, the retired parent as it is.)
-                if (heard.size > 1) packs = packs.flatMap { if (it.retired || it.prefix == prefix) listOf(it) else v.packsFor(it.prefix) }
+                var packs = v.packsFor(prefix)
+                while (true) {
+                    val unread = packs.filter { v.layout.d(it.prefix) !in heard }
+                    if (unread.isEmpty()) break
+                    for (p in unread) {
+                        val d = v.layout.d(p.prefix)
+                        val got = read(d) ?: return stop(prefix)
+                        if (v.apply(got, device).halted) return stop(prefix)
+                        heard[d] = got
+                    }
+                    packs = v.packsFor(prefix)
+                }
                 // A pack this device couldn't read stays as it is: the change waits for a readable copy.
                 if (packs.any { v.layout.d(it.prefix) in v.unreadable }) { v.dirty += prefix; break }
                 var clean = true
@@ -357,6 +365,7 @@ object Cycle {
                     if (!write(d, at, content)) { took = false; break }
                     written++
                     v.seen[d] = at
+                    p.items.forEach { v.sent[it.id] = it.fingerprint() }
                     // Read back: the newest copy should be ours.
                     val back = read(d)?.maxByOrNull { it.createdAt }
                     if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
@@ -409,10 +418,14 @@ fun Vault.adopt(other: Vault) {
 }
 
 /** What this device keeps between runs (its notes are Later's items; this is the rest). */
+/** What a note says that a change would touch (words, done, its url and when), stable across Later's round trip. */
+fun Note.fingerprint(): Int = listOf(text, updated, done, url, quote).joinToString("\u0000").hashCode()
+
 fun Vault.state(): String = JSONObject()
     .put("markers", JSONArray(markers.values.map { it.toJson() }))
     .put("retired", JSONArray(retired.toList())).put("dirty", JSONArray(dirty.toList()))
     .put("seen", JSONObject().apply { seen.forEach { (k, v) -> put(k, v) } })
+    .put("sent", JSONObject().apply { sent.forEach { (k, v) -> put(k, v) } })
     .put("checkpoint", checkpoint?.toJson()).toString()
 
 fun Vault.restore(json: String?, held: List<Note>) {
@@ -423,4 +436,8 @@ fun Vault.restore(json: String?, held: List<Note>) {
     o.optJSONArray("dirty")?.let { a -> (0 until a.length()).forEach { dirty += a.optString(it) } }
     o.optJSONObject("seen")?.let { s -> s.keys().forEach { seen[it] = s.optLong(it) } }
     o.optString("checkpoint").takeIf { it.isNotEmpty() && it != "null" }?.let(Checkpoint::parse)?.let { checkpoint = it }
+    // A change taken in but never sent (the app stopped before its state was saved): to send. (A state from before this
+    // was kept has no record: nothing is assumed.)
+    o.optJSONObject("sent")?.let { s -> s.keys().forEach { sent[it] = s.optInt(it) }
+        for (n in held) if (n.id !in markers && sent[n.id] != n.fingerprint()) dirty += layout.owner(n.id, retired) }
 }
