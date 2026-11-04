@@ -29,14 +29,15 @@ export function newestOf(found, { me, kind, d = "" }) {
 
 /**
  * What changing one entry writes: {write: unsigned event} | {nothing: why} | {refuse: why}.
- * change is {add: tag} or {remove: tag}; expected says a list should exist (this device saw one, or the account shows one).
+ * change is {add: tag} or {remove: tag}; expected says a list should exist (this device saw one, or the account shows one);
+ * title names a new set (its title tag, after d).
  */
-export function listWrite(found, { me, kind, d = "", change, expected, now = Math.floor(Date.now() / 1000) }) {
+export function listWrite(found, { me, kind, d = "", change, expected, title, now = Math.floor(Date.now() / 1000) }) {
   const old = newestOf(found, { me, kind, d });
   const tag = change.add || change.remove, k = entryOf(tag);
   if (!k) return { refuse: "not an entry" };
   if (!old && expected) return { refuse: "no list found" };
-  const tags = old?.tags ?? (addressable(kind) ? [["d", d]] : []);
+  const tags = old?.tags ?? (addressable(kind) ? [["d", d], ...(title ? [["title", title]] : [])] : []);
   const has = tags.some((t) => entryOf(t) === k);
   if (change.add ? has : !has) return { nothing: change.add ? "already in it" : "not in it" };
   const next = change.add ? [...tags, tag] : tags.filter((t) => entryOf(t) !== k);
