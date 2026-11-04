@@ -12,7 +12,7 @@ import { decode } from "./ids.js";
 import { current, method, myFollows, nip44Self, sign } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, postKey, isRead, seenKeys, mergeReader, mergeSeen } from "./reader-rules.js";
+import { kindOf, isMedia, digestKey, feedItemKey, postKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf } from "./reader-rules.js";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
@@ -178,7 +178,9 @@ async function feedOf(url) {
   feedCache.set(url, { at: Date.now(), value });
   return value;
 }
-const textOf = (html) => new DOMParser().parseFromString(`<body>${html || ""}`, "text/html").body.textContent.replace(/\s+/g, " ").trim();
+// (hnrss repeats its links and points in the description: not a summary)
+const clean = (text) => String(text || "").replace(/(Article|Comments) URL:\s*\S+|Points:\s*\d+|# Comments:\s*\d+/gi, "").replace(/\s+/g, " ").trim();
+const textOf = (html) => new DOMParser().parseFromString(`<body>${String(html || "").replace(/<\/?(p|br|div|li|h\d)\b[^>]*>/gi, " ")}`, "text/html").body.textContent.replace(/\s+/g, " ").trim();
 /** RSS 2.0, RSS 1.0 or Atom: {title, items: [{title, link, guid, at, summary, image}]}. */
 export function parseFeed(xml, base) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -194,7 +196,11 @@ export function parseFeed(xml, base) {
       .find((m) => m.getAttribute("url") && (/^image\//.test(m.getAttribute("type") || m.getAttribute("medium") || "") || isMedia(m.getAttribute("url"))))?.getAttribute("url")
       || /<img[^>]+src=["']([^"']+)/i.exec(body)?.[1] || "";
     const when = Date.parse(one(el, "pubDate", "published", "updated", "dc:date"));
-    return { title: textOf(one(el, "title")), link: abs(link), guid: one(el, "guid", "id"), at: Number.isFinite(when) ? Math.floor(when / 1000) : now(), summary: textOf(body).slice(0, 240), image: abs(media) };
+    const replies = atom ? [...el.getElementsByTagName("link")].find((l) => l.getAttribute("rel") === "replies")?.getAttribute("href") || "" : "";
+    const guid = one(el, "guid", "id");
+    const discussion = discussionOf({ link: abs(link), comments: abs(one(el, "comments")), replies: abs(replies), guid, description: body });
+    const summary = clean(textOf(body));
+    return { title: textOf(one(el, "title")), link: abs(link), guid, at: Number.isFinite(when) ? Math.floor(when / 1000) : now(), summary: summary.slice(0, 240), image: abs(media), discussion };
   }).filter((i) => i.title || i.summary);
   return { title: textOf(one(doc, "title")), items };
 }
@@ -204,13 +210,13 @@ async function newsItems(sources) {
   const stories = await loadStories().catch(() => []);
   for (const s of stories) {
     const src = `marble:${s.source?.id || "news"}`;
-    if (!muted(src) && s.published_at > now() - 2 * DAY) out.push({ key: await feedItemKey(s.url), source: src, sourceName: s.source?.name || hostOf(s.url), kind: "news", at: s.published_at, title: s.title, summary: s.summary, link: s.url, image: s.image });
+    if (!muted(src) && s.published_at > now() - 2 * DAY) out.push({ key: await feedItemKey(s.url), source: src, sourceName: s.source?.name || hostOf(s.url), kind: "news", at: s.published_at, title: s.title, summary: clean(s.summary), link: s.url, image: s.image, discussion: discussionOf({ link: s.url, comments: s.discussion || s.discussions?.[0]?.url || "" }) });
   }
   for (const src of sources.filter((x) => x.type === "feed")) {
     const f = await feedOf(src.value);
     for (const i of f?.items || []) {
       if (i.at < now() - 30 * DAY) continue;
-      out.push({ key: await feedItemKey(i.link, i.guid), source: src.id, sourceName: src.name || f.title || hostOf(src.value), kind: "news", at: i.at, title: i.title, summary: i.summary, link: i.link, image: i.image });
+      out.push({ key: await feedItemKey(i.link, i.guid), source: src.id, sourceName: src.name || f.title || hostOf(src.value), kind: "news", at: i.at, title: i.title, summary: i.summary, link: i.link, image: i.image, discussion: i.discussion });
     }
   }
   return out;
@@ -294,6 +300,7 @@ let shownKeys = new Set();
 const ICON = {
   star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>',
   out: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  talk: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a7 7 0 0 1-10.4 6.1L5 19.5l1.4-4.3A7 7 0 1 1 20 12z"/></svg>',
   more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
 };
@@ -344,6 +351,7 @@ export function showReader(root, signal, { page }) {
       <div class="r-acts">
         <button type="button" class="ic r-star${starred(i) ? " on" : ""}" aria-label="${starred(i) ? "Starred" : "Star"}" aria-pressed="${starred(i)}" data-star>${ICON.star}</button>
         <a class="ic" href="${esc(open)}"${ext} aria-label="Open in…" data-read>${ICON.out}</a>
+        ${i.discussion ? `<a class="ic" href="${esc(i.discussion)}" target="_blank" rel="noopener noreferrer" aria-label="Discussion" data-read>${ICON.talk}</a>` : ""}
         <button type="button" class="ic r-row-more" aria-label="More" data-menu>${ICON.more}</button>
       </div>
       ${i.kind === "digest" ? `<div class="r-posts" hidden>${i.posts.map((p) => `<a class="r-post" href="${esc(postPath(p))}">${avatar(p.pubkey, 24)}<span>${esc(p.content.slice(0, 280))}</span><time>${esc(ago(p.created_at))}</time></a>`).join("")}</div>` : ""}

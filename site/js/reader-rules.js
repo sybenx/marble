@@ -61,3 +61,17 @@ export function mergeReader(a, b) {
   return { ...b, ...a, v: 1, sources: by("id", a?.sources, b?.sources), folders: by("id", a?.folders, b?.folders),
     people: people || { on: true, at: 0 }, muted: by("source", a?.muted, b?.muted) };
 }
+
+// A discussion page: Hacker News, Lobsters, Reddit
+const DISCUSSION = /^https?:\/\/(news\.ycombinator\.com\/item\?id=\d+|(www\.)?lobste\.rs\/s\/\w+|(www\.|old\.)?reddit\.com\/r\/[^/]+\/comments\/\w+)/i;
+export const isDiscussion = (url) => DISCUSSION.test(url || "");
+/**
+ * Where a feed item's discussion is, or "" (none, or it's the item's own link): RSS 2.0 <comments>, Atom
+ * <link rel="replies">, the guid or link when it's a discussion page, or a "Comments URL" in the description (hnrss).
+ */
+export function discussionOf({ link = "", comments = "", replies = "", guid = "", description = "" }) {
+  const http = (u) => (/^https?:\/\//i.test(u || "") ? u.trim() : "");
+  const said = /Comments URL:?\s*(?:<a[^>]+href=["']([^"']+)["']|(https?:\/\/\S+?))(?=["'<\s]|$)/i.exec(description || "");
+  const found = http(comments) || http(replies) || [guid, link].map(http).find(isDiscussion) || http(said?.[1] || said?.[2]) || "";
+  return found && found !== link ? found : "";
+}
