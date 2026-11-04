@@ -135,9 +135,12 @@ object Fetch {
     }
 
     /** Send [event] to [relays]; how many took it. */
-    suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = runInterruptible(Dispatchers.IO) {
+    suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = publishOk(relays, event, timeoutMs).size
+
+    /** [publish], and which relays said OK. */
+    suspend fun publishOk(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Set<String> = runInterruptible(Dispatchers.IO) {
         val urls = relays.distinct()
-        val ok = AtomicInteger()
+        val ok = java.util.Collections.synchronizedSet(HashSet<String>())
         val done = CountDownLatch(urls.size)
         val frame = "[\"EVENT\"," + event.toJson() + "]"
         val sockets = urls.mapNotNull { url ->
@@ -148,7 +151,7 @@ object Fetch {
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val msg = Json.parse(text) as? List<*> ?: return
                         if (msg.getOrNull(0) == "OK" && msg.getOrNull(1) == event.id && once.compareAndSet(false, true)) {
-                            if (msg.getOrNull(2) == true) ok.incrementAndGet()
+                            if (msg.getOrNull(2) == true) ok.add(url)
                             done.countDown(); webSocket.close(1000, null)
                         }
                     }
@@ -157,6 +160,6 @@ object Fetch {
             } catch (_: Exception) { done.countDown(); null }
         }
         try { done.await(timeoutMs, TimeUnit.MILLISECONDS) } finally { sockets.forEach { it.cancel() } }
-        ok.get()
+        synchronized(ok) { ok.toSet() }
     }
 }

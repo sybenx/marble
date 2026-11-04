@@ -174,4 +174,27 @@ class PacksTest {
         // An older checkpoint is refused.
         assertFalse(fresh.takeCheckpoint(c.copy(seq = 0)))
     }
+
+    /** recheck4 #25: a pack that didn't decrypt here (or is a later version) is never written over, so its notes aren't lost. */
+    @Test fun aPackThatDidntDecryptIsNeverWrittenOver() {
+        val relay = Relay(); val a = Vault(layout())
+        a.put(note("n", "from the other device")); flush(a, relay, 1000)
+        val d = relay.held.keys.single(); val theirs = relay.held[d]!!
+        // This device can't read the copy (a signer hiccup): it sees content = null, and has a change of its own there.
+        val b = Vault(layout())
+        val applied = b.apply(listOf(Vault.Incoming(d, theirs.createdAt, null)))
+        assertTrue(applied.republish.isEmpty())
+        b.put(note("n", "this device's edit", 2000))
+        val wrote = runBlocking { Cycle.flush(b, 3000, { listOf(Vault.Incoming(it, theirs.createdAt, null)) }, { dd, at, c -> relay.write(dd, at, c) }) }
+        assertEquals(0, wrote)
+        assertEquals(theirs, relay.held[d])
+        assertTrue(d in b.unreadable)
+        // A later version this device doesn't know: the same.
+        val c = Vault(layout()); c.put(note("n", "x", 2000))
+        val v4 = JSONObject(theirs.content!!).put("v", 4).toString()
+        assertEquals(0, runBlocking { Cycle.flush(c, 3000, { listOf(Vault.Incoming(it, theirs.createdAt, v4)) }, { dd, at, cc -> relay.write(dd, at, cc) }) })
+        // Once it reads again, the change goes out, merged.
+        assertTrue(flush(b, relay, 4000) > 0)
+        assertFalse(d in b.unreadable)
+    }
 }

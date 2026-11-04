@@ -70,6 +70,7 @@ class ReaderVectorsTest {
     @Test fun readUpTo() = each("readUpTo") { c ->
         val a = c.getJSONArray("items")
         val items = (0 until a.length()).map { a.getJSONObject(it).let { o -> ReaderRules.Aged("s", o.getLong("at"), o.getBoolean("read"), o.getBoolean("aged")) } }
-        assertEquals(c.getString("name"), c.getLong("upto"), ReaderRules.ageUpto(items, emptyMap())["s"] ?: 0L)
+        val marks = c.optJSONArray("marks")?.let { m -> (0 until m.length()).map { m.getLong(it) } } ?: emptyList()
+        assertEquals(c.getString("name"), c.getLong("upto"), ReaderRules.ageUpto(items, emptyMap(), marks)["s"] ?: 0L)
     }
 }

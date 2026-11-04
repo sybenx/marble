@@ -85,4 +85,11 @@ class ReaderRulesTest {
         assertEquals("spoilers: show", Body.line(e))
         assertEquals("The ending was a surprise", Body.line(e, veil = false))
     }
+
+    /** recheck4 #10: a mark on one source's item holds only that source; one whose item isn't known holds all. */
+    @Test fun aMarkHoldsItsOwnSource() {
+        val items = listOf(ReaderRules.Aged("a", 30, true, true), ReaderRules.Aged("b", 30, true, true))
+        assertEquals(mapOf("a" to 19L, "b" to 30L), ReaderRules.ageUpto(items, emptyMap(), mapOf("a" to listOf(20L))))
+        assertEquals(mapOf("a" to 19L, "b" to 19L), ReaderRules.ageUpto(items, emptyMap(), mapOf("" to listOf(20L))))
+    }
 }

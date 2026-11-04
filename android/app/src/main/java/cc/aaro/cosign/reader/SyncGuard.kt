@@ -10,26 +10,41 @@ object SyncGuard {
     enum class Do { WAIT, WRITE, REBASE }
     data class Decision(val doThis: Do, val misses: Int)
 
-    /** More than half of the write relays answered (none known: never). */
+    private fun norm(r: Collection<String>) = r.map { it.trimEnd('/') }.toSet()
+
+    /** Reached the account: more than half of the write relays (every one in the list, down or not) sent EOSE. */
     fun complete(write: Collection<String>, answeredBy: Collection<String>): Boolean {
-        val w = write.map { it.trimEnd('/') }.toSet()
-        val a = answeredBy.map { it.trimEnd('/') }.toSet()
+        val w = norm(write); val a = norm(answeredBy)
         return w.isNotEmpty() && w.count { it in a } * 2 > w.size
     }
 
-    /** A write took: more than half of the write relays said OK (one relay's OK can be missed by a later majority read). */
-    fun written(write: Int, okBy: Int): Boolean = write > 0 && okBy * 2 > write
+    /** Every write relay sent EOSE: only such reads count toward the escape. */
+    fun full(write: Collection<String>, answeredBy: Collection<String>): Boolean = norm(write).let { w -> w.isNotEmpty() && norm(answeredBy).containsAll(w) }
+
+    /** A write is done: more than half of the write relays said OK (an OK from a relay not on the list doesn't count). */
+    fun written(write: Collection<String>, okBy: Collection<String>): Boolean {
+        val w = norm(write); val o = norm(okBy)
+        return w.isNotEmpty() && w.count { it in o } * 2 > w.size
+    }
 
     /** The wait after the [failures]-th failure in a row: 60 · 2^(n−1) s, at most 600 s. */
     fun retryAfter(failures: Int): Long = minOf(600L, 60L shl (maxOf(failures, 1) - 1).coerceAtMost(10))
 
-    /** [found]: the newest copy's created_at the relays gave (0: none); [seenAt]: the newest seen here; [expires]: a copy's life on relays (0: for good). */
-    fun decide(complete: Boolean, found: Long, seenAt: Long, misses: Int, expires: Long, now: Long): Decision = when {
+    /**
+     * [complete]: reached; [full]: every write relay answered. [found]: the newest copy's created_at the relays gave (0:
+     * none); [seenAt]: the newest seen here; [expires]: a copy's life on relays (0: for good). Only full reads count a
+     * miss; a read where any write relay didn't answer neither counts nor rebases (it may hold the copy).
+     */
+    fun decide(complete: Boolean, full: Boolean, found: Long, seenAt: Long, misses: Int, expires: Long, now: Long): Decision = when {
         !complete -> Decision(Do.WAIT, misses)
         seenAt == 0L || found >= seenAt -> Decision(Do.WRITE, 0)
         expires > 0 && now > seenAt + expires -> Decision(Do.REBASE, 0)
+        !full -> Decision(Do.WAIT, misses)
         misses + 1 >= MISSES -> Decision(Do.REBASE, 0)
         else -> Decision(Do.WAIT, misses + 1)
     }
     const val MISSES = 3
+
+    /** Misses count against one copy: once the newest seen moves on ([countedFor] isn't [seenAt]), they start again. */
+    fun misses(countedFor: Long, seenAt: Long, misses: Int): Int = if (countedFor == seenAt) misses else 0
 }

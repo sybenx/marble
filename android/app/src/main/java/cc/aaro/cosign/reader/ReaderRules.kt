@@ -47,7 +47,9 @@ object ReaderRules {
     /** Fits NIP-44 (reader.md §2): upto and unread entries older than 30 days go; then while over [max] bytes, the oldest day of keys. */
     fun fitSeen(o: JSONObject, now: Long, max: Int = MAX_SEEN): JSONObject {
         val cutoff = now - UNREAD_FOR
-        for (name in listOf("upto", "unread")) o.optJSONObject(name)?.let { m -> m.keys().asSequence().toList().forEach { k -> if (Math.abs(m.getLong(k)) <= cutoff) m.remove(k) } }
+        o.optJSONObject("upto")?.let { m -> m.keys().asSequence().toList().forEach { k -> if (m.getLong(k) <= cutoff) m.remove(k) } }
+        // Keep unread marks for 30 days; cleared marks (−t) for 7.
+        o.optJSONObject("unread")?.let { m -> m.keys().asSequence().toList().forEach { k -> val t = m.getLong(k); if (if (t < 0) -t <= now - CLEARED_FOR else t <= cutoff) m.remove(k) } }
         fun big() = o.toString().toByteArray().size > max
         // The oldest days first, but never the newest one; then the oldest read-up-tos; then the oldest read-again marks.
         o.optJSONObject("days")?.let { days -> while (big() && days.length() > 1) days.remove(days.keys().asSequence().minBy { it.toLongOrNull() ?: Long.MAX_VALUE }) }
@@ -68,10 +70,14 @@ object ReaderRules {
      * Read-up-to as items age out (reader.md §2, vectors readUpTo): to the newest aged-out read item's time, but never
      * to or past an unread item of that source (at most the oldest unread one's time − 1). Only the sources that rise.
      */
-    fun ageUpto(items: List<Aged>, upto: Map<String, Long>, marks: Collection<Long> = emptyList()): Map<String, Long> {
+    fun ageUpto(items: List<Aged>, upto: Map<String, Long>, marks: Collection<Long> = emptyList()): Map<String, Long> = ageUpto(items, upto, mapOf("" to marks.toList()))
+
+    /** [marks]: standing Keep unread marks by source ("": a mark whose item's source isn't known, which holds every source). */
+    fun ageUpto(items: List<Aged>, upto: Map<String, Long>, marks: Map<String, List<Long>>): Map<String, Long> {
         // A live Keep unread mark is never reached (whichever item it's on, loaded or not): it must stay newer than upto.
-        val markCap = marks.filter { it > 0 }.minOrNull()?.let { it - 1 } ?: Long.MAX_VALUE
+        fun capOf(src: String) = ((marks[src].orEmpty() + marks[""].orEmpty()).filter { it > 0 }.minOrNull()?.let { it - 1 }) ?: Long.MAX_VALUE
         return items.groupBy { it.source }.mapNotNull { (src, l) ->
+            val markCap = capOf(src)
             val to = l.filter { it.read && it.aged }.maxOfOrNull { it.at } ?: return@mapNotNull null
             val cap = l.filter { !it.read }.minOfOrNull { it.at - 1 } ?: Long.MAX_VALUE
             minOf(to, cap, markCap).takeIf { it > (upto[src] ?: 0) }?.let { src to it }

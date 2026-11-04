@@ -1520,6 +1520,33 @@
      "keep"
     ]
    }
+  },
+  {
+   "name": "cleared marks (negative) go after 7 days, Keep unread marks after 30",
+   "now": 3000000,
+   "in": {
+    "v": 1,
+    "at": 3000000,
+    "days": {
+     "34": "k"
+    },
+    "upto": {},
+    "unread": {
+     "oldClear": -2308800,
+     "newClear": -2481600,
+     "oldMark": 321600,
+     "keptMark": 1272000
+    }
+   },
+   "out": {
+    "unread": [
+     "keptMark",
+     "newClear"
+    ],
+    "days": [
+     "34"
+    ]
+   }
   }
  ],
  "readUpTo": [
@@ -1586,6 +1613,46 @@
     }
    ],
    "upto": 0
+  },
+  {
+   "name": "a Keep unread mark still standing caps it (even if its item didn't come in)",
+   "items": [
+    {
+     "at": 10,
+     "read": true,
+     "aged": true
+    },
+    {
+     "at": 30,
+     "read": true,
+     "aged": true
+    }
+   ],
+   "marks": [
+    20
+   ],
+   "upto": 19
+  },
+  {
+   "name": "a day's posts count by their oldest unread post",
+   "items": [
+    {
+     "at": 10,
+     "read": true,
+     "aged": true
+    },
+    {
+     "at": 12,
+     "read": false,
+     "aged": true
+    },
+    {
+     "at": 30,
+     "read": true,
+     "aged": true
+    }
+   ],
+   "upto": 11
   }
  ]
 }

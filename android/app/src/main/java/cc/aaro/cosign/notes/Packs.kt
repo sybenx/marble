@@ -195,6 +195,11 @@ class Vault(val layout: Layout) {
     val seen = HashMap<String, Long>()
     /** Packs with changes to send. */
     val dirty = LinkedHashSet<String>()
+    /**
+     * Packs (by `d`) whose newest copy on relays this device couldn't read (it didn't decrypt, or it's a later version):
+     * never written over, since that would lose what's in it. Until a readable copy comes back, changes there wait.
+     */
+    val unreadable = HashSet<String>()
     /** The newest checkpoint taken. */
     var checkpoint: Checkpoint? = null
 
@@ -224,6 +229,9 @@ class Vault(val layout: Layout) {
         dirty += layout.owner(n.id, retired)
     }
 
+    /** Decrypted, and a version this device knows (v3): anything else isn't read, so never written over. */
+    private fun readable(inc: Incoming): Boolean = inc.content != null && try { org.json.JSONObject(inc.content).optInt("v") == 3 } catch (_: Exception) { true }
+
     /** What a pull brought: each pack's `d`, `created_at` and decrypted content (null: it didn't decrypt). */
     data class Incoming(val d: String, val createdAt: Long, val content: String?)
     /** What applying a pull did: [halted] (nothing taken), packs to send again ([republish]), how many notes changed. */
@@ -239,7 +247,11 @@ class Vault(val layout: Layout) {
         val republish = HashSet<String>()
         val valid = ArrayList<Pair<Incoming, Pack>>()
         var invalid = 0
+        // A pack whose newest copy can't be read here: kept as it is on the relays (nothing taken, nothing sent over it).
+        val newest = pull.groupBy { it.d }.mapValues { (_, l) -> l.maxBy { it.createdAt } }
+        for ((d, inc) in newest) if (!readable(inc)) unreadable += d else unreadable -= d
         for (inc in pull.sortedBy { it.createdAt }) {
+            if (!readable(inc)) continue
             val pack = inc.content?.let(Pack::parse)
             val ok = pack != null && layout.d(pack.prefix) == inc.d && pack.kid == layout.kid &&
                 pack.items.all { layout.slot(it.id).startsWith(pack.prefix) } && pack.markers.all { layout.slot(it.id).startsWith(pack.prefix) }
@@ -317,6 +329,8 @@ object Cycle {
                 if (applied.halted) { v.dirty += prefix; return written }
                 val packs = v.packsFor(prefix)
                 var clean = true
+                // A pack this device couldn't read stays as it is: the change waits for a readable copy.
+                if (packs.any { v.layout.d(it.prefix) in v.unreadable }) { v.dirty += prefix; break }
                 for (p in packs) {
                     val d = v.layout.d(p.prefix)
                     val at = maxOf(now, (v.seen[d] ?: 0) + 1, (before.maxOfOrNull { it.createdAt } ?: 0) + 1)

@@ -556,6 +556,12 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         items(ui.batchAsks, key = { "batch:" + it.batch }) { b -> BatchCard(b, now) { approve -> phone.decideBatch(b.batch, approve) } }
         items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now) { approve -> phone.decide(ask.id, approve) } }
 
+        // A quiet note, no banner: write relays that haven't answered in a week (with half or more silent, your
+        // notes' and Reader's copies can't be written).
+        cc.aaro.cosign.Social.of(phone).silentWriteRelays()?.let { (silent, of) ->
+            item { Text("$silent of your $of write relays haven't answered in a week", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 6.dp)) }
+        }
         item { Heading("Your devices") }
         items(m.group.members.filter { it.role != "server" && it.role != "backup" }, key = { "member:" + it.idx }) { d ->
             // What you've called it (on any of your devices), else the name it joined with. A long press renames it.
@@ -873,11 +879,12 @@ internal fun FutureCard(f: Future, onRemove: () -> Unit) = Card(Vault.AmberEdge,
 }
 
 @Composable
-internal fun AskCard(ask: Ask, now: Long, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
+/** [quiet]: on home, no ticking seconds (home-rules.md: no counts). */
+internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
     val left = ((ask.expiresAt - now) / 1000).coerceAtLeast(0)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(question(ask.hold), style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
-        Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
+        if (!quiet) Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
     }
     Spacer(Modifier.height(6.dp))
     Text("${ask.app} asked. It doesn't happen unless you say yes.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
@@ -939,23 +946,23 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
 }
 
 @Composable
-internal fun DeletingCard(d: Deleting, now: Long, onUndo: () -> Unit) = Card(Vault.Line, Vault.Surface) {
+internal fun DeletingCard(d: Deleting, now: Long, quiet: Boolean = false, onUndo: () -> Unit) = Card(Vault.Line, Vault.Surface) {
     val left = ((d.until - now) / 1000).coerceAtLeast(0)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("Deleting ${d.count} post${if (d.count == 1) "" else "s"} for ${d.by.removePrefix("https://")}", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
-            Text("in ${left}s · a copy is kept here", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+            Text(if (quiet) "Deleting posts for ${d.by.removePrefix("https://")}" else "Deleting ${d.count} post${if (d.count == 1) "" else "s"} for ${d.by.removePrefix("https://")}", style = MaterialTheme.typography.titleSmall, color = Vault.Text)
+            Text(if (quiet) "A copy is kept here" else "in ${left}s · a copy is kept here", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
         }
         Button(onUndo, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Undo") }
     }
 }
 
 @Composable
-internal fun BatchCard(b: BatchAsk, now: Long, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
+internal fun BatchCard(b: BatchAsk, now: Long, quiet: Boolean = false, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
     val left = ((b.expiresAt - now) / 1000).coerceAtLeast(0)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(question(b.text), style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
-        Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
+        if (!quiet) Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
     }
     Spacer(Modifier.height(6.dp))
     Text("${b.by.removePrefix("https://")} asked. A deletion can't be fully taken back; a copy is kept here, so you can post them again.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)

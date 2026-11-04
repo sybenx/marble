@@ -1,10 +1,11 @@
 {
- "about": "When a device may write a synced copy on the account (Notes' marble/later, Reader's marble/reader and discover/seen): sync-guard.js decide(). found: the newest copy's created_at the relays gave (0: none); seenAt: the newest this device has seen (0: none); misses: complete reads in a row that missed it; expires: how long a copy lives on relays (0: for good). A complete read (\"reached the account\") heard back from more than half of your write relays (EOSE; read relays don't count). retryAfter: the wait after the n-th failure in a row (a new change resets it).",
+ "about": "When a device may write a synced copy on the account (Notes' marble/later, Reader's marble/reader and discover/seen), and when a write is done: reader.md §6, sync-guard.js. Write relays are the configured list (kind 10002), every one counted: one that failed to connect, answered CLOSED or never sent EOSE didn't answer. complete: more than half sent EOSE (reached). full: all of them did (only full reads count toward the escape). found: the newest copy's created_at the relays gave (0: none); seenAt: the newest this device has seen; misses: full reads in a row that missed it; expires: how long a copy lives (0: for good). written: more than half sent OK. retryAfter: the wait after the n-th failure in a row.",
  "cases": [
   {
-   "name": "a read that missed one of your write relays: wait",
+   "name": "not reached (most write relays didn't answer): wait",
    "in": {
     "complete": false,
+    "full": false,
     "found": 500,
     "seenAt": 400,
     "now": 1000
@@ -13,9 +14,10 @@
    "misses": 0
   },
   {
-   "name": "never seen a copy, a complete read: write (merged with what's found)",
+   "name": "never seen a copy, reached: write (merged with what's found)",
    "in": {
     "complete": true,
+    "full": false,
     "found": 0,
     "seenAt": 0,
     "now": 1000
@@ -27,6 +29,7 @@
    "name": "found the copy seen, or newer: write",
    "in": {
     "complete": true,
+    "full": true,
     "found": 600,
     "seenAt": 600,
     "now": 1000
@@ -35,9 +38,10 @@
    "misses": 0
   },
   {
-   "name": "the copy seen is missing: wait (the relay holding it may be down)",
+   "name": "the copy seen is missing, every write relay answered: wait, the first miss",
    "in": {
     "complete": true,
+    "full": true,
     "found": 0,
     "seenAt": 600,
     "misses": 0,
@@ -47,9 +51,10 @@
    "misses": 1
   },
   {
-   "name": "an older copy than seen: wait",
+   "name": "an older copy than seen, all answered: the second miss",
    "in": {
     "complete": true,
+    "full": true,
     "found": 300,
     "seenAt": 600,
     "misses": 1,
@@ -59,9 +64,10 @@
    "misses": 2
   },
   {
-   "name": "the third complete read in a row without it: start again from what your relays have",
+   "name": "the third full read in a row without it: start again from what your relays have",
    "in": {
     "complete": true,
+    "full": true,
     "found": 300,
     "seenAt": 600,
     "misses": 2,
@@ -71,9 +77,23 @@
    "misses": 0
   },
   {
+   "name": "missing, but a write relay didn't answer (down, CLOSED, no EOSE): it may hold the copy, so no miss counts, never rebase",
+   "in": {
+    "complete": true,
+    "full": false,
+    "found": 300,
+    "seenAt": 600,
+    "misses": 2,
+    "now": 1000
+   },
+   "do": "wait",
+   "misses": 2
+  },
+  {
    "name": "a seen list past its two weeks: gone, start again",
    "in": {
     "complete": true,
+    "full": false,
     "found": 0,
     "seenAt": 1000,
     "misses": 0,
@@ -87,6 +107,7 @@
    "name": "a seen list within its two weeks, missing: wait",
    "in": {
     "complete": true,
+    "full": true,
     "found": 0,
     "seenAt": 1000,
     "misses": 0,
@@ -111,10 +132,11 @@
     "wss://c",
     "wss://fast"
    ],
-   "complete": true
+   "complete": true,
+   "full": true
   },
   {
-   "name": "most of them (2 of 3)",
+   "name": "one of three is down (failed to connect, so not asked): still reached, not full",
    "write": [
     "wss://a",
     "wss://b",
@@ -124,7 +146,34 @@
     "wss://a",
     "wss://c"
    ],
-   "complete": true
+   "complete": true,
+   "full": false
+  },
+  {
+   "name": "one of three answered CLOSED (auth-required) or never sent EOSE: still reached, not full",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "answeredBy": [
+    "wss://a",
+    "wss://b"
+   ],
+   "complete": true,
+   "full": false
+  },
+  {
+   "name": "the only write relay is down: not reached (a down relay still counts in the list)",
+   "write": [
+    "wss://a"
+   ],
+   "answeredBy": [
+    "wss://fast",
+    "wss://read"
+   ],
+   "complete": false,
+   "full": false
   },
   {
    "name": "half isn't most (1 of 2)",
@@ -136,26 +185,17 @@
     "wss://b",
     "wss://fast"
    ],
-   "complete": false
+   "complete": false,
+   "full": false
   },
   {
-   "name": "only read and fast relays answered",
-   "write": [
-    "wss://a"
-   ],
-   "answeredBy": [
-    "wss://read",
-    "wss://fast"
-   ],
-   "complete": false
-  },
-  {
-   "name": "no write relays known",
+   "name": "no write relays known (the relay list wasn't found): not reached",
    "write": [],
    "answeredBy": [
     "wss://fast"
    ],
-   "complete": false
+   "complete": false,
+   "full": false
   }
  ],
  "retryAfter": [
@@ -182,6 +222,53 @@
   {
    "failures": 9,
    "seconds": 600
+  }
+ ],
+ "written": [
+  {
+   "name": "one OK of three: pending, not done",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "okBy": [
+    "wss://a"
+   ],
+   "written": false
+  },
+  {
+   "name": "two OK of three: done",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "okBy": [
+    "wss://a",
+    "wss://b"
+   ],
+   "written": true
+  },
+  {
+   "name": "OK from a relay not on the list doesn't count",
+   "write": [
+    "wss://a",
+    "wss://b"
+   ],
+   "okBy": [
+    "wss://fast",
+    "wss://a"
+   ],
+   "written": false
+  },
+  {
+   "name": "no write relays: never done",
+   "write": [],
+   "okBy": [
+    "wss://x"
+   ],
+   "written": false
   }
  ]
 }

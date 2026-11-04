@@ -41,6 +41,8 @@ object Glyphs {
     private const val SAVE = "M6 4h12v16l-6-4-6 4z"
     val save = line("save", SAVE)
     val saveOn = line("saveOn", SAVE, fill = true)
+    /** The bookmark's outline, for the older note's dashed one (drawn with a dash, which a vector can't carry). */
+    val savePath get() = SAVE
     /** Enter (return): keep what's typed as a note, and search it. */
     val enter = line("enter", "M19 5v7a3 3 0 0 1-3 3H6M10 11l-4 4 4 4")
     /** A video's sound: on, and off (muted). */

@@ -33,6 +33,10 @@ object NewsSources {
     var changed: () -> Unit = {}
     private var prefs: android.content.SharedPreferences? = null
 
+    /** The account these sources were first written to (they're kept for the phone): another account's never get them. Null: none yet. */
+    fun ownerOf(c: Context): String? = c.getSharedPreferences("news-sources-owner", Context.MODE_PRIVATE).getString("owner", null)
+    fun claim(c: Context, me: String) { if (ownerOf(c) == null) c.getSharedPreferences("news-sources-owner", Context.MODE_PRIVATE).edit().putString("owner", me).apply() }
+
     fun load(c: Context) {
         val p = c.getSharedPreferences("news-sources", Context.MODE_PRIVATE).also { prefs = it }
         p.getString("state", null)?.let { take(it) }

@@ -1,1 +1,1 @@
-marble-content-fixtures f0e4f6d
+marble-content-fixtures 776025a
