@@ -1,7 +1,7 @@
 // Doing things as you: signing in (the extension, or your phone's code), liking and reacting, replying.
 // What you do shows at once and is taken back if it can't be sent.
 import { publish, req, relays, foundOn, FAST } from "./pool.js";
-import { openPicker, closePicker, pickerOpen, drawEmoji, loadMine, seedRecent, LIKE } from "./emoji-picker.js";
+import { openPicker, closePicker, pickerOpen, drawEmoji, loadMine, setHistory, forgetRecent, used, LIKE } from "./emoji-picker.js";
 import { outbox, keep, profile, profiles, onProfile } from "./data.js";
 import { esc, avatar } from "./render.js";
 import { npub } from "./ids.js";
@@ -334,18 +334,16 @@ export async function markReactions(root) {
   paint(document);
 }
 
-// what you've reacted with before, for "Recently used" in a browser that hasn't any yet
+// what you've reacted with lately, for the picker's "Recently used" (from your own reactions, so every device agrees)
 async function loadHistory() {
   const me = current();
   if (!me) return;
   loadMine(me);
   const where = await myWriteRelays().catch(() => []);
   const list = await req(relays(where, ALSO), { kinds: [7], authors: [me], limit: 300 }, { timeout: 4000, settle: 800 });
-  const counts = new Map();
-  for (const r of list) { const e = emojiOf(r); if (e && e !== LIKE) { const k = JSON.stringify(e); counts.set(k, (counts.get(k) || 0) + 1); } }
-  seedRecent([...counts].sort((a, b) => b[1] - a[1]).map(([k]) => JSON.parse(k)));
+  if (current() === me) setHistory(list.sort((a, b) => b.created_at - a.created_at).map(emojiOf));
 }
-onMe(() => { mine.clear(); mineAt.clear(); checked.clear(); closePicker(); loadMine(current()); loadHistory(); markReactions(document); });
+onMe(() => { mine.clear(); mineAt.clear(); checked.clear(); closePicker(); forgetRecent(); loadMine(current()); loadHistory(); markReactions(document); });
 loadHistory();
 
 // Reacting again replaces your reaction: a new one is sent, and the newest is what shows (as in the app).
@@ -356,6 +354,7 @@ async function react(on, emoji) {
   if (before && same(before, emoji)) return;
   mine.set(id, emoji);
   mineAt.set(id, Math.floor(Date.now() / 1000));
+  used(emoji); // (first in "Recently used" at once, from a pill too)
   paint(document);
   try {
     const content = typeof emoji === "string" ? emoji : `:${emoji.shortcode}:`;

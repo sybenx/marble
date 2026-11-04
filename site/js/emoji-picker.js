@@ -11,25 +11,22 @@ export const LIKE = "+";
 
 // An emoji: a character ("😂"), or one of someone's own ({shortcode, url}).
 const keyOf = (e) => (typeof e === "string" ? `n:${e}` : `c:${e.shortcode}|${e.url}`);
-const RECENT = "marble.recent-emoji", TONE = "marble.skin-tone";
+const TONE = "marble.skin-tone";
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
-/** What you've reacted with lately, most recent first (as many as n). */
-export function recent(n = 24) {
-  return load(RECENT, []).filter((r) => r && r.e).sort((a, b) => b.at - a.at).slice(0, n).map((r) => r.e);
-}
-/** Remembers emoji as just used. */
-export function used(emoji) {
-  if (emoji === LIKE) return;
-  const list = load(RECENT, []).filter((r) => r && r.e && keyOf(r.e) !== keyOf(emoji));
-  save(RECENT, [{ e: emoji, at: Date.now() }, ...list].slice(0, 30));
-}
-/** Seeds "recently used" from what you've reacted with before (from your own reactions), when this browser has none. */
-export function seedRecent(list) {
-  if (load(RECENT, []).length || !list.length) return;
-  save(RECENT, list.slice(0, 30).map((e, i) => ({ e, at: Date.now() - i })));
-}
+// "Recently used" is worked out from your own published reactions (kind 7, newest first), as Android does, so every
+// device shows the same with nothing more to sync; what you pick here goes first at once (before the relays have it).
+let history = [], picked = [];
+const unique = (list) => { const seen = new Set(); return list.filter((e) => { const k = keyOf(e); return !seen.has(k) && seen.add(k); }); };
+/** What you've reacted with lately, most recent first (as many as n), never the plain like. */
+export const recent = (n = 24) => unique([...picked, ...history]).slice(0, n);
+/** Your own reactions' emoji, newest first (from the relays). */
+export function setHistory(list) { history = unique(list.filter((e) => e && e !== LIKE)); }
+/** Signed out, or someone else: nothing recent. */
+export function forgetRecent() { history = []; picked = []; }
+/** Remembers emoji as just used, for this visit. */
+export function used(emoji) { if (emoji !== LIKE) picked = unique([emoji, ...picked]); }
 
 // ── Your own emoji (NIP-30) ─────────────────────────────────────────────────────────────────────────
 
@@ -85,10 +82,10 @@ let box = null, picks = [], onPick = null, anchor = null;
 const phone = () => matchMedia("(max-width: 640px), (pointer: coarse) and (max-width: 900px)").matches;
 const cell = (e, cls = "") => { picks.push(e); return `<button type="button" class="${cls}" data-pick="${picks.length - 1}"${typeof e === "string" ? "" : ` title=":${esc(e.shortcode)}:"`}>${drawEmoji(e)}</button>`; };
 
-/** The quick row's emoji: up to three you used lately (and not already there), then the six. */
+/** The quick row's emoji, as Jumble's: the three you used last, then the rest of the six (all six always there). */
 export function quick() {
-  const lately = recent(10).filter((e) => !QUICK.includes(e)).slice(0, 3);
-  return [...lately, ...QUICK];
+  const lately = recent(3);
+  return [...lately, ...QUICK.filter((e) => !lately.includes(e))];
 }
 
 /** Opens the picker by a reaction button; pick(emoji) is called with what's chosen (LIKE for the plain like). */
@@ -205,7 +202,6 @@ document.addEventListener("click", (ev) => {
   if (b && box.contains(b)) {
     if (ev.detail && press && (press.b !== b || Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 8 || Math.abs(b.getBoundingClientRect().top - press.top) > 2)) return;
     const e = picks[+b.dataset.pick], f = onPick;
-    used(e);
     closePicker();
     return f?.(e);
   }
