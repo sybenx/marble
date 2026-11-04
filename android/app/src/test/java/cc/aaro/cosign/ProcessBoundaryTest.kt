@@ -16,6 +16,8 @@ class ProcessBoundaryTest {
     private fun read(path: String) = File(src, path).readText()
         // Comments may name anything.
         .replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""//[^\n]*"""), "")
+        // So may a plain string's words ("Relays ›" on a screen); one with a ${'$'} template is still read.
+        .replace(Regex(""""(?:[^"\\$\n]|\\.)*""""), "\"\"")
 
     /** What holds or uses a share. */
     private val keyMaterial = Regex("""\b(Signer|Signers|Secrets|FrostNative|Frost\.(sign|commit|ecdh\w*|aggregate)|Lists|Relays|Dkg|Refresh|Backup|signers)\b""")

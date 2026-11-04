@@ -2392,6 +2392,78 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
+    // --- Relays as feeds (RelayFeeds): favourites (10012), sets (30002), what a relay says, its posts -----
+
+    val favRelays = MutableStateFlow<List<RelayFeeds.Relay>>(emptyList())
+    val relaySets = MutableStateFlow<List<RelayFeeds.RelaySet>>(emptyList())
+    @Volatile private var favList: Event? = null
+
+    /** Your favourites and sets, from your newest lists. */
+    suspend fun knowRelayLists() {
+        val me = me ?: return
+        favList = newest(10012, favList, fetch = true)
+        favRelays.value = RelayFeeds.relaysIn(favList)
+        val sets = Fetch.query((writeRelays() + Sources.PROFILES).distinct().take(8), mapOf("kinds" to listOf(30002), "authors" to listOf(me), "limit" to 50), 6000)
+        relaySets.value = RelayFeeds.sets(sets, me)
+    }
+
+    /** [r] in your favourites (or not): from your newest list anywhere, the rest kept. */
+    fun favourite(r: RelayFeeds.Relay, on: Boolean) {
+        val me = me ?: return
+        scope.launch {
+            val list = newest(10012, favList, fetch = true)
+            if (RelayFeeds.relaysIn(list).any { it.url == r.url } == on) return@launch
+            val ev = Event(me, maxOf(Clock.now(), (list?.createdAt ?: 0) + 1), 10012, RelayFeeds.with(list?.tags ?: emptyList(), r, on), list?.content ?: "").withId()
+            actEvent(ev)?.let { favList = it; favRelays.value = RelayFeeds.relaysIn(it) }
+        }
+    }
+
+    /** [r] into the set [d] (or out of it); a new set when [d] is null, called [title]. */
+    fun inSet(d: String?, title: String, r: RelayFeeds.Relay, on: Boolean) {
+        val me = me ?: return
+        scope.launch {
+            val old = d?.let { id -> relaySets.value.firstOrNull { it.d == id }?.event }
+            val tags = old?.tags ?: listOf(listOf("d", java.util.UUID.randomUUID().toString().take(12)), listOf("title", title.trim().take(80)))
+            val ev = Event(me, maxOf(Clock.now(), (old?.createdAt ?: 0) + 1), 30002, RelayFeeds.with(tags, r, on), old?.content ?: "").withId()
+            actEvent(ev)?.let { sent ->
+                relaySets.update { l -> RelayFeeds.sets(l.map { it.event }.filter { it.firstTag("d") != sent.firstTag("d") } + sent, me) }
+            }
+        }
+    }
+
+    /** What a relay says about itself (NIP-11): name, description, icon, who runs it; null: it doesn't say (or isn't one). */
+    data class RelayInfo(val name: String?, val description: String?, val icon: String?, val pubkey: String?)
+    private val relayInfos = java.util.concurrent.ConcurrentHashMap<String, RelayInfo>()
+    suspend fun relayInfo(r: RelayFeeds.Relay): RelayInfo? = relayInfos[r.url] ?: kotlinx.coroutines.withContext(Dispatchers.IO) {
+        try {
+            Fetch.http.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(okhttp3.Request.Builder().url(r.url.replaceFirst("ws", "http")).header("Accept", "application/nostr+json").build()).execute().use { res ->
+                    val o = org.json.JSONObject(res.body?.string() ?: return@use null)
+                    fun str(k: String) = o.optString(k).trim().takeIf { it.isNotEmpty() }
+                    RelayInfo(str("name")?.take(80), str("description")?.take(600), str("icon")?.takeIf { it.startsWith("https://") }, str("pubkey")?.takeIf { cc.aaro.qrst.core.isHex32(it) })
+                }
+        } catch (_: Exception) { null }
+    }?.also { relayInfos[r.url] = it }
+
+    /** A relay's (or a set's) own posts, newest first, a page before [until]: from those relays alone. */
+    suspend fun relayPosts(relays: List<RelayFeeds.Relay>, until: Long? = null): List<Event> {
+        val f = mutableMapOf<String, Any>("kinds" to listOf(1, 6, 30023), "limit" to 30)
+        until?.let { f["until"] = it }
+        val hidden = muted.value
+        return Fetch.query(relays.map { it.url }, f, 7000).distinctBy { it.id }
+            .filter { it.pubkey !in hidden && (it.kind != 1 || parentOf(it) == null) && safe(it) && !mutedText(it.content, it) }
+            .sortedByDescending { it.createdAt }.also { remember(it); People.want(it.map { e -> e.pubkey }.distinct()) }
+    }
+
+    /** Relays the people you follow write to (not the big ones, not yours already), with who. */
+    suspend fun relaysPeopleUse(): List<Pair<RelayFeeds.Relay, List<String>>> {
+        val mine = follows.value?.toList() ?: return emptyList()
+        val lists = mine.take(600).chunked(200).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(10002), "authors" to part), 6000) } }.awaitAll().flatten()
+        val common = (POST_RELAYS + bigRelays + readRelays() + writeRelays() + Sources.PROFILES).mapNotNull { RelayFeeds.of(it)?.url }.toSet()
+        val kept = (favRelays.value + relaySets.value.flatMap { it.relays }).map { it.url }.toSet()
+        return RelayFeeds.peopleUse(lists, mine.toSet(), kept, common).also { l -> People.want(l.flatMap { it.second.take(2) }) }
+    }
+
     // --- Polls (NIP-88, Polls) ------------------------------------------------------------------
 
     /** The votes counted for each poll (by its id), as last fetched; and what you chose. */

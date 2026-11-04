@@ -191,11 +191,18 @@ private sealed class Route {
     data object SpecialList : Route()
     /** Account › News sources: your own feeds, and Marble's (each can be removed). */
     data object News : Route()
+    /** Following › Relays: your favourite relays and sets, relays your people use, and any relay by its address. */
+    data object RelayList : Route()
+    /** A relay, read like a channel. */
+    data class Relay(val address: String) : Route()
+    /** One of your relay sets, its relays read together. */
+    data class RelaySet(val d: String) : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"
+        is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -211,6 +218,9 @@ private sealed class Route {
             s == "marbles" -> Shelf
             s == "special" -> SpecialList
             s == "news" -> News
+            s == "relays" -> RelayList
+            s.startsWith("relay:") -> Relay(s.removePrefix("relay:"))
+            s.startsWith("relayset:") -> RelaySet(s.removePrefix("relayset:"))
             else -> null
         }
     }
@@ -311,6 +321,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
                 when {
                     v.startsWith("search:") -> { SearchText.q.value = v.removePrefix("search:"); stack.add(Route.Search) }
                     v.startsWith("results:") -> nav.results(v.removePrefix("results:"))
+                    // (also a marble.syb.lol/relay/… link, from MainActivity)
+                    v.startsWith("relay:") -> stack.add(Route.Relay(v.removePrefix("relay:")))
                     v.startsWith("save:") -> v.removePrefix("save:").split('|').forEach { social.later.save(it) }
                 }
             }
@@ -345,6 +357,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Searches -> SearchesScreen(social, nav)
             Route.SpecialList -> SpecialListScreen(social, nav)
             Route.News -> NewsSourcesScreen(social, nav)
+            Route.RelayList -> RelayListScreen(social, nav)
+            is Route.Relay -> RelayScreen(top.address, social, nav)
+            is Route.RelaySet -> RelaySetScreen(top.d, social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
     } }
@@ -763,6 +778,11 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             val starred = shown.filter { it.reason.startsWith("★") }
             val others = shown.filter { !it.reason.startsWith("★") }
             val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
+            // Relays, a tap away (the sections below are as they were).
+            item(key = "s:relays") {
+                Text("Relays ›", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    modifier = Modifier.fillMaxWidth().clickable { nav.open(Route.RelayList) }.padding(horizontal = 18.dp, vertical = 6.dp))
+            }
             if (starred.isNotEmpty()) item(key = "s:special") {
                 val fresh = starred.count { mark > 0 && it.e.createdAt > mark }
                 SectionCard("Special Follow", if (fresh > 0) "$fresh new" else null) {
@@ -3979,5 +3999,198 @@ private fun MentionChips(who: List<String>, people: Map<String, Person>, nav: Na
             modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Vault.Surface).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 3.dp))
         for (pk in shown) Chip("@" + (people[pk]?.shown ?: shortNpub(pk))) { nav.profile(pk) }
         if (!all && who.size > 4) Chip("+${who.size - 4}") { all = true }
+    }
+}
+
+// --- Relays as feeds (RelayFeeds) ---------------------------------------------------------------------------
+
+@Composable
+private fun RelayRow(r: cc.aaro.cosign.RelayFeeds.Relay, sub: String, social: Social, nav: Nav, star: Boolean? = null, onStar: (() -> Unit)? = null) {
+    val info by produceState<Social.RelayInfo?>(null, r.url) { value = social.relayInfo(r) }
+    Row(Modifier.fillMaxWidth().clickable { nav.open(Route.Relay(r.address)) }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        RelayIcon(info, 36)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(info?.name ?: r.address, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (star != null && onStar != null) Text(if (star) "★" else "☆", color = if (star) Vault.Accent else Vault.Muted, fontSize = 20.sp,
+            modifier = Modifier.clip(CircleShape).clickable(onClick = onStar).padding(8.dp))
+    }
+    HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 18.dp))
+}
+
+/** A relay's icon (NIP-11), else a plain mark. */
+@Composable
+private fun RelayIcon(info: Social.RelayInfo?, size: Int) = Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 4).dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
+    info?.icon?.let { NetImage(it, Modifier.fillMaxSize(), size * 3) } ?: Text("◎", color = Vault.Accent, fontSize = (size / 2).sp)
+}
+
+/** Following › Relays: open one by its address; your favourites and sets; relays your people write to (☆ keeps one). */
+@Composable
+private fun RelayListScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Relays", nav)
+    val favs by social.favRelays.collectAsState()
+    val sets by social.relaySets.collectAsState()
+    val people by People.known.collectAsState()
+    var theirs by remember { mutableStateOf<List<Pair<cc.aaro.cosign.RelayFeeds.Relay, List<String>>>?>(null) }
+    LaunchedEffect(Unit) { social.knowRelayLists(); theirs = try { social.relaysPeopleUse() } catch (_: Exception) { emptyList() } }
+    var typed by remember { mutableStateOf("") }
+    val typedRelay = cc.aaro.cosign.RelayFeeds.of(typed)
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            androidx.compose.material3.OutlinedTextField(typed, { typed = it }, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp), singleLine = true,
+                placeholder = { Text("Open a relay: wss://… or its address", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, imeAction = androidx.compose.ui.text.input.ImeAction.Go),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { typedRelay?.let { nav.open(Route.Relay(it.address)) } }))
+            typedRelay?.let { r -> Text("Open ${r.address} ›", color = Vault.Accent, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 18.dp).clip(RoundedCornerShape(8.dp)).clickable { nav.open(Route.Relay(r.address)) }.padding(6.dp)) }
+        }
+        if (favs.isNotEmpty()) {
+            item { Heading("Your favourites") }
+            items(favs, key = { "f" + it.url }) { r -> RelayRow(r, r.address, social, nav) }
+        }
+        if (sets.isNotEmpty()) {
+            item { Heading("Your sets") }
+            items(sets, key = { "s" + it.d }) { set ->
+                Row(Modifier.fillMaxWidth().clickable { nav.open(Route.RelaySet(set.d)) }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) { Text("▦", color = Vault.Accent, fontSize = 18.sp) }
+                    Spacer(Modifier.width(12.dp))
+                    Column { Text(set.title, color = Vault.Text, style = MaterialTheme.typography.titleSmall); Text("${set.relays.size} ${if (set.relays.size == 1) "relay" else "relays"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall) }
+                }
+                HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 18.dp))
+            }
+        }
+        item { Heading("Your people post to") }
+        when (val t = theirs) {
+            null -> item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) } }
+            else -> if (t.isEmpty()) item { Text("Nothing beyond the usual relays yet.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }
+            else items(t, key = { "p" + it.first.url }) { (r, who) ->
+                val names = who.mapNotNull { people[it]?.name?.takeIf { n -> n.isNotBlank() } }.take(2)
+                val sub = when { names.isEmpty() -> "People you follow"; who.size > names.size -> names.joinToString(", ") + " and others you follow"; else -> names.joinToString(" and ") }
+                RelayRow(r, sub, social, nav, star = favs.any { it.url == r.url }) { social.favourite(r, favs.none { it.url == r.url }) }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/** A relay, read like a channel: what it says about itself, ★ Favourite, Share, Add to a set; then its posts, newest first. */
+@Composable
+private fun RelayScreen(address: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar(null, nav)
+    val r = remember(address) { cc.aaro.cosign.RelayFeeds.of(address) } ?: return@Column Text("That doesn't look like a relay's address.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    val context = LocalContext.current
+    val info by produceState<Social.RelayInfo?>(null, r.url) { value = social.relayInfo(r) }
+    val favs by social.favRelays.collectAsState()
+    val sets by social.relaySets.collectAsState()
+    val people by People.known.collectAsState()
+    LaunchedEffect(Unit) { social.knowRelayLists() }
+    LaunchedEffect(info?.pubkey) { info?.pubkey?.let { People.want(listOf(it)) } }
+    var adding by remember { mutableStateOf(false) }
+    var naming by remember { mutableStateOf(false) }
+    RelayFeed(listOf(r), social, nav) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RelayIcon(info, 52)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(info?.name ?: r.address, color = Vault.Text, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Relay · ${r.url}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            info?.description?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp)) }
+            info?.pubkey?.let { pk -> Text("Run by " + (people[pk]?.shown ?: shortNpub(pk)), color = Vault.Accent, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 6.dp).clickable { nav.profile(pk) }) }
+            val fav = favs.any { it.url == r.url }
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ social.favourite(r, !fav) }, border = BorderStroke(1.dp, if (fav) Vault.AccentEdge else Vault.Line),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (fav) Vault.AccentGround else Color.Transparent)) { Text(if (fav) "★ Favourite" else "☆ Favourite", color = if (fav) Vault.Accent else Vault.Text) }
+                OutlinedButton({ share(context, (info?.name ?: r.address) + "\n" + cc.aaro.cosign.RelayFeeds.link(r), null) }, border = BorderStroke(1.dp, Vault.Line)) { Text("Share", color = Vault.Text) }
+                Box {
+                    OutlinedButton({ adding = true }, border = BorderStroke(1.dp, Vault.Line)) { Text("Add to a set", color = Vault.Text) }
+                    if (adding) DropdownMenu(true, { adding = false }, containerColor = Vault.Surface) {
+                        for (set in sets) {
+                            val inIt = set.relays.any { it.url == r.url }
+                            DropdownMenuItem({ Text((if (inIt) "✓ " else "") + set.title, color = Vault.Text) }, { adding = false; social.inSet(set.d, set.title, r, !inIt) })
+                        }
+                        DropdownMenuItem({ Text("New set…", color = Vault.Accent) }, { adding = false; naming = true })
+                    }
+                }
+            }
+        }
+    }
+    if (naming) NewSetDialog({ naming = false }) { title -> naming = false; social.inSet(null, title, r, true) }
+}
+
+@Composable
+private fun NewSetDialog(onClose: () -> Unit, onMake: (String) -> Unit) {
+    var title by remember { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(onDismissRequest = onClose, containerColor = Vault.Surface,
+        title = { Text("A new set", color = Vault.Text) },
+        text = { androidx.compose.material3.OutlinedTextField(title, { title = it }, singleLine = true, placeholder = { Text("Its name", color = Vault.Muted) }) },
+        confirmButton = { TextButton({ onMake(title) }, enabled = title.isNotBlank()) { Text("Make it", color = Vault.Accent) } },
+        dismissButton = { TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** One of your relay sets: its relays, Edit (each one's ×), Share; their posts together, newest first. */
+@Composable
+private fun RelaySetScreen(d: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar(null, nav)
+    val sets by social.relaySets.collectAsState()
+    LaunchedEffect(Unit) { if (sets.isEmpty()) social.knowRelayLists() }
+    val set = sets.firstOrNull { it.d == d } ?: return@Column Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf(false) }
+    RelayFeed(set.relays, social, nav) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
+            Text(set.title, color = Vault.Text, style = MaterialTheme.typography.titleLarge)
+            Text("Relay set · yours", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (r in set.relays) Text(r.address + if (editing) "  ×" else "", color = Vault.Text, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                        .clickable { if (editing) social.inSet(set.d, set.title, r, false) else nav.open(Route.Relay(r.address)) }.padding(horizontal = 9.dp, vertical = 4.dp))
+            }
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ editing = !editing }, border = BorderStroke(1.dp, Vault.Line)) { Text(if (editing) "Done" else "Edit", color = Vault.Text) }
+                OutlinedButton({ share(context, set.title + "\n" + set.relays.joinToString("\n") { cc.aaro.cosign.RelayFeeds.link(it) }, null) }, border = BorderStroke(1.dp, Vault.Line)) { Text("Share", color = Vault.Text) }
+            }
+        }
+    }
+}
+
+/** Posts from [relays] alone, newest first, a page at a time, under [head]. */
+@Composable
+private fun RelayFeed(relays: List<cc.aaro.cosign.RelayFeeds.Relay>, social: Social, nav: Nav, head: @Composable () -> Unit) {
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    val key = relays.joinToString(",") { it.url }
+    var posts by remember(key) { mutableStateOf<List<Event>?>(null) }
+    var more by remember(key) { mutableStateOf(true) }
+    var paging by remember(key) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(key) { posts = try { social.relayPosts(relays) } catch (_: Exception) { emptyList() }; if (posts.isNullOrEmpty()) more = false }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item(key = "head") { head(); HorizontalDivider(color = Vault.Edge) }
+        when (val p = posts) {
+            null -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
+            else -> {
+                if (p.isEmpty()) item(key = "none") { Text("No posts to show here. Some relays share them only with their members.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                items(p, key = { it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12); HorizontalDivider(color = Vault.Edge) }
+                if (more && p.isNotEmpty()) item(key = "more") {
+                    LaunchedEffect(p.size) {
+                        if (paging) return@LaunchedEffect
+                        paging = true
+                        scope.launch {
+                            val next = try { social.relayPosts(relays, until = p.minOf { it.createdAt } - 1) } catch (_: Exception) { emptyList() }.filter { n -> p.none { it.id == n.id } }
+                            if (next.isEmpty()) more = false else posts = p + next
+                            paging = false
+                        }
+                    }
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
+                }
+            }
+        }
     }
 }
