@@ -102,6 +102,8 @@ class Later(private val prefs: android.content.SharedPreferences) {
     fun done(item: LaterItem, on: Boolean) = put(item.copy(done = if (on) Clock.now() else null, updated = next(item)))
     /** Removed: only a marker stays (no text), so other devices learn it, for a month. */
     fun remove(item: LaterItem) = put(item.copy(text = "", deleted = Clock.now(), updated = next(item)))
+    /** Undo a remove made a moment ago: [item] as it was, back (a newer change, so it syncs as one). */
+    fun bringBack(item: LaterItem) = put(item.copy(deleted = null, updated = next(item)))
     /** A change's time: now, or just after the last change if that was this same second (so it still wins, and is still sent). */
     private fun next(item: LaterItem) = maxOf(Clock.now(), item.updated + 1)
     /** Undo of a save just made: gone as if it never was (other devices may not have it yet; a tombstone tells them). */

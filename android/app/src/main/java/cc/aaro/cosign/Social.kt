@@ -1026,7 +1026,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val text = toSelf(interests.toJson(), encrypt = true) ?: return
         val ev = Event(me, Clock.now(), 30078, listOf(listOf("d", interestsTag)), text).withId()
         val signed = try { phone.signOwn(ev) } catch (_: Exception) { return }
-        if (Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed) > 0) prefs.edit().putLong("interestsSent", at).apply()
+        // Your configured write relays, done only when most took it (reader.md §6).
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        if (cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))) prefs.edit().putLong("interestsSent", at).apply()
     }
 
     /** Your account's copy, if it's newer than this phone's: true if there is one. */
@@ -1095,6 +1097,27 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
     fun keepUnread(key: String) { readerUnread.update { it + (key to Clock.now()) }; keepRead() }
     /** Mark all as read: each of [sources] read up to now; what was kept unread there is read too. */
+    /** Read state as it was, for an Undo of Mark all as read. */
+    data class ReadSnapshot(val upto: Map<String, Long>, val unread: Map<String, Long>)
+    fun readSnapshot() = ReadSnapshot(readerUpto.value, readerUnread.value)
+    /** Undo: read-up-to and kept-unread as they were just before. */
+    fun restoreRead(s: ReadSnapshot) { readerUpto.value = s.upto; readerUnread.value = s.unread; keepRead() }
+
+    /** When each Reader folder (or source) was last opened: a chip is bold for what arrived since (no counts). On this phone. */
+    private val readerOpened = java.util.concurrent.ConcurrentHashMap(longs("readerOpened"))
+    fun openedFolder(id: String) { readerOpened[id] = Clock.now(); prefs.edit().putString("readerOpened", org.json.JSONObject(readerOpened as Map<*, *>).toString()).apply() }
+    /**
+     * Bold (reader.md §5): an unread item in [items] newer than when [id] was last opened. No record yet: now is
+     * recorded, and it isn't bold.
+     */
+    fun arrivedSince(id: String, items: List<ReaderItem>): Boolean {
+        val t = readerOpened[id] ?: run { openedFolder(id); return false }
+        return items.any { it.at > t && !itemRead(it) }
+    }
+
+    /** Kept unread (a standing mark): it still ages out as a read item would (Star keeps things). */
+    fun keptUnread(i: ReaderItem) = (readerUnread.value[i.key] ?: 0) > 0
+
     fun markAllRead(sources: Collection<String>, keys: Collection<String>) {
         val now = Clock.now()
         readerUpto.update { m -> m + sources.associateWith { maxOf(m[it] ?: 0, now) } }
@@ -1390,10 +1413,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun pullKept(sending: Boolean = false) {
         val me = me ?: return
         if (Sources.viewAs != null) return
-        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val w = listTargets().ifEmpty { return }
+        val relays = if (Sources.localOnly) w else (w + readRelays().take(3)).distinct()
         val years = (2026..java.time.LocalDate.now(java.time.ZoneOffset.UTC).year).map { it.toString() }
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to years.map { "${Kept.TAG}/$it" }, "limit" to 40), 6000)
-            .filter { it.pubkey == me && it.verify() }
+        val (found, answered) = Fetch.queryAnswered(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to years.map { "${Kept.TAG}/$it" }, "limit" to 40), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
+        // Not reached: no year's copy can be said to be missing, so nothing is sent over one.
+        if (!cc.aaro.cosign.reader.SyncGuard.complete(w, answered)) return
+        val got = found.filter { it.pubkey == me && it.verify() }
             .groupBy { e -> e.tags.firstOrNull { it.size > 1 && it[0] == "d" }?.get(1)?.removePrefix("${Kept.TAG}/") ?: "" }
             .mapValues { (_, l) -> l.maxBy { it.createdAt } }
         for (y in (kept.years() + got.keys).filter { it in years }) {
@@ -1411,7 +1438,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         for (y in keptDirty.toList()) {
             val text = toSelf(kept.json(y), encrypt = true) ?: return
             val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", "${Kept.TAG}/$y")), text).withId()) } catch (_: Exception) { return }
-            if (Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed) > 0) keptDirty -= y
+            if (cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))) keptDirty -= y
         }
     }
 
@@ -2829,7 +2856,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
             .filter { it.source !in muted && it.at > now - cc.aaro.cosign.reader.ReaderRules.UNREAD_FOR }
             .distinctBy { it.key }.sortedByDescending { it.at }
         val stars = keptUrls().let { kept -> all.filter { starred(it, kept) }.map { it.key }.toSet() }
-        val (shown, aged) = all.partition { i -> cc.aaro.cosign.reader.ReaderRules.stays(itemRead(i), i.at, i.type, i.key in stars, now, onScreen = i.key in keep) }
+        // Kept unread ages out as read does (to keep something, star it).
+        val (shown, aged) = all.partition { i -> cc.aaro.cosign.reader.ReaderRules.stays(itemRead(i) || keptUnread(i), i.at, i.type, i.key in stars, now, onScreen = i.key in keep) }
         // A read item that's aged out: its source read up to it, so it stays read once its key has left the seen list.
         // Never up to an unread one: in this load (a digest by its oldest unread post), shown here lately but missing
         // from this load, or kept unread anywhere (a live mark is never reached).
@@ -2879,10 +2907,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** Star: kept privately in Notes (and kept in Reader too); again, taken out. */
-    fun star(i: ReaderItem) {
-        val url = readerUrl(i) ?: return
-        later.items.value.firstOrNull { it.deleted == null && (it.url == url || (i.link != null && it.url == i.link)) }?.let { later.remove(it); return }
+    /** Star and its Note are one thing: starring keeps a Note, un-starring removes it (the Note it was: for Undo). */
+    fun star(i: ReaderItem): LaterItem? {
+        val url = readerUrl(i) ?: return null
+        later.items.value.firstOrNull { it.deleted == null && (it.url == url || (i.link != null && it.url == i.link)) }?.let { later.remove(it); return it }
         later.keep(shareTitle(i), url, i.snippet.take(500).ifEmpty { null }, i.sourceName)
+        return null
     }
 
     /** Share with a note, public: a post with your words and the link (a Nostr item quoted). */

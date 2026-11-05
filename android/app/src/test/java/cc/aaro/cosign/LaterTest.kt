@@ -226,4 +226,15 @@ class LaterTest {
         assertTrue(Later.same("fix the bike\n→ buy a tube", "Fix the bike"))
         assertFalse(Later.same("fix the bike\n→ buy a tube", "buy a tube"))
     }
+
+    /** Reader fidelity: Star and its Note are one; un-starring removes the Note, and Undo brings it back as it was. */
+    @Test fun anUnstarCanBeUndone() {
+        val l = Later(Prefs())
+        val n = l.keep("A story", "https://example.com/a", "its summary", "Example")!!
+        l.remove(n)
+        assertTrue(l.items.value.none { it.deleted == null && it.url == "https://example.com/a" })
+        l.bringBack(n)
+        val back = l.items.value.single { it.deleted == null && it.url == "https://example.com/a" }
+        assertEquals("A story", back.text); assertEquals(n.id, back.id)
+    }
 }
