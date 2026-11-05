@@ -1,0 +1,419 @@
+{
+ "about": "When a device may write a synced copy on the account (Notes' marble/later, Reader's marble/reader and discover/seen), and when a write is done: reader.md §6, sync-guard.js. Write relays are the configured list (kind 10002), every one counted: one that failed to connect, answered CLOSED or never sent EOSE didn't answer. complete: more than half sent EOSE (reached). full: all of them did (only full reads count toward the escape). found: the newest copy's created_at the relays gave (0: none); seenAt: the newest this device has seen; misses: full reads in a row that missed it; expires: how long a copy lives (0: for good). written: more than half sent OK. retryAfter: the wait after the n-th failure in a row. writeList: your write relays from your relay list's tags, every one (no cap; .onion, LAN and ws:// count, as no answer when unreachable); none at all means the fast defaults. missesAgainst: misses are counted against one copy seen and start again when a newer one is seen.",
+ "cases": [
+  {
+   "name": "not reached (most write relays didn't answer): wait",
+   "in": {
+    "complete": false,
+    "full": false,
+    "found": 500,
+    "seenAt": 400,
+    "now": 1000
+   },
+   "do": "wait",
+   "misses": 0
+  },
+  {
+   "name": "never seen a copy, reached: write (merged with what's found)",
+   "in": {
+    "complete": true,
+    "full": false,
+    "found": 0,
+    "seenAt": 0,
+    "now": 1000
+   },
+   "do": "write",
+   "misses": 0
+  },
+  {
+   "name": "found the copy seen, or newer: write",
+   "in": {
+    "complete": true,
+    "full": true,
+    "found": 600,
+    "seenAt": 600,
+    "now": 1000
+   },
+   "do": "write",
+   "misses": 0
+  },
+  {
+   "name": "the copy seen is missing, every write relay answered: wait, the first miss",
+   "in": {
+    "complete": true,
+    "full": true,
+    "found": 0,
+    "seenAt": 600,
+    "misses": 0,
+    "now": 1000
+   },
+   "do": "wait",
+   "misses": 1
+  },
+  {
+   "name": "an older copy than seen, all answered: the second miss",
+   "in": {
+    "complete": true,
+    "full": true,
+    "found": 300,
+    "seenAt": 600,
+    "misses": 1,
+    "now": 1000
+   },
+   "do": "wait",
+   "misses": 2
+  },
+  {
+   "name": "the third full read in a row without it: start again from what your relays have",
+   "in": {
+    "complete": true,
+    "full": true,
+    "found": 300,
+    "seenAt": 600,
+    "misses": 2,
+    "now": 1000
+   },
+   "do": "rebase",
+   "misses": 0
+  },
+  {
+   "name": "missing, but a write relay didn't answer (down, CLOSED, no EOSE): it may hold the copy, so no miss counts, never rebase",
+   "in": {
+    "complete": true,
+    "full": false,
+    "found": 300,
+    "seenAt": 600,
+    "misses": 2,
+    "now": 1000
+   },
+   "do": "wait",
+   "misses": 2
+  },
+  {
+   "name": "a seen list past its two weeks: gone, start again",
+   "in": {
+    "complete": true,
+    "full": false,
+    "found": 0,
+    "seenAt": 1000,
+    "misses": 0,
+    "expires": 1209600,
+    "now": 1300000
+   },
+   "do": "rebase",
+   "misses": 0
+  },
+  {
+   "name": "a seen list within its two weeks, missing: wait",
+   "in": {
+    "complete": true,
+    "full": true,
+    "found": 0,
+    "seenAt": 1000,
+    "misses": 0,
+    "expires": 1209600,
+    "now": 500000
+   },
+   "do": "wait",
+   "misses": 1
+  }
+ ],
+ "complete": [
+  {
+   "name": "every write relay answered",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "answeredBy": [
+    "wss://a",
+    "wss://b",
+    "wss://c",
+    "wss://fast"
+   ],
+   "complete": true,
+   "full": true
+  },
+  {
+   "name": "one of three is down (failed to connect, so not asked): still reached, not full",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "answeredBy": [
+    "wss://a",
+    "wss://c"
+   ],
+   "complete": true,
+   "full": false
+  },
+  {
+   "name": "one of three answered CLOSED (auth-required) or never sent EOSE: still reached, not full",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "answeredBy": [
+    "wss://a",
+    "wss://b"
+   ],
+   "complete": true,
+   "full": false
+  },
+  {
+   "name": "the only write relay is down: not reached (a down relay still counts in the list)",
+   "write": [
+    "wss://a"
+   ],
+   "answeredBy": [
+    "wss://fast",
+    "wss://read"
+   ],
+   "complete": false,
+   "full": false
+  },
+  {
+   "name": "half isn't most (1 of 2)",
+   "write": [
+    "wss://a",
+    "wss://b"
+   ],
+   "answeredBy": [
+    "wss://b",
+    "wss://fast"
+   ],
+   "complete": false,
+   "full": false
+  },
+  {
+   "name": "no write relays known (the relay list wasn't found): not reached",
+   "write": [],
+   "answeredBy": [
+    "wss://fast"
+   ],
+   "complete": false,
+   "full": false
+  }
+ ],
+ "retryAfter": [
+  {
+   "failures": 1,
+   "seconds": 60
+  },
+  {
+   "failures": 2,
+   "seconds": 120
+  },
+  {
+   "failures": 3,
+   "seconds": 240
+  },
+  {
+   "failures": 4,
+   "seconds": 480
+  },
+  {
+   "failures": 5,
+   "seconds": 600
+  },
+  {
+   "failures": 9,
+   "seconds": 600
+  }
+ ],
+ "written": [
+  {
+   "name": "one OK of three: pending, not done",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "okBy": [
+    "wss://a"
+   ],
+   "written": false
+  },
+  {
+   "name": "two OK of three: done",
+   "write": [
+    "wss://a",
+    "wss://b",
+    "wss://c"
+   ],
+   "okBy": [
+    "wss://a",
+    "wss://b"
+   ],
+   "written": true
+  },
+  {
+   "name": "OK from a relay not on the list doesn't count",
+   "write": [
+    "wss://a",
+    "wss://b"
+   ],
+   "okBy": [
+    "wss://fast",
+    "wss://a"
+   ],
+   "written": false
+  },
+  {
+   "name": "no write relays: never done",
+   "write": [],
+   "okBy": [
+    "wss://x"
+   ],
+   "written": false
+  }
+ ],
+ "writeList": [
+  {
+   "name": "every write relay counts, none capped: ten of them",
+   "tags": [
+    [
+     "r",
+     "wss://r0.example"
+    ],
+    [
+     "r",
+     "wss://r1.example"
+    ],
+    [
+     "r",
+     "wss://r2.example"
+    ],
+    [
+     "r",
+     "wss://r3.example"
+    ],
+    [
+     "r",
+     "wss://r4.example"
+    ],
+    [
+     "r",
+     "wss://r5.example"
+    ],
+    [
+     "r",
+     "wss://r6.example"
+    ],
+    [
+     "r",
+     "wss://r7.example"
+    ],
+    [
+     "r",
+     "wss://r8.example"
+    ],
+    [
+     "r",
+     "wss://r9.example"
+    ]
+   ],
+   "write": [
+    "wss://r0.example",
+    "wss://r1.example",
+    "wss://r2.example",
+    "wss://r3.example",
+    "wss://r4.example",
+    "wss://r5.example",
+    "wss://r6.example",
+    "wss://r7.example",
+    "wss://r8.example",
+    "wss://r9.example"
+   ]
+  },
+  {
+   "name": "read-only ones don't; unmarked and write ones do; once each, written alike",
+   "tags": [
+    [
+     "r",
+     "wss://A.example/"
+    ],
+    [
+     "r",
+     "wss://b.example",
+     "read"
+    ],
+    [
+     "r",
+     "wss://c.example",
+     "write"
+    ],
+    [
+     "r",
+     "wss://a.example"
+    ]
+   ],
+   "write": [
+    "wss://a.example",
+    "wss://c.example"
+   ]
+  },
+  {
+   "name": ".onion, your own network and ws:// count too (a browser just never hears from them)",
+   "tags": [
+    [
+     "r",
+     "ws://abcdef.onion"
+    ],
+    [
+     "r",
+     "ws://192.168.1.5:7777"
+    ],
+    [
+     "r",
+     "wss://relay.example"
+    ]
+   ],
+   "write": [
+    "ws://abcdef.onion",
+    "ws://192.168.1.5:7777",
+    "wss://relay.example"
+   ]
+  },
+  {
+   "name": "no write relays at all (every one read-only)",
+   "tags": [
+    [
+     "r",
+     "wss://a.example",
+     "read"
+    ]
+   ],
+   "write": []
+  }
+ ],
+ "missesAgainst": [
+  {
+   "name": "counted against the copy seen now: kept",
+   "stored": {
+    "n": 2,
+    "at": 600
+   },
+   "seenAt": 600,
+   "misses": 2
+  },
+  {
+   "name": "a newer copy seen since: starts again (else misses against an older copy rebase a newer one)",
+   "stored": {
+    "n": 2,
+    "at": 600
+   },
+   "seenAt": 900,
+   "misses": 0
+  },
+  {
+   "name": "nothing stored",
+   "stored": null,
+   "seenAt": 600,
+   "misses": 0
+  }
+ ]
+}

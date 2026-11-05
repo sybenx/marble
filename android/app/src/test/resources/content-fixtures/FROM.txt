@@ -1,1 +1,1 @@
-Copied from marble-content-fixtures 59e9915 (2026-11-01). Rules: content-rules.md there. Update by copying fixtures/*.json again.
+Copied from marble-content-fixtures 7516dcf (2026-11-04). Rules: content-rules.md there. Update by copying fixtures/*.json again.

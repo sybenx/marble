@@ -223,7 +223,11 @@ object TopicGuess {
  * A copy goes to your own account encrypted to yourself, so your other phones have it too; no
  * server reads or ranks it. [changed]: it changed here (time to save that copy).
  */
+/** Off (marble-2009-spec §8): sources are picked, so nothing needs learning. What was learned stays, inert. (Tests of the kept code turn it on.) */
+@Volatile internal var LEARNING = false
+
 class Interests(private val prefs: android.content.SharedPreferences, private val changed: () -> Unit = {}) {
+
     private val weights = HashMap<String, Double>()
     val followed: MutableSet<String> = LinkedHashSet()
     private val lessTopic = HashMap<String, Int>()
@@ -236,13 +240,13 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
 
     init { prefs.getString("interests", null)?.let { try { read(org.json.JSONObject(it)) } catch (_: Exception) {} } }
 
-    @Synchronized fun learn(topics: List<String>, by: Double) {
+    @Synchronized fun learn(topics: List<String>, by: Double) { if (!LEARNING) return
         if (topics.isEmpty()) return
         topics.take(2).forEachIndexed { i, t -> weights[t] = ((weights[t] ?: 0.0) + by / (i + 1)).coerceAtLeast(0.0) }
         save()
     }
     /** Learned in one go, from what you liked before up to [likesTo] (seconds): the 90 days at first, then what's new since. */
-    @Synchronized fun seed(votes: Map<String, Double>, likesTo: Long? = null) {
+    @Synchronized fun seed(votes: Map<String, Double>, likesTo: Long? = null) { if (!LEARNING) return
         votes.forEach { (t, v) -> weights[t] = (weights[t] ?: 0.0) + v }
         likesTo?.let { extra.put("likesTo", it) }
         prefs.edit().putBoolean("interestsSeeded", true).apply(); save()
@@ -253,7 +257,7 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
      */
     val likesTo: Long? @Synchronized get() = extra.optLong("likesTo", 0).takeIf { it > 0 }
     /** A like made here, learned at once: counted, as far as the next catch-up is concerned, if likes were caught up to now. */
-    @Synchronized fun liked(topics: List<String>, caughtUp: Boolean) {
+    @Synchronized fun liked(topics: List<String>, caughtUp: Boolean) { if (!LEARNING) return
         if (caughtUp) extra.put("likesTo", System.currentTimeMillis() / 1000)
         learn(topics, 1.0)
     }
@@ -264,7 +268,7 @@ class Interests(private val prefs: android.content.SharedPreferences, private va
     private val entities = HashMap<String, Double>().apply {
         prefs.getString("entities", null)?.let { try { val o = org.json.JSONObject(it); o.keys().forEach { k -> put(k, o.optDouble(k)) } } catch (_: Exception) {} }
     }
-    @Synchronized fun noticed(text: String, by: Double = 1.0) {
+    @Synchronized fun noticed(text: String, by: Double = 1.0) { if (!LEARNING) return
         val words = Entities.of(text)
         if (words.isEmpty()) return
         entities.replaceAll { _, v -> v * 0.98 }
@@ -375,20 +379,24 @@ class Seen(private val file: File) {
     private val at = java.util.Collections.synchronizedMap(LinkedHashMap<String, Long>())
     /** Every key's short form: a post seen here and the same post from another phone are one. */
     private val shorts = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** When each was seen (by its short form): the day it was opened decides against a Keep unread mark. */
+    private val times = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    fun timeOf(id: String): Long? = times[SeenSync.short(id)]
     init {
         try {
             val now = System.currentTimeMillis() / 1000
-            file.readLines().filter { it.isNotBlank() }.forEach { l -> val k = l.substringBefore(' '); at[k] = l.substringAfter(' ', "").toLongOrNull() ?: now; shorts += SeenSync.short(k) }
+            file.readLines().filter { it.isNotBlank() }.forEach { l -> val k = l.substringBefore(' '); val t = l.substringAfter(' ', "").toLongOrNull() ?: now; at[k] = t; shorts += SeenSync.short(k); times.merge(SeenSync.short(k), t, ::maxOf) }
         } catch (_: Exception) {}
     }
     /** Seen here, or on another of your phones. */
     operator fun contains(id: String) = SeenSync.short(id) in shorts
     /** Seen just now; true if it's new. */
     fun add(id: String, time: Long = System.currentTimeMillis() / 1000): Boolean {
-        if (!shorts.add(SeenSync.short(id))) return false
-        at[id] = time
+        if (!shorts.add(SeenSync.short(id))) { times.merge(SeenSync.short(id), time, ::maxOf); return false }
+        at[id] = time; times.merge(SeenSync.short(id), time, ::maxOf)
         try {
-            if (at.size > 20_000) { val keep = synchronized(at) { at.entries.toList().takeLast(15_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
+            // Room for Reader's month of keys too (unread items show for 30 days), beside the feed's.
+            if (at.size > 60_000) { val keep = synchronized(at) { at.entries.toList().takeLast(50_000) }; at.clear(); shorts.clear(); keep.forEach { at[it.key] = it.value; shorts += SeenSync.short(it.key) }; file.writeText(keep.joinToString("") { "${it.key} ${it.value}\n" }) }
             else file.appendText("$id $time\n")
         } catch (_: Exception) {}
         return true
@@ -417,12 +425,21 @@ object SeenSync {
     }
 
     /** The account's copy: {"v":1,"at":…,"days":{"<day number>":"key key …"}}, the newest [CAP] within [WINDOW] of [now]. */
-    fun encode(keys: List<Pair<String, Long>>, now: Long): String {
+    /** [keep]: fields of the account's copy this version doesn't write (Reader's upto and unread, reader.md §2): kept as they were. */
+    fun encode(keys: List<Pair<String, Long>>, now: Long, keep: org.json.JSONObject? = null): String {
         val recent = keys.filter { it.second > now - WINDOW }.sortedBy { it.second }.distinctBy { it.first }.takeLast(CAP)
         val days = org.json.JSONObject()
         recent.groupBy { it.second / 86_400 }.forEach { (d, l) -> days.put(d.toString(), l.joinToString(" ") { it.first }) }
-        return org.json.JSONObject().put("v", 1).put("at", now).put("days", days).toString()
+        val o = org.json.JSONObject()
+        keep?.keys()?.forEach { k -> if (k !in setOf("v", "at", "days")) o.put(k, keep.get(k)) }
+        return o.put("v", 1).put("at", now).put("days", days).toString()
     }
+
+    /** A copy's fields besides v, at and days (kept when this phone writes it again). */
+    fun others(json: String): org.json.JSONObject? = try {
+        val o = org.json.JSONObject(json)
+        if (o.optInt("v") != 1) null else org.json.JSONObject().apply { o.keys().forEach { k -> if (k !in setOf("v", "at", "days")) put(k, o.get(k)) } }
+    } catch (_: Exception) { null }
 
     /** The keys in a copy, each with the start of its day; empty if it isn't one (or is a later version). */
     fun decode(json: String): List<Pair<String, Long>> = try {

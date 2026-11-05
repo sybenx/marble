@@ -1,0 +1,145 @@
+{
+  "name": "A post with a quoted note, an article and ten people tagged at the end (Laan Tungir, BUD-10)",
+  "rule": "§3, §2",
+  "why": "An article reference becomes an article card (its summary only repeats its title and its image is empty: the first table row stands in, and no picture block); the ten mentions at the end are one line of chips, four shown and +6.",
+  "source": "wss://relay.ditto.pub",
+  "event": {
+    "kind": 1,
+    "id": "00000000011cb91f14427762a336acd2795e1ca20a9a253e07b77ff22f3e9e39",
+    "pubkey": "1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139",
+    "created_at": 1793555243,
+    "tags": [
+      [
+        "nonce",
+        "1000001428823731",
+        "33"
+      ]
+    ],
+    "content": "Nostr is very decentralized if you post text. I regularly post to nearly 100 servers around the world.\n\nIf however you post an image, meme, video or other blob, #nostr is hardly decentralized at all. What is the point of posting an important meme to 100 geographically different relays, if an attacker only has to take down one link to your meme?\n\nThis is where blossom servers and BUD-10 come in. Unfortunately most nostr clients today don't support BUD-10. The good news is, it has never been easier to implement. Just whisper it to your agent, and it can be quickly done.\n\nnevent1qqsqqqqxk8fs9tdsp8447dt84r936sma0jc283y6ra7nfy694xwgehgprpmhxue69uhhqun9d45h2mfwwpexjmtpdshxuet5qy8hwumn8ghj7mn0wd68ytnddakszxnhwden5te0wfjkccte9ekxzctww36kuemfwghxuet5jjlm76\n \nHere is a long form note I am going to maintain to try to encourage developers to implement BUD-10. BUD-10 in my opinion is the most important technology missing from our stack. \n\nnaddr1qvzqqqr4gupzq8ky23e5mjlkle2fq88ztsx8c672tmwcj3p5zempltwry8fcmufeqyt8wumn8ghj7un9d3shjtnddaehgu3wwp6kytcprdmhxue69uhhyetvv9ujumrpv9h8gatwva5hytnwv46z7qq2xymnjve4xsmrgve5ak029m\n\n\nnostr:npub12vkcxr0luzwp8e673v29eqjhrr7p9vqq8asav85swaepclllj09sylpugg\nnostr:npub16c0nh3dnadzqpm76uctf5hqhe2lny344zsmpm6feee9p5rdxaa9q586nvr\nnostr:npub1s08tmwrq93umxp2lpe5js05sm0syr3kue7uqjc6ue95heqfl3vdsn9jqv0\nnostr:npub1utx00neqgqln72j22kej3ux7803c2k986henvvha4thuwfkper4s7r50e8\nnostr:npub17n4cuc4d6y6qh89dekvxrenfkt5s0n49xns00uavjaxpr36c55dq87fyh9\nnostr:npub1syjmjy0dp62dhccq3g97fr87tngvpvzey08llyt6ul58m2zqpzps9wf6wl\nnostr:npub13c0ralhk2zdealz98kp4jz2qkmn92uc86k9cn40hpa8c237vdcyszpe8s8\nnostr:npub1yzvxlwp7wawed5vgefwfmugvumtp8c8t0etk3g8sky4n0ndvyxesnxrf8q\nnostr:npub1n0sturny6w9zn2wwexju3m6asu7zh7jnv2jt2kx6tlmfhs7thq0qnflahe\nnostr:npub17fe5rak0reatm7y5xu3yvve0trl8njvjt4yflevhyxqpwv22mlfs3wnzuc",
+    "sig": "a6c3e03a5416551025518bb23c8c8dbe307c6419dac66aab391376713f2fb8dc25df7aee703ff81a648136fecf6f543b7b20967fa90618c9137f32ff0487763e"
+  },
+  "related": [
+    {
+      "kind": 1,
+      "id": "000006b1d302adb009eb5f3567a8cb1d437d7cb0a3c49a1f7d349345a99c8cdd",
+      "pubkey": "1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139",
+      "created_at": 1793370421,
+      "tags": [
+        [
+          "nonce",
+          "1000000000676754",
+          "20"
+        ]
+      ],
+      "content": "This is a test of BUD-10. Can you see this image? What client are you using?\nblossom:d819b922fbbf3a47e606dab12a6c316b9a0445ff4aa69d749d638ce83884cf1c.jpg?xs=blossom.laantungir.net&xs=cdn.satellite.earth&xs=blossom.primal.net&as=1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139&sz=117475",
+      "sig": "9640d337ed4bd4fbd516e4b5f3d889da4a7598ad4f2c4a714a1400b0bc2a75f81c28985eea94cad334b5aff89681bf77086d776d3f70acb2430d3f09c236e940"
+    },
+    {
+      "kind": 30023,
+      "id": "eb1c8e9e637f176f12ef69b169de20375f6c59da54896caee4604ad9dc9d09ae",
+      "pubkey": "1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139",
+      "created_at": 1793546434,
+      "tags": [
+        [
+          "d",
+          "1793546434"
+        ],
+        [
+          "published_at",
+          "1793546434"
+        ],
+        [
+          "title",
+          "BUD-10 Client Adoption Status"
+        ],
+        [
+          "image",
+          ""
+        ],
+        [
+          "summary",
+          "BUD-10 Client Adoption Status"
+        ],
+        [
+          "t",
+          "bud10"
+        ],
+        [
+          "t",
+          "blossom"
+        ]
+      ],
+      "content": "# BUD-10 Client Adoption Status\n\n| Client | Platform or version | Thread status | Evidence and qualification |\n| --- | --- | --- | --- |\n| **Amethyst** | Android; version 1.20.0 explicitly reported | ✅ Working | Five independent positive reports. The final report explicitly says, “Yes. Amethyst 1.20.0.” [1](https://njump.me/nevent1qqsqqqrqwv5rm5xu5yx7r3chmv58r08f7yxun9cz8dy8p860l483x7s80qvaw) [2](https://njump.me/nevent1qqsgvd8y0vh8uemwrdvenymqq0nzpu85nnc77r30c727r3qahzhwuecsevnlw) [3](https://njump.me/nevent1qqsxu6mzcj2n42vtaafy4rfhqyeuzpmnlawv252n65paj9n4lfuwfzsx6vhu6) [4](https://njump.me/nevent1qqs28xzysqhjp3em3fkxn52hmpapn2mj24m44snahtywnv9qc9gupuq4hh855) [5](https://njump.me/nevent1qqs2f7h2rjy8nc3j3arr9vkthk3txyuslr3vl26gld8q459836m4mkgxe4me6) |\n| **Feather** | Android; 1.9.0 announced | ✅ Working in 1.9.0 | An initial report said the image was not visible. Feather then announced, “Added BUD-10 support in 1.9.0!” and a user subsequently confirmed, “Yes, now I can see it.” [Initial failure](https://njump.me/nevent1qqsqqqqq2yf2er3dkll5ap7n0y76scsv5jk52xnmzmapd7c08sjaazs7lw5f2) · [Developer announcement](https://njump.me/nevent1qqs0e3gfr6p0dnm3w62d6h6z3kerh4mek3rzcrrym7lxwsfstl8zm4ctgpm56) · [User confirmation](https://njump.me/nevent1qqsqqqqr4xl9wn4k2ph99ch4pj4decqp0z84aj5640474af972af9tszjj696) |\n| **Nostr Vault** | Web | ✅ Working according to its developer | About 4 hours 43 minutes after the initial iOS failure, Nostr Vault's creator reported, “This is functional on Nostrvault.app now.” This is a developer statement rather than an independent rendering confirmation. [Developer update](https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd) |\n| **Nostr Vault** | iOS | ⚠️ Initially failed; current status unconfirmed | The iOS app initially displayed only a link. The subsequent update was posted from an event tagged “Nostr Vault on iOS,” but its text explicitly names Nostrvault.app and does not clearly say whether the iOS app was fixed. A fresh iOS test is needed. [Initial failure](https://njump.me/nevent1qqsqqqzmtwnzlyqg8aenys42jhnkr8vg5tkqhc0mdh0kzxjl6xhf3pq6ypu32) · [Ambiguous update](https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd) |\n| **Zap Cooking** | Web | 🟡 Announced, not confirmed | The project said, “We will support this very soon in Zap Cooking.” This is an implementation commitment, not evidence that support has shipped. [Announcement](https://njump.me/nevent1qqsqqqptfaqt2syz5m9qk8x5ctq0fmqeu4cxdexc2w223jypu6skvkgg0428c) |\n| **Primal** | Web in Chrome and Brave | ❌ Not working in this test | Two independent web users reported no image and raw Blossom text. [Chrome report](https://njump.me/nevent1qqspn5hadenqjyzv6d394ury7yh8ykatd95umw6zs3hu2cazakjg5gsnkw23p) · [Brave report](https://njump.me/nevent1qqsyvn950x20slqkg8aveqffk6u4dz3xug4regy8xtyfay7nc5qdwxcpe2nvx) |\n| **Primal** | iOS | ❌ Not working in this test | A Primal iOS user explicitly reported that the image was not visible. [Report](https://njump.me/nevent1qqsy9g536qezjv9vhtrrg9meg3p0mu5rge7m4htnzunt8eq990adyag37tq22) |\n| **Wisp** | Unspecified | ❌ Not working in this test | The participant saw a link and reported that it appeared to break at each query string. The event metadata says only “Wisp,” not a specific platform. [Report](https://njump.me/nevent1qqsqqqx3ukvlfu4pjsxgdelr5j8mczy4tveyks9dz0s4gkvr3rt64tsjfwp7e) |\n| **Wisp** | iOS | ❌ Not working in this test | The Wisp iOS report said the reference looked like a text string and generalized the failure to every iOS client. Only Wisp iOS is counted here; later evidence showed that the generalization no longer held. [Report](https://njump.me/nevent1qqsqqqp2lm3thyzj0yrh2m053zuywj97zjv2vxacpcuruwf39jsfe8q08mcfa) |\n| **Jumble** | Web | ❌ Not working in this test | A participant reported “no” while tagging Jumble's official account. [Report](https://njump.me/nevent1qqsgvh0gshvlfg4suudy596cg7x9ret269w008k4scvgnn0xecdr9jqj278wg) |\n| **T-Bone** | Unspecified | ❌ Not working in this test | A participant associated with the client answered, “No T-Bone,” then shared its v0.5.2 release link. The release link is not itself evidence that this version supports BUD-10. [Failure report](https://njump.me/nevent1qqsxez0sdfdu5xkfvqqe6zsdq3rj2m52c6x7x6ja4crpw2kwjuw0kjsyqa77t) · [Follow-up](https://njump.me/nevent1qqsf2mjmpr0d8p2yhsqhap3h3tfjt4x5lck2vjekpd7pz0ec6yunpqc3rcnhj) |\n| **YakiHonne** | Unspecified | ❌ Not working in this test | A participant reported, “Not visible on yakihonne.” [Report](https://njump.me/nevent1qqs066f5dlcu5q3v7kfde2v3rppmgaul7tqugc04tsukzs0xqjan0pg8mxhd6) |\n| **Nostur** | Apple platforms; exact platform not stated | ❌ Not working in this test | A participant reported, “Not visible on nostur,” and tagged the Nostur account. [Report](https://njump.me/nevent1qqsz86h8yqdxhs4u0h546p90uuptt885gpp6nesx43teu0ve9868k0qgfjyqe) |\n| **Nostrich** | Unspecified | ❌ Not working in the supplied screenshot | The reply contains only a screenshot. The screenshot shows the original Blossom URI as plain text, without the referenced image rendered. [Screenshot reply](https://njump.me/nevent1qqsy05p9hjfsnvthhml27h8mujyr2y3a7quqmnyzlakr56rpr7dwjzqansjs4) |\n| **Dark Wisp** | Unknown | ❌ Not working | A participant reported that the image did not render, and the original poster subsequently confirmed that Dark Wisp is not working. [Original report](https://njump.me/nevent1qqsg0jt5phx9vua50c6zq9fhp8gu3atz9hsmqffllc7yfgpka0v83zsca3psr) |",
+      "sig": "d384143fa79888e6c570e41bb24865e600e1f6bba53e6cbcb8bc14a868b1d512de7fb0fa1867a72fd36154f739f4c0cb0ffc34bcb5c826f596383c8ba7eaecef"
+    }
+  ],
+  "expect": {
+    "inline": [
+      {
+        "text": "Nostr is very decentralized if you post text."
+      },
+      {
+        "hashtag": "nostr"
+      },
+      {
+        "text": "Here is a long form note"
+      },
+      {
+        "mention": "532d830dffe09c13e75e8b145c825718fc12b0003f61d61e9077721c7fff93cb"
+      },
+      {
+        "mention": "d61f3bc5b3eb4400efdae6169a5c17cabf3246b514361de939ce4a1a0da6ef4a"
+      },
+      {
+        "mention": "83cebdb8602c79b3055f0e69283e90dbe041c6dccfb809635cc9697c813f8b1b"
+      },
+      {
+        "mention": "e2ccf7cf20403f3f2a4a55b328f0de3be38558a7d5f33632fdaaefc726c1c8eb"
+      },
+      {
+        "mention": "f4eb8e62add1340b9cadcd9861e669b2e907cea534e0f7f3ac974c11c758a51a"
+      },
+      {
+        "mention": "8125b911ed0e94dbe3008a0be48cfe5cd0c0b05923cfff917ae7e87da8400883"
+      },
+      {
+        "mention": "8e1e3efef6509b9efc453d83590940b6e6557307d58b89d5f70f4f8547cc6e09"
+      },
+      {
+        "mention": "20986fb83e775d96d188ca5c9df10ce6d613e0eb7e5768a0f0b12b37cdac21b3"
+      },
+      {
+        "mention": "9be0be0e64d38a29a9cec9a5c8ef5d873c2bfa5362a4b558da5ff69bc3cbb81e"
+      },
+      {
+        "mention": "f27341f6cf1e7abdf894372246332f58fe79c9925d489fe597218017314adfd3"
+      }
+    ],
+    "cards": [
+      {
+        "card": "note",
+        "ref": "000006b1d302adb009eb5f3567a8cb1d437d7cb0a3c49a1f7d349345a99c8cdd",
+        "line": "This is a test of BUD-10."
+      },
+      {
+        "card": "article",
+        "ref": "30023:1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139:1793546434",
+        "line": "Amethyst · Android; version 1.20.0 explicitly reported"
+      }
+    ],
+    "media": [],
+    "warning": null,
+    "mentionRun": {
+      "shown": 4,
+      "more": 6
+    },
+    "preview": null,
+    "never": [
+      "nostr:",
+      "naddr1",
+      "nevent1",
+      "↪ an article",
+      "npub1"
+    ]
+  }
+}

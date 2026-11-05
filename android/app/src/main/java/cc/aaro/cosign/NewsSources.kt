@@ -33,8 +33,41 @@ object NewsSources {
     var changed: () -> Unit = {}
     private var prefs: android.content.SharedPreferences? = null
 
-    fun load(c: Context) {
-        val p = c.getSharedPreferences("news-sources", Context.MODE_PRIVATE).also { prefs = it }
+    /** Whose sources these are: one account's, as everything else (kept under that account's name). */
+    @Volatile var account: String? = null; private set
+    /** One lock for loading, taking in and reading out, so a switch of account can't fall between them. */
+    private val lock = Any()
+    /** Moves on with every load: a send that began under another load sends nothing. */
+    @Volatile var generation = 0L; private set
+
+    /** This account's list as JSON, and the load it came from; null if [account] isn't the one loaded. */
+    fun snapshot(account: String): Pair<String, Long>? = synchronized(lock) { if (this.account != account) null else json() to generation }
+    /** This account's own feeds and Marble's sources it took out, read together; null if it isn't the one loaded. */
+    fun shownFor(account: String): Pair<List<OwnFeed>, Set<String>>? = synchronized(lock) {
+        if (this.account != account) null else shownOwn() to off.value.filterValues { it.first }.keys }
+
+    /** The shown account's sources (loaded again when you switch). */
+    fun load(c: Context, account: String, signedIn: String?) = load(account, signedIn) { c.getSharedPreferences(it, Context.MODE_PRIVATE) }
+
+    /**
+     * [account]'s sources. Before 0.12.27 there was one list for the phone: it moves, once, to the account recorded
+     * for it, else the one signed in ([signedIn]: the account on screen when the app started,
+     * as before the upgrade), recorded the first time this runs. No other account ever gets it, or a copy merged from another.
+     */
+    fun load(account: String, signedIn: String?, prefsFor: (String) -> android.content.SharedPreferences) = synchronized(lock) {
+        val p = prefsFor("news-sources.$account")
+        if (this.account == account && prefs === p) return@synchronized
+        val legacy = prefsFor("news-sources")
+        if (legacy.getString("movedTo", null) == null && legacy.contains("state")) {
+            val owner = legacy.getString("upgradeAccount", null)
+                ?: signedIn?.also { legacy.edit().putString("upgradeAccount", it).apply() }
+            if (owner == account && !p.contains("state")) {
+                p.edit().putString("state", legacy.getString("state", null)).apply()
+                legacy.edit().putString("movedTo", account).apply()
+            }
+        }
+        own.value = emptyList(); off.value = emptyMap()
+        prefs = p; this.account = account; generation++
         p.getString("state", null)?.let { take(it) }
     }
 
@@ -52,6 +85,9 @@ object NewsSources {
         .put("off", JSONObject().apply { off.value.forEach { (k, v) -> put(k, JSONObject().put("off", v.first).put("at", v.second)) } }).toString()
 
     /** Another copy merged in (the account's): per feed and per source, the newest change. True if this one has something it hasn't. */
+    /** [take], only if [account]'s list is the one loaded (an account switched mid-pull takes nothing). */
+    fun takeFor(account: String, json: String): Boolean = synchronized(lock) { if (this.account != account) false else take(json) }
+
     fun take(json: String): Boolean {
         val o = try { JSONObject(json) } catch (_: Exception) { return false }
         if (o.optInt("v", 1) != 1) return false
@@ -116,6 +152,15 @@ object NewsSources {
         }
     }
 
+    /** One feed's stories (Reader's feed: sources), from the phone's copy if fetched in the last 30 minutes. */
+    suspend fun feedCards(context: Context, url: String, name: String, cachedOnly: Boolean = false): List<TopicCard> = withContext(Dispatchers.IO) {
+        val dir = File(context.cacheDir, "own-feeds").also { it.mkdirs() }
+        val file = File(dir, sha(url) + ".xml")
+        val fresh = file.exists() && System.currentTimeMillis() - file.lastModified() < 30 * 60_000L
+        val body = if (fresh || cachedOnly) file.takeIf { it.exists() }?.readText() else get(url)?.second?.also { try { file.writeText(it) } catch (_: Exception) {} } ?: file.takeIf { it.exists() }?.readText()
+        body?.let { parse(it, url, name, "news")?.third }.orEmpty()
+    }
+
     /** Marble's stories as you've chosen (its sources you took out, gone) and your own feeds' added. */
     suspend fun mix(context: Context, site: List<TopicCard>, cachedOnly: Boolean): List<TopicCard> {
         if (site.isNotEmpty()) marble.value = site.groupBy { it.sourceId }.mapValues { (_, l) -> l[0].sourceName to l.map { it.topic }.toSet() }
@@ -145,6 +190,7 @@ object NewsSources {
                         val rel = p.getAttributeValue(null, "rel") ?: "alternate"
                         val href = p.getAttributeValue(null, "href")
                         if (rel == "alternate") { if (cur != null) cur.putIfAbsent("link", href) else if (siteLink.isEmpty()) siteLink = href }
+                        else if (rel == "replies" && cur != null) cur.putIfAbsent("replies", href)
                     }
                     (n == "media:content" || n == "media:thumbnail" || n == "enclosure") && cur != null ->
                         p.getAttributeValue(null, "url")?.takeIf { (p.getAttributeValue(null, "type") ?: "image").startsWith("image") || n != "enclosure" }?.let { cur.putIfAbsent("image", it) }
@@ -155,6 +201,7 @@ object NewsSources {
                                 "title" -> cur.putIfAbsent("title", text); "link" -> cur.putIfAbsent("link", text.trim())
                                 "description", "summary", "content:encoded", "content" -> cur.putIfAbsent("summary", text)
                                 "pubdate", "published", "updated", "dc:date" -> cur.putIfAbsent("date", text.trim()); "guid", "id" -> cur.putIfAbsent("id", text.trim())
+                                "comments" -> cur.putIfAbsent("comments", text.trim())
                             } else if (cur == null) when (n) { "title" -> if (title.isEmpty()) title = text.trim(); "link" -> if (siteLink.isEmpty()) siteLink = text.trim() }
                             ev = p.eventType; continue
                         }
@@ -168,13 +215,16 @@ object NewsSources {
             val link = m["link"]?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null
             val t = m["title"]?.let(HtmlText::decode)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             val summary = m["summary"]?.replace(Regex("<[^>]+>"), " ")?.let(HtmlText::decode)?.replace(Regex("\\s+"), " ")?.trim()?.take(300).orEmpty()
-            TopicCard("own:" + sha(m["id"] ?: link), link, t, summary, m["image"]?.takeIf { it.startsWith("https://") }, src, name.ifEmpty { title }, date(m["date"]), topic)
+            // Where it's discussed (reader.md §5): <comments>, rel=replies, a discussion page as its guid or link, hnrss's "Comments URL".
+            val talk = cc.aaro.cosign.reader.ReaderRules.discussion(link, m["comments"], m["replies"], m["id"], m["summary"])
+            TopicCard("own:" + sha(m["id"] ?: link), link, t, summary, m["image"]?.takeIf { it.startsWith("https://") }, src, name.ifEmpty { title }, date(m["date"]), topic,
+                listOfNotNull(talk.takeIf { it.startsWith("http") }?.let { Discussion(it, try { java.net.URI(it).host.removePrefix("www.") } catch (_: Exception) { "" }) }))
         }
         if (title.isEmpty() && items.isEmpty()) null else Triple(siteLink, title, cards)
     } catch (_: Exception) { null }
 
     /** The elements whose text is read (anything else is walked into, not read). */
-    private val TEXT = setOf("title", "link", "description", "summary", "content:encoded", "content", "pubdate", "published", "updated", "dc:date", "guid", "id")
+    private val TEXT = setOf("title", "link", "description", "summary", "content:encoded", "content", "pubdate", "published", "updated", "dc:date", "guid", "id", "comments")
 
     private fun date(s: String?): Long {
         s ?: return 0

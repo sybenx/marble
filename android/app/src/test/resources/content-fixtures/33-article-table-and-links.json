@@ -1,0 +1,162 @@
+{
+  "name": "The BUD-10 adoption article: a markdown table, a leading # H1 repeating the title, njump.me links",
+  "rule": "§7",
+  "why": "The table is drawn as a table, in full (it once looked cut off partway through); the leading heading that repeats the title is dropped; links to njump.me open the post in Marble.",
+  "source": "wss://relay.ditto.pub",
+  "event": {
+    "kind": 30023,
+    "id": "eb1c8e9e637f176f12ef69b169de20375f6c59da54896caee4604ad9dc9d09ae",
+    "pubkey": "1ec454734dcbf6fe54901ce25c0c7c6bca5edd89443416761fadc321d38df139",
+    "created_at": 1793546434,
+    "tags": [
+      [
+        "d",
+        "1793546434"
+      ],
+      [
+        "published_at",
+        "1793546434"
+      ],
+      [
+        "title",
+        "BUD-10 Client Adoption Status"
+      ],
+      [
+        "image",
+        ""
+      ],
+      [
+        "summary",
+        "BUD-10 Client Adoption Status"
+      ],
+      [
+        "t",
+        "bud10"
+      ],
+      [
+        "t",
+        "blossom"
+      ]
+    ],
+    "content": "# BUD-10 Client Adoption Status\n\n| Client | Platform or version | Thread status | Evidence and qualification |\n| --- | --- | --- | --- |\n| **Amethyst** | Android; version 1.20.0 explicitly reported | ✅ Working | Five independent positive reports. The final report explicitly says, “Yes. Amethyst 1.20.0.” [1](https://njump.me/nevent1qqsqqqrqwv5rm5xu5yx7r3chmv58r08f7yxun9cz8dy8p860l483x7s80qvaw) [2](https://njump.me/nevent1qqsgvd8y0vh8uemwrdvenymqq0nzpu85nnc77r30c727r3qahzhwuecsevnlw) [3](https://njump.me/nevent1qqsxu6mzcj2n42vtaafy4rfhqyeuzpmnlawv252n65paj9n4lfuwfzsx6vhu6) [4](https://njump.me/nevent1qqs28xzysqhjp3em3fkxn52hmpapn2mj24m44snahtywnv9qc9gupuq4hh855) [5](https://njump.me/nevent1qqs2f7h2rjy8nc3j3arr9vkthk3txyuslr3vl26gld8q459836m4mkgxe4me6) |\n| **Feather** | Android; 1.9.0 announced | ✅ Working in 1.9.0 | An initial report said the image was not visible. Feather then announced, “Added BUD-10 support in 1.9.0!” and a user subsequently confirmed, “Yes, now I can see it.” [Initial failure](https://njump.me/nevent1qqsqqqqq2yf2er3dkll5ap7n0y76scsv5jk52xnmzmapd7c08sjaazs7lw5f2) · [Developer announcement](https://njump.me/nevent1qqs0e3gfr6p0dnm3w62d6h6z3kerh4mek3rzcrrym7lxwsfstl8zm4ctgpm56) · [User confirmation](https://njump.me/nevent1qqsqqqqr4xl9wn4k2ph99ch4pj4decqp0z84aj5640474af972af9tszjj696) |\n| **Nostr Vault** | Web | ✅ Working according to its developer | About 4 hours 43 minutes after the initial iOS failure, Nostr Vault's creator reported, “This is functional on Nostrvault.app now.” This is a developer statement rather than an independent rendering confirmation. [Developer update](https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd) |\n| **Nostr Vault** | iOS | ⚠️ Initially failed; current status unconfirmed | The iOS app initially displayed only a link. The subsequent update was posted from an event tagged “Nostr Vault on iOS,” but its text explicitly names Nostrvault.app and does not clearly say whether the iOS app was fixed. A fresh iOS test is needed. [Initial failure](https://njump.me/nevent1qqsqqqzmtwnzlyqg8aenys42jhnkr8vg5tkqhc0mdh0kzxjl6xhf3pq6ypu32) · [Ambiguous update](https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd) |\n| **Zap Cooking** | Web | 🟡 Announced, not confirmed | The project said, “We will support this very soon in Zap Cooking.” This is an implementation commitment, not evidence that support has shipped. [Announcement](https://njump.me/nevent1qqsqqqptfaqt2syz5m9qk8x5ctq0fmqeu4cxdexc2w223jypu6skvkgg0428c) |\n| **Primal** | Web in Chrome and Brave | ❌ Not working in this test | Two independent web users reported no image and raw Blossom text. [Chrome report](https://njump.me/nevent1qqspn5hadenqjyzv6d394ury7yh8ykatd95umw6zs3hu2cazakjg5gsnkw23p) · [Brave report](https://njump.me/nevent1qqsyvn950x20slqkg8aveqffk6u4dz3xug4regy8xtyfay7nc5qdwxcpe2nvx) |\n| **Primal** | iOS | ❌ Not working in this test | A Primal iOS user explicitly reported that the image was not visible. [Report](https://njump.me/nevent1qqsy9g536qezjv9vhtrrg9meg3p0mu5rge7m4htnzunt8eq990adyag37tq22) |\n| **Wisp** | Unspecified | ❌ Not working in this test | The participant saw a link and reported that it appeared to break at each query string. The event metadata says only “Wisp,” not a specific platform. [Report](https://njump.me/nevent1qqsqqqx3ukvlfu4pjsxgdelr5j8mczy4tveyks9dz0s4gkvr3rt64tsjfwp7e) |\n| **Wisp** | iOS | ❌ Not working in this test | The Wisp iOS report said the reference looked like a text string and generalized the failure to every iOS client. Only Wisp iOS is counted here; later evidence showed that the generalization no longer held. [Report](https://njump.me/nevent1qqsqqqp2lm3thyzj0yrh2m053zuywj97zjv2vxacpcuruwf39jsfe8q08mcfa) |\n| **Jumble** | Web | ❌ Not working in this test | A participant reported “no” while tagging Jumble's official account. [Report](https://njump.me/nevent1qqsgvh0gshvlfg4suudy596cg7x9ret269w008k4scvgnn0xecdr9jqj278wg) |\n| **T-Bone** | Unspecified | ❌ Not working in this test | A participant associated with the client answered, “No T-Bone,” then shared its v0.5.2 release link. The release link is not itself evidence that this version supports BUD-10. [Failure report](https://njump.me/nevent1qqsxez0sdfdu5xkfvqqe6zsdq3rj2m52c6x7x6ja4crpw2kwjuw0kjsyqa77t) · [Follow-up](https://njump.me/nevent1qqsf2mjmpr0d8p2yhsqhap3h3tfjt4x5lck2vjekpd7pz0ec6yunpqc3rcnhj) |\n| **YakiHonne** | Unspecified | ❌ Not working in this test | A participant reported, “Not visible on yakihonne.” [Report](https://njump.me/nevent1qqs066f5dlcu5q3v7kfde2v3rppmgaul7tqugc04tsukzs0xqjan0pg8mxhd6) |\n| **Nostur** | Apple platforms; exact platform not stated | ❌ Not working in this test | A participant reported, “Not visible on nostur,” and tagged the Nostur account. [Report](https://njump.me/nevent1qqsz86h8yqdxhs4u0h546p90uuptt885gpp6nesx43teu0ve9868k0qgfjyqe) |\n| **Nostrich** | Unspecified | ❌ Not working in the supplied screenshot | The reply contains only a screenshot. The screenshot shows the original Blossom URI as plain text, without the referenced image rendered. [Screenshot reply](https://njump.me/nevent1qqsy05p9hjfsnvthhml27h8mujyr2y3a7quqmnyzlakr56rpr7dwjzqansjs4) |\n| **Dark Wisp** | Unknown | ❌ Not working | A participant reported that the image did not render, and the original poster subsequently confirmed that Dark Wisp is not working. [Original report](https://njump.me/nevent1qqsg0jt5phx9vua50c6zq9fhp8gu3atz9hsmqffllc7yfgpka0v83zsca3psr) |",
+    "sig": "d384143fa79888e6c570e41bb24865e600e1f6bba53e6cbcb8bc14a868b1d512de7fb0fa1867a72fd36154f739f4c0cb0ffc34bcb5c826f596383c8ba7eaecef"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "Amethyst"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqrqwv5rm5xu5yx7r3chmv58r08f7yxun9cz8dy8p860l483x7s80qvaw",
+        "here": "/nevent1qqsqqqrqwv5rm5xu5yx7r3chmv58r08f7yxun9cz8dy8p860l483x7s80qvaw"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsgvd8y0vh8uemwrdvenymqq0nzpu85nnc77r30c727r3qahzhwuecsevnlw",
+        "here": "/nevent1qqsgvd8y0vh8uemwrdvenymqq0nzpu85nnc77r30c727r3qahzhwuecsevnlw"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsxu6mzcj2n42vtaafy4rfhqyeuzpmnlawv252n65paj9n4lfuwfzsx6vhu6",
+        "here": "/nevent1qqsxu6mzcj2n42vtaafy4rfhqyeuzpmnlawv252n65paj9n4lfuwfzsx6vhu6"
+      },
+      {
+        "link": "https://njump.me/nevent1qqs28xzysqhjp3em3fkxn52hmpapn2mj24m44snahtywnv9qc9gupuq4hh855",
+        "here": "/nevent1qqs28xzysqhjp3em3fkxn52hmpapn2mj24m44snahtywnv9qc9gupuq4hh855"
+      },
+      {
+        "link": "https://njump.me/nevent1qqs2f7h2rjy8nc3j3arr9vkthk3txyuslr3vl26gld8q459836m4mkgxe4me6",
+        "here": "/nevent1qqs2f7h2rjy8nc3j3arr9vkthk3txyuslr3vl26gld8q459836m4mkgxe4me6"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqqq2yf2er3dkll5ap7n0y76scsv5jk52xnmzmapd7c08sjaazs7lw5f2",
+        "here": "/nevent1qqsqqqqq2yf2er3dkll5ap7n0y76scsv5jk52xnmzmapd7c08sjaazs7lw5f2"
+      },
+      {
+        "link": "https://njump.me/nevent1qqs0e3gfr6p0dnm3w62d6h6z3kerh4mek3rzcrrym7lxwsfstl8zm4ctgpm56",
+        "here": "/nevent1qqs0e3gfr6p0dnm3w62d6h6z3kerh4mek3rzcrrym7lxwsfstl8zm4ctgpm56"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqqr4xl9wn4k2ph99ch4pj4decqp0z84aj5640474af972af9tszjj696",
+        "here": "/nevent1qqsqqqqr4xl9wn4k2ph99ch4pj4decqp0z84aj5640474af972af9tszjj696"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd",
+        "here": "/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqzmtwnzlyqg8aenys42jhnkr8vg5tkqhc0mdh0kzxjl6xhf3pq6ypu32",
+        "here": "/nevent1qqsqqqzmtwnzlyqg8aenys42jhnkr8vg5tkqhc0mdh0kzxjl6xhf3pq6ypu32"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd",
+        "here": "/nevent1qqsf0j4hvpz03e8qurzsevtt0qnkmp92sdxx0hmn67nvx5t5a396kkgcv9dxd"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqptfaqt2syz5m9qk8x5ctq0fmqeu4cxdexc2w223jypu6skvkgg0428c",
+        "here": "/nevent1qqsqqqptfaqt2syz5m9qk8x5ctq0fmqeu4cxdexc2w223jypu6skvkgg0428c"
+      },
+      {
+        "link": "https://njump.me/nevent1qqspn5hadenqjyzv6d394ury7yh8ykatd95umw6zs3hu2cazakjg5gsnkw23p",
+        "here": "/nevent1qqspn5hadenqjyzv6d394ury7yh8ykatd95umw6zs3hu2cazakjg5gsnkw23p"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsyvn950x20slqkg8aveqffk6u4dz3xug4regy8xtyfay7nc5qdwxcpe2nvx",
+        "here": "/nevent1qqsyvn950x20slqkg8aveqffk6u4dz3xug4regy8xtyfay7nc5qdwxcpe2nvx"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsy9g536qezjv9vhtrrg9meg3p0mu5rge7m4htnzunt8eq990adyag37tq22",
+        "here": "/nevent1qqsy9g536qezjv9vhtrrg9meg3p0mu5rge7m4htnzunt8eq990adyag37tq22"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqx3ukvlfu4pjsxgdelr5j8mczy4tveyks9dz0s4gkvr3rt64tsjfwp7e",
+        "here": "/nevent1qqsqqqx3ukvlfu4pjsxgdelr5j8mczy4tveyks9dz0s4gkvr3rt64tsjfwp7e"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsqqqp2lm3thyzj0yrh2m053zuywj97zjv2vxacpcuruwf39jsfe8q08mcfa",
+        "here": "/nevent1qqsqqqp2lm3thyzj0yrh2m053zuywj97zjv2vxacpcuruwf39jsfe8q08mcfa"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsgvh0gshvlfg4suudy596cg7x9ret269w008k4scvgnn0xecdr9jqj278wg",
+        "here": "/nevent1qqsgvh0gshvlfg4suudy596cg7x9ret269w008k4scvgnn0xecdr9jqj278wg"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsxez0sdfdu5xkfvqqe6zsdq3rj2m52c6x7x6ja4crpw2kwjuw0kjsyqa77t",
+        "here": "/nevent1qqsxez0sdfdu5xkfvqqe6zsdq3rj2m52c6x7x6ja4crpw2kwjuw0kjsyqa77t"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsf2mjmpr0d8p2yhsqhap3h3tfjt4x5lck2vjekpd7pz0ec6yunpqc3rcnhj",
+        "here": "/nevent1qqsf2mjmpr0d8p2yhsqhap3h3tfjt4x5lck2vjekpd7pz0ec6yunpqc3rcnhj"
+      },
+      {
+        "link": "https://njump.me/nevent1qqs066f5dlcu5q3v7kfde2v3rppmgaul7tqugc04tsukzs0xqjan0pg8mxhd6",
+        "here": "/nevent1qqs066f5dlcu5q3v7kfde2v3rppmgaul7tqugc04tsukzs0xqjan0pg8mxhd6"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsz86h8yqdxhs4u0h546p90uuptt885gpp6nesx43teu0ve9868k0qgfjyqe",
+        "here": "/nevent1qqsz86h8yqdxhs4u0h546p90uuptt885gpp6nesx43teu0ve9868k0qgfjyqe"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsy05p9hjfsnvthhml27h8mujyr2y3a7quqmnyzlakr56rpr7dwjzqansjs4",
+        "here": "/nevent1qqsy05p9hjfsnvthhml27h8mujyr2y3a7quqmnyzlakr56rpr7dwjzqansjs4"
+      },
+      {
+        "link": "https://njump.me/nevent1qqsg0jt5phx9vua50c6zq9fhp8gu3atz9hsmqffllc7yfgpka0v83zsca3psr",
+        "here": "/nevent1qqsg0jt5phx9vua50c6zq9fhp8gu3atz9hsmqffllc7yfgpka0v83zsca3psr"
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "tables": [
+      {
+        "rows": 15,
+        "columns": 4
+      }
+    ],
+    "notHeading": "BUD-10 Client Adoption Status",
+    "never": [
+      "| --- |",
+      "nostr:"
+    ]
+  }
+}

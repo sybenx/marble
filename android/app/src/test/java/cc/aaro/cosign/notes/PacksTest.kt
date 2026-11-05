@@ -18,9 +18,10 @@ class PacksTest {
     class Relay {
         val held = HashMap<String, Vault.Incoming>()
         fun read(d: String) = listOfNotNull(held[d])
-        fun write(d: String, at: Long, content: String) {
+        fun write(d: String, at: Long, content: String): Boolean {
             val have = held[d]
             if (have == null || at > have.createdAt || (at == have.createdAt && content < (have.content ?: ""))) held[d] = Vault.Incoming(d, at, content)
+            return true
         }
     }
 
@@ -173,5 +174,113 @@ class PacksTest {
         pullAll(fresh, relay); assertTrue(fresh.complete())
         // An older checkpoint is refused.
         assertFalse(fresh.takeCheckpoint(c.copy(seq = 0)))
+    }
+
+    /** recheck4 #25: a pack that didn't decrypt here (or is a later version) is never written over, so its notes aren't lost. */
+    @Test fun aPackThatDidntDecryptIsNeverWrittenOver() {
+        val relay = Relay(); val a = Vault(layout())
+        a.put(note("n", "from the other device")); flush(a, relay, 1000)
+        val d = relay.held.keys.single(); val theirs = relay.held[d]!!
+        // This device can't read the copy (a signer hiccup): it sees content = null, and has a change of its own there.
+        val b = Vault(layout())
+        val applied = b.apply(listOf(Vault.Incoming(d, theirs.createdAt, null)))
+        assertTrue(applied.republish.isEmpty())
+        b.put(note("n", "this device's edit", 2000))
+        val wrote = runBlocking { Cycle.flush(b, 3000, { listOf(Vault.Incoming(it, theirs.createdAt, null)) }, { dd, at, c -> relay.write(dd, at, c) }) }
+        assertEquals(0, wrote)
+        assertEquals(theirs, relay.held[d])
+        assertTrue(d in b.unreadable)
+        // A later version this device doesn't know: the same.
+        val c = Vault(layout()); c.put(note("n", "x", 2000))
+        val v4 = JSONObject(theirs.content!!).put("v", 4).toString()
+        assertEquals(0, runBlocking { Cycle.flush(c, 3000, { listOf(Vault.Incoming(it, theirs.createdAt, v4)) }, { dd, at, cc -> relay.write(dd, at, cc) }) })
+        // Once it reads again, the change goes out, merged.
+        assertTrue(flush(b, relay, 4000) > 0)
+        assertFalse(d in b.unreadable)
+    }
+
+    /** recheck5: a read that didn't reach your account (null, most write relays didn't answer) writes nothing; the change waits. */
+    @Test fun aReadThatDidntReachTheAccountWritesNothing() {
+        val relay = Relay(); val a = Vault(layout())
+        a.put(note("n", "the other device's")); flush(a, relay, 1000)
+        val before = relay.held.toMap()
+        val b = Vault(layout()); b.put(note("n", "an edit here", 2000))
+        val wrote = runBlocking { Cycle.flush(b, 3000, { null }, { d, at, c -> relay.write(d, at, c) }) }
+        assertEquals(0, wrote)
+        assertEquals(before, relay.held.toMap())
+        assertTrue(b.dirty.isNotEmpty())
+        // Once a read reaches it: merged and sent.
+        assertTrue(flush(b, relay, 4000) > 0)
+    }
+
+    /** Gate check 1: a read that stops the flush early leaves every pack not sent yet to send, not only the one it was on. */
+    @Test fun aStoppedFlushKeepsEveryUnsentPack() {
+        val l = layout(); val v = Vault(l)
+        // Two notes in two different packs.
+        val ids = (0 until 200).map { "note-$it" }.groupBy { l.owner(it, emptySet()) }.values.take(2).map { it[0] }
+        ids.forEach { v.put(note(it, "text $it")) }
+        assertEquals(2, v.dirty.size)
+        val relay = Relay()
+        // The relay answers the first pack's read, then stops reaching the account.
+        var reads = 0
+        runBlocking { Cycle.flush(v, 1000, { d -> if (reads++ < 2) relay.read(d) else null }, { d, at, c -> relay.write(d, at, c) }) }
+        // The first went (its read and read-back reached); the second's read didn't, so it's still to send.
+        assertEquals(1, relay.held.size)
+        assertEquals(1, v.dirty.size)
+        // Once it reaches again, everything goes.
+        flush(v, relay, 2000)
+        assertTrue(v.dirty.isEmpty())
+        assertEquals(2, relay.held.size)
+    }
+
+    /** Gate check 2: a write that most write relays didn't take (false) stays to send, and isn't the newest seen. */
+    @Test fun aWriteThatDidntTakeStaysDirty() {
+        val v = Vault(layout()); v.put(note("n", "a change"))
+        val relay = Relay()
+        val wrote = runBlocking { Cycle.flush(v, 1000, { relay.read(it) }, { _, _, _ -> false }) }
+        assertEquals(0, wrote)
+        assertTrue(v.dirty.isNotEmpty())
+        assertTrue(v.seen.isEmpty())
+        assertTrue(flush(v, relay, 2000) > 0)
+        assertTrue(v.dirty.isEmpty())
+    }
+
+    /** 0.12.28: a pack that splits reads each new pack before writing it, so none is written over unread. */
+    @Test fun aSplitReadsItsNewPacksFirst() {
+        val l = layout(); val relay = Relay(); val v = Vault(l)
+        val ids = (0 until 4000).map { "n$it" }.filter { l.owner(it, emptySet()) == "0000" }.take(60)
+        ids.forEach { v.put(note(it, "x".repeat(400))) }
+        val readDs = ArrayList<String>(); val writtenBeforeRead = ArrayList<String>()
+        runBlocking { Cycle.flush(v, 1000, { d -> readDs += d; relay.read(d) }, { d, at, c -> if (d !in readDs) writtenBeforeRead += d; relay.write(d, at, c) }) }
+        assertTrue("0000" in v.retired)
+        assertTrue("written before being read: $writtenBeforeRead", writtenBeforeRead.isEmpty())
+    }
+
+    /** gate2: a split pack, sent again (a write that didn't take), sends its marker and parts, never an empty live pack over the marker. */
+    @Test fun aSplitPackResentKeepsItsMarker() {
+        val l = layout(); val v = Vault(l)
+        val ids = (0 until 4000).map { "n$it" }.filter { l.owner(it, emptySet()) == "0000" }.take(60)
+        ids.forEach { v.put(note(it, "x".repeat(400))) }
+        val relay = Relay()
+        // The first try: the marker goes, then a part doesn't take.
+        var n = 0
+        runBlocking { Cycle.flush(v, 1000, { relay.read(it) }, { d, at, c -> if (n++ == 1) false else relay.write(d, at, c) }) }
+        assertTrue("0000" in v.retired)
+        assertTrue(v.dirty.isNotEmpty())
+        flush(v, relay, 2000)
+        val marker = Pack.parse(relay.held[l.d("0000")]!!.content!!)!!
+        assertTrue("the marker stays a marker", marker.retired)
+        val fresh = Vault(l); pullAll(fresh, relay)
+        assertEquals(ids.toSet(), fresh.notes.keys)
+    }
+
+    /** gate2: anything thrown mid-flush (a cancel, the network) puts back every pack not finished. */
+    @Test fun aFlushThatThrowsKeepsItsPacks() {
+        val l = layout(); val v = Vault(l)
+        val ids = (0 until 200).map { "note-$it" }.groupBy { l.owner(it, emptySet()) }.values.take(3).map { it[0] }
+        ids.forEach { v.put(note(it, "text $it")) }
+        val before = v.dirty.toSet()
+        try { runBlocking { Cycle.flush(v, 1000, { throw IllegalStateException("gone") }, { _, _, _ -> true }) } } catch (_: IllegalStateException) {}
+        assertEquals(before, v.dirty.toSet())
     }
 }

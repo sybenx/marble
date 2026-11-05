@@ -17,12 +17,21 @@ import java.io.File
 class ContentFixturesTest {
     /** What was drawn, as compare.mjs's `got`. */
     private class Card(val card: String, val ref: String, val text: String, val open: String?)
-    private class Got(val inline: List<Pair<String, String>>, val cards: List<Card>, val media: List<String>, val warning: String?, val visible: String)
+    private class Got(val inline: List<Pair<String, String>>, val cards: List<Card>, val media: List<String>, val warning: String?, val visible: String,
+                      val mentionRun: Map<String, Int>? = null, val tables: List<Map<String, Int>> = emptyList(), val headings: List<String> = emptyList(),
+                      val preview: String? = null, val opened: List<Pair<String, Int>> = emptyList())
 
     private fun draw(e: Event, related: List<Event>): Got {
         // An article, as the reader draws it (its Markdown); anything else as a post in a list.
-        if (e.kind == 30023) Markdown.tokens(Markdown.parse(e)).let { (inline, media, seen) ->
-            return Got(inline, emptyList(), media.map { (k, u) -> "$k $u" }, Body.warning(e), seen)
+        if (e.kind == 30023) {
+            // As the reader draws it: a leading heading repeating the title dropped.
+            val title = e.firstTag("title")?.trim()
+            val blocks = Markdown.parse(e).dropWhile { b -> b is Markdown.Block.Heading && title != null &&
+                b.spans.joinToString("") { (it.part as? Body.Part.Plain)?.s ?: "" }.trim().equals(title, ignoreCase = true) }
+            val (inline, media, seen) = Markdown.tokens(blocks)
+            val tables = blocks.filterIsInstance<Markdown.Block.Table>().map { mapOf("rows" to it.rows.size, "columns" to it.header.size) }
+            val headings = blocks.filterIsInstance<Markdown.Block.Heading>().map { h -> h.spans.joinToString("") { (it.part as? Body.Part.Plain)?.s ?: "" }.trim() }
+            return Got(inline, emptyList(), media.map { (k, u) -> "$k $u" }, Body.warning(e), seen, tables = tables, headings = headings)
         }
         val body = Body.of(e)
         val (inline, seen) = body.tokens()
@@ -31,9 +40,13 @@ class ContentFixturesTest {
             is Body.Part.QuoteAddr -> related.filter { it.kind == c.a.kind && it.pubkey == c.a.pubkey && it.firstTag("d") == c.a.d }.maxByOrNull { it.createdAt }
                 ?.let { q -> Card(OtherApps.card(q.kind), "${c.a.kind}:${c.a.pubkey}:${c.a.d}", cardText(q), open(q, related)) }
             else -> null
-        })
+        }, body.article?.let { c -> related.filter { it.kind == c.a.kind && it.pubkey == c.a.pubkey && it.firstTag("d") == c.a.d }.maxByOrNull { it.createdAt }
+            ?.let { q -> Card(OtherApps.card(q.kind), "${c.a.kind}:${c.a.pubkey}:${c.a.d}", cardText(q), open(q, related)) } })
         val media = body.media.map { m -> when (m) { is Body.Img -> "image ${m.url}"; is Body.Vid -> "video ${m.v.url}" } }
-        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.text })
+        val run = body.trailing.takeIf { it.isNotEmpty() }?.let { mapOf("shown" to minOf(4, it.size), "more" to maxOf(0, it.size - 4)) }
+        // Its reactions, as the opened post shows them (a list shows none: Heart draws no counts).
+        val opened = cc.aaro.cosign.ReactionRules.tally(related, e.id).map { (s, who) -> s.emoji to who.size }
+        return Got(inline, cards, media, Body.warning(e), seen + " " + cards.joinToString(" ") { it.text }, run, preview = body.previewLink?.url, opened = opened)
     }
 
     /** Where a card's Open goes (OtherBox: Social.openTarget, here offline from [related]); a post or article opens in Marble. */
@@ -44,14 +57,17 @@ class ContentFixturesTest {
     /** What a card shows (QuoteBox, OtherBox): a post's words, an article's title and summary, anything else's line. */
     private fun cardText(q: Event) = when (OtherApps.card(q.kind)) {
         "note" -> readable(q.content.trim())
-        "article" -> listOfNotNull(q.firstTag("title") ?: "An article", q.firstTag("summary")).joinToString(" ")
+        "article" -> listOfNotNull(q.firstTag("title") ?: "Untitled", Markdown.line(q)).joinToString(" ")
         else -> OtherApps.what(q)
     }
 
     /** compare.mjs, ported: the problems (none: it passes). */
     private fun compare(expect: Map<*, *>, got: Got): List<String> {
         val problems = ArrayList<String>()
-        val want = (expect["inline"] as? List<*>).orEmpty().map { (it as Map<*, *>).entries.first().let { (k, v) -> k as String to v as String } }
+        // (A link opened here carries its "here": "<url>|<here>".)
+        val want = (expect["inline"] as? List<*>).orEmpty().map { t -> (t as Map<*, *>).let { m ->
+            val k = listOf("text", "mention", "hashtag", "link", "emoji", "shortlink").first { it in m }
+            k to (m[k] as String + ((m["here"] as? String)?.let { "|$it" } ?: "")) } }
         val kinds = setOf("mention", "hashtag", "link", "emoji", "shortlink")
         val gotTokens = got.inline.filter { it.first in kinds }
         val wantTokens = want.filter { it.first in kinds }
@@ -76,6 +92,16 @@ class ContentFixturesTest {
         val wantMedia = (expect["media"] as? List<*>).orEmpty().map { m -> (m as Map<*, *>).let { if ("image" in it) "image ${it["image"]}" else "video ${it["video"]}" } }
         if (got.media != wantMedia) problems += "media: want ${wantMedia.ifEmpty { "none" }} got ${got.media.ifEmpty { "none" }}"
         if (expect["warning"] as String? != got.warning) problems += "warning: want ${expect["warning"]} got ${got.warning}"
+        (expect["mentionRun"] as? Map<*, *>)?.let { w -> val m = w.mapKeys { it.key as String }.mapValues { (it.value as Number).toInt() }; if (m != got.mentionRun) problems += "mention run: want $m got ${got.mentionRun}" }
+        (expect["tables"] as? List<*>)?.let { w -> val t = w.map { (it as Map<*, *>).mapKeys { e -> e.key as String }.mapValues { e -> (e.value as Number).toInt() } }; if (t != got.tables) problems += "tables: want $t got ${got.tables}" }
+        (expect["notHeading"] as? String)?.let { if (it in got.headings) problems += "heading \"$it\" shown twice" }
+        (expect["reactions"] as? Map<*, *>)?.let { r ->
+            fun key(l: List<Pair<String, Int>>) = l.map { "${it.first}×${it.second}" }.sorted().joinToString(" ")
+            val want = (r["opened"] as? List<*>).orEmpty().map { (it as List<*>).let { p -> p[0] as String to (p[1] as Number).toInt() } }
+            if (key(got.opened) != key(want)) problems += "reactions: want ${key(want)} got ${key(got.opened)}"
+            if (got.opened.zipWithNext().any { (a, b) -> b.second > a.second }) problems += "reactions not most first"
+        }
+        if (expect.containsKey("preview") && expect["preview"] as String? != got.preview) problems += "preview: want ${expect["preview"]} got ${got.preview ?: "none"}"
         for (s in (expect["never"] as? List<*>).orEmpty().map { it as String }) if (s in got.visible) problems += "shows \"$s\""
         return problems
     }

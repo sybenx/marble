@@ -125,10 +125,11 @@ private fun OpenLink(url: String, context: android.content.Context, after: Long 
 /** A picture from the web, or [placeholder] until (or unless) it arrives. */
 @Composable
 fun NetImage(url: String?, modifier: Modifier, px: Int, scale: ContentScale = ContentScale.Crop, description: String? = null,
-             ground: androidx.compose.ui.graphics.Color = Vault.Surface, placeholder: @Composable () -> Unit = {}) {
+             ground: androidx.compose.ui.graphics.Color = Vault.Surface, alignment: androidx.compose.ui.Alignment = androidx.compose.ui.Alignment.Center,
+             placeholder: @Composable () -> Unit = {}) {
     var img by remember(url, px) { mutableStateOf(url?.let { Images.cached(it, px) }) }
     LaunchedEffect(url, px) { if (img == null && url != null) img = Images.load(url, px) }
     val shown = img
-    if (shown != null) Image(shown, description, modifier, contentScale = scale)
+    if (shown != null) Image(shown, description, modifier, alignment = alignment, contentScale = scale)
     else Box(modifier.background(ground)) { placeholder() }
 }

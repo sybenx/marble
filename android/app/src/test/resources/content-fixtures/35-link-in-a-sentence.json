@@ -1,0 +1,34 @@
+{
+  "name": "A link inside a sentence stays a link, with no preview",
+  "rule": "§5",
+  "why": "Previews only for a link standing on its own: in the middle of a sentence it would break the reading.",
+  "source": "synthetic",
+  "event": {
+    "kind": 1,
+    "created_at": 1793700001,
+    "tags": [],
+    "content": "I read https://github.com/hzrd149/blossom/blob/master/buds/10.md yesterday and liked it.",
+    "pubkey": "dcbd62d3f143617244a75ca92bce7976b5903e2e80c2cb403f2671f706488fd1",
+    "id": "eddfaae1a906898791f80557a18a0d4981ebdc0d5059ab5afd7728b487109277",
+    "sig": "d89660afe484f0d6064ff173fe0c0029fc2b3d3e59c14b81f6796f2f0d3fd95b00a493c0338a9b8fdc219826779e40e9f2be0f57109c832d3092831437ae65b1"
+  },
+  "related": [],
+  "expect": {
+    "inline": [
+      {
+        "text": "I read "
+      },
+      {
+        "link": "https://github.com/hzrd149/blossom/blob/master/buds/10.md"
+      },
+      {
+        "text": " yesterday and liked it."
+      }
+    ],
+    "cards": [],
+    "media": [],
+    "warning": null,
+    "preview": null,
+    "never": []
+  }
+}

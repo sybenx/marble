@@ -139,6 +139,8 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
     var userPaused by remember(url) { mutableStateOf(false) }
     var buffering by remember { mutableStateOf(false) }
     var ended by remember(url) { mutableStateOf(false) }
+    // No sound track: a GIF, really. It loops, and has no sound button or Replay. With sound: once, then Replay.
+    var silent by remember(url) { mutableStateOf(false) }
     var wanted by remember(url) { mutableStateOf(false) }
     var playOnCreate by remember(url) { mutableStateOf(false) }
     var resumeAt by remember(url) { mutableLongStateOf(0L) }
@@ -154,13 +156,18 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
             setMediaItem(MediaItem.fromUri(Uri.parse(url))); prepare()
             volume = if (Videos.muted.value) 0f else 1f
             playWhenReady = false
-            // Played once, as Jumble does: at the end it stays on its last frame, with Replay.
+            // Once, as Jumble plays it, until its tracks say there's no sound (then it loops, like a GIF).
             repeatMode = Player.REPEAT_MODE_OFF
         }
         if (resumeAt > 0) player.seekTo(resumeAt)
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(s: VideoSize) { if (s.width > 0 && s.height > 0) ratio = s.width * s.pixelWidthHeightRatio / s.height }
             override fun onIsPlayingChanged(playing: Boolean) { if (!playing && player.playbackState == Player.STATE_READY) userPaused = true }
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (tracks.groups.isEmpty()) return
+                silent = !tracks.containsType(androidx.media3.common.C.TRACK_TYPE_AUDIO)
+                player.repeatMode = if (silent) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
                 if (state == Player.STATE_ENDED) { ended = true; if (Videos.active.value == url) Videos.active.value = null }
@@ -216,13 +223,15 @@ fun VideoCard(v: VideoRef, modifier: Modifier = Modifier) {
                     CircularProgressIndicator(color = Color.White.copy(alpha = 0.7f), strokeWidth = 2.dp)
                 }
                 // Ended: the last frame stays, and Replay plays it from the start.
-                if (ended) Box(Modifier.fillMaxSize().clickable { ended = false; userPaused = false; Videos.active.value = url; p.seekTo(0); p.play() }, contentAlignment = Alignment.Center) {
+                if (ended && !silent) Box(Modifier.fillMaxSize().clickable { ended = false; userPaused = false; Videos.active.value = url; p.seekTo(0); p.play() }, contentAlignment = Alignment.Center) {
                     Icon(Glyphs.replay, "Replay", tint = Color.White, modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(14.dp))
                 }
                 AnimatedVisibility(showControls, Modifier.align(Alignment.TopEnd), enter = fadeIn(), exit = fadeOut()) {
                     Row(Modifier.padding(8.dp)) {
-                        TopButton(if (muted) Glyphs.soundOff else Glyphs.soundOn, if (muted) "Sound on" else "Sound off") { Videos.muted.value = !muted }
-                        Spacer(Modifier.width(4.dp))
+                        if (!silent) {
+                            TopButton(if (muted) Glyphs.soundOff else Glyphs.soundOn, if (muted) "Sound on" else "Sound off") { Videos.muted.value = !muted }
+                            Spacer(Modifier.width(4.dp))
+                        }
                         TopButton(Glyphs.download, "Save to the phone") { scope.launch { Videos.save(context, url) } }
                         Spacer(Modifier.width(4.dp))
                         TopButton(Glyphs.fullscreen, "Full screen") { val at = p.currentPosition; p.pause(); Videos.full.value = url to at }
@@ -251,6 +260,11 @@ fun VideoFullScreen() {
         val exo = Videos.player(activity).apply {
             setMediaItem(MediaItem.fromUri(Uri.parse(url))); prepare(); seekTo(from)
             playWhenReady = true; repeatMode = Player.REPEAT_MODE_OFF
+            addListener(object : Player.Listener {
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    if (tracks.groups.isNotEmpty()) repeatMode = if (tracks.containsType(androidx.media3.common.C.TRACK_TYPE_AUDIO)) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
+                }
+            })
         }
         val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.setCancelable(true)

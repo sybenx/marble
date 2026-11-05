@@ -1,0 +1,282 @@
+{
+ "about": "Reader drawing posts with the shared content rules (content-rules.md, fixtures 1-36): people you follow post these, built at test time (fresh keys, now-relative times, the {…} references filled with real ones), and Reader must show them as everywhere else. Line text (the collapsed row) never shows a raw reference (nostr:, npub1…, nevent1…, naddr1…, blossom:). Opened, they're the shared renderer's: a quote card, an article card, @names, a Blossom picture, a viewer link opening here; a Nostr item's Open in… offers Marble, your Nostr app and njump.me. Posts with a quote or a Blossom picture are items (reader.md §3); a short one is a day's line.",
+ "people": {
+  "ana": "Ana Quote",
+  "ben": "Ben Builder",
+  "cy": "Cy Writer",
+  "dee": "Dee Linker",
+  "eve": "Eve Warns",
+  "fay": "Fay Emoji",
+  "gus": "Gus Pictures",
+  "hal": "Hal Quotes",
+  "ivy": "Ivy Marble",
+  "jon": "Jon Links"
+ },
+ "follow": [
+  "ana",
+  "cy",
+  "dee",
+  "eve",
+  "fay",
+  "gus",
+  "hal",
+  "ivy",
+  "jon"
+ ],
+ "events": [
+  {
+   "ref": "quoted",
+   "by": "ben",
+   "kind": 1,
+   "ago": 7200,
+   "content": "The original post, quoted below."
+  },
+  {
+   "ref": "article",
+   "by": "cy",
+   "kind": 30023,
+   "ago": 5000,
+   "d": "field-notes",
+   "title": "Field notes on soil",
+   "summary": "What a year of compost taught me.",
+   "content": "# Field notes\n\nA year of compost."
+  },
+  {
+   "ref": "withNevent",
+   "by": "ana",
+   "kind": 1,
+   "ago": 600,
+   "content": "Look at this nostr:{nevent:quoted} so good"
+  },
+  {
+   "ref": "withNpub",
+   "by": "ana",
+   "kind": 1,
+   "ago": 700,
+   "content": "Thanks nostr:{npub:ben} for the help"
+  },
+  {
+   "ref": "withNaddr",
+   "by": "ana",
+   "kind": 1,
+   "ago": 800,
+   "content": "Read this: nostr:{naddr:article}"
+  },
+  {
+   "ref": "withBlossom",
+   "by": "dee",
+   "kind": 1,
+   "ago": 900,
+   "content": "Garden photo {blossom:png}"
+  },
+  {
+   "ref": "withNjump",
+   "by": "dee",
+   "kind": 1,
+   "ago": 1000,
+   "content": "See https://njump.me/{nevent:quoted}"
+  },
+  {
+   "ref": "withWarning",
+   "by": "eve",
+   "kind": 1,
+   "ago": 1100,
+   "content": "The ending was a surprise",
+   "tags": [
+    [
+     "content-warning",
+     "spoilers"
+    ]
+   ]
+  },
+  {
+   "ref": "withEmoji",
+   "by": "fay",
+   "kind": 1,
+   "ago": 1200,
+   "content": "Party time :blobcat:",
+   "tags": [
+    [
+     "emoji",
+     "blobcat",
+     "https://example.com/blobcat.png"
+    ]
+   ]
+  },
+  {
+   "ref": "pictureNoExt",
+   "by": "gus",
+   "kind": 1,
+   "ago": 1300,
+   "content": "https://image.example.com/abc",
+   "tags": [
+    [
+     "imeta",
+     "url https://image.example.com/abc",
+     "m image/jpeg"
+    ]
+   ]
+  },
+  {
+   "ref": "quoteOnly",
+   "by": "hal",
+   "kind": 1,
+   "ago": 1400,
+   "content": "nostr:{nevent:quoted}"
+  },
+  {
+   "ref": "marbleLink",
+   "by": "ivy",
+   "kind": 1,
+   "ago": 1500,
+   "content": "Look https://marble.syb.lol/{nevent:quoted}"
+  },
+  {
+   "ref": "linkPost",
+   "by": "jon",
+   "kind": 1,
+   "ago": 1600,
+   "content": "Great essay https://example.org/essay"
+  }
+ ],
+ "expect": {
+  "lines": [
+   {
+    "source": "Ana Quote",
+    "title": "Look at this ↪ quoted so good"
+   },
+   {
+    "source": "Ana Quote",
+    "title": "1 post",
+    "has": [
+     "@Ben Builder"
+    ]
+   },
+   {
+    "source": "Ana Quote",
+    "title": "Read this: ↪ an article"
+   },
+   {
+    "source": "Cy Writer",
+    "title": "Field notes on soil"
+   },
+   {
+    "source": "Dee Linker",
+    "title": "Garden photo"
+   },
+   {
+    "source": "Dee Linker",
+    "title": "See a post"
+   },
+   {
+    "source": "Eve Warns",
+    "title": "1 post",
+    "has": [
+     "spoilers: show"
+    ],
+    "hasNot": [
+     "ending"
+    ]
+   },
+   {
+    "source": "Fay Emoji",
+    "title": "1 post",
+    "has": [
+     "Party time :blobcat:"
+    ]
+   },
+   {
+    "source": "Gus Pictures",
+    "title": "A picture"
+   },
+   {
+    "source": "Hal Quotes",
+    "title": "↪ quoted"
+   },
+   {
+    "source": "Ivy Marble",
+    "title": "Look a post"
+   },
+   {
+    "source": "Jon Links",
+    "title": "Great essay example.org/essay"
+   }
+  ],
+  "noRaw": "nostr:|blossom:|\\b(npub|nprofile|note|nevent|naddr)1[02-9ac-hj-np-z]{6,}",
+  "opened": [
+   {
+    "line": [
+     "Ana Quote",
+     "Look at this ↪ quoted so good"
+    ],
+    "quote": "The original post, quoted below.",
+    "openIn": [
+     "Your Nostr app",
+     "Marble",
+     "njump.me"
+    ]
+   },
+   {
+    "line": [
+     "Ana Quote",
+     "1 post"
+    ],
+    "mention": "@Ben Builder"
+   },
+   {
+    "line": [
+     "Ana Quote",
+     "Read this: ↪ an article"
+    ],
+    "article": "Field notes on soil"
+   },
+   {
+    "line": [
+     "Cy Writer",
+     "Field notes on soil"
+    ],
+    "openIn": [
+     "Your Nostr app",
+     "Marble",
+     "njump.me"
+    ]
+   },
+   {
+    "line": [
+     "Dee Linker",
+     "Garden photo"
+    ],
+    "blossomImage": true
+   },
+   {
+    "line": [
+     "Dee Linker",
+     "See a post"
+    ],
+    "linkHref": "^/nevent1"
+   },
+   {
+    "line": [
+     "Eve Warns",
+     "1 post"
+    ],
+    "warningGate": "spoilers"
+   },
+   {
+    "line": [
+     "Ivy Marble",
+     "Look a post"
+    ],
+    "linkHref": "^/nevent1"
+   },
+   {
+    "line": [
+     "Jon Links",
+     "Great essay example.org/essay"
+    ],
+    "vOpens": "^https://example.org/essay"
+   }
+  ],
+  "openInNote": "With an app your follows recommend for the kind (NIP-89, 31989/31990), it comes first; these test people recommend none."
+ }
+}

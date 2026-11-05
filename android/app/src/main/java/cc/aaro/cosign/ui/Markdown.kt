@@ -21,6 +21,8 @@ internal object Markdown {
         data class Picture(val url: String, val alt: String) : Block()
         data class Video(val v: VideoRef) : Block()
         data object Rule : Block()
+        /** A GFM table: its header cells, then each row's (every row as wide as the header). */
+        data class Table(val header: List<List<Span>>, val rows: List<List<List<Span>>>) : Block()
     }
 
     private val FENCE = Regex("^\\s*(```|~~~)")
@@ -29,6 +31,7 @@ internal object Markdown {
     private val BULLET = Regex("^\\s*[-*+]\\s+(.*)$")
     private val NUMBERED = Regex("^\\s*(\\d{1,9})[.)]\\s+(.*)$")
     private val QUOTE = Regex("^\\s*>\\s?(.*)$")
+    private val TABLE_RULE = Regex("^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)*\\|?\\s*$")
     private val PICTURE_LINE = Regex("^\\s*!\\[([^\\]]*)]\\((https://[^)\\s]+)(?:\\s+\"[^\"]*\")?\\)\\s*$")
 
     fun parse(e: Event, text: String = e.content): List<Block> {
@@ -49,6 +52,17 @@ internal object Markdown {
                     out += Block.Code(code.joinToString("\n"))
                 }
                 l.isBlank() -> flush()
+                // A table: a row of cells, then a line of dashes under it.
+                '|' in l && i + 1 < lines.size && TABLE_RULE.matches(lines[i + 1]) && '|' in lines[i + 1] -> {
+                    flush()
+                    val header = cells(l)
+                    i += 2
+                    val rows = ArrayList<List<String>>()
+                    while (i < lines.size && '|' in lines[i] && lines[i].isNotBlank()) { rows += cells(lines[i]); i++ }
+                    fun row(c: List<String>) = header.indices.map { j -> spans(e, c.getOrElse(j) { "" }.trim(), false, false, ArrayList()) }
+                    out += Block.Table(row(header), rows.map(::row))
+                    continue
+                }
                 HEADING.matches(l) -> { flush(); HEADING.find(l)!!.let { m -> out += inline(e, m.groupValues[2]) { Block.Heading(m.groupValues[1].length, it) } } }
                 RULE.matches(l) -> { flush(); out += Block.Rule }
                 PICTURE_LINE.matches(l) -> { flush(); PICTURE_LINE.find(l)!!.let { out += Block.Picture(it.groupValues[2], it.groupValues[1].trim()) } }
@@ -66,6 +80,24 @@ internal object Markdown {
             i++
         }
         flush()
+        return out
+    }
+
+    /** A table row's cells: split on | (not \| or one inside `code`), the outer ones dropped. */
+    private fun cells(line: String): List<String> {
+        val out = ArrayList<String>(); val cur = StringBuilder(); var code = false; var k = 0
+        val t = line.trim().removePrefix("|").let { if (it.endsWith("|") && !it.endsWith("\\|")) it.dropLast(1) else it }
+        while (k < t.length) {
+            val c = t[k]
+            when {
+                c == '\\' && k + 1 < t.length && t[k + 1] == '|' -> { cur.append('|'); k++ }
+                c == '`' -> { code = !code; cur.append(c) }
+                c == '|' && !code -> { out += cur.toString(); cur.clear() }
+                else -> cur.append(c)
+            }
+            k++
+        }
+        out += cur.toString()
         return out
     }
 
@@ -117,7 +149,8 @@ internal object Markdown {
     fun minutes(blocks: List<Block>): Int = (blocks.sumOf { b ->
         when (b) {
             is Block.Heading -> words(b.spans); is Block.Para -> words(b.spans); is Block.Item -> words(b.spans); is Block.Quote -> words(b.spans)
-            is Block.Code -> b.text.split(Regex("\\s+")).size; else -> 0
+            is Block.Code -> b.text.split(Regex("\\s+")).size
+            is Block.Table -> (b.rows + listOf(b.header)).sumOf { r -> r.sumOf { words(it) } }; else -> 0
         }
     } / 230).coerceAtLeast(1)
 
@@ -135,7 +168,7 @@ internal object Markdown {
             for (sp in spansOf(b)) {
                 val p = sp.part
                 inline += when (p) {
-                    is Body.Part.Plain -> "text" to p.s; is Body.Part.Link -> "link" to p.url; is Body.Part.Mention -> "mention" to p.pubkey
+                    is Body.Part.Plain -> "text" to p.s; is Body.Part.Link -> "link" to Body.linkToken(p.url); is Body.Part.Mention -> "mention" to p.pubkey
                     is Body.Part.Tag -> "hashtag" to p.tag; is Body.Part.Emoji -> "emoji" to p.code
                     is Body.Part.Quote -> "shortlink" to p.raw; is Body.Part.QuoteAddr -> "shortlink" to p.raw
                 }
@@ -149,6 +182,32 @@ internal object Markdown {
     /** The spans of every block, in order (for the shared fixtures' tokens). */
     fun spansOf(b: Block): List<Span> = when (b) {
         is Block.Heading -> b.spans; is Block.Para -> b.spans; is Block.Item -> b.spans; is Block.Quote -> b.spans
-        is Block.Code -> listOf(Span(Body.Part.Plain(b.text), code = true)); else -> emptyList()
+        is Block.Code -> listOf(Span(Body.Part.Plain(b.text), code = true))
+        is Block.Table -> (listOf(b.header) + b.rows).flatMap { r -> r.flatMap { it + Span(Body.Part.Plain(" ")) } }
+        else -> emptyList()
+    }
+
+    /**
+     * The line under an article card's title: its summary when that says something the title doesn't; else its first
+     * real sentence (a leading heading equal to the title skipped, Markdown taken out, a table's first row as text).
+     */
+    fun line(e: Event): String {
+        val title = e.firstTag("title")?.trim().orEmpty()
+        e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() && !it.equals(title, ignoreCase = true) }?.let { return it }
+        fun plain(spans: List<Span>) = spans.joinToString("") { sp -> when (val p = sp.part) { is Body.Part.Plain -> p.s; is Body.Part.Link -> p.text ?: ""; is Body.Part.Tag -> "#" + p.tag; else -> "" } }
+            .replace(Regex("\\s+"), " ").trim()
+        for (b in parse(e)) {
+            val text = when (b) {
+                is Block.Heading -> continue
+                is Block.Para -> plain(b.spans)
+                is Block.Quote -> plain(b.spans)
+                is Block.Item -> plain(b.spans)
+                is Block.Table -> b.rows.firstOrNull()?.map { plain(it) }?.filter { it.isNotEmpty() }?.joinToString(" · ")
+                else -> null
+            }?.takeIf { it.isNotEmpty() } ?: continue
+            val end = Regex("[.!?](\\s|$)").find(text)?.range?.first
+            return (if (end != null && end < 220) text.substring(0, end + 1) else text.take(200)).trim()
+        }
+        return ""
     }
 }

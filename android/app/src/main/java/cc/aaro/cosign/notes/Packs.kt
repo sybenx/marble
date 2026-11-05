@@ -195,6 +195,11 @@ class Vault(val layout: Layout) {
     val seen = HashMap<String, Long>()
     /** Packs with changes to send. */
     val dirty = LinkedHashSet<String>()
+    /**
+     * Packs (by `d`) whose newest copy on relays this device couldn't read (it didn't decrypt, or it's a later version):
+     * never written over, since that would lose what's in it. Until a readable copy comes back, changes there wait.
+     */
+    val unreadable = HashSet<String>()
     /** The newest checkpoint taken. */
     var checkpoint: Checkpoint? = null
 
@@ -224,6 +229,9 @@ class Vault(val layout: Layout) {
         dirty += layout.owner(n.id, retired)
     }
 
+    /** Decrypted, and a version this device knows (v3): anything else isn't read, so never written over. */
+    private fun readable(inc: Incoming): Boolean = inc.content != null && try { org.json.JSONObject(inc.content).optInt("v") == 3 } catch (_: Exception) { false }
+
     /** What a pull brought: each pack's `d`, `created_at` and decrypted content (null: it didn't decrypt). */
     data class Incoming(val d: String, val createdAt: Long, val content: String?)
     /** What applying a pull did: [halted] (nothing taken), packs to send again ([republish]), how many notes changed. */
@@ -239,7 +247,11 @@ class Vault(val layout: Layout) {
         val republish = HashSet<String>()
         val valid = ArrayList<Pair<Incoming, Pack>>()
         var invalid = 0
+        // A pack whose newest copy can't be read here: kept as it is on the relays (nothing taken, nothing sent over it).
+        val newest = pull.groupBy { it.d }.mapValues { (_, l) -> l.maxBy { it.createdAt } }
+        for ((d, inc) in newest) if (!readable(inc)) unreadable += d else unreadable -= d
         for (inc in pull.sortedBy { it.createdAt }) {
+            if (!readable(inc)) continue
             val pack = inc.content?.let(Pack::parse)
             val ok = pack != null && layout.d(pack.prefix) == inc.d && pack.kid == layout.kid &&
                 pack.items.all { layout.slot(it.id).startsWith(pack.prefix) } && pack.markers.all { layout.slot(it.id).startsWith(pack.prefix) }
@@ -279,6 +291,8 @@ class Vault(val layout: Layout) {
      * notes into two packs by one more bit, again while either is still too big). Each entry: a pack to publish.
      */
     fun packsFor(prefix: String): List<Pack> {
+        // Already split: its marker again, and its parts (never an empty live pack over the marker).
+        if (prefix in retired) return listOf(Pack(prefix, layout.kid, retired = true)) + packsFor(prefix + "0") + packsFor(prefix + "1")
         val pack = Pack(prefix, layout.kid, notes.values.filter { layout.owner(it.id, retired) == prefix }, markers.values.filter { layout.owner(it.id, retired) == prefix })
         if (pack.bytes <= Layout.LIMIT || pack.items.size + pack.markers.size <= 1) return listOf(pack)
         retired += prefix
@@ -302,31 +316,58 @@ object Cycle {
      * `created_at = max(now, newest seen + 1)` ([write]), and read it back; if another device's copy is there instead,
      * merge again and write again (three tries). Returns how many packs were written.
      */
-    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>, write: suspend (d: String, createdAt: Long, content: String) -> Unit,
+    suspend fun flush(v: Vault, now: Long, read: suspend (String) -> List<Vault.Incoming>?, write: suspend (d: String, createdAt: Long, content: String) -> Boolean,
               device: String = "another device"): Int {
         var written = 0
         val todo = ArrayDeque(v.dirty.toList())
         val done = HashSet<String>()
         v.dirty.clear()
+        // Stopping early (a read that didn't reach the account, a halt): this pack and every one not reached yet stay to send.
+        fun stop(prefix: String): Int { v.dirty += prefix; v.dirty += todo.filter { it !in done }; return written }
+        // Anything thrown (a cancel, the network) puts back what wasn't finished, as an early stop does.
+        var current: String? = null
+        try {
         while (todo.isNotEmpty()) {
             val prefix = todo.removeFirst()
             if (!done.add(prefix)) continue
+            current = prefix
             for (attempt in 0 until 3) {
-                val before = read(v.layout.d(prefix))
+                // A read that didn't reach your account (null) tells nothing: the change waits for one that does.
+                val before = read(v.layout.d(prefix)) ?: return stop(prefix)
                 val applied = v.apply(before, device)
-                if (applied.halted) { v.dirty += prefix; return written }
-                val packs = v.packsFor(prefix)
+                if (applied.halted) return stop(prefix)
+                // Every pack about to be written is read (and merged) first, as the parent was. A part read back as
+                // itself split (another device went deeper) is drawn again, and its parts read, until none is unread.
+                val heard = HashMap<String, List<Vault.Incoming>>().apply { put(v.layout.d(prefix), before) }
+                var packs = v.packsFor(prefix)
+                while (true) {
+                    val unread = packs.filter { v.layout.d(it.prefix) !in heard }
+                    if (unread.isEmpty()) break
+                    for (p in unread) {
+                        val d = v.layout.d(p.prefix)
+                        val got = read(d) ?: return stop(prefix)
+                        if (v.apply(got, device).halted) return stop(prefix)
+                        heard[d] = got
+                    }
+                    packs = v.packsFor(prefix)
+                }
+                // A pack this device couldn't read stays as it is: the change waits for a readable copy.
+                if (packs.any { v.layout.d(it.prefix) in v.unreadable }) { v.dirty += prefix; break }
                 var clean = true
+                var took = true
                 for (p in packs) {
                     val d = v.layout.d(p.prefix)
-                    val at = maxOf(now, (v.seen[d] ?: 0) + 1, (before.maxOfOrNull { it.createdAt } ?: 0) + 1)
+                    val at = maxOf(now, (v.seen[d] ?: 0) + 1, ((heard[d] ?: before).maxOfOrNull { it.createdAt } ?: 0) + 1)
                     val content = p.toJson()
-                    write(d, at, content); written++
+                    // Done only when most of your write relays took it; else it stays to send, and isn't the newest seen.
+                    if (!write(d, at, content)) { took = false; break }
+                    written++
                     v.seen[d] = at
                     // Read back: the newest copy should be ours.
-                    val back = read(d).maxByOrNull { it.createdAt }
+                    val back = read(d)?.maxByOrNull { it.createdAt }
                     if (back == null || back.createdAt > at || (back.createdAt == at && back.content != content)) clean = false
                 }
+                if (!took) { v.dirty += prefix; v.dirty += packs.map { it.prefix }; break }
                 v.dirty.removeAll(packs.map { it.prefix }.toSet())
                 if (clean) break
                 // Not ours on the relays after three tries (or none answered): it goes out again next flush.
@@ -334,7 +375,9 @@ object Cycle {
             }
             // What merging just made (a conflict's copy in another pack) goes in this flush too.
             v.dirty.filter { it !in done }.forEach { todo.addLast(it) }
+            current = null
         }
+        } catch (e: Throwable) { current?.let { v.dirty += it }; v.dirty += todo.filter { it !in done }; throw e }
         return written
     }
 }
@@ -372,10 +415,16 @@ fun Vault.adopt(other: Vault) {
 }
 
 /** What this device keeps between runs (its notes are Later's items; this is the rest). */
+/** What a note says that a change would touch (words, done, its url and when), stable across Later's round trip. */
+fun Note.fingerprint(): Int = listOf(text, updated, done, url, quote).joinToString("\u0000").hashCode()
+
 fun Vault.state(): String = JSONObject()
     .put("markers", JSONArray(markers.values.map { it.toJson() }))
     .put("retired", JSONArray(retired.toList())).put("dirty", JSONArray(dirty.toList()))
     .put("seen", JSONObject().apply { seen.forEach { (k, v) -> put(k, v) } })
+    // Every note not waiting to be sent, as it is now (sent, pulled, or from the base file alike): a held note that
+    // differs after a restart was changed and never sent.
+    .put("sent", JSONObject().apply { notes.values.filter { layout.owner(it.id, retired) !in dirty }.forEach { put(it.id, it.fingerprint()) } })
     .put("checkpoint", checkpoint?.toJson()).toString()
 
 fun Vault.restore(json: String?, held: List<Note>) {
@@ -386,4 +435,8 @@ fun Vault.restore(json: String?, held: List<Note>) {
     o.optJSONArray("dirty")?.let { a -> (0 until a.length()).forEach { dirty += a.optString(it) } }
     o.optJSONObject("seen")?.let { s -> s.keys().forEach { seen[it] = s.optLong(it) } }
     o.optString("checkpoint").takeIf { it.isNotEmpty() && it != "null" }?.let(Checkpoint::parse)?.let { checkpoint = it }
+    // A change taken in but never sent (the app stopped before its state was saved): to send. (A state from before this
+    // was kept has no record: nothing is assumed.)
+    o.optJSONObject("sent")?.let { s ->
+        for (n in held) if (n.id !in markers && (!s.has(n.id) || s.optInt(n.id) != n.fingerprint()) && layout.owner(n.id, retired) !in dirty) dirty += layout.owner(n.id, retired) }
 }

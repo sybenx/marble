@@ -31,7 +31,18 @@ object Fetch {
 
     suspend fun query(relays: Collection<String>, filter: Map<String, Any>, timeoutMs: Long = 7000) = query(relays, listOf(filter), timeoutMs)
 
-    private fun queryBlocking(relays: List<String>, filters: List<Map<String, Any>>, timeoutMs: Long, graceMs: Long): List<Event> {
+    /**
+     * [query], and how many relays said they were done (EOSE): none means nothing could be asked, which is not the
+     * same as "there's nothing there" (reader.md: never write over the account's copy on a timeout).
+     */
+    suspend fun queryAnswered(relays: Collection<String>, filter: Map<String, Any>, timeoutMs: Long = 7000, enough: (Set<String>) -> Boolean = { false }): Pair<List<Event>, Set<String>> = runInterruptible(Dispatchers.IO) {
+        val answered = java.util.Collections.synchronizedSet(HashSet<String>())
+        // Which ones answered is the point: the slow ones get their grace only once [enough] have.
+        queryBlocking(relays.distinct(), listOf(filter), timeoutMs, 2500, answered, enough) to synchronized(answered) { answered.toSet() }
+    }
+
+    private fun queryBlocking(relays: List<String>, filters: List<Map<String, Any>>, timeoutMs: Long, graceMs: Long,
+                              answered: MutableSet<String>? = null, enough: (Set<String>) -> Boolean = { true }): List<Event> {
         if (relays.isEmpty()) return emptyList()
         // In the order they arrive: a curated feed's order is its ranking.
         val got = java.util.Collections.synchronizedMap(LinkedHashMap<String, Event>())
@@ -50,7 +61,8 @@ object Fetch {
                         if (msg.getOrNull(1) != sub) return
                         when (msg.getOrNull(0)) {
                             "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e -> if (!got.containsKey(e.id) && e.verify()) got[e.id] = e }
-                            "EOSE", "CLOSED" -> { firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
+                            "EOSE" -> { answered?.add(url); if (answered == null || enough(synchronized(answered) { answered.toSet() })) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
+                            "CLOSED" -> { if (answered == null) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
                         }
                     }
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { if (once.compareAndSet(false, true)) done.countDown() }
@@ -123,9 +135,12 @@ object Fetch {
     }
 
     /** Send [event] to [relays]; how many took it. */
-    suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = runInterruptible(Dispatchers.IO) {
+    suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = publishOk(relays, event, timeoutMs).size
+
+    /** [publish], and which relays said OK. */
+    suspend fun publishOk(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Set<String> = runInterruptible(Dispatchers.IO) {
         val urls = relays.distinct()
-        val ok = AtomicInteger()
+        val ok = java.util.Collections.synchronizedSet(HashSet<String>())
         val done = CountDownLatch(urls.size)
         val frame = "[\"EVENT\"," + event.toJson() + "]"
         val sockets = urls.mapNotNull { url ->
@@ -136,7 +151,7 @@ object Fetch {
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val msg = Json.parse(text) as? List<*> ?: return
                         if (msg.getOrNull(0) == "OK" && msg.getOrNull(1) == event.id && once.compareAndSet(false, true)) {
-                            if (msg.getOrNull(2) == true) ok.incrementAndGet()
+                            if (msg.getOrNull(2) == true) ok.add(url)
                             done.countDown(); webSocket.close(1000, null)
                         }
                     }
@@ -145,6 +160,6 @@ object Fetch {
             } catch (_: Exception) { done.countDown(); null }
         }
         try { done.await(timeoutMs, TimeUnit.MILLISECONDS) } finally { sockets.forEach { it.cancel() } }
-        ok.get()
+        synchronized(ok) { ok.toSet() }
     }
 }

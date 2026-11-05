@@ -47,6 +47,8 @@ object FeedLog {
         val p = prefs(c)
         files = LogFiles(File(c.filesDir, "feedlog"))
         app = try { c.packageManager.getPackageInfo(c.packageName, 0).versionName ?: "" } catch (_: Exception) { "" }
+        // Off once (marble-2009-spec, question 22): with no ranked feed it has nothing to teach. The switch stays in Advanced.
+        if (!p.getBoolean("off2009", false)) p.edit().putBoolean("on", false).putBoolean("off2009", true).apply()
         on.value = p.getBoolean("on", false)
         unlocked.value = p.getBoolean("unlocked", false) || on.value
         io.execute { bytes.value = files?.bytes() ?: 0 }
@@ -175,6 +177,6 @@ class LogFiles(val dir: File, private val cap: Long = 30L shl 20, private val da
 
 /** The feeds' names, to tell them apart (Account › Advanced; the feed log says "following1" and so on). */
 object FeedNames {
-    fun of(v: Int) = "Feed $v · " + short(v).substringAfter(" · ")
-    fun short(v: Int) = when (v) { 1 -> "1 · Original"; 2 -> "2 · Mixed"; else -> "3 · Edition" }
+    fun of(v: Int) = if (v == 4) "Reader" else "Feed $v · " + short(v).substringAfter(" · ")
+    fun short(v: Int) = when (v) { 1 -> "1 · Original"; 2 -> "2 · Mixed"; 4 -> "Reader"; else -> "3 · Edition" }
 }

@@ -45,6 +45,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.vector.toPath
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Delete
@@ -191,11 +195,22 @@ private sealed class Route {
     data object SpecialList : Route()
     /** Account › News sources: your own feeds, and Marble's (each can be removed). */
     data object News : Route()
+    /** Following › Relays: your favourite relays and sets, relays your people use, and any relay by its address. */
+    data object RelayList : Route()
+    /** A relay, read like a channel. */
+    data class Relay(val address: String) : Route()
+    /** Everything waiting for your key, in one place (marble-2009-spec step 3): what the bell's first half was. */
+    data object Approvals : Route()
+    /** Reader's folders and sources: the Add box, the people toggle, Mute and Unsubscribe. */
+    data object ReaderSources : Route()
+    /** One of your relay sets, its relays read together. */
+    data class RelaySet(val d: String) : Route()
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
+        is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
         fun of(s: String): Route? = when {
@@ -211,6 +226,11 @@ private sealed class Route {
             s == "marbles" -> Shelf
             s == "special" -> SpecialList
             s == "news" -> News
+            s == "relays" -> RelayList
+            s == "approvals" -> Approvals
+            s == "readersources" -> ReaderSources
+            s.startsWith("relay:") -> Relay(s.removePrefix("relay:"))
+            s.startsWith("relayset:") -> RelaySet(s.removePrefix("relayset:"))
             else -> null
         }
     }
@@ -219,6 +239,7 @@ private sealed class Route {
 @Composable
 fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val social = remember(phone) { Social.of(phone) }
+    LaunchedEffect(social) { social.shown() }
     LaunchedEffect(Unit) { cc.aaro.cosign.Tabs.warm(CosignApp.instance) }
     val appContext = LocalContext.current
     remember { cc.aaro.cosign.SearchPrefs.load(appContext) }
@@ -226,10 +247,12 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     val stack = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Route>, String>(
         save = { l -> l.map { it.save() } }, restore = { l -> mutableStateListOf<Route>().apply { addAll(l.mapNotNull { Route.of(it) }) } })) { mutableStateListOf() }
     val feedState = rememberLazyListState()
+    val readerState = rememberLazyListState()
     // Following's place: kept while you read a story, a post or a thread, and while you're on Search.
     val followingPlace = remember { FollowingPlace() }
     // The panes: Following on the left, Search (home) in the middle, Messages on the right.
-    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 3 }
+    // (Messages, the third pane, is hidden until messages work: marble-2009-spec §6. MessagesPane is kept.)
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = PANE_SEARCH) { 2 }
     // How far the header had folded, kept with the list's place when Android recreates Marble.
     val header = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<TopCollapse, Float>({ it.px }, { TopCollapse().apply { px = it } })) { TopCollapse() }
     // Each screen on the stack keeps its own state (where it was scrolled to) while another is on top of it;
@@ -279,7 +302,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         // Your profile and follows on the relays your relay list names (when that list changed, or never had them).
         social.spreadIdentity()
         // The night's marble (and where it's claimed), then today's award if it's kept and not yet claimed.
-        Daily.refresh(context).invokeOnCompletion { social.claimToday() }
+        Daily.refresh(context)
     }
     // And every 30 minutes while it's open: new things come in above what you're reading, never moving it.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -311,6 +334,8 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
                 when {
                     v.startsWith("search:") -> { SearchText.q.value = v.removePrefix("search:"); stack.add(Route.Search) }
                     v.startsWith("results:") -> nav.results(v.removePrefix("results:"))
+                    // (also a marble.syb.lol/relay/… link, from MainActivity)
+                    v.startsWith("relay:") -> stack.add(Route.Relay(v.removePrefix("relay:")))
                     v.startsWith("save:") -> v.removePrefix("save:").split('|').forEach { social.later.save(it) }
                 }
             }
@@ -325,7 +350,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     LaunchedEffect(inSearch) { if (!inSearch) { SearchText.q.value = ""; SearchText.search.value = null; social.clearSearch() } }
     val top = stack.lastOrNull()
     // The panes stay composed under any screen on top of them, so Back to them is instant, with Following where it was.
-    Panes(phone, ui, social, nav, pager, feedState, followingPlace, covered = top != null)
+    Panes(phone, ui, social, nav, pager, feedState, followingPlace, covered = top != null, readerState = readerState)
     // A screen on top: its own ground, and every touch is its (none reaches the panes under it).
     if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
@@ -345,6 +370,11 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Searches -> SearchesScreen(social, nav)
             Route.SpecialList -> SpecialListScreen(social, nav)
             Route.News -> NewsSourcesScreen(social, nav)
+            Route.RelayList -> RelayListScreen(social, nav)
+            Route.Approvals -> ApprovalsScreen(phone, ui, social, nav)
+            Route.ReaderSources -> ReaderSourcesScreen(social, nav)
+            is Route.Relay -> RelayScreen(top.address, social, nav)
+            is Route.RelaySet -> RelaySetScreen(top.d, social, nav)
             Route.Shelf -> ShelfScreen(social, nav) { from, m, d -> bigMarble = BigMarble(from, m, d) }
         }
     } }
@@ -424,78 +454,72 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
     val d = androidx.compose.ui.platform.LocalDensity.current
     val scope = rememberCoroutineScope()
     val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.toFloat()
-    // The pull: the finger's travel down (times Stretch.GIVE), in pixels; up, towards opening Discover.
-    var pull by remember { mutableFloatStateOf(0f) }
-    var lift by remember { mutableFloatStateOf(0f) }
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(
-        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom)).pointerInput(Unit) {
-        detectVerticalDragGestures(
-            onDragStart = { lift = 0f },
-            onDragEnd = {
-                if (lift < -48.dp.toPx()) { LaterTab.value = "saved"; nav.open(Route.Later) }
-                scope.launch { androidx.compose.animation.core.animate(pull, 0f, animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = 300f)) { v, _ -> pull = v } }
-            },
-            onDragCancel = { pull = 0f },
-        ) { c, dy -> c.consume(); if (dy > 0 || pull > 0f) pull = (pull + dy * Stretch.GIVE).coerceAtLeast(0f) else lift += dy }
-    }) {
-        val w = maxWidth.value
-        // The most the marble grows: a third of the screen's height, and 24dp clear of each side.
-        val most = with(d) { (minOf(screenH / 3f, w - 48f) - 72f).coerceAtLeast(130f).dp.toPx() }
-        val grow = with(d) { Stretch.band(pull, 0f, most).toDp().value }
-        val m = 72f + grow
-        // A phone on its side has room for none; a tall screen, four.
-        val keptMax = when { maxHeight < 520.dp -> 0; maxHeight < 700.dp -> 3; else -> 4 }
-        val waiting = ui.asks.size + ui.batchAsks.size
-        val fresh = notices.list.count { it.event.createdAt > seen }
-        // Everything centred on the box: the marble and the name above it, what you kept below.
+        androidx.compose.foundation.layout.WindowInsetsSides.Horizontal + androidx.compose.foundation.layout.WindowInsetsSides.Bottom))) {
+        // At rest (home-rules.md): the mark (a still picture), the box, and nothing else. Your own things come when you tap the box.
         androidx.compose.ui.layout.Layout(content = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-                val marble = Marbles.current()
-                Box(Modifier.size(m.dp).onGloballyPositioned { centre = it.boundsInRoot().center }.clip(CircleShape)
-                    .clickable(onClickLabel = "Look at the marble") { nav.marble(centre) }, contentAlignment = Alignment.Center) {
-                    MarbleArt(marble, "The marble", Modifier.wrapContentSize(Alignment.Center, unbounded = true).requiredSize((m * 1.8f).dp))
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(appName, style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 40.sp), color = Vault.Text, maxLines = 1)
-            }
+            Swirl(64f)
             Row(Modifier.padding(horizontal = 16.dp).widthIn(max = 600.dp).fillMaxWidth().height(52.dp)
                 .background(Vault.Surface, RoundedCornerShape(26.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(26.dp))
-                .clickable { social.clearSearch(); nav.open(Route.Search) }.padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                .clickable(onClickLabel = "Search") { social.clearSearch(); nav.open(Route.Search) }.padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Search, null, tint = Vault.Muted)
                 Spacer(Modifier.width(12.dp))
-                Text("Search or jot anything…", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Text("Search", color = Vault.Muted, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 // Enter searches (the box opens for typing).
                 GoChip(null)
             }
-            // Your latest notes just under the box, then Notes (your searches are at the foot of Notes).
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                KeptLately(laterItems, social, nav, keptMax)
-                Spacer(Modifier.height(6.dp))
-                val notes = laterItems.count { it.deleted == null && it.done == null }
-                HomePill(Glyphs.save, if (notes > 0) "Notes · $notes" else "Notes") { LaterTab.value = "saved"; nav.open(Route.Later) }
-            }
         }, modifier = Modifier.fillMaxSize()) { parts, c ->
             val loose = c.copy(minWidth = 0, minHeight = 0)
-            val (top, box, kept) = parts.map { it.measure(loose) }
-            // The box's middle a little above the screen's middle (moved down by half the pull, as the marble grows above it).
-            // On a short screen (a phone on its side) the marble keeps clear of the top: the box moves down for it.
+            val (top, box) = parts.map { it.measure(loose) }
+            // The box at 41% of the height (as the shared design), the mark just above it.
             val gap = 20.dp.roundToPx()
-            val boxY = maxOf((c.maxHeight * HOME_BOX_AT).toInt() - box.height / 2, top.height + gap) + (grow * density / 2).toInt()
+            val boxY = maxOf((c.maxHeight * HOME_BOX_AT).toInt() - box.height / 2, top.height + gap)
             layout(c.maxWidth, c.maxHeight) {
                 top.place((c.maxWidth - top.width) / 2, boxY - gap - top.height)
                 box.place((c.maxWidth - box.width) / 2, boxY)
-                kept.place((c.maxWidth - kept.width) / 2, boxY + box.height + 6.dp.roundToPx())
             }
         }
-        // What needs you (an approval, say), and a passing error, under the panes' bar.
+        // The one thing that can interrupt home: what waits on you (an approval, an Undo, recovery). And a passing error.
         Column(Modifier.align(Alignment.TopCenter).padding(top = 4.dp).widthIn(max = 600.dp).fillMaxWidth()) {
-            NeedsYou(phone, ui, social) { nav.open(Route.Bell) }
-            tomorrow?.let { TomorrowCard(it, social) }
+            NeedsYou(phone, ui, social) { nav.open(Route.Approvals) }
             ui.error?.let { e -> Text(e, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().clickable { phone.clearError() }.padding(horizontal = 20.dp, vertical = 6.dp)) }
         }
-        // Your notes, below: swipe up, or tap.
-        NotesLip(Modifier.align(Alignment.BottomCenter)) { LaterTab.value = "saved"; nav.open(Route.Later) }
+    }
+}
+
+/** A row's source as it reads now: a person's name once their profile has come (it was stored at load). */
+private fun liveSource(i: Social.ReaderItem, people: Map<String, Person>): String =
+    i.pubkey?.takeIf { i.source.startsWith("people:") || i.source == "writer:$it" }?.let { people[it]?.shown } ?: i.sourceName
+
+/** Your picture's sheet (home-rules.md "Picture"): rare things and account-shaped ones, as named rows. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PictureSheet(person: Person?, me: String, nav: Nav, onClose: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.material3.ModalBottomSheet(onClose, containerColor = Vault.Surface) {
+        Row(Modifier.fillMaxWidth().clickable { onClose(); nav.profile(me) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Avatar(person, me, 40)
+            Column(Modifier.padding(start = 14.dp)) {
+                Text(person?.shown ?: shortNpub(me), color = Vault.Text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text("Your profile", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        HorizontalDivider(color = Vault.Edge)
+        for ((label, go) in listOf<Pair<String, () -> Unit>>(
+            "Notes and searches" to { LaterTab.value = "saved"; nav.open(Route.Later) },
+            // Replies, mentions and likes (the bell's list, now that the bell is gone).
+            "Replies and mentions" to { nav.open(Route.Bell) },
+            "Approvals" to { nav.open(Route.Approvals) },
+            "Devices and backup" to { nav.open(Route.Account) },
+            "Your marbles" to { nav.open(Route.Shelf) },
+            "About Marble" to { cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/about", false, Vault.dark, Vault.Ground.toArgb(), null) },
+        )) Text(label, color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onClose(); go() }.padding(horizontal = 20.dp, vertical = 13.dp))
+        // Switch account: each other account here, one tap away.
+        val accounts = CosignApp.instance.accounts
+        for (p in accounts.all.filter { it.isMember && it.ui.value.member?.group?.groupX != me }) Text("Switch to ${p.label}", color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onClose(); accounts.show(p.slot) }.padding(horizontal = 20.dp, vertical = 13.dp))
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -505,10 +529,10 @@ private class FollowingPlace {
     var known: Set<String>? = null
 }
 
-/** Which list Notes opens on: "saved" (your notes) or "pages" (tabs: the pages you opened). */
+/** Which list Notes opens on: "saved" (your notes) or "done". */
 private val LaterTab = kotlinx.coroutines.flow.MutableStateFlow("saved")
 
-/** A button under home's box: Notes, or Tabs. */
+/** The button under home's box: Notes. */
 @Composable
 private fun HomePill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) = Row(
     Modifier.clip(RoundedCornerShape(18.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(18.dp))
@@ -557,7 +581,7 @@ private fun MessagesPane() = Box(Modifier.fillMaxSize().windowInsetsPadding(andr
  */
 @Composable
 private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: androidx.compose.foundation.pager.PagerState, feedState: LazyListState, place: FollowingPlace,
-                  covered: Boolean = false) {
+                  covered: Boolean = false, readerState: LazyListState = rememberLazyListState()) {
     val people by People.known.collectAsState()
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
@@ -565,31 +589,28 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
     LaunchedEffect(pager.settledPage, covered) { if (!covered) cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_FOLLOWING -> "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
     Column(Modifier.fillMaxSize()
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
+        // Home's one place word top left (a tap, or a swipe, goes there); on it, the mark goes home. Your picture top right.
+        var sheet by remember { mutableStateOf(false) }
         Box(Modifier.fillMaxWidth().height(56.dp)) {
-            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                for ((i, label) in listOf(PANE_FOLLOWING to "Following", PANE_SEARCH to "Search", PANE_MESSAGES to "Messages")) {
-                    val on = pager.currentPage == i
-                    val c = if (on) Vault.Text else Vault.Muted
-                    // Following, tapped while you're on it: back to the top (a long way down: a jump, then the last bit animated).
-                    Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable {
-                        scope.launch {
-                            if (i == PANE_FOLLOWING && pager.currentPage == PANE_FOLLOWING) { if (feedState.firstVisibleItemIndex > 8) feedState.scrollToItem(8); feedState.animateScrollToItem(0) }
-                            else pager.animateScrollToPage(i)
-                        }
-                    }.padding(horizontal = 4.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(label, color = c, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(5.dp))
-                        Box(Modifier.width(28.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(if (on) Vault.Accent else Color.Transparent))
-                    }
-                }
+            // The place word: Reader (Following only while the older feed is chosen in Advanced).
+            if (pager.currentPage == PANE_SEARCH) Text(if (social.feedVersion.collectAsState().value == 3) "Following" else "Reader", color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp).clip(RoundedCornerShape(8.dp))
+                    .clickable { scope.launch { pager.animateScrollToPage(PANE_FOLLOWING) } }.padding(horizontal = 12.dp, vertical = 12.dp))
+            else Box(Modifier.align(Alignment.CenterStart).padding(start = 6.dp).clip(CircleShape).semantics { contentDescription = "Search" }
+                .clickable(onClickLabel = "Go to Search", role = androidx.compose.ui.semantics.Role.Button) { scope.launch { pager.animateScrollToPage(PANE_SEARCH) } }.padding(10.dp)) { Swirl(28f) }
+            // 48 dp to tap, a button that opens your menu.
+            Box(Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(48.dp).clip(CircleShape)
+                .clickable(onClickLabel = "Open your menu", role = androidx.compose.ui.semantics.Role.Button) { sheet = true }, contentAlignment = Alignment.Center) {
+                Avatar(people[me], me, 32, Modifier, "Your picture")
             }
-            // Your picture, on every pane: your account, devices and backup.
-            Avatar(people[me], me, 30, Modifier.align(Alignment.CenterEnd).padding(end = 14.dp).clickable { nav.open(Route.Account) }, "Your account")
         }
+        if (sheet) PictureSheet(people[me], me, nav) { sheet = false }
+        val wanted by PaneWanted.collectAsState()
+        LaunchedEffect(wanted) { wanted?.let { pager.animateScrollToPage(it); PaneWanted.value = null } }
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
             when (page) {
-                PANE_FOLLOWING -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
+                PANE_FOLLOWING -> if (social.feedVersion.collectAsState().value == 4) ReaderPane(social, nav, current = pager.settledPage == PANE_FOLLOWING && !covered, state = readerState)
+                    else FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
                 PANE_MESSAGES -> MessagesPane()
                 else -> Home(phone, ui, social, nav)
             }
@@ -638,14 +659,14 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
     if (open.isEmpty()) return
     val context = LocalContext.current
     Column(Modifier.padding(horizontal = 24.dp).widthIn(max = 600.dp).fillMaxWidth()) {
-        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        LaunchedEffect(open.take(max).map { it.id }) { open.take(max).forEach { cc.aaro.cosign.NotesTrial.shown(it.id, "home") } }
+        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.NotesTrial.opened(item.id, "home"); FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable(onClickLabel = "Done") { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
             item.url?.let { SiteIcon(it, 16); Spacer(Modifier.width(8.dp)) }
             Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(agoWords(item.created), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 10.dp))
         }
     }
 }
@@ -762,7 +783,13 @@ private fun FeedScreen(social: Social, nav: Nav, pane: Boolean, current: Boolean
             // then Today's news, then your people (newest first) with beyond your people at its end. Nothing is reordered.
             val starred = shown.filter { it.reason.startsWith("★") }
             val others = shown.filter { !it.reason.startsWith("★") }
-            val outside = beyond.filter { b -> shown.none { it.e.id == b.e.id } && b.e.id !in dismissed }
+            // (Beyond your people is off: strangers belong in Search, not in your chosen sources.)
+            val outside = emptyList<Pick>()
+            // Relays, a tap away (the sections below are as they were).
+            item(key = "s:relays") {
+                Text("Relays ›", color = Vault.Accent, style = MaterialTheme.typography.labelLarge, textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    modifier = Modifier.fillMaxWidth().clickable { nav.open(Route.RelayList) }.padding(horizontal = 18.dp, vertical = 6.dp))
+            }
             if (starred.isNotEmpty()) item(key = "s:special") {
                 val fresh = starred.count { mark > 0 && it.e.createdAt > mark }
                 SectionCard("Special Follow", if (fresh > 0) "$fresh new" else null) {
@@ -1085,7 +1112,7 @@ private fun NewsCard(c: cc.aaro.cosign.TopicCard, social: Social, nav: Nav) {
                 }
             }
             if (picking) Row(Modifier.clip(RoundedCornerShape(20.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(horizontal = 4.dp)) {
-                for (e in social.topEmojis()) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 20.sp) }
+                for (e in social.topEmojis().filter { it.url == null }) Box(Modifier.size(36.dp).clip(CircleShape).clickable { picking = false; social.reactToPage(c.url, cc.aaro.cosign.ReactionRules.wire(e.emoji)) }, contentAlignment = Alignment.Center) { Text(e.emoji, fontSize = 20.sp) }
             } else {
                 Icon(Glyphs.reply, "Comment", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { nav.compose(c.url) }.padding(10.dp))
                 // Repost a story: a public post that quotes its link (there's no plain repost of a page). Held, the same, with a tick.
@@ -1362,7 +1389,8 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
     var pan by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val d = androidx.compose.ui.platform.LocalDensity.current
     val today = Marbles.current()
-    val marble = big.marble ?: today
+    // No marble today (and none of yours asked for): nothing to show.
+    val marble = big.marble ?: today ?: run { LaunchedEffect(Unit) { onClose() }; return }
     BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Vault.Ground)
         .onGloballyPositioned { centre = it.boundsInRoot().center }, contentAlignment = Alignment.Center) {
         // The picture has room round the marble (its shadow): the marble itself ends up about four fifths of the width.
@@ -1421,7 +1449,7 @@ private fun MarbleView(big: BigMarble, social: Social, onShelf: () -> Unit, onCl
         val todays = big.marble == null && Marbles.shift == 0L
         val first = remember { todays && social.kept.keep(day) }
         // Claimed (now or before): its award from the issuer, quietly.
-        LaunchedEffect(Unit) { if (todays) social.claimToday() }
+        // (New collecting stopped, 2026-11-04: nothing is claimed.)
         var removing by remember { mutableStateOf(false) }
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp).graphicsLayer { alpha = shown.value }, horizontalAlignment = Alignment.CenterHorizontally) {
             NameChip(marble.name, big.date ?: java.time.LocalDate.parse(day), flourish = first && !still, count = all.values.count { it.here }.takeIf { it > 0 }, onClick = onShelf, modifier = Modifier)
@@ -1602,11 +1630,14 @@ private fun TomorrowCard(t: Social.Tomorrow, social: Social) {
 object Marbles {
     /** Debug builds only: days ahead (or back) to look at (--ei marble_day n). */
     @Volatile var shift = 0L
-    /** Today's: the night's own when it's here ([Daily]), else one from the collection. */
+    /**
+     * Today's: the night's own when the issuer made one ([Daily]); none, nothing (new marbles stopped, 2026-11-04: no
+     * collection's marble stands in, nothing to claim). A debug build looking days ahead or back: the collection's.
+     */
     @Composable
-    fun current(): Marble {
+    fun current(): Marble? {
         val live by Daily.today.collectAsState()
-        return live?.takeIf { shift == 0L } ?: today()
+        return if (shift != 0L) today() else live
     }
     fun today(): Marble = MARBLES[Math.floorMod(java.time.LocalDate.now(java.time.ZoneOffset.UTC).toEpochDay() + shift, MARBLES.size.toLong()).toInt()]
 }
@@ -1712,7 +1743,7 @@ private fun HomeTop(top: TopCollapse, onName: () -> Unit, onSearch: () -> Unit, 
         var centre by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
         // Marble of the day; changes at 00:00 UTC, the same moment everywhere (looked at again whenever Discover comes back).
         val marble = Marbles.current()
-        MarbleArt(marble, "The marble",
+        if (marble != null) MarbleArt(marble, "The marble",
             // Unbounded, so a marble wider than the header is still placed by its own centre, not pushed aside.
             Modifier.offset((mx - m * 0.9f).dp, (my - m * 0.9f).dp).wrapContentSize(Alignment.TopStart, unbounded = true).requiredSize((m * 1.8f).dp)
                 .onGloballyPositioned { centre = it.boundsInRoot().center }
@@ -1756,18 +1787,20 @@ private fun openInBrowser(context: android.content.Context, url: String, item: S
 @Composable
 private fun NeedsYou(phone: Phone, ui: Ui, social: Social, onMore: () -> Unit) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    // (No ticking seconds on home: the card goes when it's answered or runs out.)
     val counting = ui.asks.isNotEmpty() || ui.batchAsks.isNotEmpty() || ui.deleting.isNotEmpty()
-    if (counting) LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-    val cards = needs(phone, ui)
+    if (counting) LaunchedEffect(Unit) { while (true) { delay(15_000); now = System.currentTimeMillis() } }
+    // Home is interrupted only by approvals, an Undo and recovery (home-rules.md "Interrupt"); the rest live in Approvals.
+    val cards = needs(phone, ui).filter { it !is Need.Paper && it !is Need.Future }
     // Another key of yours with something waiting.
     val others = CosignApp.instance.accounts.all.filter { it !== phone }.map { it to it.ui.collectAsState().value }
         .filter { (_, u) -> u.asks.isNotEmpty() || u.batchAsks.isNotEmpty() }
     if (cards.isEmpty() && others.isEmpty()) return
     Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
         cards.firstOrNull()?.let { NeedCard(it, phone, now) }
-        if (cards.size > 1) TextButton(onMore, contentPadding = PaddingValues(0.dp)) { Text("${cards.size - 1} more waiting for you", color = Vault.AmberText) }
-        for ((p, u) in others) TextButton({ CosignApp.instance.accounts.show(p.slot) }, contentPadding = PaddingValues(0.dp)) {
-            Text("${p.label}: ${u.asks.size + u.batchAsks.size} waiting for you. Switch", color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
+        if (cards.size > 1) TextButton(onMore, contentPadding = PaddingValues(0.dp)) { Text("More waiting for you", color = Vault.AmberText) }
+        for ((p, _) in others) TextButton({ CosignApp.instance.accounts.show(p.slot) }, contentPadding = PaddingValues(0.dp)) {
+            Text("Something's waiting for ${p.label}. Switch", color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -1793,9 +1826,9 @@ private fun needs(phone: Phone, ui: Ui): List<Need> = buildList {
 
 @Composable
 private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
-    is Need.Approve -> AskCard(n.ask, now) { approve -> phone.decide(n.ask.id, approve) }
-    is Need.Batch -> BatchCard(n.b, now) { approve -> phone.decideBatch(n.b.batch, approve) }
-    is Need.Deleting -> DeletingCard(n.d, now) { phone.cancelDeletion(n.d.batch) }
+    is Need.Approve -> AskCard(n.ask, now, quiet = true) { approve -> phone.decide(n.ask.id, approve) }
+    is Need.Batch -> BatchCard(n.b, now, quiet = true) { approve -> phone.decideBatch(n.b.batch, approve) }
+    is Need.Deleting -> DeletingCard(n.d, now, quiet = true) { phone.cancelDeletion(n.d.batch) }
     is Need.Recovery -> RecoveryCard(n.name, n.until, phone)
     is Need.Future -> FutureCard(n.f) { phone.removeFuture(n.f) }
     Need.Paper -> PaperCard(phone)
@@ -1831,7 +1864,8 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     val offer = nav.social.offers.collectAsState().value[n.id]
     var original by remember(n.id) { mutableStateOf(false) }
     // A link with a preview shows as a card instead of in the text; an article as a card of its own.
-    val link = remember(n.id) { if (pick != null) Calm.link(n) else null }
+    val link = remember(n.id) { if (pick != null) Calm.link(n) else if (n.kind == 1) Body.of(n).previewLink?.url else null }
+    if (link != null && pick == null) LaunchedEffect(link) { nav.social.wantPreview(link) }
     val card = if (n.kind == 30023) remember(n.id) { Preview(n.firstTag("title") ?: "Article", n.firstTag("image"), n.firstTag("summary") ?: "", "Article") } else link?.let { previews[it] }
     val body = remember(n.id, tr, original, card != null) {
         val text = if (tr != null && !original) tr.text else if (n.kind == 30023) "" else n.content
@@ -1892,17 +1926,21 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
                 Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, maxLines = maxLines, overflow = TextOverflow.Ellipsis, inlineContent = emoji)
             }
             // What it refers to first, under it (a post, an article, something from another app); any later one is a short link.
+            // A closing run of mentions: one line of small chips (+N opens the rest).
+            if (!veiled && body.trailing.isNotEmpty()) MentionChips(body.trailing, people, nav)
             if (!veiled) when (val c = body.card) {
                 is Body.Part.Quote -> QuoteBox(c.id, people, nav)
                 is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
                 else -> {}
             }
+            if (!veiled) body.article?.let { AddrBox(it.a, people, nav) }
             // In a list, one picture, no taller than it is wide (and how many more); a thread shows them all, whole.
             val full = maxLines == Int.MAX_VALUE
             // A tap on a picture opens it full screen (and not the thread); a video plays where it is.
             val urls = remember(body) { body.images.map { it.url } }
             val context = LocalContext.current
-            if (!veiled) card?.let { c -> LinkCard(c) { if (n.kind == 30023 || link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
+            if (!veiled && n.kind == 30023) ArticleCard(n, people, nav, author = false)
+            else if (!veiled) card?.let { c -> LinkCard(c, link) { if (link == null) nav.thread(n.id) else cc.aaro.cosign.marblePost(link)?.let { nav.thread(it) } ?: run { nav.social.openedLink(n); openInBrowser(context, link, n.id) } } }
             if (card == null && !veiled) body.media.take(if (full) Int.MAX_VALUE else 1).forEach { m ->
                 Spacer(Modifier.height(8.dp))
                 when (m) {
@@ -1917,7 +1955,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             if (pick != null && pick.more.isNotEmpty()) Text("+ ${pick.more.size} more about this from ${pick.more.joinToString(", ")}", color = Vault.Field, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (card == null && !veiled && !full && body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) { FeedLog.open(n.id, "image"); nav.pictures(urls, 1) } else nav.thread(n.id) })
-            PostActions(n, liked, nav, onLike, full, author, onReply, saved, onSave, onShare)
+            PostActions(n, liked, nav, onLike, full, author, onReply, saved, onSave, onShare, reader = pick != null)
         }
     }
 }
@@ -1927,17 +1965,18 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, full: Boolean, author: Person?, onReply: (() -> Unit)? = null,
-                        saved: Boolean = false, onSave: (() -> Unit)? = null, onShare: (() -> Unit)? = null) {
+                        saved: Boolean = false, onSave: (() -> Unit)? = null, onShare: (() -> Unit)? = null, reader: Boolean = false) {
     val context = LocalContext.current
     // Like and reply, as plain icons (an IconButton each costs a visible frame on a slow phone).
     Row(Modifier.offset(x = (-9).dp), verticalAlignment = Alignment.CenterVertically) {
         // A tap likes; a long press picks an emoji (see Heart). Then what others reacted with, once counted.
         // Feed 2: no counts in a list (the post itself has them, a tap in).
-        Heart(n, liked, nav.social, onLike, showCounts = true)
-        val eng = nav.social.engagement.collectAsState().value[n.id]
+        // A row in Following (Reader): no reacting, replying or reposting there; an opened post and Search have them.
+        if (!reader) {
+        // (No counts under a post in a list: an opened post has them, under it.)
+        Heart(n, liked, nav.social, onLike)
         Icon(Glyphs.reply, "Reply", tint = Vault.Muted,
             modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onReply?.invoke() ?: nav.reply(n.id) }.padding(10.dp))
-        eng?.replyTotal?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
         // Repost: public, so never one tap; a small menu says so first. Held: quote it, in the composer (public too).
         val reposted = n.id in nav.social.reposted.collectAsState().value
         var asking by remember { mutableStateOf(false) }
@@ -1955,7 +1994,7 @@ private fun PostActions(n: Event, liked: Boolean, nav: Nav, onLike: () -> Unit, 
                 } }, { asking = false; nav.social.repost(n) })
             }
         }
-        eng?.reposts?.takeIf { it > 0 }?.let { Text(it.toString(), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.offset(x = (-6).dp)) }
+        }
         // Share and keep, on every post (in a list, an open post, its replies): unless the list says otherwise, keep is
         // into your notes and share is the phone's share sheet with the post's marble.syb.lol link.
         Spacer(Modifier.weight(1f))
@@ -2037,6 +2076,7 @@ private fun AddrBox(a: Ref.Addr, people: Map<String, Person>, nav: Nav) {
  */
 @Composable
 private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav: Nav, page: String? = null) {
+    if (e?.kind == 30023) return ArticleCard(e, people, nav)
     val context = LocalContext.current
     val inMarble = e != null && OtherApps.drawn(e.kind)
     var target by remember(e?.id) { mutableStateOf(page) }
@@ -2056,9 +2096,7 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
         }
         when {
             // An article: its card (picture, title, summary), as an article shows in the feed.
-            e?.kind == 30023 -> Box(Modifier.padding(top = 6.dp)) {
-                LinkCard(Preview(e.firstTag("title") ?: "An article", e.firstTag("image")?.takeIf { it.startsWith("https://") }, e.firstTag("summary") ?: "", "Article")) { nav.thread(e.id) }
-            }
+
             else -> Text(if (e == null) "Couldn't load this post" else if (e.kind == 1) cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown } else OtherApps.what(e),
                 color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp))
@@ -2071,8 +2109,9 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
 @Composable
 private fun Totals(e: Social.Engagement) {
     fun n(v: Long, one: String, many: String) = "$v ${if (v == 1L) one else many}"
-    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") }, n(e.likeTotal, "like", "likes"),
-        e.zaps.takeIf { it > 0 }?.let { n(it.toLong(), "zap", "zaps") })
+    // (No zaps: showing payments is put off.)
+    // (Reactions are the chips above it.)
+    val parts = listOfNotNull(n(e.replyTotal, "reply", "replies"), e.reposts.takeIf { it > 0 }?.let { n(it.toLong(), "repost", "reposts") })
     Text(parts.joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp))
 }
 
@@ -2150,12 +2189,15 @@ private fun LinkResults(ref: Ref, social: Social, nav: Nav) {
 
 /** A link's preview: the page's picture, its site, title and a line of summary. */
 @Composable
-private fun LinkCard(c: Preview, onOpen: () -> Unit) = Column(
+private fun LinkCard(c: Preview, url: String? = null, onOpen: () -> Unit) = Column(
     Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).background(Vault.Surface).clickable(onClick = onOpen),
 ) {
     c.image?.let { NetImage(it, Modifier.fillMaxWidth().heightIn(max = 190.dp).aspectRatio(1.91f).background(Vault.Edge), 1080) }
     Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
-        if (c.site.isNotEmpty()) Text(c.site, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (c.site.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+            url?.let { SiteIcon(it, 14); Spacer(Modifier.width(6.dp)) }
+            Text(c.site, color = Vault.Field, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Text(c.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
         if (c.summary.isNotEmpty()) Text(c.summary, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
     }
@@ -2258,7 +2300,9 @@ private fun ReportDialog(name: String, onClose: () -> Unit, onReport: (String) -
  * A note's text, cut up: pictures apart, mentions and #tags made tappable. The rules are shared with Marble Web and
  * Astral (marble-content-fixtures: content-rules.md); ContentFixturesTest runs its fixtures against [tokens].
  */
-internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>, private val quoted: Part? = null) {
+internal class Body(val parts: List<Part>, val media: List<Media>, val mentions: List<String>, private val quoted: Part? = null,
+                    /** A run of three or more mentions closing the post: shown as one line of small chips, not in the text. */
+                    val trailing: List<String> = emptyList()) {
     val images get() = media.filterIsInstance<Img>()
     sealed class Part {
         data class Plain(val s: String) : Part()
@@ -2280,6 +2324,23 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
      */
     val card: Part? = parts.firstOrNull { it is Part.Quote || it is Part.QuoteAddr } ?: quoted
 
+    /** An article it refers to (kind 30023), when that isn't [card] already: a card too, as articles always get. */
+    val article: Part.QuoteAddr? = parts.firstOrNull { it is Part.QuoteAddr && it.a.kind == 30023 && it !== card } as Part.QuoteAddr?
+
+    /**
+     * The link that gets a preview card (one per post, the first): a web link on its own line, or at the post's end.
+     * One in the middle of a sentence stays a link.
+     */
+    val previewLink: Part.Link? = if (media.isNotEmpty()) null else parts.withIndex().firstOrNull { (i, p) ->
+        p is Part.Link && p.text == null && !p.url.startsWith("blossom:") && cc.aaro.cosign.inAppRef(p.url) == null && run {
+            val before = (parts.getOrNull(i - 1) as? Part.Plain)?.s
+            val after = parts.drop(i + 1)
+            val ownLine = (i == 0 || before?.trimEnd(' ', '\t')?.let { it.isEmpty() || it.endsWith("\n") } == true) &&
+                (after.isEmpty() || (after.first() as? Part.Plain)?.s?.trimStart(' ', '\t')?.let { it.isEmpty() || it.startsWith("\n") } == true)
+            ownLine || after.all { it is Part.Plain && it.s.isBlank() }
+        }
+    }?.value as Part.Link?
+
     /** What a part shows as, in the text (null: nothing; a card, or an emoji, drawn as its picture). */
     fun label(p: Part, people: Map<String, Person>): String? = when (p) {
         is Part.Plain -> p.s
@@ -2288,7 +2349,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
         } ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it }
         is Part.Mention -> "@" + (people[p.pubkey]?.shown ?: shortNpub(p.pubkey))
         is Part.Quote -> if (p === card) null else "↪ quoted"
-        is Part.QuoteAddr -> if (p === card) null else if (p.a.kind == 30023) "↪ an article" else "↪ quoted"
+        is Part.QuoteAddr -> if (p === card || p === article) null else if (p.a.kind == 30023) "↪ an article" else "↪ quoted"
         is Part.Tag -> "#" + p.tag
         is Part.Emoji -> null
     }
@@ -2303,15 +2364,16 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             val shown = label(p, people)
             when (p) {
                 is Part.Plain -> out += "text" to p.s
-                is Part.Link -> out += "link" to p.url
+                is Part.Link -> out += "link" to linkToken(p.url)
                 is Part.Mention -> out += "mention" to p.pubkey
                 is Part.Tag -> out += "hashtag" to p.tag
                 is Part.Emoji -> out += "emoji" to p.code
                 is Part.Quote -> if (p !== card) out += "shortlink" to p.raw
-                is Part.QuoteAddr -> if (p !== card) out += "shortlink" to p.raw
+                is Part.QuoteAddr -> if (p !== card && p !== article) out += "shortlink" to p.raw
             }
             if (p !is Part.Link && shown != null) seen.append(shown)
         }
+        for (pk in trailing) { out += "mention" to pk; seen.append("@" + (people[pk]?.shown ?: shortNpub(pk))) }
         return out to seen.toString()
     }
     sealed class Media
@@ -2328,6 +2390,9 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
     }
 
     companion object {
+        /** A link as the fixtures' token: its address, and "|/<ref>" when it opens here (a viewer's link to a post or person). */
+        fun linkToken(url: String): String = if (cc.aaro.cosign.inAppRef(url) == null || url.startsWith("nostr:")) url
+            else url + "|/" + url.trimEnd('/').substringAfterLast('/').substringBefore('?')
         const val EMOJI = "emoji:"
         // Links first (anything inside one is the link's), then references (with or without nostr:, not inside a word),
         // #tags (with a letter: #1 is text) and :emoji: (only those the post defines; others stay text).
@@ -2336,6 +2401,43 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
             // A Blossom link (BUD-10): a picture or video shows as one; any other file, a short link.
             "|(blossom:[0-9a-fA-F]{64}\\.[A-Za-z0-9]{1,10}(?:\\?[^\\s<>\"]*)?)")
         private const val TRAILING = ".,;:!?)]}'\""
+
+        /**
+         * A post as one line of text (content-rules §9; reader.md §5): people as @names, a quoted post or article as
+         * "↪ quoted" / "↪ an article", a viewer's link as "a post", other links shortened, custom emoji as :name:,
+         * pictures and video left out ("A picture" when that's all), never a raw reference. Cut after this, not before.
+         */
+        fun line(e: Event, people: Map<String, Person> = emptyMap(), veil: Boolean = true): String {
+            if (veil) warning(e)?.let { return it.ifEmpty { "Sensitive" } + ": show" }
+            val b = of(e)
+            fun name(pk: String) = "@" + (people[pk]?.shown ?: shortNpub(pk))
+            fun ref(r: Ref) = when (r) { is Ref.Note -> "↪ quoted"; is Ref.Profile -> name(r.pubkey); is Ref.Addr -> if (r.kind == 30023) "↪ an article" else "↪ quoted" }
+            val sb = StringBuilder()
+            for (p in b.parts) when (p) {
+                is Part.Plain -> sb.append(p.s)
+                // A viewer's link (njump, primal, marble.syb.lol…) is "a post"; any other link, shortened.
+                is Part.Link -> when (val r = if (p.url.startsWith("blossom:")) null else cc.aaro.cosign.inAppRef(p.url)) {
+                    is Ref.Note -> sb.append("a post")
+                    is Ref.Profile -> sb.append(name(r.pubkey))
+                    is Ref.Addr -> sb.append(if (r.kind == 30023) "an article" else "a post")
+                    null -> sb.append(p.text ?: p.url.removePrefix("https://").removePrefix("http://").removePrefix("www.").let { if (it.length > 40) it.take(38) + "…" else it })
+                }
+                is Part.Mention -> sb.append(name(p.pubkey))
+                is Part.Tag -> sb.append("#" + p.tag)
+                is Part.Emoji -> sb.append(":" + p.code + ":")
+                is Part.Quote -> sb.append("↪ quoted")
+                is Part.QuoteAddr -> sb.append(ref(p.a))
+            }
+            for (pk in b.trailing) sb.append(" " + name(pk))
+            val text = sb.toString().replace(Regex("\\s+"), " ").replace(Regex(" ([.,;:!?])(?=\\s|$)"), "$1").trim()
+            // Nothing but its pictures or video: says so.
+            return text.ifEmpty { if (b.media.any { it is Vid }) "A video" else if (b.media.isNotEmpty()) "A picture" else "A post" }
+        }
+
+        /** [s] cut to about [n] characters, at a space where there is one. */
+        fun cut(s: String, n: Int): String = if (s.length <= n) s else s.take(n).let { c ->
+            // At the last space; one past half-way if there's one, else any; a single run of letters is cut where it must be.
+            c.substringBeforeLast(' ').takeIf { it.length > n / 2 } ?: c.substringBeforeLast(' ', "").ifEmpty { c } }.trimEnd() + "…"
 
         /** A NIP-36 content warning: its reason ("": none given); null: none. */
         fun warning(e: Event): String? = e.tags.firstOrNull { it.isNotEmpty() && it[0] == "content-warning" }?.let { it.getOrNull(1)?.trim() ?: "" }
@@ -2370,7 +2472,7 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 if (blossom != null) at = m.range.first + blossom.raw.length
                 when {
                     url != null && isVideo(url) -> images += video(url)
-                    url != null && IMAGE.containsMatchIn(url) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
+                    url != null && (IMAGE.containsMatchIn(url) || meta[url]?.get("m")?.startsWith("image/") == true) -> images += Img(url, ratioOf(url) ?: 1.5f, (meta[url]?.get("image") ?: meta[url]?.get("thumb"))?.takeIf { it.startsWith("https://") })
                     url != null -> parts += Part.Link(url)
                     ref != null -> when (val r = Ref.parse(ref)) {
                         is Ref.Profile -> { parts += Part.Mention(r.pubkey); mentions += r.pubkey; Social.hint(r.pubkey, r.relays) }
@@ -2404,6 +2506,18 @@ internal class Body(val parts: List<Part>, val media: List<Media>, val mentions:
                 val v = t[1].lowercase()
                 if (cc.aaro.qrst.core.isHex32(v)) Part.Quote(v)
                 else v.split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.qrst.core.isHex32(it[1]) }?.let { (k, pk, d) -> k.toIntOrNull()?.let { Part.QuoteAddr(Ref.Addr(it, pk, t[1].split(':', limit = 3)[2]).apply { relays = listOfNotNull(t.getOrNull(2)?.takeIf { r -> r.startsWith("wss://") }) }) } }
+            }
+            // A run of 3+ mentions closing the post (only spaces and line breaks between them): out of the text, into chips.
+            var cut = tidy.size
+            val run = ArrayList<String>()
+            while (cut > 0) {
+                val p = tidy[cut - 1]
+                if (p is Part.Mention) { run.add(0, p.pubkey); cut-- } else if (p is Part.Plain && p.s.isBlank()) cut-- else break
+            }
+            if (run.size >= 3) {
+                val kept = tidy.take(cut).toMutableList()
+                (kept.lastOrNull() as? Part.Plain)?.let { kept[kept.lastIndex] = Part.Plain(it.s.trimEnd()) }
+                return Body(kept, images, mentions, q, run)
             }
             return Body(tidy, images, mentions, q)
         }
@@ -2485,7 +2599,6 @@ private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(8.dp)) { Swirl(28f) }
         Spacer(Modifier.weight(1f))
         IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
-        IconButton({ nav.open(Route.Bell) }) { Icon(Icons.Outlined.Notifications, "Notifications", tint = Vault.Text) }
         nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account") }
     }
     // What this screen is, when the screen itself doesn't say.
@@ -2602,11 +2715,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                 NetImage(img, Modifier.fillMaxWidth().aspectRatio(1.9f).clickable { nav.pictures(listOf(img) + pictures, 0) }, 1080)
             }
             Column(Modifier.padding(horizontal = 24.dp)) {
-                Text("Article · ${Markdown.minutes(blocks)} min read".uppercase(), color = Vault.Accent, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp,
-                    letterSpacing = 0.12.em, modifier = Modifier.padding(top = 20.dp))
-                Text(title ?: "An article", fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 35.sp, color = Vault.Text,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
-                e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                Text(title ?: "Untitled", fontFamily = LiterataTitle, fontWeight = FontWeight.SemiBold, fontSize = 31.sp, lineHeight = 35.sp, color = Vault.Text,
+                    modifier = Modifier.padding(top = 22.dp, bottom = 10.dp))
+                e.firstTag("summary")?.trim()?.takeIf { it.isNotEmpty() && !it.equals(title, ignoreCase = true) }?.let {
                     Text(it, fontFamily = Literata, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, fontSize = 17.5.sp, lineHeight = 25.sp, color = Vault.Muted,
                         modifier = Modifier.padding(bottom = 16.dp))
                 }
@@ -2616,6 +2727,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                     Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp))
                     Text(" · " + java.text.SimpleDateFormat("d MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(when_ * 1000)), color = Vault.Muted, fontSize = 13.sp)
                 }
+                Text("${Markdown.minutes(blocks)} min read", color = Vault.Muted, fontSize = 13.sp, modifier = Modifier.padding(start = 38.dp, top = 2.dp))
                 Box(Modifier.padding(vertical = 18.dp).size(36.dp, 2.dp).clip(RoundedCornerShape(1.dp)).background(Vault.Accent))
             }
         }
@@ -2651,6 +2763,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.article(e: Event, blo
                 }
                 is Markdown.Block.Video -> Box(pad.padding(bottom = 14.dp)) { VideoCard(b.v) }
                 Markdown.Block.Rule -> EndMark()
+                is Markdown.Block.Table -> ArticleTable(b, people, nav, Modifier.padding(start = 16.dp, bottom = 16.dp))
             }
         }
     }
@@ -2976,6 +3089,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val pasted = remember(t) { Ref.parse(t) }
     // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
+    val place = remember(t, laterItems) { cc.aaro.cosign.HomeRules.goTo(t, PLACES, laterItems.filter { it.deleted == null && it.done == null }.map { cc.aaro.cosign.Later.wordsOf(it.text) }) }
     // A handle (alice@example.com, @name.bsky.social, @name): rows for what a quick lookup confirms, once it's whole and
     // you've stopped typing (at once for a paste). "@" is no mode: Enter searches the web all the same.
     val handle = remember(t) { cc.aaro.cosign.Handles.kind(t) }
@@ -3002,9 +3116,12 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
     // Your own, first: up to two of your searches and notes with these words (your latest searches, with the box empty).
     val searchList by social.searches.all.collectAsState()
+    // The notes trial's choices for an old note held in the results (Next step / Keep in view / Let go).
+    var deciding by remember { mutableStateOf<cc.aaro.cosign.LaterItem?>(null) }
+    deciding?.let { n -> NoteDecision(n, social) { deciding = null } }
     val own = remember(t, searchList, laterItems) {
         val s = searchList.filter { t.isEmpty() || (it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t)) }.map { it.text to null as cc.aaro.cosign.LaterItem? }
-        val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && it.text.contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { it.text to it }
+        val n = if (t.isEmpty()) emptyList() else laterItems.filter { it.deleted == null && it.done == null && cc.aaro.cosign.Later.wordsOf(it.text).contains(t, ignoreCase = true) && !cc.aaro.cosign.Later.same(it.text, t) }.map { cc.aaro.cosign.Later.wordsOf(it.text) to it }
         (s + n).distinctBy { it.first.lowercase() }.take(2)
     }
     // A search: into Searches (an edit of this one takes its place); its results are already here, so the keyboard goes.
@@ -3064,21 +3181,31 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     Box(Modifier.fillMaxSize()) {
         // What goes above the results: a typed address's "Go to", what a handle confirms, and two of your own.
         val top: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+            // Go to a place by its name (home-rules.md), never above your own note that's exactly what's typed.
+            place?.let { (name, below) ->
+                if (below) laterItems.firstOrNull { it.deleted == null && it.done == null && cc.aaro.cosign.Later.same(it.text, t) }?.let { n ->
+                    item(key = "exact") { OwnRow(n.text, n, t) { if (n.url != null) openInBrowser(context, n.url, "l:" + n.id) else searchFor(n.text) } }
+                }
+                item(key = "place") { GoToPlace(name) { goToPlace(name, nav, context) } }
+            }
             site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
             items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
                 if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
                 else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
             }
             items(own, key = { "o:" + it.first }) { (text, note) ->
-                OwnRow(text, note, t) { if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text) }
+                note?.let { n -> LaunchedEffect(n.id) { cc.aaro.cosign.NotesTrial.shown(n.id, "search") } }
+                OwnRow(text, note, t, onLong = note?.takeIf { cc.aaro.cosign.NotesTrial.on && it.done == null && System.currentTimeMillis() / 1000 - it.created > 30 * 86_400L }
+                    ?.let { n -> { deciding = n } }) {
+                    note?.let { cc.aaro.cosign.NotesTrial.opened(it.id, "search") }
+                    if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text)
+                }
             }
         }
         when {
             pasted != null -> LinkResults(pasted, social, nav)
             t.length >= 2 -> MarbleResults(found?.takeIf { it.query == t }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName, top = top)
-            t.isEmpty() -> LazyColumn(Modifier.fillMaxSize()) {
-                items(own, key = { "o:" + it.first }) { (text, _) -> OwnRow(text, null, "") { q = text; searchFor(text) } }
-            }
+            t.isEmpty() -> FocusList(social, nav, laterItems, searchList, onSearch = { text -> q = text; searchFor(text) }, onDecide = { deciding = it })
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { top() }
         }
     }
@@ -3212,20 +3339,32 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     val done = items.filter { it.deleted == null && it.done != null && (hit(it.text) || it.quote?.let(::hit) == true) }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(nav.back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text) }
-        Text("Notes", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Text("Notes and searches", style = MaterialTheme.typography.headlineSmall, color = Vault.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         OnlyYou()
     }
     FilterBox(filter, "Filter your notes") { filter = it }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Notes · ${open.size}", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to "Notes", "done" to "Done")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
                     .clickable { show = k }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
+    val shelf by cc.aaro.cosign.NotesTrial.shelf.collectAsState()
+    val answer by cc.aaro.cosign.NotesTrial.answer.collectAsState()
+    val trial = cc.aaro.cosign.NotesTrial.on
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        val list = if (show == "done") done else open
+        // Day 28 of the notes trial: the one question, asked once.
+        if (cc.aaro.cosign.NotesTrial.ask && answer == null) item(key = "ask") { TrialQuestion() }
+        // The trial (from day 15): Keep in view at the top (no number), then the rest, the ones you haven't seen lower.
+        val inView = if (trial && show != "done") shelf.mapNotNull { id -> open.firstOrNull { it.id == id } } else emptyList()
+        if (inView.isNotEmpty()) {
+            item(key = "kh") { Text("Keep in view", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 2.dp)) }
+            items(inView, key = { "v" + it.id }) { item -> LaterRow(item, f, emptyList(), social, nav) }
+            item(key = "kd") { Spacer(Modifier.height(10.dp)) }
+        }
+        val list = if (show == "done") done else if (trial) cc.aaro.cosign.NotesTrial.order(open.filter { it.id !in shelf }) else open
         items(list, key = { "i" + it.id }) { item -> LaterRow(item, f, emptyList(), social, nav) }
         if (list.isEmpty()) item { Text(if (f.isEmpty()) "Nothing yet." else "Nothing matches “$f”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
     }
@@ -3323,7 +3462,8 @@ private fun SiteIcon(url: String, size: Int) {
 private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<cc.aaro.cosign.Page>, social: Social, nav: Nav) {
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
+    LaunchedEffect(item.id) { cc.aaro.cosign.NotesTrial.shown(item.id, "notes") }
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { cc.aaro.cosign.NotesTrial.opened(item.id, "notes"); FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
         .padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
         IconButton({ social.later.done(item, item.done == null) }) {
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)
@@ -3342,9 +3482,18 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(cc.aaro.cosign.readable(it) { pk -> People.known.value[pk]?.name }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
             val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
-            Text(listOfNotNull(site, if (item.done != null) "done ${agoWords(item.done)}" else agoWords(item.created)).joinToString(" · "), color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+            // (After the notes trial, no ages: only where it's from.)
+            // No ages (home-rules.md: no counts, no ages).
+            val age: String? = null
+            listOfNotNull(site, age).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelMedium) }
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+            if (cc.aaro.cosign.NotesTrial.on && item.done == null) {
+                val inView = item.id in cc.aaro.cosign.NotesTrial.shelf.collectAsState().value
+                DropdownMenuItem({ Text(if (inView) "Take out of Keep in view" else "Keep in view", color = Vault.Text) }, {
+                    menu = false; cc.aaro.cosign.NotesTrial.keepInView(item.id, !inView); if (!inView) cc.aaro.cosign.NotesTrial.decided(item.id, "view")
+                })
+            }
             DropdownMenuItem({ Text("Remove from Later", color = Vault.Danger) }, { menu = false; social.later.remove(item) })
         }
     }
@@ -3401,6 +3550,104 @@ private fun GoChip(onClick: (() -> Unit)?) = Box(
 }
 private const val SOLID_ENTER = false
 
+/** Places you can go by typing their name (home-rules.md "Typed"). */
+private val PLACES = listOf("Reader", "Notes", "Searches", "Settings", "Approvals", "Devices", "About")
+
+/** Asks home's pager for a pane (Go to Reader, from the box). */
+private val PaneWanted = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
+
+private fun goToPlace(name: String, nav: Nav, context: android.content.Context) = when (name) {
+    "Reader" -> { nav.home(); PaneWanted.value = PANE_FOLLOWING }
+    "Notes" -> { LaterTab.value = "saved"; nav.open(Route.Later) }
+    "Searches" -> nav.open(Route.Searches)
+    "Approvals" -> nav.open(Route.Approvals)
+    "About" -> cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/about", false, Vault.dark, Vault.Ground.toArgb(), null)
+    else -> nav.open(Route.Account)
+}
+
+/** "Go to Settings": a place, by its name. */
+@Composable
+private fun GoToPlace(name: String, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClickLabel = "Go to $name", onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Icon(Glyphs.openIn, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+    Spacer(Modifier.width(16.dp))
+    Text("Go to $name", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
+}
+
+/**
+ * The focused, empty box (home-rules.md, at most 7 rows): Keep in view, one older note (both from the notes trial's
+ * day 15), your 2 latest searches or notes, then Notes and searches. No dates, no counts; your own words in typewriter type.
+ */
+@Composable
+private fun FocusList(social: Social, nav: Nav, laterItems: List<cc.aaro.cosign.LaterItem>, searchList: List<cc.aaro.cosign.SearchEntry>,
+                      onSearch: (String) -> Unit, onDecide: (cc.aaro.cosign.LaterItem) -> Unit) {
+    val context = LocalContext.current
+    val shelf by cc.aaro.cosign.NotesTrial.shelf.collectAsState()
+    val trial = cc.aaro.cosign.NotesTrial.on
+    val open = remember(laterItems) { laterItems.filter { it.deleted == null && it.done == null } }
+    val byId = remember(open) { open.associateBy { it.id } }
+    // This account's (the accounts on a phone share these prefs).
+    val prefs = remember { CosignApp.instance.getSharedPreferences("marble", android.content.Context.MODE_PRIVATE) }
+    val offerKey = "olderOffered:" + social.me
+    val rows = remember(open, searchList, shelf, trial) {
+        // "id offeredAt seenAtOffer": the older note offered today, and how long unseen it was then, so being shown in
+        // the box (which counts as seeing it) doesn't make it stop being the day's older note.
+        val held = prefs.getString(offerKey, null)?.split(' ')?.takeIf { it.size == 3 }
+        val offered = held?.let { it[0] to (it[1].toLongOrNull() ?: 0) }
+        val seen = open.associate { it.id to maxOf(cc.aaro.cosign.NotesTrial.seen(it.id), it.updated) }.toMutableMap()
+        // Today only: tomorrow, being shown counts as seen, and another note's turn comes.
+        val today = System.currentTimeMillis() / 1000 / 86_400L
+        held?.let { h -> if (h[0] in seen && (h[1].toLongOrNull() ?: 0) / 86_400L == today) seen[h[0]] = maxOf(h[2].toLongOrNull() ?: 0, byId[h[0]]?.updated ?: 0) }
+        cc.aaro.cosign.HomeRules.focus(if (trial) shelf else emptyList(), open.map { cc.aaro.cosign.HomeRules.Note(it.id, cc.aaro.cosign.Later.wordsOf(it.text), it.created) },
+            searchList.map { cc.aaro.cosign.HomeRules.Search(it.text, it.at) }, System.currentTimeMillis() / 1000, seen, offered, older = trial)
+    }
+    LaunchedEffect(rows) { rows.firstOrNull { it.kind == "older" }?.let { r -> if (prefs.getString(offerKey, "")?.substringBefore(' ') != r.id)
+        prefs.edit().putString(offerKey, "${r.id} ${System.currentTimeMillis() / 1000} ${maxOf(cc.aaro.cosign.NotesTrial.seen(r.id), byId[r.id]?.updated ?: 0)}").apply() } }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(rows, key = { it.toString() }) { r ->
+            val note = byId[r.id]
+            when (r.kind) {
+                "all" -> Row(Modifier.fillMaxWidth().clickable { LaterTab.value = "saved"; nav.open(Route.Later) }.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(38.dp))
+                    Text("Notes and searches", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+                }
+                "search" -> FocusRow(Glyphs.clock, "Search", r.id, Vault.Muted) { onSearch(r.id) }
+                else -> if (note != null) {
+                    if (r.kind != "note") LaunchedEffect(note.id) { cc.aaro.cosign.NotesTrial.shown(note.id, "box") }
+                    FocusRow(if (r.kind == "inView") Glyphs.saveOn else Glyphs.save, when (r.kind) { "inView" -> "Kept in view"; "older" -> "An older note"; else -> "Note" }, cc.aaro.cosign.Later.wordsOf(note.text),
+                        if (r.kind == "older") Vault.Field else Vault.Muted, more = if (r.kind == "older") { { onDecide(note) } } else null) {
+                        cc.aaro.cosign.NotesTrial.opened(note.id, "box")
+                        if (note.url != null) openInBrowser(context, note.url, "l:" + note.id) else onSearch(cc.aaro.cosign.Later.wordsOf(note.text))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One row of the focused box: its icon (with a spoken name), your words in typewriter type, and an optional ⋯. */
+@Composable
+private fun FocusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, what: String, text: String, tint: Color, more: (() -> Unit)? = null, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onClick).padding(start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    // The older note: a dashed bookmark (home-rules.md).
+    if (more != null) androidx.compose.foundation.Canvas(Modifier.size(22.dp).semantics { contentDescription = what }) {
+        val path = androidx.compose.ui.graphics.vector.PathParser().parsePathString(Glyphs.savePath).toPath()
+        val k = size.width / 24f
+        scale(k, k, pivot = androidx.compose.ui.geometry.Offset.Zero) {
+            drawPath(path, tint, style = androidx.compose.ui.graphics.drawscope.Stroke(1.8f, cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(2.5f, 2f))))
+        }
+    } else Icon(icon, what, tint = tint, modifier = Modifier.size(22.dp))
+    Spacer(Modifier.width(16.dp))
+    Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    if (more != null) IconButton(more, Modifier.semantics { contentDescription = "Choices for this note" }) { Text("⋯", color = Vault.Muted, style = MaterialTheme.typography.titleLarge) }
+}
+
 /** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
 @Composable
 private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
@@ -3433,9 +3680,10 @@ private fun HandleRow(r: cc.aaro.cosign.Handles.Row, onOpen: () -> Unit) = Row(
 }
 
 /** One of your own in the box's list: a past search (the clock) or a note (the bookmark). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun OwnRow(text: String, note: cc.aaro.cosign.LaterItem?, typed: String, onClick: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+private fun OwnRow(text: String, note: cc.aaro.cosign.LaterItem?, typed: String, onLong: (() -> Unit)? = null, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().combinedClickable(onLongClick = onLong, onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
     Icon(if (note != null) Glyphs.save else Glyphs.clock, null, tint = Vault.Muted, modifier = Modifier.size(22.dp))
@@ -3637,11 +3885,19 @@ private fun BellScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(
     LaunchedEffect(notices.at) { if (notices.at != 0L) social.markSeen() }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     if (ui.asks.isNotEmpty() || ui.batchAsks.isNotEmpty() || ui.deleting.isNotEmpty()) LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-    val cards = needs(phone, ui)
+    // Home is interrupted only by approvals, an Undo and recovery (home-rules.md "Interrupt"); the rest live in Approvals.
+    val cards = needs(phone, ui).filter { it !is Need.Paper && it !is Need.Future }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (cards.isNotEmpty()) {
-            item(key = "ch") { Heading("For your key") }
-            items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }
+        // What's waiting for your key has its own screen now (Approvals): one line to it here.
+        if (cards.isNotEmpty()) item(key = "ch") {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                .clickable { nav.open(Route.Approvals) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (cards.size == 1) "Something is waiting for your key" else "${cards.size} things are waiting for your key", color = Vault.Text, style = MaterialTheme.typography.titleSmall)
+                    Text("Open Approvals", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("›", color = Vault.Muted, fontSize = 20.sp)
+            }
         }
         item(key = "nh") { Heading("Replies, mentions and likes") }
         if (notices.list.isEmpty()) item(key = "empty") {
@@ -3861,5 +4117,685 @@ private fun TranslateOffer(n: Event, o: Social.Offer, social: Social) = Box {
     if (open) DropdownMenu(true, { open = false; other = false }, containerColor = Vault.Surface) {
         for (l in if (other) OnDevice.all() else o.likeliest) DropdownMenuItem({ Text(OnDevice.name(l), color = Vault.Text) }, { open = false; other = false; social.translateFrom(n, l, remember = true) })
         if (!other) DropdownMenuItem({ Text("Other…", color = Vault.Muted) }, { other = true })
+    }
+}
+
+/**
+ * A table in an article: wider than the screen, it scrolls sideways in its own box, its first column staying put.
+ * Bold, links and emoji in cells work as in the text.
+ */
+@Composable
+private fun ArticleTable(t: Markdown.Block.Table, people: Map<String, Person>, nav: Nav, modifier: Modifier = Modifier) {
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    val cell = articleStyle.copy(fontSize = 14.sp, lineHeight = 19.sp, fontFamily = null)
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp))) {
+        (listOf(t.header) + t.rows).forEachIndexed { r, row ->
+            val head = r == 0
+            Row(Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Min).background(if (head) Vault.Surface else Color.Transparent)) {
+                @Composable fun Cell(spans: List<Markdown.Span>, w: androidx.compose.ui.unit.Dp) {
+                    val (text, inline) = articleText(spans, people, nav)
+                    Text(text, Modifier.width(w).fillMaxHeight().padding(horizontal = 10.dp, vertical = 8.dp), style = if (head) cell.copy(fontWeight = FontWeight.SemiBold) else cell, inlineContent = inline)
+                }
+                // The first column stays put (all rows share one sideways scroll for the rest).
+                Cell(row.firstOrNull() ?: emptyList(), 112.dp)
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Vault.Edge))
+                Row(Modifier.horizontalScroll(scroll)) { row.drop(1).forEach { Cell(it, 210.dp) } }
+            }
+            if (r < t.rows.size) HorizontalDivider(color = Vault.Edge)
+        }
+    }
+}
+
+/**
+ * An article (kind 30023), as a card: its picture if it has one (16:9, from the top; none, no box), its title, the
+ * line under it (Markdown.line), and who wrote it, how long it takes to read, and when if it's older than a week.
+ * A tap opens the reader.
+ */
+@Composable
+private fun ArticleCard(e: Event, people: Map<String, Person>, nav: Nav, author: Boolean = true) {
+    val line = remember(e.id) { Markdown.line(e) }
+    val minutes = remember(e.id) { Markdown.minutes(Markdown.parse(e)) }
+    LaunchedEffect(e.pubkey) { People.want(listOf(e.pubkey)) }
+    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).background(Vault.Surface)
+        .clickable(onClickLabel = "Read it") { nav.thread(e.id) }) {
+        e.firstTag("image")?.trim()?.takeIf { it.startsWith("https://") }?.let {
+            NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Vault.Edge), 1080, ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
+        Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp)) {
+            Text(e.firstTag("title")?.trim()?.ifEmpty { null } ?: "Untitled", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (line.isNotEmpty()) Text(line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (author) {
+                    Avatar(people[e.pubkey], e.pubkey, 18)
+                    Text(people[e.pubkey]?.shown ?: shortNpub(e.pubkey), color = Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 6.dp).weight(1f, fill = false))
+                    Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                }
+                val at = e.firstTag("published_at")?.toLongOrNull() ?: e.createdAt
+                val old = System.currentTimeMillis() / 1000 - at > 7 * 86_400L
+                Text("$minutes min read" + if (old) " · " + java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(at * 1000)) else "",
+                    color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** A closing run of mentions: small muted chips on one wrapped line, the first four and "+N" (a tap shows the rest). */
+@Composable
+private fun MentionChips(who: List<String>, people: Map<String, Person>, nav: Nav) {
+    var all by remember(who) { mutableStateOf(false) }
+    LaunchedEffect(who) { People.want(who) }
+    val shown = if (all) who else who.take(4)
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        @Composable fun Chip(text: String, onClick: () -> Unit) = Text(text, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+            modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Vault.Surface).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 3.dp))
+        for (pk in shown) Chip("@" + (people[pk]?.shown ?: shortNpub(pk))) { nav.profile(pk) }
+        if (!all && who.size > 4) Chip("+${who.size - 4}") { all = true }
+    }
+}
+
+// --- Relays as feeds (RelayFeeds) ---------------------------------------------------------------------------
+
+@Composable
+private fun RelayRow(r: cc.aaro.cosign.RelayFeeds.Relay, sub: String, social: Social, nav: Nav, star: Boolean? = null, onStar: (() -> Unit)? = null) {
+    val info by produceState<Social.RelayInfo?>(null, r.url) { value = social.relayInfo(r) }
+    Row(Modifier.fillMaxWidth().clickable { nav.open(Route.Relay(r.address)) }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        RelayIcon(info, 36)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(info?.name ?: r.address, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (star != null && onStar != null) Text(if (star) "★" else "☆", color = if (star) Vault.Accent else Vault.Muted, fontSize = 20.sp,
+            modifier = Modifier.clip(CircleShape).clickable(onClick = onStar).padding(8.dp))
+    }
+    HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 18.dp))
+}
+
+/** A relay's icon (NIP-11), else a plain mark. */
+@Composable
+private fun RelayIcon(info: Social.RelayInfo?, size: Int) = Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 4).dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
+    info?.icon?.let { NetImage(it, Modifier.fillMaxSize(), size * 3) } ?: Text("◎", color = Vault.Accent, fontSize = (size / 2).sp)
+}
+
+/** Following › Relays: open one by its address; your favourites and sets; relays your people write to (☆ keeps one). */
+@Composable
+private fun RelayListScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Relays", nav)
+    val favs by social.favRelays.collectAsState()
+    val sets by social.relaySets.collectAsState()
+    val people by People.known.collectAsState()
+    var theirs by remember { mutableStateOf<List<Pair<cc.aaro.cosign.RelayFeeds.Relay, List<String>>>?>(null) }
+    LaunchedEffect(Unit) { social.knowRelayLists(); theirs = try { social.relaysPeopleUse() } catch (_: Exception) { emptyList() } }
+    var typed by remember { mutableStateOf("") }
+    val typedRelay = cc.aaro.cosign.RelayFeeds.of(typed)
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            androidx.compose.material3.OutlinedTextField(typed, { typed = it }, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp), singleLine = true,
+                placeholder = { Text("Open a relay: wss://… or its address", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, imeAction = androidx.compose.ui.text.input.ImeAction.Go),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { typedRelay?.let { nav.open(Route.Relay(it.address)) } }))
+            typedRelay?.let { r -> Text("Open ${r.address} ›", color = Vault.Accent, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 18.dp).clip(RoundedCornerShape(8.dp)).clickable { nav.open(Route.Relay(r.address)) }.padding(6.dp)) }
+        }
+        if (favs.isNotEmpty()) {
+            item { Heading("Your favourites") }
+            items(favs, key = { "f" + it.url }) { r -> RelayRow(r, r.address, social, nav) }
+        }
+        if (sets.isNotEmpty()) {
+            item { Heading("Your sets") }
+            items(sets, key = { "s" + it.d }) { set ->
+                Row(Modifier.fillMaxWidth().clickable { nav.open(Route.RelaySet(set.d)) }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) { Text("▦", color = Vault.Accent, fontSize = 18.sp) }
+                    Spacer(Modifier.width(12.dp))
+                    Column { Text(set.title, color = Vault.Text, style = MaterialTheme.typography.titleSmall); Text("${set.relays.size} ${if (set.relays.size == 1) "relay" else "relays"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall) }
+                }
+                HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 18.dp))
+            }
+        }
+        item { Heading("Your people post to") }
+        when (val t = theirs) {
+            null -> item { Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) } }
+            else -> if (t.isEmpty()) item { Text("Nothing beyond the usual relays yet.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) }
+            else items(t, key = { "p" + it.first.url }) { (r, who) ->
+                val names = who.mapNotNull { people[it]?.name?.takeIf { n -> n.isNotBlank() } }.take(2)
+                val sub = when { names.isEmpty() -> "People you follow"; who.size > names.size -> names.joinToString(", ") + " and others you follow"; else -> names.joinToString(" and ") }
+                RelayRow(r, sub, social, nav, star = favs.any { it.url == r.url }) { social.favourite(r, favs.none { it.url == r.url }) }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/** A relay, read like a channel: what it says about itself, ★ Favourite, Share, Add to a set; then its posts, newest first. */
+@Composable
+private fun RelayScreen(address: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar(null, nav)
+    val r = remember(address) { cc.aaro.cosign.RelayFeeds.of(address) } ?: return@Column Text("That doesn't look like a relay's address.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
+    val context = LocalContext.current
+    val info by produceState<Social.RelayInfo?>(null, r.url) { value = social.relayInfo(r) }
+    val favs by social.favRelays.collectAsState()
+    val sets by social.relaySets.collectAsState()
+    val people by People.known.collectAsState()
+    LaunchedEffect(Unit) { social.knowRelayLists() }
+    LaunchedEffect(info?.pubkey) { info?.pubkey?.let { People.want(listOf(it)) } }
+    var adding by remember { mutableStateOf(false) }
+    var naming by remember { mutableStateOf(false) }
+    RelayFeed(listOf(r), social, nav) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RelayIcon(info, 52)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(info?.name ?: r.address, color = Vault.Text, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Relay · ${r.url}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            info?.description?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 10.dp)) }
+            info?.pubkey?.let { pk -> Text("Run by " + (people[pk]?.shown ?: shortNpub(pk)), color = Vault.Accent, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 6.dp).clickable { nav.profile(pk) }) }
+            val fav = favs.any { it.url == r.url }
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ social.favourite(r, !fav) }, border = BorderStroke(1.dp, if (fav) Vault.AccentEdge else Vault.Line),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (fav) Vault.AccentGround else Color.Transparent)) { Text(if (fav) "★ Favourite" else "☆ Favourite", color = if (fav) Vault.Accent else Vault.Text) }
+                OutlinedButton({ share(context, (info?.name ?: r.address) + "\n" + cc.aaro.cosign.RelayFeeds.link(r), null) }, border = BorderStroke(1.dp, Vault.Line)) { Text("Share", color = Vault.Text) }
+                Box {
+                    OutlinedButton({ adding = true }, border = BorderStroke(1.dp, Vault.Line)) { Text("Add to a set", color = Vault.Text) }
+                    if (adding) DropdownMenu(true, { adding = false }, containerColor = Vault.Surface) {
+                        for (set in sets) {
+                            val inIt = set.relays.any { it.url == r.url }
+                            DropdownMenuItem({ Text((if (inIt) "✓ " else "") + set.title, color = Vault.Text) }, { adding = false; social.inSet(set.d, set.title, r, !inIt) })
+                        }
+                        DropdownMenuItem({ Text("New set…", color = Vault.Accent) }, { adding = false; naming = true })
+                    }
+                }
+            }
+        }
+    }
+    if (naming) NewSetDialog({ naming = false }) { title -> naming = false; social.inSet(null, title, r, true) }
+}
+
+@Composable
+private fun NewSetDialog(onClose: () -> Unit, onMake: (String) -> Unit) {
+    var title by remember { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(onDismissRequest = onClose, containerColor = Vault.Surface,
+        title = { Text("A new set", color = Vault.Text) },
+        text = { androidx.compose.material3.OutlinedTextField(title, { title = it }, singleLine = true, placeholder = { Text("Its name", color = Vault.Muted) }) },
+        confirmButton = { TextButton({ onMake(title) }, enabled = title.isNotBlank()) { Text("Make it", color = Vault.Accent) } },
+        dismissButton = { TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** One of your relay sets: its relays, Edit (each one's ×), Share; their posts together, newest first. */
+@Composable
+private fun RelaySetScreen(d: String, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar(null, nav)
+    val sets by social.relaySets.collectAsState()
+    LaunchedEffect(Unit) { if (sets.isEmpty()) social.knowRelayLists() }
+    val set = sets.firstOrNull { it.d == d } ?: return@Column Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf(false) }
+    RelayFeed(set.relays, social, nav) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
+            Text(set.title, color = Vault.Text, style = MaterialTheme.typography.titleLarge)
+            Text("Relay set · yours", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (r in set.relays) Text(r.address + if (editing) "  ×" else "", color = Vault.Text, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp))
+                        .clickable { if (editing) social.inSet(set.d, set.title, r, false) else nav.open(Route.Relay(r.address)) }.padding(horizontal = 9.dp, vertical = 4.dp))
+            }
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ editing = !editing }, border = BorderStroke(1.dp, Vault.Line)) { Text(if (editing) "Done" else "Edit", color = Vault.Text) }
+                OutlinedButton({ share(context, set.title + "\n" + set.relays.joinToString("\n") { cc.aaro.cosign.RelayFeeds.link(it) }, null) }, border = BorderStroke(1.dp, Vault.Line)) { Text("Share", color = Vault.Text) }
+            }
+        }
+    }
+}
+
+/** Posts from [relays] alone, newest first, a page at a time, under [head]. */
+@Composable
+private fun RelayFeed(relays: List<cc.aaro.cosign.RelayFeeds.Relay>, social: Social, nav: Nav, head: @Composable () -> Unit) {
+    val people by People.known.collectAsState()
+    val liked by social.liked.collectAsState()
+    val key = relays.joinToString(",") { it.url }
+    var posts by remember(key) { mutableStateOf<List<Event>?>(null) }
+    var more by remember(key) { mutableStateOf(true) }
+    var paging by remember(key) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(key) { posts = try { social.relayPosts(relays) } catch (_: Exception) { emptyList() }; if (posts.isNullOrEmpty()) more = false }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item(key = "head") { head(); HorizontalDivider(color = Vault.Edge) }
+        when (val p = posts) {
+            null -> item(key = "loading") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
+            else -> {
+                if (p.isEmpty()) item(key = "none") { Text("No posts to show here. Some relays share them only with their members.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                items(p, key = { it.id }) { n -> NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12); HorizontalDivider(color = Vault.Edge) }
+                if (more && p.isNotEmpty()) item(key = "more") {
+                    LaunchedEffect(p.size) {
+                        if (paging) return@LaunchedEffect
+                        paging = true
+                        scope.launch {
+                            val next = try { social.relayPosts(relays, until = p.minOf { it.createdAt } - 1) } catch (_: Exception) { emptyList() }.filter { n -> p.none { it.id == n.id } }
+                            if (next.isEmpty()) more = false else posts = p + next
+                            paging = false
+                        }
+                    }
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Vault.Accent, strokeWidth = 2.dp) }
+                }
+            }
+        }
+    }
+}
+
+/** The notes trial, held on an old note in search: write one next step into it, keep it in view, or let it go (done). */
+@Composable
+private fun NoteDecision(n: cc.aaro.cosign.LaterItem, social: Social, onClose: () -> Unit) {
+    var step by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(onDismissRequest = onClose, containerColor = Vault.Surface,
+        title = { Text(n.text, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                if (step == null) {
+                    for ((label, act) in listOf<Pair<String, () -> Unit>>(
+                        "Next step" to { step = "" },
+                        "Keep in view" to { cc.aaro.cosign.NotesTrial.keepInView(n.id, true); cc.aaro.cosign.NotesTrial.decided(n.id, "view"); onClose() },
+                        "Let go" to { cc.aaro.cosign.NotesTrial.decided(n.id, "go"); social.later.done(n, true); onClose() })) {
+                        Text(label, color = Vault.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().clickable(onClick = act).padding(vertical = 12.dp))
+                    }
+                } else {
+                    androidx.compose.material3.OutlinedTextField(step!!, { step = it }, Modifier.fillMaxWidth(), placeholder = { Text("One next step", color = Vault.Muted) })
+                }
+            }
+        },
+        confirmButton = { if (step != null) TextButton({
+            cc.aaro.cosign.NotesTrial.decided(n.id, "step"); social.later.setText(n, n.text + "\n→ " + step!!.trim()); onClose()
+        }, enabled = !step.isNullOrBlank()) { Text("Add it", color = Vault.Accent) } },
+        dismissButton = { TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** Day 28 of the notes trial: the one question, asked once. */
+@Composable
+private fun TrialQuestion() = Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vault.Surface).padding(14.dp)) {
+    Text("These last weeks, has Notes felt calmer, the same, or worse?", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((k, label) in listOf("calmer" to "Calmer", "same" to "The same", "worse" to "Worse"))
+            OutlinedButton({ cc.aaro.cosign.NotesTrial.answered(k) }, border = BorderStroke(1.dp, Vault.Line)) { Text(label, color = Vault.Text) }
+    }
+}
+
+/**
+ * Approvals: everything waiting for your key (requests to sign, a deletion you can still undo, recovery, a device
+ * joining, the paper backup), each with what it needs from you. Reached from home's "more waiting" and from the bell.
+ */
+@Composable
+private fun ApprovalsScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Waiting for you", nav)
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
+    // Home is interrupted only by approvals, an Undo and recovery (home-rules.md "Interrupt"); the rest live in Approvals.
+    val cards = needs(phone, ui).filter { it !is Need.Paper && it !is Need.Future }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (cards.isEmpty()) item { Text("Nothing is waiting for you.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }
+    }
+}
+
+// --- Reader (marble-2009-spec §4, reader.md): Google Reader's list view, a row a story, a tap to read it in place ---
+
+private val READER_FOLDERS = listOf("first" to "Read first", "people" to "Your people", "news" to "News", "writers" to "Writers", "relays" to "Relays")
+
+/** "2:14 pm" today, else "Nov 3". */
+private fun shortDate(t: Long): String {
+    val d = java.util.Date(t * 1000); val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+    return if (today.format(d) == today.format(java.util.Date())) java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(d)
+        else java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(d)
+}
+
+/** Reader: folders along the top (a dot when something's new, never a number), then a compact row per item. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyListState) {
+    val items by social.readerItems.collectAsState()
+    val list by social.readerList.collectAsState()
+    social.readerReadAt.collectAsState().value
+    val laterItems by social.later.items.collectAsState()
+    val kept = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
+    var folder by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
+    var loading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun refresh() { loading = true; scope.launch { try { social.pullReader(); social.loadReader() } finally { loading = false } } }
+    // The first time it's shown, then on a pull: Back from a post finds Reader as it was, nothing redrawn under you.
+    LaunchedEffect(current) { if (current && items == null && !loading) refresh() }
+    val all = items.orEmpty()
+    val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } }.map { it.id to it.name }
+    val folders = (listOf("all" to "All") + READER_FOLDERS + custom).filter { (id, _) -> id == "all" || all.any { it.folder == id } }
+    // Muted or unsubscribed just now: gone at once; the list loaded again for what changed.
+    val gone = remember(list) { list.muted.toSet() + list.sources.filter { it.gone }.map { it.id } }
+    val inFolder = if (folder == "all") all else all.filter { it.folder == folder }
+    val shown = inFolder.filter { it.source !in gone }
+    val shape = remember(list) { Triple(list.live.map { it.id to it.folder }, list.muted.toSet(), social.peopleOn()) }
+    var lastShape by remember { mutableStateOf(shape) }
+    // A change while a load is running waits for it, then loads again; the rows on screen stay.
+    // (Launched apart from the effect, which `loading` keys: setting it mustn't cancel the load.)
+    LaunchedEffect(shape, loading) { if (shape != lastShape && items != null && !loading) { lastShape = shape; loading = true
+        scope.launch { try { social.loadReader(keep = items.orEmpty().map { it.key }.toSet()) } finally { loading = false } } } }
+    fun unread(i: Social.ReaderItem) = !social.itemRead(i)
+    val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
+    val open = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((id, name) in folders) {
+                val on = folder == id
+                val fresh = id != "all" && all.any { it.folder == id && unread(it) }
+                Box(Modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Vault.AccentGround else Color.Transparent).border(1.dp, if (on) Vault.AccentEdge else Vault.Edge, RoundedCornerShape(14.dp))
+                    .clickable { folder = id }.padding(horizontal = 11.dp, vertical = 5.dp)) {
+                    Text(name, color = if (on) Vault.Accent else Vault.Text, style = MaterialTheme.typography.labelLarge)
+                    if (fresh) Box(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-3).dp).size(5.dp).clip(CircleShape).background(Vault.Accent))
+                }
+            }
+            Box(Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.ReaderSources) }.padding(horizontal = 11.dp, vertical = 5.dp)) {
+                Text("+", color = Vault.Muted, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(folders.firstOrNull { it.first == folder }?.second ?: "All", color = Vault.Text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "Folder", tint = Vault.Muted) }
+                if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) }) })
+                    if (folder != "all") for ((v, label) in listOf("list" to "List view", "river" to "Expanded view")) DropdownMenuItem({ Text((if (view == v) "✓ " else "") + label, color = Vault.Text) }, {
+                        menu = false
+                        val name = folders.firstOrNull { it.first == folder }?.second ?: folder
+                        social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, name, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
+                    })
+                }
+            }
+        }
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(loading && items != null, ::refresh, Modifier.fillMaxSize()) {
+            // Expanded view: an item is read once it's been fully on screen for a second, not while flinging past it.
+            if (view == "river") LaunchedEffect(state, shown) {
+                val since = HashMap<String, Long>()
+                while (true) {
+                    delay(250)
+                    val now = System.currentTimeMillis()
+                    val info = state.layoutInfo
+                    val whole = if (state.isScrollInProgress) emptySet() else info.visibleItemsInfo
+                        .filter { it.offset >= info.viewportStartOffset && it.offset + it.size <= info.viewportEndOffset }.mapNotNull { it.key as? String }.toSet()
+                    since.keys.retainAll(whole)
+                    for (k in whole) {
+                        val t = since.getOrPut(k) { now }
+                        if (now - t >= 1000) shown.firstOrNull { it.key == k }?.let { if (!social.itemRead(it)) social.markItemRead(it) }
+                    }
+                }
+            }
+            LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (items == null) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
+                else if (shown.isEmpty()) item { Text(if (all.isEmpty()) "Add a site or a person with +." else "Nothing new here.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                items(shown, key = { it.key }) { i ->
+                    val isOpen = view == "river" || i.key in open
+                    ReaderRow(i, unread(i), social.starred(i, kept), isOpen, social, nav, onToggle = {
+                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markItemRead(i, opened = true) }
+                    })
+                }
+            }
+        }
+    }
+}
+
+/** One item: ☆ · source · title (bold until read) · snippet · date; tapped, it opens in place; held, Keep unread and Share. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, open: Boolean, social: Social, nav: Nav, onToggle: () -> Unit) {
+    val context = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
+    val people by People.known.collectAsState()
+    val scope = rememberCoroutineScope()
+    Box {
+        Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }, onClick = onToggle).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
+                modifier = Modifier.size(36.dp).clip(CircleShape).clickable { social.star(i) }.padding(9.dp))
+            Text(liveSource(i, people), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(76.dp))
+            Spacer(Modifier.width(8.dp))
+            // Drawn again as names arrive (the line has @names in it).
+            val (title, snippet) = remember(i, people.size) { cc.aaro.cosign.ReaderRows.text(i, people) }
+            Text(androidx.compose.ui.text.buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(title) }
+                if (snippet.isNotBlank() && !open) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Field)) { append(" — " + snippet) }
+            }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(vertical = 10.dp))
+            // A day's several posts: each opened has its own Open in… (one for the row would open only one of them).
+            if (!open && i.posts.size <= 1) ReaderOpenIn(i, social, nav, 32)
+            Text(shortDate(i.at), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
+        }
+        if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+            DropdownMenuItem({ Text("Keep unread", color = Vault.Text) }, { menu = false; social.keepUnread(i.key) })
+            DropdownMenuItem({ Text("Share with a note", color = Vault.Text) }, { menu = false; sharing = true })
+            DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) })
+            DropdownMenuItem({ Text("Mute ${liveSource(i, people)}", color = Vault.Text) }, { menu = false; social.changeReader { it.withMute(i.source, true, cc.aaro.cosign.core.Clock.now()) } })
+        }
+    }
+    if (open) Column(Modifier.fillMaxWidth().background(Vault.Surface).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
+        // A story's heading; a post or article is its own (drawn below).
+        if (i.event == null && i.posts.isEmpty()) Text(i.title, color = Vault.Text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(liveSource(i, people) + " · " + shortDate(i.at), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+        // Posts drawn as everywhere else (the shared content rules): @names, quote and article cards, pictures (Blossom too), a warning's veil.
+        when {
+            i.posts.isNotEmpty() -> i.posts.forEachIndexed { n, p -> if (n > 0) HorizontalDivider(color = Vault.Edge)
+                // Tap a post to open it; hold it for Open in… (no icon on each: Reader keeps rows plain).
+                var menu by remember(p.id) { mutableStateOf(false) }
+                Box {
+                    ReaderPost(p, people, nav, compact = true, onLong = { menu = true })
+                    if (menu) OpenInMenu(i, p, null, social, nav) { menu = false }
+                } }
+            i.event?.kind == 30023 -> Veiled(i.event) { ArticleCard(i.event, people, nav) }
+            i.event != null -> ReaderPost(i.event, people, nav, compact = false)
+            else -> {
+                i.image?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
+                if (i.snippet.isNotBlank()) Text(i.snippet, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (i.posts.size <= 1) ReaderOpenIn(i, social, nav, 40)
+            i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> Icon(Glyphs.talk, "Discussion", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { openInBrowser(context, d, i.key) }.padding(10.dp)) }
+            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Muted,
+                modifier = Modifier.size(40.dp).clip(CircleShape).clickable { social.star(i) }.padding(10.dp))
+        }
+    }
+    HorizontalDivider(color = Vault.Edge)
+    if (sharing) ShareWithNote(i, social) { sharing = false }
+}
+
+/**
+ * Open in… (reader.md §5): a post or article (a day's newest post, for a digest) in Marble, your Nostr app or njump.me,
+ * and the page it links to; a story straight to its page; a viewer's link (njump, primal, nostr.at…) here.
+ */
+@Composable
+private fun ReaderOpenIn(i: Social.ReaderItem, social: Social, nav: Nav, size: Int, tapped: Event? = null) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // The post this Open in… is for: the one it sits on, never a day's first or newest by default.
+    val post = cc.aaro.cosign.ReaderRows.openTarget(i, tapped)
+    val here = i.link?.let { cc.aaro.cosign.inAppRef(it) }
+    val page = i.link?.takeIf { here == null }
+    var opener by remember { mutableStateOf(false) }
+    Box {
+        Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(size.dp).clip(CircleShape).clickable {
+            when {
+                post != null -> opener = true
+                here != null -> { social.markItemRead(i, opened = true); scope.launch { nav.ref(here, context) } }
+                page != null -> { social.markItemRead(i, opened = true); openInBrowser(context, page, i.key) }
+            }
+        }.padding((size / 4).dp))
+        if (opener && post != null) OpenInMenu(i, post, page, social, nav) { opener = false }
+    }
+}
+
+/** Open in…'s choices for [post] (your Nostr app, Marble, njump.me, and the [page] it links to), as a menu. */
+@Composable
+private fun OpenInMenu(i: Social.ReaderItem, post: Event, page: String?, social: Social, nav: Nav, onClose: () -> Unit) {
+    val context = LocalContext.current
+    DropdownMenu(true, onClose, containerColor = Vault.Surface) {
+            val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
+            val (app, marble, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
+            DropdownMenuItem({ Text(app, color = Vault.Text) }, {
+                onClose()
+                social.markItemRead(i, opened = true)
+                try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
+            })
+            DropdownMenuItem({ Text(marble, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); nav.thread(post.id) })
+            DropdownMenuItem({ Text(njump, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, "https://njump.me/$ref", i.key) })
+            // A post about a page: the page too.
+            page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, u, i.key) }) }
+    }
+}
+
+/** A content warning's veil (NIP-36) over [content]: "<reason>: show", until tapped. */
+@Composable
+private fun Veiled(e: Event, content: @Composable () -> Unit) {
+    val warning = remember(e.id) { Body.warning(e) }
+    var unveiled by remember(e.id) { mutableStateOf(false) }
+    if (warning != null && !unveiled) Text(warning.ifEmpty { "Sensitive" } + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Ground).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
+    else content()
+}
+
+/** A post inside Reader, by the shared renderer (Body): its text, its card, its first picture or video; a tap opens it. */
+@Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun ReaderPost(n: Event, people: Map<String, Person>, nav: Nav, compact: Boolean, onLong: (() -> Unit)? = null) {
+    val body = remember(n.id) { Body.of(n) }
+    LaunchedEffect(n.id) { People.want(body.mentions + n.pubkey) }
+    val warning = remember(n.id) { Body.warning(n) }
+    var unveiled by remember(n.id) { mutableStateOf(false) }
+    val veiled = warning != null && !unveiled
+    Column(Modifier.fillMaxWidth().combinedClickable(onLongClick = onLong, onLongClickLabel = if (onLong != null) "Open in…" else null) { nav.thread(n.id) }.padding(vertical = 6.dp)) {
+        if (compact) Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(people[n.pubkey], n.pubkey, 20)
+            Text(shortDate(n.createdAt), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+        }
+        if (veiled) Text(warning!!.ifEmpty { "Sensitive" } + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Ground).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
+        else {
+            val text = remember(body, people.size) { body.annotated(people, nav) }
+            if (text.isNotEmpty()) Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = if (compact) 8 else 20, overflow = TextOverflow.Ellipsis,
+                inlineContent = remember(body) { body.emojiContent() }, modifier = Modifier.padding(top = 4.dp))
+            if (body.trailing.isNotEmpty()) MentionChips(body.trailing, people, nav)
+            when (val c = body.card) {
+                is Body.Part.Quote -> QuoteBox(c.id, people, nav)
+                is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
+                else -> {}
+            }
+            body.article?.let { AddrBox(it.a, people, nav) }
+            val urls = remember(body) { body.images.map { it.url } }
+            body.media.firstOrNull()?.let { m ->
+                Spacer(Modifier.height(6.dp))
+                when (m) {
+                    is Body.Img -> PostImage(m.url, m.preview, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(1f, 2.2f)).clip(RoundedCornerShape(10.dp))) { nav.pictures(urls, 0) }
+                    is Body.Vid -> VideoCard(m.v)
+                }
+            }
+            // As a post in a list: one picture, and how many more (a tap shows them, or the post).
+            if (body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, if (body.media[0] is Body.Img) 1 else 0) else nav.thread(n.id) })
+        }
+    }
+}
+
+/**
+ * Share with a note (marble-2009-spec §5), with its guards: Public is off every time it opens; your private note is
+ * never put into the public one; with Public on the button says Post publicly; a few seconds to take it back first.
+ */
+@Composable
+private fun ShareWithNote(i: Social.ReaderItem, social: Social, onClose: () -> Unit) {
+    var public by remember { mutableStateOf(false) }
+    var keepNote by remember { mutableStateOf("") }
+    var postNote by remember { mutableStateOf("") }
+    var counting by remember { mutableStateOf(0) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(counting) {
+        if (counting <= 0) return@LaunchedEffect
+        delay(1000)
+        if (counting == 1) { counting = 0; val sent = social.shareWithNote(i, postNote); social.message.value = if (sent != null) "Posted." else "Couldn't post that right now."; onClose() } else counting--
+    }
+    androidx.compose.material3.AlertDialog(onDismissRequest = { if (counting == 0) onClose() }, containerColor = Vault.Surface,
+        title = { Text(social.shareTitle(i), color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                if (!public) androidx.compose.material3.OutlinedTextField(keepNote, { keepNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Why keep it? (only you)", color = Vault.Muted) })
+                else androidx.compose.material3.OutlinedTextField(postNote, { postNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Say something (everyone sees this)", color = Vault.Muted) })
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = counting == 0) { public = !public }, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Post publicly", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(public, { if (counting == 0) public = it })
+                }
+                if (counting > 0) Text("Posting in $counting…", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            if (counting > 0) TextButton({ counting = 0 }) { Text("Undo", color = Vault.Danger) }
+            else TextButton({
+                if (public) counting = 5
+                else { social.readerUrl(i)?.let { url -> social.later.keep(keepNote.ifBlank { social.shareTitle(i) }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }; social.message.value = "Kept in your notes."; onClose() }
+            }) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
+        },
+        dismissButton = { if (counting == 0) TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+}
+
+/** Reader's folders and sources: add a site or a person; the people toggle; each source's Mute and Unsubscribe. */
+@Composable
+private fun ReaderSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Reader", nav)
+    val list by social.readerList.collectAsState()
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var said by remember { mutableStateOf<String?>(null) }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            androidx.compose.material3.OutlinedTextField(typed, { typed = it; said = null }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), singleLine = true,
+                placeholder = { Text("A site or a person", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                leadingIcon = { if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp) else Text("＋", color = Vault.Muted) },
+                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, imeAction = ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                    busy = true
+                    scope.launch { val got = social.addToReader(typed); busy = false; said = got?.let { "Added $it." } ?: "Couldn't find anything to follow there."; if (got != null) { typed = ""; social.loadReader() } }
+                }))
+            said?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+        }
+        item { Heading("Folders") }
+        item {
+            Row(Modifier.fillMaxWidth().clickable { social.changeReader { it.withPeople(!social.peopleOn(), cc.aaro.cosign.core.Clock.now()) } }.padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Your people", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                    Text("Posts from people you follow", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                androidx.compose.material3.Switch(social.peopleOn(), { on -> social.changeReader { it.withPeople(on, cc.aaro.cosign.core.Clock.now()) } })
+            }
+        }
+        item { Text("Read first is your Special Follow list.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) }
+        val sources = list.live
+        if (sources.isNotEmpty()) item { Heading("Sources") }
+        items(sources, key = { it.id }) { src ->
+            var menu by remember { mutableStateOf(false) }
+            val isMuted = src.id in list.muted
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                    Text(src.name.ifEmpty { src.value }, color = if (isMuted) Vault.Muted else Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(READER_FOLDERS.firstOrNull { it.first == src.folder }?.second ?: src.folder, color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Box {
+                    IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "More", tint = Vault.Muted) }
+                    if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
+                        DropdownMenuItem({ Text(if (isMuted) "Unmute" else "Mute", color = Vault.Text) }, { menu = false; social.changeReader { it.withMute(src.id, !isMuted, cc.aaro.cosign.core.Clock.now()) } })
+                        DropdownMenuItem({ Text("Unsubscribe", color = Vault.Danger) }, { menu = false; social.changeReader { it.withSource(src.copy(gone = true, at = cc.aaro.cosign.core.Clock.now())) } })
+                    }
+                }
+            }
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }

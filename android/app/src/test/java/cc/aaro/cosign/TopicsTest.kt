@@ -10,6 +10,7 @@ import java.io.File
 
 /** Discover's topics: what a post is about, what you like, what you've seen, and how a page is put together. */
 class TopicsTest {
+    init { LEARNING = true }
     private val now = 1_800_000_000L
     private fun post(n: Int, text: String, tags: List<String> = emptyList(), at: Long = now - 3600) =
         Event("%064x".format(n), at, 1, tags.map { listOf("t", it) }, text, id = "%064x".format(n))

@@ -26,11 +26,16 @@ class NotesSyncTest {
         var drop = 0
         private var shouts = 0
         var pageReads = 0
+        var writes = 0
+        var packWrites = 0
+        /** Reads that don't reach the account (null), and writes most relays don't take (false), by tag and value. */
+        var unread: (String, List<String>) -> Boolean = { _, _ -> false }
+        var untaken: (String) -> Boolean = { false }
         val blobs = HashMap<String, ByteArray>()
         private var n = 0
         val net = object : NotesNet {
             override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
-                if (down) return null
+                if (down || unread(tag, values)) return null
                 reads++; if (tag == "w") pageReads++
                 return held.values.filter { if (tag == "d") it.d in values else it.w in values }
                     .filter { e -> (until == null || e.at <= until) && (since == null || e.at >= since) }
@@ -52,7 +57,8 @@ class NotesSyncTest {
                 ears.getOrPut(w) { mutableListOf() }.add(onMessage); return AutoCloseable { ears[w]?.remove(onMessage) }
             }
             override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
-                if (down) return false
+                if (down || untaken(d)) return false
+                writes++; if (w != null) packWrites++
                 val e = Ev("%08d".format(++n), d, w, createdAt, content)
                 val have = held[d]
                 if (have == null || createdAt > have.at || (createdAt == have.at && e.id < have.id)) held[d] = e
@@ -283,5 +289,73 @@ class NotesSyncTest {
         catchUp(phone, tablet)
         assertEquals(600, tablet.shown().size)
         assertEquals(0, relay.pageReads - 1)
+    }
+
+    /** 0.12.28: the old list is never written over a copy that isn't v1 (here, "moved"), nor when it couldn't be read. */
+    @Test fun theOldListIsntWrittenOverALaterVersion() {
+        val relay = Relay()
+        runBlocking { relay.net.write("marble/later", null, 5000, """{"v":2,"moved":"notes"}""") }
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        assertEquals(2, relay.v1()!!.optInt("v"))
+        relay.held.remove("marble/later"); relay.unread = { _, v -> "marble/later" in v }
+        phone.add("b", "bread"); phone.flush()
+        assertNull(relay.held["marble/later"])
+    }
+
+    /** 0.12.28: new keys most write relays didn't take aren't used (packs under them would be lost to other devices). */
+    @Test fun keysThatDidntTakeArentUsed() {
+        val relay = Relay(); relay.untaken = { it == Keys.D }
+        val phone = Device(relay); phone.add("a", "milk")
+        assertNull(phone.flush())
+        assertTrue(relay.held.values.none { it.w != null })
+        relay.untaken = { false }
+        assertNotNull(phone.flush())
+        assertTrue(relay.held.values.any { it.w != null })
+    }
+
+    /** 0.12.28: a pull whose pages didn't all come doesn't move "pulled up to", so the next reads from as far back. */
+    @Test fun aPullWithAMissingPageReadsAgainFromAsFarBack() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.flush()
+        val tablet = Device(relay); tablet.pull()
+        val pulled = tablet.store.m["notesPulled"]
+        clock += 5000
+        relay.unread = { tag, _ -> tag == "w" }
+        tablet.pull(full = false)
+        assertEquals(pulled, tablet.store.m["notesPulled"])
+    }
+
+
+    /** 0.12.28 gate (b): a restart doesn't send again what was sent, pulled or put in the base file. */
+    @Test fun aBigNotebookUploadsOnceAcrossRestarts() {
+        val relay = Relay()
+        val mac = Device(relay); big(mac); mac.flush()
+        assertEquals(1, relay.blobs.size)
+        var items = mac.items
+        repeat(3) { clock += 100; val again = Device(relay, items, mac.store); again.pull(full = false); again.flush(); items = again.items }
+        assertEquals(1, relay.blobs.size)
+    }
+
+    @Test fun anUpgradeResendsNothing() {
+        val relay = Relay()
+        val phone = Device(relay); (0 until 20).forEach { phone.add("n$it", "note $it") }; phone.flush()
+        // A state saved by 0.12.27: no "sent" record.
+        val saved = JSONObject(phone.store.m["notesVault"]!!)
+        saved.put("state", JSONObject(saved.getString("state")).apply { remove("sent") }.toString())
+        phone.store.m["notesVault"] = saved.toString()
+        val before = relay.packWrites
+        var items = phone.items
+        repeat(2) { clock += 100; val again = Device(relay, items, phone.store); again.flush(); items = again.items }
+        assertEquals(before, relay.packWrites)
+    }
+
+    @Test fun aPulledNoteIsntResent() {
+        val relay = Relay()
+        val phone = Device(relay); phone.add("a", "milk"); phone.add("b", "bread"); phone.flush()
+        val tablet = Device(relay); tablet.pull(); tablet.flush()
+        val before = relay.packWrites
+        clock += 100
+        val again = Device(relay, tablet.items, tablet.store); again.flush()
+        assertEquals(before, relay.packWrites)
     }
 }

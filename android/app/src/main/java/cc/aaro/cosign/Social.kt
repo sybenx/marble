@@ -122,7 +122,11 @@ fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
  * A link that's a post, article or someone, opened in Marble rather than a browser: marble.syb.lol (/nevent1…, /e/…,
  * /p/…, /a/…), njump.me, or nostr:…. Anything else (a real web page): null.
  */
-fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, setOf("marble.syb.lol", "njump.me"))
+fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, VIEWERS)
+
+/** Sites that show a post or a person by its reference: their links open it in Marble instead. */
+private val VIEWERS = setOf("marble.syb.lol", "njump.me", "njump.to", "primal.net", "nostr.at", "nostr.com", "snort.social", "iris.to", "coracle.social",
+    "nostrudel.ninja", "yakihonne.com", "habla.news", "highlighter.com", "jumble.social", "nostter.app")
 
 private fun refIn(url: String, hosts: Set<String>): Ref? {
     val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }
@@ -715,7 +719,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             e.id !in skip && e.pubkey !in hidden && !interests.hidden("hiddenPeople", e.pubkey) && !mutedText(e.content, e) && e.createdAt <= now + 600 && !snoozedNow(e.pubkey)
         }
         val starred = sp.await()
-        scope.launch { beyond.value = try { beyondPosts(now) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; beyond.value } }
+        // (Beyond your people is off, marble-2009-spec §8: beyondPosts is kept, not asked.)
         posts.map { e -> Pick(e, TopicGuess.of(e).firstOrNull() ?: "", 0.0, if (e.pubkey in starred) "★ Special Follow" else "") }.also {
             remember(it.map { p -> p.e }); People.want(it.map { p -> p.e.pubkey }.distinct())
         }
@@ -818,6 +822,13 @@ class Social private constructor(private val phone: Phone, context: Context) {
             .filter { parentOf(it) == null }
     }
 
+    /** One link's preview (a post's own link card), fetched once while Marble runs. */
+    private val previewAsked = java.util.Collections.synchronizedSet(HashSet<String>())
+    fun wantPreview(url: String) {
+        if (url in previews.value || !previewAsked.add(url)) return
+        scope.launch { Preview.fetch(url)?.let { p -> previews.update { it + (url to p) }; Preview.save(CosignApp.instance, previews.value) } }
+    }
+
     /** Link previews for these posts' links, in the background, kept on this phone. */
     private fun loadPreviews(posts: List<Event>) = scope.launch {
         afterPaint()
@@ -839,9 +850,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
+            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); launch { try { knowRecents() } catch (_: Exception) {} }; pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
-            kept.takeIn(CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE).getStringSet("collected", emptySet())!!)
+            // The phone-wide marbles of before go to one account only: the first that takes them.
+            val legacy = CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE)
+            if (legacy.getString("takenBy", null).let { it == null || it == me }) {
+                legacy.edit().putString("takenBy", me).apply()
+                kept.takeIn(legacy.getStringSet("collected", emptySet())!!)
+            }
             pullKept()
         }
         scope.launch {
@@ -1029,23 +1045,105 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // before it; written a couple of minutes after the last thing you saw, merged with what's there first.
     private var seenSending: Job? = null
     @Volatile private var seenPulled = false
+    @Volatile private var seenReached = false
 
-    private fun seenChanged() {
-        if (Sources.viewAs != null) return
-        seenSending?.cancel()
-        seenSending = scope.launch { delay(120_000); sendSeen() }
+    // --- Reader's read state (reader.md §2): the seen list's days, plus "read up to" per source and kept-unread items ---
+
+    private fun longs(key: String): Map<String, Long> = prefs.getString(key, null)?.let { j -> try { val o = org.json.JSONObject(j); o.keys().asSequence().associateWith { o.getLong(it) } } catch (_: Exception) { null } } ?: emptyMap()
+    /** Each source's "read up to" (Mark all as read). */
+    val readerUpto = MutableStateFlow(longs("readerUpto"))
+    /** Items kept unread, with when. */
+    val readerUnread = MutableStateFlow(longs("readerUnread"))
+    /** Bumped when read state changes here (rows redraw). */
+    val readerReadAt = MutableStateFlow(0L)
+    private fun keepRead() {
+        val cutoff = Clock.now() - cc.aaro.cosign.reader.ReaderRules.UNREAD_FOR
+        // Older than anything Reader still shows: dropped, so the seen list stays small (a read-again mark by its size).
+        val cleared = Clock.now() - cc.aaro.cosign.reader.ReaderRules.CLEARED_FOR
+        readerUnread.update { m -> m.filterValues { if (it < 0) -it > cleared else it > cutoff } }
+        readerUpto.update { m -> m.filterValues { it > cutoff } }
+        prefs.edit().putString("readerUpto", org.json.JSONObject(readerUpto.value as Map<*, *>).toString())
+            .putString("readerUnread", org.json.JSONObject(readerUnread.value as Map<*, *>).toString()).apply()
+        readerReadAt.value = System.currentTimeMillis(); seenChanged()
     }
+
+    /** Read in Reader: seen (here or on another device), or older than its source's read-up-to; not if kept unread. */
+    fun isRead(key: String, source: String, at: Long, folder: String? = null): Boolean =
+        cc.aaro.cosign.reader.ReaderRules.isRead(key, source, at, readerSeen(key), folder)
+    /** The read state for one key, as the shared rule reads it (this phone's seen keys, with their day). */
+    private fun readerSeen(key: String) = cc.aaro.cosign.reader.ReaderRules.Seen(
+        if (key in seen) mapOf(key to Math.floorDiv(seen.timeOf(key) ?: 0L, 86_400L)) else emptyMap(), readerUpto.value, readerUnread.value)
+    /** Mark all as read's entries: one per source, but one for a whole folder of people (Your people, Read first). */
+    fun uptoKeys(items: List<ReaderItem>): List<String> = items.map { if (it.folder in PEOPLE_FOLDERS) "folder:${it.folder}" else it.source }.distinct()
+    private val PEOPLE_FOLDERS = setOf("people", "first")
+
+    /** A Reader row read: a day's digest when every post in it is (reader.md §3), else its own key. */
+    fun itemRead(i: ReaderItem): Boolean = if (i.posts.isEmpty()) isRead(i.key, i.source, i.at, i.folder)
+        else !((readerUnread.value[i.key] ?: 0) > 0 && !isRead(i.key, i.source, 0, i.folder)) && i.posts.all { isRead(cc.aaro.cosign.reader.ReaderRules.postKey(it.id), i.source, it.createdAt, i.folder) }
+    /** A row opened: its key, and each post's in a digest. */
+    fun markItemRead(i: ReaderItem, opened: Boolean = false) { markRead(i.key, opened); i.posts.forEach { markRead(cc.aaro.cosign.reader.ReaderRules.postKey(it.id)) } }
+    /** Every key a row's read state is in (Mark all as read clears their Keep unread). */
+    fun itemKeys(i: ReaderItem): List<String> = listOf(i.key) + i.posts.map { cc.aaro.cosign.reader.ReaderRules.postKey(it.id) }
+
+    /** Read now (expanded, or scrolled past in expanded view); opened again after Keep unread, it's read again. */
+    fun markRead(key: String, opened: Boolean = false) {
+        // Read again after Keep unread: its time made negative, never removed, so a merge can't bring the mark back.
+        // Opened on purpose: always, so a mark kept on another device that hasn't reached this one yet loses too.
+        val wasUnread = (readerUnread.value[key] ?: 0) > 0
+        if (wasUnread || opened) readerUnread.update { it + (key to -Clock.now()) }
+        if (seen.add(key) || wasUnread || opened) keepRead()
+    }
+    fun keepUnread(key: String) { readerUnread.update { it + (key to Clock.now()) }; keepRead() }
+    /** Mark all as read: each of [sources] read up to now; what was kept unread there is read too. */
+    fun markAllRead(sources: Collection<String>, keys: Collection<String>) {
+        val now = Clock.now()
+        readerUpto.update { m -> m + sources.associateWith { maxOf(m[it] ?: 0, now) } }
+        readerUnread.update { m -> m + keys.filter { (m[it] ?: 0) > 0 }.associateWith { -now } }
+        keepRead()
+    }
+    /** The account's copy's read-up-to and kept-unread, merged in (the larger, the newer). */
+    /** [theirAt]: when the other copy was written. */
+    private fun takeReadState(others: org.json.JSONObject, theirAt: Long) {
+        // Marks first, then read-up-to: a rise from the other copy never passes a Keep unread mark still standing.
+        others.optJSONObject("unread")?.let { o -> readerUnread.update { m -> m + o.keys().asSequence().map { k -> k to o.getLong(k) }
+            .filter { (k, t) -> m[k]?.let { Math.abs(t) > Math.abs(it) } ?: true }.toMap() } }
+        // The other copy's read-up-to doesn't pass a mark made here after it was written.
+        others.optJSONObject("upto")?.let { o -> readerUpto.update { m ->
+            val marks = readerUnread.value.values.filter { it > 0 && it > theirAt }
+            cc.aaro.cosign.reader.ReaderRules.mergeUpto(m, Long.MAX_VALUE, o.keys().asSequence().associateWith { o.getLong(it) }, theirAt, emptyList(), marks) } }
+        prefs.edit().putString("readerUpto", org.json.JSONObject(readerUpto.value as Map<*, *>).toString())
+            .putString("readerUnread", org.json.JSONObject(readerUnread.value as Map<*, *>).toString()).apply()
+        readerReadAt.value = System.currentTimeMillis()
+    }
+
+    private fun seenChanged(retry: Boolean = false) {
+        if (Sources.viewAs != null || (accountRelays != null && listTargets().isEmpty())) return
+        seenTries = if (retry) seenTries + 1 else 0
+        seenSending?.cancel()
+        seenSending = scope.launch { delay(backoff(120_000, seenTries)); sendSeen() }
+    }
+    private var seenTries = 0
 
     private suspend fun sendSeen() {
         val me = me ?: return
         pullSeen(again = true)
         val now = Clock.now()
-        val text = toSelf(SeenSync.encode(seen.since(now - SeenSync.WINDOW).filter { !it.first.startsWith("t") }, now), encrypt = true) ?: return
+        if (seenUnreadable) return
+        // No relay answered: the account's copy wasn't read, so it isn't written over (tried again later).
+        if (!seenReached) { seenChanged(retry = true); return }
+        val keep = (prefs.getString("seenOthers", null)?.let { try { org.json.JSONObject(it) } catch (_: Exception) { null } } ?: org.json.JSONObject())
+            .put("upto", org.json.JSONObject(readerUpto.value as Map<*, *>)).put("unread", org.json.JSONObject(readerUnread.value as Map<*, *>))
+        // Under NIP-44's 64 KB: old marks go, then the oldest days if it would still be larger.
+        val plain = cc.aaro.cosign.reader.ReaderRules.fitSeen(org.json.JSONObject(SeenSync.encode(seen.since(now - SeenSync.WINDOW).filter { !it.first.startsWith("t") }, now, keep)), now).toString()
+        val text = toSelf(plain, encrypt = true) ?: run { if (debuggable) android.util.Log.w("CosignSync", "seen not encrypted (${plain.length} chars)"); seenChanged(retry = true); return }
         // NIP-40: relays may drop it two weeks after the last write, so it doesn't outlive your use of Marble (each write moves it on).
         val tags = listOf(listOf("d", SeenSync.TAG), listOf("expiration", (now + SeenSync.EXPIRES).toString()))
-        val signed = try { phone.signOwn(Event(me, now, 30078, tags, text).withId()) } catch (_: Exception) { return }
-        val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
-        val n = Fetch.publish(to, signed)
+        val signed = try { phone.signOwn(Event(me, maxOf(now, prefs.getLong("seenPulled", 0) + 1), 30078, tags, text).withId()) } catch (_: Exception) { seenChanged(retry = true); return }
+        val to = listTargets()
+        val ok = Fetch.publishOk(to, signed)
+        val n = ok.size
+        // What it wrote is the newest copy now: a pull that comes back with less is a relay that didn't answer.
+        if (cc.aaro.cosign.reader.SyncGuard.written(to, ok)) { seenTries = 0; prefs.edit().putLong("seenPulled", signed.createdAt).apply() } else seenChanged(retry = true)
         if (debuggable) android.util.Log.i("CosignSync", "seen sent: ${text.length} chars to $n of ${to.size} relays")
     }
 
@@ -1056,7 +1154,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // list (d=marble/later) is still read, and kept current while it fits, for older Marbles.
 
     val later = Later(prefs).also { it.changed = { laterChanged() } }
-    init { NewsSources.load(CosignApp.instance); NewsSources.changed = { newsChanged() }; OnDevice.load() }
+    init { OnDevice.load(); NotesTrial.load(CosignApp.instance) }
+    /** This account is the one on screen: its own news sources, and changes made now go to it. */
+    fun shown() { me?.let { NewsSources.load(CosignApp.instance, it, signedInAtStart) }; NewsSources.changed = { newsChanged() }; if (newsPending) newsChanged() }
+    /** The news sources loaded are this account's (another account's are never pulled into them or sent). */
+    private fun newsMine() = me != null && NewsSources.account == me
     /** What you searched, on this phone only (not synced), 30 days. */
     val searches = Searches(prefs)
     private var laterSending: kotlinx.coroutines.Job? = null
@@ -1085,11 +1187,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private val notesNet = object : NotesNet {
         override suspend fun read(tag: String, values: List<String>, until: Long?, since: Long?, limit: Int): List<Stored>? {
             val me = me ?: return null
-            val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-            if (relays.isEmpty()) return null
+            // The sync guard (reader.md §6): your configured write relays; a read that didn't reach most of them is no read.
+            if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+            val w = listTargets().ifEmpty { return null }
+            val relays = if (Sources.localOnly) w else (w + readRelays().take(3)).distinct()
             val f = mutableMapOf<String, Any>("kinds" to listOf(30078), "authors" to listOf(me), "#$tag" to values, "limit" to limit)
             until?.let { f["until"] = it }; since?.let { f["since"] = it }
-            return Fetch.query(relays, f, 8000).filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
+            val (found, answered) = Fetch.queryAnswered(relays, f, 8000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
+            if (!cc.aaro.cosign.reader.SyncGuard.complete(w, answered)) return null
+            return found.filter { it.pubkey == me && it.kind == 30078 && it.verify() }.distinctBy { it.id }
                 .map { Stored(it.id, it.firstTag("d") ?: "", it.createdAt, toSelf(it.content, encrypt = false)) }
         }
         override suspend fun write(d: String, w: String?, createdAt: Long, content: String): Boolean {
@@ -1098,8 +1204,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val signed = try { phone.signOwn(Event(me, createdAt, 30078, listOfNotNull(listOf("d", d), w?.let { listOf("w", it) }), text).withId()) } catch (e: Exception) {
                 if (debuggable) android.util.Log.i("CosignSync", "notes not sent: ${e.javaClass.simpleName}"); return false
             }
-            val to = if (Sources.localOnly) Sources.extra.value else writeRelays()
-            return Fetch.publish(to, signed) > 0
+            // Done only when most of your write relays took it (one relay's OK can be missed by the next read).
+            val to = listTargets().ifEmpty { return false }
+            return cc.aaro.cosign.reader.SyncGuard.written(to, Fetch.publishOk(to, signed))
         }
         override suspend fun fetchBlob(sha256: String, servers: List<String>): ByteArray? { val me = me ?: return null; return Blossom.fetch((servers + Blossom.mine(me)).distinct(), sha256) }
         override suspend fun uploadBlob(bytes: ByteArray, sha256: String, seed: ByteArray): List<String> { val me = me ?: return emptyList(); return Blossom.upload(Blossom.mine(me), bytes, sha256, seed) }
@@ -1247,6 +1354,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
         val id = "marble-$today"
         if (kept.all.value[id]?.let { it.here && it.award == null } != true || claiming) return
+        // No marble from the issuer today: nothing to claim.
+        if (cc.aaro.cosign.ui.Daily.today.value == null) return
         val issuer = cc.aaro.cosign.ui.Daily.issuer ?: return
         claiming = true
         scope.launch {
@@ -1327,9 +1436,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (Sources.viewAs != null) return
         val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(DEVICE_NAMES), "limit" to 4), 6000)
-            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
-        val theirs = got?.let { toSelf(it.content, encrypt = false) }?.let(::namesFrom) ?: emptyMap()
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val (found, answered) = Fetch.queryAnswered((relays + listTargets()).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(DEVICE_NAMES), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
+        val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        // Never written over a copy that wasn't read here (didn't decrypt, a later version), nor when the account wasn't reached.
+        namesWritable = cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), answered)
+        val plain = got?.let { toSelf(it.content, encrypt = false) ?: run { namesWritable = false; return } }
+        if (plain != null && (try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) { namesWritable = false; return }
+        val theirs = plain?.let(::namesFrom) ?: emptyMap()
         val mine = deviceNames.value
         // Each name as it was last set, here or on another device.
         val merged = (theirs.keys + mine.keys).associateWith { k -> listOfNotNull(theirs[k], mine[k]).maxBy { it.at } }
@@ -1354,29 +1468,63 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private suspend fun pullNews(): Boolean {
         val me = me ?: return false
-        if (Sources.viewAs != null) return false
+        if (Sources.viewAs != null || !newsMine()) { newsWritable = false; return false }
         val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(NewsSources.TAG), "limit" to 4), 6000)
-            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val (found, answered) = Fetch.queryAnswered((relays + listTargets()).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(NewsSources.TAG), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
+        val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt }
+        // Written only after reaching the account, and never over a copy that wasn't read here; and only this
+        // account's own sources (the list is shared by the accounts on this phone).
+        newsWritable = cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), answered) && newsMine()
         val before = NewsSources.json()
-        val ahead = if (got == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.take(toSelf(got.content, encrypt = false) ?: return false)
+        val plain = got?.let { toSelf(it.content, encrypt = false) ?: run { newsWritable = false; return false } }
+        if (plain != null && (try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) { newsWritable = false; return false }
+        // Switched account while reading: this copy is not the list now loaded.
+        if (NewsSources.account != me) { newsWritable = false; return false }
+        val ahead = if (plain == null) NewsSources.own.value.isNotEmpty() || NewsSources.off.value.isNotEmpty() else NewsSources.takeFor(me, plain)
         if (NewsSources.json() != before) allStories.value = try { TopicFeeds.load(CosignApp.instance) } catch (_: Exception) { allStories.value }
         return ahead
     }
 
+    @Volatile private var newsWritable = false
+    /** A send that stopped because another account was loaded: it goes when this one is shown again. */
+    @Volatile private var newsPending = false
     private suspend fun sendNews() {
         val me = me ?: return
         if (pullNews().not() && NewsSources.own.value.isEmpty() && NewsSources.off.value.isEmpty()) return
-        val text = toSelf(NewsSources.json(), encrypt = true) ?: return
+        if (!newsWritable) return
+        // This account's list and the load it came from, taken together; a load in between (a switch, even back again) sends nothing.
+        val (json, gen) = NewsSources.snapshot(me) ?: run { newsPending = true; return }
+        val text = toSelf(json, encrypt = true) ?: return
+        if (NewsSources.generation != gen) { newsPending = true; return }
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", NewsSources.TAG)), text).withId()) } catch (_: Exception) { return }
-        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
+        if (NewsSources.generation != gen) { newsPending = true; return }
+        if (cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))) newsPending = false
+        else { newsPending = true; newsSending = scope.launch { delay(60_000); sendNews() } }
     }
 
+    @Volatile private var namesWritable = false
+    /** Read the account's names again just before writing them: written only after a reached read of a copy this phone can read. */
+    private suspend fun namesStillWritable(): Boolean {
+        val me = me ?: return false
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val w = listTargets().ifEmpty { return false }
+        val (found, answered) = Fetch.queryAnswered((w + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(DEVICE_NAMES), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
+        if (!cc.aaro.cosign.reader.SyncGuard.complete(w, answered)) return false
+        val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return true
+        val plain = toSelf(got.content, encrypt = false) ?: return false
+        if ((try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) return false
+        // What's there now joins what's here, so a name set elsewhere since isn't written over.
+        val theirs = namesFrom(plain); val mine = deviceNames.value
+        deviceNames.value = (theirs.keys + mine.keys).associateWith { k -> listOfNotNull(theirs[k], mine[k]).maxBy { it.at } }
+        return true
+    }
     private suspend fun sendDeviceNames() {
         val me = me ?: return
+        if (!namesWritable || !namesStillWritable()) return
         val text = toSelf(namesJson(deviceNames.value), encrypt = true) ?: return
         val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", DEVICE_NAMES)), text).withId()) } catch (_: Exception) { return }
-        Fetch.publish(if (Sources.localOnly) Sources.extra.value else writeRelays(), signed)
+        cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))
     }
 
     // --- Tomorrow's marble: the pipeline's owner sees it a day early, and can veto it -----------
@@ -1448,15 +1596,32 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun fromBot(bot: String, text: String): String? = null
 
     /** Your account's seen list, merged into this phone's; what's further down the feed and seen elsewhere goes. */
+    /** The account's seen list didn't decrypt here: this phone doesn't write it. */
+    @Volatile private var seenUnreadable = false
     private suspend fun pullSeen(again: Boolean = false) {
         val me = me ?: return
         if (Sources.viewAs != null || (seenPulled && !again)) return
         seenPulled = true
-        val relays = if (Sources.localOnly) Sources.extra.value else (writeRelays() + readRelays()).distinct().take(8)
-        val got = Fetch.query(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(SeenSync.TAG), "limit" to 4), 6000)
-            .filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return
-        if (got.createdAt <= prefs.getLong("seenPulled", 0)) return
-        val keys = SeenSync.decode(toSelf(got.content, encrypt = false) ?: return)
+        // Every write relay (whose answers count), and a few read relays.
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val relays = if (Sources.localOnly) Sources.extra.value else (listTargets() + writeRelays() + readRelays().take(3)).distinct()
+        val (found, answered) = Fetch.queryAnswered(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(SeenSync.TAG), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
+        val got = cc.aaro.cosign.ListWrite.newest(found.filter { it.verify() }, me, 30078, SeenSync.TAG)
+        // As the Reader list: written only when most of the write relays (where copies go) answered, and nothing older
+        // than a copy this phone has seen came back as the newest.
+        var rebased = false
+        seenReached = guard("seen", answered, got?.createdAt ?: 0, prefs.getLong("seenPulled", 0), SeenSync.EXPIRES) { rebased = true; prefs.edit().putLong("seenPulled", got?.createdAt ?: 0).apply() }
+        // No copy (gone, or expired): nothing unreadable stands in the way any more.
+        if (got == null) { seenUnreadable = false; return }
+        if (!rebased && got.createdAt <= prefs.getLong("seenPulled", 0)) return
+        // A copy this phone can't read: never written over (its other fields would be lost).
+        val plain = toSelf(got.content, encrypt = false) ?: run { seenUnreadable = true; return }
+        // A later version than this phone writes: read, but never written over (its fields would be lost).
+        if ((try { org.json.JSONObject(plain).optInt("v") } catch (_: Exception) { 0 }) != 1) { seenUnreadable = true; return }
+        seenUnreadable = false
+        // What this version doesn't write (Reader's upto and unread): kept, and sent back as it was.
+        SeenSync.others(plain)?.let { prefs.edit().putString("seenOthers", it.toString()).apply(); takeReadState(it, (try { org.json.JSONObject(plain).optLong("at") } catch (_: Exception) { 0L }).takeIf { a -> a > 0 } ?: got.createdAt) }
+        val keys = SeenSync.decode(plain)
         if (debuggable) android.util.Log.i("CosignSync", "seen pulled: ${keys.size} keys from ${relays.size} relays")
         var added = 0
         for ((k, t) in keys) if (seen.add(k, t)) added++
@@ -1543,7 +1708,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
     // The user asked to try Feed 3 (27 Oct): this build starts in it, once; the switch takes it back in one tap.
     val feedVersion = MutableStateFlow(prefs.let { p ->
         if (!p.getBoolean("feed3Tried", false)) p.edit().putInt("feedVersion", 3).putBoolean("feed3Tried", true).apply()
-        p.getInt("feedVersion", 2)
+        // Feed 1 and 2 move to Feed 3 once (marble-2009-spec §8); the old choice is kept, and Advanced can go back this release.
+        if (!p.getBoolean("feed3For2009", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 3)).putInt("feedVersion", 3).putBoolean("feed3For2009", true).apply()
+        // Reader (marble-2009-spec step 6) takes Following's place once; Edition stays a switch in Advanced for a release.
+        if (!p.getBoolean("readerFirst", false)) p.edit().putInt("feedVersion", 4).putBoolean("readerFirst", true).apply()
+        p.getInt("feedVersion", 3)
     }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {
         if (v == feedVersion.value) return
@@ -1958,6 +2127,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         (cc.aaro.cosign.spam.Spam.inflated(root.id, got)?.takeIf { !cc.aaro.cosign.spam.Spam.notSpam(root.pubkey) } ?: cc.aaro.cosign.spam.Spam.advert(root).takeIf { unknown })
             ?.let { w -> spam.update { it + (root.id to w) } }
         val byTarget = got.groupBy { r -> r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1) }
+        reactors.update { m -> m + (root.id to ReactionRules.tally(got, root.id)) }
         engagement.update { m ->
             m + posts.associate { p ->
                 val rs = byTarget[p.id] ?: emptyList()
@@ -2164,13 +2334,17 @@ class Social private constructor(private val phone: Phone, context: Context) {
      */
     suspend fun post(text: String, link: String = ""): Event? {
         val me = me ?: return null
-        val quoted = Ref.parse(link.substringAfterLast('/').substringBefore('?')) as? Ref.Note
+        val ref = Ref.parse(link.substringAfterLast('/').substringBefore('?'))
+        val quoted = ref as? Ref.Note
+        // An article (any addressable event) is quoted by its address: nostr:naddr… and a q tag of kind:pubkey:d.
+        val addr = ref as? Ref.Addr
         val tail = when {
             quoted != null -> "nostr:" + cc.aaro.qrst.core.Bech32.encode("note", quoted.id.hexToBytes())
+            addr != null -> "nostr:" + addr.naddr
             else -> link.trim()
         }
         val body = listOf(text.trim(), tail).filter { it.isNotEmpty() }.joinToString("\n\n").ifEmpty { return null }
-        val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else emptyList()
+        val tags = if (quoted != null) listOf(listOf("q", quoted.id)) else if (addr != null) listOf(listOf("q", "${addr.kind}:${addr.pubkey}:${addr.d}")) else emptyList()
         val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId()) ?: return null
         if (link.isNotBlank()) FeedLog.act(quoted?.id ?: allStories.value.firstOrNull { it.url == link.trim() }?.let { "t:" + it.id } ?: link.trim(), if (quoted != null) "quote" else "post")
         remember(listOf(signed))
@@ -2258,29 +2432,105 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * A reaction: "+" is a like, anything else the emoji it is. Again on a post you've reacted to, it's a new
-     * reaction, and the newest is the one shown (what's learned from it is learned once).
+     * A reaction ([shown]: an emoji, or a custom :name: with its picture), as marble-reactions.md says: ❤️ goes out as
+     * "+"; a new one on a post you've reacted to replaces yours (the old one deleted, NIP-09).
      */
-    fun react(note: Event, emoji: String) {
+    fun react(note: Event, emoji: String, url: String? = null) {
         val me = me ?: return
+        val s = ReactionRules.Shown(if (emoji == "+") ReactionRules.LIKE else emoji, url)
+        if (reactions.value[note.id] == s.emoji && note.id in liked.value) return
         val first = note.id !in liked.value
         val before = reactions.value[note.id]
-        FeedLog.act(note.id, if (emoji == "+") "like" else "react", "emoji" to emoji.takeIf { it != "+" }, "first" to first)
+        val known = synchronized(reactionIds) { reactionIds[note.id] }?.split(',').orEmpty()
+        FeedLog.act(note.id, if (s.emoji == ReactionRules.LIKE) "like" else "react", "emoji" to s.emoji.takeIf { it != ReactionRules.LIKE }, "first" to first)
         mark(note.id, true)
-        setReaction(note.id, emoji.takeIf { it != "+" })
-        if (emoji != "+") { emojiUse[emoji] = (emojiUse[emoji] ?: 0) + 1; prefs.edit().putString("emojiUse", org.json.JSONObject(emojiUse.entries.sortedByDescending { it.value }.take(40).associate { it.key to it.value }).toString()).apply() }
+        setReaction(note.id, s.emoji)
+        recents.update { l -> (listOf(s) + l).distinctBy { it.emoji }.take(12) }
+        prefs.edit().putString("recentReactions", recents.value.joinToString("\n") { it.emoji + (it.url?.let { u -> " $u" } ?: "") }).apply()
         if (first) {
             interests.liked(TopicGuess.of(reposted(note) ?: note), likesCaughtUp)
             newsletterTaste(reposted(note) ?: note, 1)
         }
         scope.launch {
-            val tags = listOf(listOf("e", note.id), listOf("p", note.pubkey), listOf("k", note.kind.toString()))
-            if (!act(Event(me, Clock.now(), 7, tags, emoji).withId())) { if (first) mark(note.id, false); setReaction(note.id, before) }
+            // Yours to it so far (here and on your relays): replaced by the new one (ReactionRules.sends).
+            val old = if (first && known.isEmpty()) emptyList() else (known + findMyReactions(me, note.id)).distinct()
+            // Where the post can be found (its author's first write relay), for others' notifications.
+            val hint = try { outboxOf(note.pubkey).firstOrNull() } catch (_: Exception) { null } ?: ""
+            val plan = ReactionRules.sends(old, s, note, hint)
+            val sent = actEvent(Event(me, Clock.now(), plan[0].kind, plan[0].tags, plan[0].content).withId())
+            if (sent == null) { if (first) mark(note.id, false); setReaction(note.id, before); return@launch }
+            keepReactionId(note.id, listOf(sent.id))
+            plan.drop(1).forEach { d -> actEvent(Event(me, Clock.now(), d.kind, d.tags, d.content).withId()) }
         }
     }
 
+    /** Your reaction taken back: its event deleted (NIP-09); the button is ☺+ again. */
+    fun unreact(note: Event) {
+        val me = me ?: return
+        val known = synchronized(reactionIds) { reactionIds[note.id] }?.split(',').orEmpty()
+        val before = reactions.value[note.id]
+        FeedLog.act(note.id, "unreact")
+        mark(note.id, false); setReaction(note.id, null)
+        scope.launch {
+            // Every one of yours to it, in one deletion.
+            val all = (known + findMyReactions(me, note.id)).distinct()
+            val plan = ReactionRules.sends(all, null, note)
+            if (plan.isEmpty() || actEvent(Event(me, Clock.now(), plan[0].kind, plan[0].tags, plan[0].content).withId()) == null) {
+                mark(note.id, true); setReaction(note.id, before); return@launch
+            }
+            keepReactionId(note.id, null)
+        }
+    }
+
+    /** Your reactions to [noteId] on your relays (ones made on another device, say). */
+    private suspend fun findMyReactions(me: String, noteId: String): List<String> =
+        Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "#e" to listOf(noteId), "limit" to 20), 5000)
+            .filter { it.pubkey == me }.map { it.id }
+
+    /** Your reaction's event, per post (to replace or take back). */
+    private val reactionIds = HashMap<String, String>().apply {
+        prefs.getStringSet("reactionIds", emptySet())!!.forEach { s -> s.split(' ', limit = 2).takeIf { it.size == 2 }?.let { put(it[0], it[1]) } }
+    }
+    private fun keepReactionId(note: String, ids: List<String>?) = synchronized(reactionIds) {
+        if (ids.isNullOrEmpty()) reactionIds.remove(note) else reactionIds[note] = ids.joinToString(",")
+        prefs.edit().putStringSet("reactionIds", reactionIds.entries.toList().takeLast(1000).map { "${it.key} ${it.value}" }.toSet()).apply()
+    }
+
+    /** Your recent reactions (newest first), from your own published ones, so every device has the same; kept here for speed. */
+    val recents = MutableStateFlow(prefs.getString("recentReactions", null)?.lines()?.filter { it.isNotBlank() }
+        ?.map { l -> l.split(' ', limit = 2).let { ReactionRules.Shown(it[0], it.getOrNull(1)) } } ?: emptyList())
+    @Volatile private var recentsAt = 0L
+    suspend fun knowRecents() {
+        val me = me ?: return
+        if (System.currentTimeMillis() - recentsAt < 10 * 60_000L) return
+        val mine = Fetch.query(writeRelays().take(6), mapOf("kinds" to listOf(7), "authors" to listOf(me), "limit" to 200), 6000).filter { it.pubkey == me }
+        if (mine.isEmpty()) return
+        recentsAt = System.currentTimeMillis()
+        recents.value = ReactionRules.recents(mine, me, 12)
+        prefs.edit().putString("recentReactions", recents.value.joinToString("\n") { it.emoji + (it.url?.let { u -> " $u" } ?: "") }).apply()
+    }
+
+    /** Your own emoji (NIP-30: kind 10030 and the 30030 sets it names), for the picker. */
+    val myEmoji = MutableStateFlow<List<ReactionRules.Shown>>(emptyList())
+    suspend fun knowMyEmoji() {
+        val me = me ?: return
+        if (myEmoji.value.isNotEmpty()) return
+        val relays = (writeRelays() + Sources.PROFILES).distinct().take(8)
+        val list = Fetch.query(relays, mapOf("kinds" to listOf(10030), "authors" to listOf(me), "limit" to 2), 5000).filter { it.pubkey == me }.maxByOrNull { it.createdAt } ?: return
+        fun emojis(e: Event) = e.tags.filter { it.size > 2 && it[0] == "emoji" && it[2].startsWith("https://") && Regex("^[A-Za-z0-9_+-]{1,60}$").matches(it[1]) }
+            .map { ReactionRules.Shown(":${it[1]}:", it[2]) }
+        val sets = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30030:") }.mapNotNull { t ->
+            t[1].split(':', limit = 3).takeIf { it.size == 3 && cc.aaro.qrst.core.isHex32(it[1]) }?.let { mapOf("kinds" to listOf(30030), "authors" to listOf(it[1]), "#d" to listOf(it[2])) }
+        }.take(20)
+        val packs = if (sets.isEmpty()) emptyList() else Fetch.query(relays, sets, 6000).groupBy { it.pubkey + (it.firstTag("d") ?: "") }.values.map { l -> l.maxBy { it.createdAt } }
+        myEmoji.value = (emojis(list) + packs.flatMap(::emojis)).distinctBy { it.emoji }.take(300)
+    }
+
+    /** Who gave each reaction to an opened post, most first (ReactionRules.tally). */
+    val reactors = MutableStateFlow<Map<String, List<Pair<ReactionRules.Shown, List<String>>>>>(emptyMap())
+
     /** The emojis a long press on the heart offers, as Marble Web does: your four most-used (besides the usual ones), then the usual six. */
-    fun topEmojis(): List<String> = (emojiUse.entries.sortedByDescending { it.value }.map { it.key }.take(3) + USUAL_EMOJIS).distinct().take(7)
+    fun topEmojis(): List<ReactionRules.Shown> = ReactionRules.tray(recents.value)
 
     // Counts under posts in a list (reactions with counts, as Jumble): each post on screen asks, and they're fetched together.
     private val wantCounts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
@@ -2350,7 +2600,6 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     // The usual six, the ones you use: like, love, haha, sad, eyes, the monocle. (Others' 😮 or 😡 still show as they are.)
-    private val USUAL_EMOJIS = listOf("👍", "❤️", "😂", "🥲", "👀", "🫡", "🫂")
 
     private fun setReaction(id: String, emoji: String?) {
         reactions.update { if (emoji == null) it - id else it + (id to emoji) }
@@ -2368,17 +2617,374 @@ class Social private constructor(private val phone: Phone, context: Context) {
         busy.update { it + pk }
         scope.launch {
             try {
-                // Start from your newest follow list anywhere, never from an empty one by mistake.
-                val list = newestContacts(fetch = true)
-                if (list == null && !on) return@launch
-                val old = list?.tags ?: emptyList()
-                val has = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
-                if (has == on) { contacts = list; follows.value = followsIn(list); return@launch }
-                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
-                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-                act(Event(me, at, 3, tags, list?.content ?: "").withId())
+                // Your newest follow list anywhere; a list known to exist and not found: refused, never one started from empty.
+                val expected = contacts != null || phone.latest("3") != null || follows.value?.isNotEmpty() == true
+                val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
+                when (val r = changeList(3, null, change, expected, contacts)) {
+                    is ListResult.Unchanged -> r.newest?.let { contacts = it; follows.value = followsIn(it) }
+                    else -> {}
+                }
             } finally { busy.update { it - pk } }
         }
+    }
+
+
+    // --- Reader (marble-2009-spec §4, reader.md): sources you chose, a compact list, read state shared with the web ---
+
+    /** One row in Reader: a story, a feed item, a person's item, an article, or one person's short posts of a day. */
+    data class ReaderItem(val key: String, val source: String, val sourceName: String, val folder: String, val type: String,
+                          val title: String, val snippet: String, val at: Long, val link: String? = null, val discussion: String? = null,
+                          val image: String? = null, val event: Event? = null, val posts: List<Event> = emptyList(), val pubkey: String? = null)
+
+    val readerList = MutableStateFlow(cc.aaro.cosign.reader.ReaderList.parse(prefs.getString("readerList", null)) ?: cc.aaro.cosign.reader.ReaderList())
+    val readerItems = MutableStateFlow<List<ReaderItem>?>(null)
+    @Volatile private var readerUnreadable = false
+    @Volatile private var readerReached = false
+    @Volatile private var readerUnreadableId: String? = null
+    /** The newest account copy's created_at, from the last pull. */
+    @Volatile private var readerAt = 0L
+    private var readerSending: kotlinx.coroutines.Job? = null
+
+    /** The account's Reader list, merged in. The first time: your own news feeds move in as a News folder (news-sources is left as it is). */
+    suspend fun pullReader() {
+        val me = me ?: return
+        if (Sources.viewAs != null) return
+        // Every write relay (whose answers count), and a few read relays.
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val relays = if (Sources.localOnly) Sources.extra.value else (listTargets() + writeRelays() + readRelays().take(3)).distinct()
+        val (found, answered) = Fetch.queryAnswered(relays, mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(cc.aaro.cosign.reader.ReaderList.D), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
+        val got = cc.aaro.cosign.ListWrite.newest(found.filter { it.verify() }, me, 30078, cc.aaro.cosign.reader.ReaderList.D)
+        // No answer isn't "no copy" (reader.md §1, the list-write rule): written only after a relay said it was done, and
+        // never under a newer copy this phone has seen (the relay holding it didn't answer). Tried again later.
+        val seenAt = prefs.getLong("readerSeenAt", 0)
+        var base = seenAt
+        readerReached = guard("reader", answered, got?.createdAt ?: 0, seenAt, 0) { base = got?.createdAt ?: 0; prefs.edit().putLong("readerSeenAt", base).apply() }
+        // A copy older than one this phone has seen isn't merged (it's a relay behind the others), unless starting again from it.
+        if (got != null && got.createdAt >= base) {
+            readerAt = got.createdAt
+            prefs.edit().putLong("readerSeenAt", got.createdAt).apply()
+            // A copy that won't decrypt isn't asked about again (each try may be a prompt) until it changes.
+            if (readerUnreadable && got.id == readerUnreadableId) return
+            val theirs = toSelf(got.content, encrypt = false)?.let(cc.aaro.cosign.reader.ReaderList::parse) ?: run { readerUnreadable = true; readerUnreadableId = got.id; return }
+            readerUnreadable = false
+            readerList.value = readerList.value.merge(theirs)
+        } else if (got == null && readerReached && !prefs.getBoolean("readerMoved", false) && seenAt == 0L && newsMine()) {
+            var l = readerList.value
+            val now = Clock.now()
+            // This account's own, read together (a switch can't put another account's feeds in its Reader).
+            val (feeds, offIds) = NewsSources.shownFor(me) ?: return
+            feeds.forEach { f -> l = l.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("feed", f.url), "feed", f.url, f.name, "news", now, false)) }
+            offIds.forEach { l = l.withMute("marble:$it", true, now) }
+            readerList.value = l
+            prefs.edit().putBoolean("readerMoved", true).apply()
+            readerChanged()
+        }
+        prefs.edit().putString("readerList", readerList.value.toString()).apply()
+    }
+
+    /** A change to the Reader list: here at once, on your account half a minute later (read again and merged first). */
+    fun changeReader(f: (cc.aaro.cosign.reader.ReaderList) -> cc.aaro.cosign.reader.ReaderList) {
+        // A change of yours: a copy that didn't decrypt may be asked about once more (reader.md §6.7).
+        readerUnreadableId = null
+        readerList.value = f(readerList.value).tidy(Clock.now())
+        prefs.edit().putString("readerList", readerList.value.toString()).apply()
+        readerChanged()
+    }
+    private fun readerChanged(retry: Boolean = false) {
+        if (Sources.viewAs != null || (accountRelays != null && listTargets().isEmpty())) return
+        readerTries = if (retry) readerTries + 1 else 0
+        readerSending?.cancel()
+        readerSending = scope.launch { delay(backoff(30_000, readerTries)); sendReader() }
+    }
+    private var readerTries = 0
+    /**
+     * The sync guard (fixtures/sync/guard.json): whether this phone may write [name]'s copy after a read that [answered]
+     * (complete: every write relay). Three complete reads in a row missing the copy seen (or its expiring) starts
+     * again from what's there ([rebase]).
+     */
+    private fun guard(name: String, answered: Set<String>, found: Long, seenAt: Long, expires: Long, rebase: () -> Unit): Boolean {
+        val w = listTargets()
+        heardFrom(answered)
+        // Misses count against one copy: when the newest seen moves on, they start again.
+        val misses = cc.aaro.cosign.reader.SyncGuard.misses(prefs.getLong("${name}MissesFor", -1), seenAt, prefs.getInt("${name}Misses", 0))
+        prefs.edit().putLong("${name}MissesFor", seenAt).apply()
+        val d = cc.aaro.cosign.reader.SyncGuard.decide(cc.aaro.cosign.reader.SyncGuard.complete(w, answered), cc.aaro.cosign.reader.SyncGuard.full(w, answered),
+            found, seenAt, misses, expires, Clock.now())
+        prefs.edit().putInt("${name}Misses", d.misses).apply()
+        if (debuggable) android.util.Log.i("CosignSync", "$name guard: ${d.doThis} (${answered.size} answered, found $found, seen $seenAt)")
+        if (d.doThis == cc.aaro.cosign.reader.SyncGuard.Do.REBASE) rebase()
+        return d.doThis != cc.aaro.cosign.reader.SyncGuard.Do.WAIT
+    }
+    /** Where copies of your account lists go (and so, whose answer counts before writing one). */
+    private fun listTargets(): List<String> = if (Sources.localOnly) Sources.extra.value.map(::normRelay).distinct() else accountRelays ?: emptyList()
+    /** A relay's address as both apps count it: no trailing slash, lower case. */
+    private fun normRelay(u: String) = cc.aaro.cosign.reader.SyncGuard.normRelay(u)
+    /** A 10002 list's write relays: every one (no cap; .onion and LAN ones too: one that can't be reached counts as not answering). */
+    private fun writesOf(l: Event) = cc.aaro.cosign.reader.SyncGuard.writeList(l.tags)
+
+    /** When each write relay last answered a read (EOSE), for Settings' quiet note about ones that never do. */
+    private fun heardFrom(answered: Set<String>) {
+        val now = Clock.now()
+        val o = try { org.json.JSONObject(prefs.getString("relayHeard", "{}")!!) } catch (_: Exception) { org.json.JSONObject() }
+        for (r in listTargets()) { if (normRelay(r) in answered.map(::normRelay)) o.put(r, now) else if (!o.has(r)) o.put(r, -now) }
+        prefs.edit().putString("relayHeard", o.toString()).apply()
+    }
+    /**
+     * Settings' quiet note (reader.md §6): how many of your write relays haven't answered in a week, of how many; null
+     * when they all have. With half or more silent, your copies can't be written (that rule stays).
+     */
+    fun silentWriteRelays(): Pair<Int, Int>? {
+        val w = listTargets().takeIf { it.isNotEmpty() } ?: return null
+        val o = try { org.json.JSONObject(prefs.getString("relayHeard", "{}")!!) } catch (_: Exception) { return null }
+        val weekAgo = Clock.now() - 7 * 86_400L
+        // Never heard from since we started counting (a negative time) for a week, or last heard over a week ago.
+        val silent = w.count { r -> o.optLong(r, 0).let { t -> if (t < 0) -t < weekAgo else t in 1 until weekAgo } }
+        return if (silent == 0) null else silent to w.size
+    }
+    /**
+     * Your write relays for account copies (reader.md §6.1): the configured list (10002), every one; with no list (3 or
+     * more relays say so), the fast defaults; null: not known yet (a lookup that heard from fewer than 3), so nothing
+     * is written.
+     */
+    @Volatile private var accountRelays: List<String>? = null
+    private suspend fun knowAccountRelays() {
+        val me = me ?: return
+        phone.latest("10002")?.let { l -> accountRelays = writesOf(l).ifEmpty { Sources.GENERAL.map(::normRelay) }; return }
+        val (found, answered) = Fetch.queryAnswered((listOf("wss://purplepag.es", "wss://user.kindpag.es") + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 2), 6000)
+        val list = found.filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt }
+        accountRelays = when {
+            list != null -> writesOf(list).ifEmpty { Sources.GENERAL.map(::normRelay) }
+            // (Asked again each session: a list made later is found.)
+            answered.size >= 3 -> Sources.GENERAL.map(::normRelay)
+            else -> null
+        }
+    }
+    /** The wait before a write: [first] for a new change; after a failure, the shared retry schedule (reader.md §6). */
+    private fun backoff(first: Long, tries: Int): Long = if (tries == 0) first else cc.aaro.cosign.reader.SyncGuard.retryAfter(tries) * 1000
+    private suspend fun sendReader() {
+        val me = me ?: return
+        pullReader()
+        // A copy this phone couldn't read is never written over; nor one it couldn't reach (tried again later).
+        if (readerUnreadable) return
+        if (!readerReached) { readerChanged(retry = true); return }
+        val text = toSelf(readerList.value.toString(), encrypt = true) ?: run { readerChanged(retry = true); return }
+        val after = maxOf(readerAt, prefs.getLong("readerSeenAt", 0))
+        val signed = try { phone.signOwn(Event(me, maxOf(Clock.now(), after + 1), 30078, listOf(listOf("d", cc.aaro.cosign.reader.ReaderList.D)), text).withId()) } catch (_: Exception) { readerChanged(retry = true); return }
+        // Done only when most write relays took it; until then it's pending (retried), and not the newest seen.
+        if (cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed))) {
+            readerAt = signed.createdAt; readerTries = 0; prefs.edit().putLong("readerSeenAt", signed.createdAt).apply()
+        } else readerChanged(retry = true)
+    }
+
+    /** The people toggle: what's stored, else on if you follow anyone. */
+    fun peopleOn(): Boolean = readerList.value.peopleOn ?: (follows.value?.isNotEmpty() == true)
+
+    private fun peopleRows(posts: List<Event>, source: (String) -> String, folder: String) =
+        ReaderRows.people(posts, People.known.value, source, folder) { at -> java.util.TimeZone.getDefault().getOffset(at * 1000) / 1000L }
+    private fun titleOf(e: Event) = ReaderRows.title(e, People.known.value)
+
+    /** Everything Reader shows now, newest first: read items age out (news a day, people two, articles a week), unread stay up to 30 days. */
+    /** [keep]: rows on screen now, which stay even if they'd age out (a reload for a mute or a source change doesn't take them from under you). */
+    suspend fun loadReader(keep: Set<String> = emptySet()) = kotlinx.coroutines.coroutineScope {
+        val now = Clock.now()
+        val list = readerList.value
+        val hiddenPeople = muted.value
+        val muted = list.muted + hiddenPeople.map { "writer:$it" }
+        val since = now - 7 * 86_400L
+        val news = async {
+            val stories = allStories.value.ifEmpty { try { TopicFeeds.load(CosignApp.instance, cachedOnly = true) } catch (_: Exception) { emptyList() } }
+            stories.filter { !it.sourceId.startsWith("own:") }.map { c ->
+                ReaderItem(cc.aaro.cosign.reader.ReaderRules.feedItemKey(c.url, c.id), "marble:" + c.sourceId, c.sourceName, "news", "news", c.title, c.summary, c.publishedAt, c.url,
+                    c.discussions.firstOrNull()?.url, c.image)
+            }
+        }
+        val feeds = list.live.filter { it.type == "feed" }.map { s -> async {
+            NewsSources.feedCards(CosignApp.instance, s.value, s.name).map { c ->
+                ReaderItem(cc.aaro.cosign.reader.ReaderRules.feedItemKey(c.url, c.id.removePrefix("own:")), s.id, s.name.ifEmpty { c.sourceName }, s.folder.ifEmpty { "news" }, "news", c.title, c.summary,
+                    c.publishedAt, c.url, c.discussions.firstOrNull()?.url, c.image)
+            }
+        } }
+        val people = async {
+            if (!peopleOn()) return@async emptyList()
+            val star = specialPeople()
+            val posts = try { followingPosts(now, cap = Int.MAX_VALUE) } catch (_: Exception) { emptyList() }
+            val arts = follows.value.orEmpty().toList().take(600).chunked(300).map { part -> async { Fetch.query((readRelays() + POST_RELAYS).distinct().take(8), mapOf("kinds" to listOf(30023), "authors" to part, "since" to since, "limit" to 100), 7000) } }.awaitAll().flatten()
+            remember(arts)
+            // The same filters as Following: muted people, people hidden from the feed, muted words.
+            val all = ReaderRows.newest(posts + arts).filter { it.pubkey !in hiddenPeople && it.pubkey != me && !interests.hidden("hiddenPeople", it.pubkey) && !mutedText(it.content, it) }
+            peopleRows(all.filter { it.pubkey in star }, { "people:$it" }, "first") + peopleRows(all.filter { it.pubkey !in star }, { "people:$it" }, "people")
+        }
+        val writers = async {
+            val w = list.live.filter { it.type == "writer" }
+            if (w.isEmpty()) emptyList() else Fetch.query((readRelays() + POST_RELAYS).distinct().take(8), mapOf("kinds" to listOf(30023), "authors" to w.map { it.value }, "since" to now - 60 * 86_400L, "limit" to 200), 7000)
+                .also { remember(it) }.let(ReaderRows::newest).filter { it.pubkey !in hiddenPeople && !mutedText(it.content, it) }.map { e -> val s = w.first { it.value == e.pubkey }; val (t, sn) = titleOf(e)
+                    ReaderItem(cc.aaro.cosign.reader.ReaderRules.keyOf(e), s.id, s.name.ifEmpty { People.known.value[e.pubkey]?.shown ?: shortNpub(e.pubkey) }, s.folder.ifEmpty { "writers" }, "article", t, sn, e.createdAt,
+                        image = e.firstTag("image")?.takeIf { it.startsWith("https://") }, event = e, pubkey = e.pubkey) }
+        }
+        val relays = list.live.filter { it.type == "relay" }.mapNotNull { s -> RelayFeeds.of(s.value)?.let { r -> async {
+            peopleRows(try { relayPosts(listOf(r)) } catch (_: Exception) { emptyList() }, { s.id }, s.folder.ifEmpty { "relays" }).map { it.copy(sourceName = if (it.posts.isEmpty()) it.sourceName else it.sourceName, source = s.id) }
+        } } }
+        // The same story from one of your feeds and from Marble: yours is kept (the first of a key is).
+        val all = (feeds.awaitAll().flatten() + news.await() + people.await() + writers.await() + relays.awaitAll().flatten())
+            .filter { it.source !in muted && it.at > now - cc.aaro.cosign.reader.ReaderRules.UNREAD_FOR }
+            .distinctBy { it.key }.sortedByDescending { it.at }
+        val stars = keptUrls().let { kept -> all.filter { starred(it, kept) }.map { it.key }.toSet() }
+        val (shown, aged) = all.partition { i -> cc.aaro.cosign.reader.ReaderRules.stays(itemRead(i), i.at, i.type, i.key in stars, now, onScreen = i.key in keep) }
+        // A read item that's aged out: its source read up to it, so it stays read once its key has left the seen list.
+        // Never up to an unread one: in this load (a digest by its oldest unread post), shown here lately but missing
+        // from this load, or kept unread anywhere (a live mark is never reached).
+        val unreadNow = all.filter { !itemRead(it) }
+        rememberUnread(unreadNow, now)
+        val loaded = all.map { it.key }.toSet()
+        val missing = readerUnreadSeen().filter { (k, v) -> k !in loaded && !isRead(k, v.first, v.second) }
+            .map { (_, v) -> cc.aaro.cosign.reader.ReaderRules.Aged(v.first, v.second, read = false, aged = false) }
+        val rise = cc.aaro.cosign.reader.ReaderRules.ageUpto(all.map { i ->
+            val read = itemRead(i)
+            val at = if (!read && i.posts.isNotEmpty()) i.posts.filter { p -> !isRead(cc.aaro.cosign.reader.ReaderRules.postKey(p.id), i.source, p.createdAt, i.folder) }.minOfOrNull { it.createdAt } ?: i.at else i.at
+            cc.aaro.cosign.reader.ReaderRules.Aged(i.source, at, read, i in aged)
+        } + missing, readerUpto.value, markTimes(all))
+        if (rise.isNotEmpty()) { readerUpto.update { it + rise }; keepRead() }
+        // The authors, and everyone their lines name (so @names fill in as they arrive).
+        People.want((shown.mapNotNull { it.pubkey } + shown.flatMap { i -> (i.posts + listOfNotNull(i.event)).flatMap { e -> cc.aaro.cosign.ui.Body.of(e).let { it.mentions + it.trailing } } }).distinct().take(800))
+        readerItems.value = shown
+    }
+
+    /** Where a Reader item lives: its link, or its post's marble.syb.lol link (a star is a note with it; Notes' format is untouched). */
+    fun readerUrl(i: ReaderItem): String? = i.link?.takeIf { inAppRef(it) == null || (i.event == null && i.posts.isEmpty()) } ?: i.event?.let { cc.aaro.cosign.marbleLink(it) } ?: i.posts.firstOrNull()?.let { cc.aaro.cosign.marbleLink(it) }
+    private fun keptUrls(): Set<String> = later.items.value.filter { it.deleted == null }.mapNotNull { it.url }.toSet()
+    /** Starred: kept under its link (or, for a post, under the viewer link it was kept with before). */
+    fun starred(i: ReaderItem, kept: Set<String> = keptUrls()) = readerUrl(i) in kept || (i.link != null && i.link in kept)
+    /** What a row is called when it leaves Reader (Share, a starred note): a digest says whose posts. */
+    fun shareTitle(i: ReaderItem): String = if (i.posts.isNotEmpty()) "${i.sourceName} · ${i.title}"
+        // A post or article behind a content warning: its own title (the row shows the warning instead).
+        else i.event?.let { e -> if (e.kind == 30023) e.firstTag("title")?.trim()?.ifEmpty { null } ?: i.title else cc.aaro.cosign.ui.Body.cut(cc.aaro.cosign.ui.Body.line(e, People.known.value, veil = false), 120) } ?: i.title
+
+    /**
+     * Keep unread marks, for the read-up-to rise: by source where this phone knows the item's (loaded now, or shown
+     * lately); a mark whose item it doesn't know holds every source ("" in the map).
+     */
+    private fun markTimes(all: List<ReaderItem>): Map<String, List<Long>> {
+        val sourceOf = all.associate { it.key to it.source } + readerUnreadSeen().mapValues { it.value.first }
+        return readerUnread.value.filterValues { it > 0 }.entries.groupBy({ sourceOf[it.key] ?: "" }, { it.value })
+    }
+
+    /** Unread rows shown here lately (key to source and time), up to 30 days: a later load that misses one still counts it as unread. */
+    private fun readerUnreadSeen(): Map<String, Pair<String, Long>> = prefs.getString("readerUnreadSeen", null)?.let { j -> try {
+        val o = org.json.JSONObject(j); o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { it.getString(0) to it.getLong(1) } } } catch (_: Exception) { null } } ?: emptyMap()
+    private fun rememberUnread(items: List<ReaderItem>, now: Long) {
+        val m = readerUnreadSeen().filter { (k, v) -> v.second > now - cc.aaro.cosign.reader.ReaderRules.UNREAD_FOR && !isRead(k, v.first, v.second) }.toMutableMap()
+        for (i in items) m[i.key] = i.source to (i.posts.minOfOrNull { it.createdAt } ?: i.at)
+        val o = org.json.JSONObject(); m.entries.sortedByDescending { it.value.second }.take(3000).forEach { (k, v) -> o.put(k, org.json.JSONArray(listOf(v.first, v.second))) }
+        prefs.edit().putString("readerUnreadSeen", o.toString()).apply()
+    }
+
+    /** Star: kept privately in Notes (and kept in Reader too); again, taken out. */
+    fun star(i: ReaderItem) {
+        val url = readerUrl(i) ?: return
+        later.items.value.firstOrNull { it.deleted == null && (it.url == url || (i.link != null && it.url == i.link)) }?.let { later.remove(it); return }
+        later.keep(shareTitle(i), url, i.snippet.take(500).ifEmpty { null }, i.sourceName)
+    }
+
+    /** Share with a note, public: a post with your words and the link (a Nostr item quoted). */
+    suspend fun shareWithNote(i: ReaderItem, text: String): Event? {
+        val link = readerUrl(i) ?: return null
+        return post(text.trim(), link)
+    }
+
+    /**
+     * Something typed in Reader's Add box: a relay's address, a person (npub, nprofile or name@domain: their articles),
+     * or a site (its feed). Null: nothing found there.
+     */
+    suspend fun addToReader(typed: String): String? {
+        val t = typed.trim().ifEmpty { return null }
+        val now = Clock.now()
+        if (t.startsWith("wss://") || t.startsWith("ws://")) RelayFeeds.of(t)?.let { r ->
+            changeReader { it.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("relay", r.url), "relay", r.url, r.address, "relays", now, false)) }; return r.address
+        }
+        val pk = (Ref.parse(t) as? Ref.Profile)?.pubkey ?: if ('@' in t && '.' in t.substringAfter('@')) try { Nip05.lookup(t) } catch (_: Exception) { null } else null
+        if (pk != null) {
+            People.want(listOf(pk))
+            val name = People.known.value[pk]?.shown ?: t
+            changeReader { it.withSource(cc.aaro.cosign.reader.ReaderList.Source("writer:$pk", "writer", pk, name, "writers", now, false)) }; return name
+        }
+        val f = NewsSources.find(t) ?: return null
+        changeReader { it.withSource(cc.aaro.cosign.reader.ReaderList.Source(cc.aaro.cosign.reader.ReaderList.id("feed", f.url), "feed", f.url, f.name, "news", now, false)) }
+        return f.name
+    }
+
+    // --- Relays as feeds (RelayFeeds): favourites (10012), sets (30002), what a relay says, its posts -----
+
+    val favRelays = MutableStateFlow<List<RelayFeeds.Relay>>(emptyList())
+    val relaySets = MutableStateFlow<List<RelayFeeds.RelaySet>>(emptyList())
+    @Volatile private var favList: Event? = null
+
+    /** Your favourites and sets, from your newest lists. */
+    suspend fun knowRelayLists() {
+        val me = me ?: return
+        favList = newest(10012, favList, fetch = true)
+        favRelays.value = RelayFeeds.relaysIn(favList)
+        val sets = Fetch.query((writeRelays() + Sources.PROFILES).distinct().take(8), mapOf("kinds" to listOf(30002), "authors" to listOf(me), "limit" to 50), 6000)
+        relaySets.value = RelayFeeds.sets(sets, me)
+    }
+
+    /** [r] in your favourites (or not): from your newest list anywhere, the rest kept. */
+    fun favourite(r: RelayFeeds.Relay, on: Boolean) {
+        val me = me ?: return
+        scope.launch {
+            val change = if (on) ListWrite.Change(add = listOf("relay", r.url)) else ListWrite.Change(remove = listOf("relay", r.url))
+            when (val res = changeList(10012, null, change, expected = favList != null || phone.latest("10012") != null, have = favList)) {
+                is ListResult.Sent -> { favList = res.e; favRelays.value = RelayFeeds.relaysIn(res.e) }
+                is ListResult.Unchanged -> res.newest?.let { favList = it; favRelays.value = RelayFeeds.relaysIn(it) }
+                else -> {}
+            }
+        }
+    }
+
+    /** [r] into the set [d] (or out of it); a new set when [d] is null, called [title]. */
+    fun inSet(d: String?, title: String, r: RelayFeeds.Relay, on: Boolean) {
+        val me = me ?: return
+        scope.launch {
+            val old = d?.let { id -> relaySets.value.firstOrNull { it.d == id }?.event }
+            val id = d ?: java.util.UUID.randomUUID().toString().take(12)
+            val change = if (on) ListWrite.Change(add = listOf("relay", r.url)) else ListWrite.Change(remove = listOf("relay", r.url))
+            val res = changeList(30002, id, change, expected = d != null, have = old, title = title.trim().take(80))
+            (res as? ListResult.Sent)?.e?.let { sent ->
+                relaySets.update { l -> RelayFeeds.sets(l.map { it.event }.filter { it.firstTag("d") != sent.firstTag("d") } + sent, me) }
+            }
+        }
+    }
+
+    /** What a relay says about itself (NIP-11): name, description, icon, who runs it; null: it doesn't say (or isn't one). */
+    data class RelayInfo(val name: String?, val description: String?, val icon: String?, val pubkey: String?)
+    private val relayInfos = java.util.concurrent.ConcurrentHashMap<String, RelayInfo>()
+    suspend fun relayInfo(r: RelayFeeds.Relay): RelayInfo? = relayInfos[r.url] ?: kotlinx.coroutines.withContext(Dispatchers.IO) {
+        try {
+            Fetch.http.newBuilder().callTimeout(4, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(okhttp3.Request.Builder().url(r.url.replaceFirst("ws", "http")).header("Accept", "application/nostr+json").build()).execute().use { res ->
+                    val o = org.json.JSONObject(res.body?.string() ?: return@use null)
+                    fun str(k: String) = o.optString(k).trim().takeIf { it.isNotEmpty() }
+                    RelayInfo(str("name")?.take(80), str("description")?.take(600), str("icon")?.takeIf { it.startsWith("https://") }, str("pubkey")?.takeIf { cc.aaro.qrst.core.isHex32(it) })
+                }
+        } catch (_: Exception) { null }
+    }?.also { relayInfos[r.url] = it }
+
+    /** A relay's (or a set's) own posts, newest first, a page before [until]: from those relays alone. */
+    suspend fun relayPosts(relays: List<RelayFeeds.Relay>, until: Long? = null): List<Event> {
+        val f = mutableMapOf<String, Any>("kinds" to listOf(1, 6, 30023), "limit" to 30)
+        until?.let { f["until"] = it }
+        val hidden = muted.value
+        return Fetch.query(relays.map { it.url }, f, 7000).distinctBy { it.id }
+            .filter { it.pubkey !in hidden && (it.kind != 1 || parentOf(it) == null) && safe(it) && !mutedText(it.content, it) }
+            .sortedByDescending { it.createdAt }.also { remember(it); People.want(it.map { e -> e.pubkey }.distinct()) }
+    }
+
+    /** Relays the people you follow write to (not the big ones, not yours already), with who. */
+    suspend fun relaysPeopleUse(): List<Pair<RelayFeeds.Relay, List<String>>> {
+        val mine = follows.value?.toList() ?: return emptyList()
+        val lists = mine.take(600).chunked(200).map { part -> scope.async { Fetch.query(Sources.PROFILES.take(3), mapOf("kinds" to listOf(10002), "authors" to part), 6000) } }.awaitAll().flatten()
+        val common = (POST_RELAYS + bigRelays + readRelays() + writeRelays() + Sources.PROFILES).mapNotNull { RelayFeeds.of(it)?.url }.toSet()
+        val kept = (favRelays.value + relaySets.value.flatMap { it.relays }).map { it.url }.toSet()
+        return RelayFeeds.peopleUse(lists, mine.toSet(), kept, common).also { l -> People.want(l.flatMap { it.second.take(2) }) }
     }
 
     // --- Polls (NIP-88, Polls) ------------------------------------------------------------------
@@ -2428,14 +3034,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (e.pubkey != me) return
         scope.launch {
-            val list = newest(10001, null, fetch = true)
-            val old = list?.tags ?: emptyList()
-            val has = old.any { it.size > 1 && it[0] == "e" && it[1] == e.id }
-            if (has == on) return@launch
-            val tags = if (on) old + listOf(listOf("e", e.id)) else old.filterNot { it.size > 1 && it[0] == "e" && it[1] == e.id }
-            val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-            if (act(Event(me, at, 10001, tags, list?.content ?: "").withId())) {
-                val ids = tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
+            val change = if (on) ListWrite.Change(add = listOf("e", e.id)) else ListWrite.Change(remove = listOf("e", e.id))
+            val res = changeList(10001, null, change, expected = myPins.value.isNotEmpty() || phone.latest("10001") != null)
+            if (res is ListResult.Sent) {
+                val ids = res.e.tags.filter { it.size > 1 && it[0] == "e" }.map { it[1] }.reversed()
                 myPins.value = ids; prefs.edit().putString("myPins", ids.joinToString(",")).apply()
                 message.value = if (on) "Pinned to your profile" else "Unpinned"
             }
@@ -2454,18 +3056,22 @@ class Social private constructor(private val phone: Phone, context: Context) {
             try {
                 val list = newest(10010, null, fetch = true)
                 if (list == null && !on) return@launch
-                val old = list?.tags ?: emptyList()
-                val public = old.any { it.size > 1 && it[0] == "p" && it[1] == pk }
-                // Someone kept privately: taken out of the private part (which only you can read).
+                val public = list?.tags?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
+                // Someone kept privately: taken out of the private part (which only you can read), checked the same way.
                 val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
                     ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
                 val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
                 if (on == (public || inPrivate)) return@launch
-                val tags = if (on) old + listOf(listOf("p", pk)) else old.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
-                val content = if (!on && inPrivate) toSelf(Json.stringify(private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }), encrypt = true) ?: return@launch
-                    else list?.content ?: ""
-                val at = maxOf(Clock.now(), (list?.createdAt ?: 0) + 1)
-                if (act(Event(me, at, 10010, tags, content).withId())) {
+                val sent = if (!on && inPrivate && !public) {
+                    val next = private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
+                    ListWrite.privateGuard(list!!.tags, list.tags, private, next)?.let { message.value = "Didn't change that list: it would have changed more than you asked."; return@launch }
+                    val content = toSelf(Json.stringify(next), encrypt = true) ?: return@launch
+                    actEvent(Event(me, maxOf(Clock.now(), list.createdAt + 1), 10010, list.tags, content).withId()) != null
+                } else {
+                    val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
+                    changeList(10010, null, change, expected = list != null || special.value.isNotEmpty(), have = list) is ListResult.Sent
+                }
+                if (sent) {
                     special.update { if (on) it + pk else it - pk }
                     specialAt = System.currentTimeMillis()
                     prefs.edit().putStringSet("special", special.value).apply()
@@ -2474,18 +3080,54 @@ class Social private constructor(private val phone: Phone, context: Context) {
         }
     }
 
+
     private fun followsIn(e: Event?) = e?.tags?.filter { it.size > 1 && it[0] == "p" }?.map { it[1] }?.toSet() ?: emptySet()
 
     /** Your newest follow list: what this phone has seen signed, or what your relays have. */
     private suspend fun newestContacts(fetch: Boolean): Event? = newest(3, contacts, fetch)
 
-    /** Your newest version of a list (follows, mutes): what this phone has seen signed, or what your relays have. */
+    /** Your newest version of a list (follows, mutes): what this phone has seen signed, or what your relays have (ListWrite.newest). */
     private suspend fun newest(kind: Int, have: Event?, fetch: Boolean): Event? {
         val me = reader ?: return null
-        val local = listOfNotNull(phone.latest(kind.toString()), have)
-        val remote = if (fetch) Fetch.query((writeRelays() + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(kind), "authors" to listOf(me), "limit" to 1), 6000)
-            .filter { it.pubkey == me && it.kind == kind } else emptyList()
-        return (local + remote).maxByOrNull { it.createdAt }
+        return ListWrite.newest(if (fetch) versions(kind, null, have) else listOfNotNull(phone.latest(kind.toString()), have), me, kind)
+    }
+
+    /** Every version of your list [kind] (a set: the one with [d]) this phone or your relays and the profile indexes have. */
+    private suspend fun versions(kind: Int, d: String?, have: Event?): List<Event> {
+        val me = reader ?: return emptyList()
+        val f = mutableMapOf<String, Any>("kinds" to listOf(kind), "authors" to listOf(me), "limit" to 5)
+        d?.let { f["#d"] = listOf(it) }
+        val remote = Fetch.query((writeRelays() + Sources.PROFILES).distinct(), f, 6000)
+        return listOfNotNull(if (d == null) phone.latest(kind.toString()) else null, have) + remote
+    }
+
+    /** What changing one list did: sent (the new version), nothing to do (the newest found), or refused (why). */
+    sealed class ListResult {
+        data class Sent(val e: Event) : ListResult()
+        data class Unchanged(val newest: Event?) : ListResult()
+        data class Refused(val why: String) : ListResult()
+    }
+
+    /**
+     * One change to one of your lists, by the shared rule (ListWrite, list-writes.md): planned from every version found,
+     * checked again before it's signed. [expected]: a list is known to exist (then none found is a refusal). [title]: a
+     * brand-new set's name.
+     */
+    private suspend fun changeList(kind: Int, d: String?, change: ListWrite.Change, expected: Boolean, have: Event? = null,
+                                   title: String? = null): ListResult {
+        val me = me ?: return ListResult.Refused("not signed in")
+        val found = versions(kind, d, have)
+        return when (val p = ListWrite.plan(found, me, kind, d, change, expected, Clock.now(), title)) {
+            is ListWrite.Plan.Refuse -> { message.value = "Couldn't change that list: your current one wasn't found. Try again in a moment."; ListResult.Refused(p.why) }
+            ListWrite.Plan.Nothing -> ListResult.Unchanged(ListWrite.newest(found, me, kind, d))
+            is ListWrite.Plan.Write -> {
+                val tags = p.tags
+                p.old?.let { o -> ListWrite.guard(ListWrite.Version(o.kind, o.createdAt, o.content, o.tags), ListWrite.Version(kind, p.createdAt, p.content, tags)) }?.let { why ->
+                    message.value = "Didn't change that list: it would have changed more than you asked."; return ListResult.Refused(why)
+                }
+                actEvent(Event(me, p.createdAt, kind, tags, p.content).withId())?.let { ListResult.Sent(it) } ?: ListResult.Refused("not sent")
+            }
+        }
     }
 
     // --- Keeping Discover pleasant ---------------------------------------------------------
@@ -2608,12 +3250,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         muted.update { it + pk }
         prefs.edit().putStringSet("muted", muted.value).apply()
         scope.launch {
-            val list = newest(10000, mutes, fetch = true)
-            val old = list?.tags ?: emptyList()
-            if (old.any { it.size > 1 && it[0] == "p" && it[1] == pk }) return@launch
-            // The private part (encrypted in content) stays as it was.
-            val ev = Event(me, maxOf(Clock.now(), (list?.createdAt ?: 0) + 1), 10000, old + listOf(listOf("p", pk)), list?.content ?: "").withId()
-            act(ev)
+            // The private part (encrypted in content) stays as it was (ListWrite).
+            changeList(10000, null, ListWrite.Change(add = listOf("p", pk)), expected = mutes != null || phone.latest("10000") != null, have = mutes)
         }
     }
 
@@ -2708,10 +3346,81 @@ class Social private constructor(private val phone: Phone, context: Context) {
         private fun noteOf(id: String) = synchronized(notes) { notes[id] }
 
         private val all = HashMap<String, Social>()
+        /** The account on screen when the app started (as it was before an upgrade): who the old shared news list goes to. */
+        @Volatile var signedInAtStart: String? = null; private set
+        private var startTaken = false
         fun of(phone: Phone): Social = synchronized(all) {
+            // Once, at the first call: if nobody was signed in then, the old list goes to no one (never to a later switch).
+            if (!startTaken) { startTaken = true; signedInAtStart = try { CosignApp.instance.accounts.active.ui.value.member?.group?.groupX } catch (_: Exception) { null } }
             all.getOrPut(phone.slot + "/" + phone.ui.value.member?.group?.groupX) { People.init(CosignApp.instance); Social(phone, CosignApp.instance).also { it.restoreFeed() } }
         }
     }
 
     private fun remember(es: List<Event>) = Companion.remember(es)
+}
+
+/** Reader's rows from people's posts (reader.md §3, §5): apart from Social so the shared fixtures can run them. */
+internal object ReaderRows {
+    private val WEB = Regex("""(?i)https?://[^\s<>"]+""")
+
+    /** Each event once, an article (or anything addressable) only in its newest version. */
+    fun newest(events: List<Event>): List<Event> = events.distinctBy { it.id }
+        .groupBy { if (it.kind in 30000..39999) "${it.kind}:${it.pubkey}:${it.firstTag("d") ?: ""}" else it.id }.values.map { l -> l.maxBy { it.createdAt } }
+
+    /** A row's title and the grey text after it, from the post as one line (no raw reference, cut after flattening). */
+    fun title(e: Event, people: Map<String, Person>): Pair<String, String> {
+        // A content warning: the reason, not the words (an article's title and summary too).
+        cc.aaro.cosign.ui.Body.warning(e)?.let { return it.ifEmpty { "Sensitive" } + ": show" to "" }
+        if (e.kind == 30023) return (e.firstTag("title")?.trim()?.ifEmpty { null } ?: "Untitled") to cc.aaro.cosign.ui.Markdown.line(e)
+        // Only a viewer's link: "a post", as a title "A post".
+        val line = cc.aaro.cosign.ui.Body.line(e, people).let { l -> if (l == "a post" || l == "an article") l.replaceFirstChar { it.uppercase() } else l }
+        val t = cc.aaro.cosign.ui.Body.cut(line, 120)
+        return t to (if (t.length >= line.length) "" else cc.aaro.cosign.ui.Body.cut(line.drop(t.removeSuffix("…").length).trim(), 200))
+    }
+
+    /** The link a person's item goes to: its first web link (a viewer's link included: that opens here). */
+    fun link(e: Event): String? {
+        if (e.kind == 30023) return null
+        // The first web link that isn't one of its pictures or videos (those are shown, not linked to).
+        val media = cc.aaro.cosign.ui.Body.of(e).media.map { m -> when (m) { is cc.aaro.cosign.ui.Body.Img -> m.url; is cc.aaro.cosign.ui.Body.Vid -> m.v.url } }.toSet()
+        return WEB.findAll(e.content).map { it.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"') }.firstOrNull { it !in media }
+    }
+
+    /**
+     * What a row's Open in… (or a tap) opens: the post [tapped] (one of a day's posts), else the row's own post or
+     * article, else a day of one post's. A day of several posts has no one post for the row: null.
+     */
+    fun openTarget(i: Social.ReaderItem, tapped: Event? = null): Event? = tapped?.takeIf { t -> i.posts.any { it.id == t.id } || i.event?.id == t.id }
+        ?: i.event ?: i.posts.singleOrNull()
+
+    /** A row's title and snippet drawn now, with the names known now (stored ones were made at load). */
+    fun text(i: Social.ReaderItem, people: Map<String, Person>): Pair<String, String> = when {
+        i.posts.isNotEmpty() -> i.title to cc.aaro.cosign.ui.Body.cut(i.posts.joinToString(" · ") { cc.aaro.cosign.ui.Body.line(it, people) }, 240)
+        i.event != null -> title(i.event, people)
+        else -> i.title to i.snippet
+    }
+
+    /** Articles and posts with a link or media one by one; short ones a row per person per day ("3 posts"). [offset]: local time's, at a moment. */
+    fun people(posts: List<Event>, people: Map<String, Person>, source: (String) -> String, folder: String, offset: (Long) -> Long = { 0 }): List<Social.ReaderItem> {
+        val out = ArrayList<Social.ReaderItem>()
+        val shorts = LinkedHashMap<String, MutableList<Event>>()
+        fun name(pk: String) = people[pk]?.shown ?: shortNpub(pk)
+        for (e in posts) when (cc.aaro.cosign.reader.ReaderRules.kindOf(e)) {
+            cc.aaro.cosign.reader.ReaderRules.Kind.REPLY -> {}
+            cc.aaro.cosign.reader.ReaderRules.Kind.SHORT -> shorts.getOrPut(cc.aaro.cosign.reader.ReaderRules.digestKey(e.pubkey, e.createdAt, offset(e.createdAt))) { ArrayList() } += e
+            cc.aaro.cosign.reader.ReaderRules.Kind.ITEM -> {
+                val (t, sn) = title(e, people)
+                val image = e.firstTag("image")?.takeIf { it.startsWith("https://") }
+                    ?: cc.aaro.cosign.ui.Body.of(e).images.firstOrNull()?.let { it.preview ?: it.url }?.takeIf { it.startsWith("https://") }
+                out += Social.ReaderItem(cc.aaro.cosign.reader.ReaderRules.keyOf(e), source(e.pubkey), name(e.pubkey), folder,
+                    if (e.kind == 30023) "article" else "people", t, sn, e.createdAt, link(e), null, image, e, pubkey = e.pubkey)
+            }
+        }
+        for ((k, l) in shorts) {
+            val sorted = l.sortedByDescending { it.createdAt }; val pk = sorted[0].pubkey
+            out += Social.ReaderItem(k, source(pk), name(pk), folder, "people", "${sorted.size} ${if (sorted.size == 1) "post" else "posts"}",
+                cc.aaro.cosign.ui.Body.cut(sorted.joinToString(" · ") { cc.aaro.cosign.ui.Body.line(it, people) }, 240), sorted[0].createdAt, posts = sorted, pubkey = pk)
+        }
+        return out
+    }
 }
