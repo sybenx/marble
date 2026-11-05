@@ -100,4 +100,29 @@ class ReaderRulesTest {
         // Written at 250, after the mark: it wins.
         assertEquals(mapOf("s" to 300L), ReaderRules.mergeUpto(mapOf("s" to 10L), Long.MAX_VALUE, mapOf("s" to 300L), 250, emptyList(), emptyList()))
     }
+
+    /** gate 0.12.29: Mark all as read's Undo puts back only what it set; a value a sync brought in since stays. */
+    @Test fun undoRevertsOnlyItsOwnChange() {
+        val change = mapOf("s" to (100L to 500L), "t" to (null to 500L))
+        // "s" was raised by a sync to 600 meanwhile: kept. "t" is as the change left it: removed again.
+        assertEquals(mapOf("s" to 600L, "u" to 7L), ReaderRules.revert(mapOf("s" to 600L, "t" to 500L, "u" to 7L), change))
+        assertEquals(mapOf("s" to 100L), ReaderRules.revert(mapOf("s" to 500L, "t" to 500L), change))
+    }
+
+    /** re-check B: an unread item past its 30 days never holds read-up-to back; read or still-showing ones do. */
+    @Test fun anOldUnreadItemDoesntHoldTheRise() {
+        val now = 100 * 86_400L
+        assertTrue(!ReaderRules.holdsRise(read = false, at = now - 60 * 86_400, now = now))
+        assertTrue(ReaderRules.holdsRise(read = false, at = now - 10 * 86_400, now = now))
+        assertTrue(ReaderRules.holdsRise(read = true, at = now - 60 * 86_400, now = now))
+    }
+
+    /** withoutCounts: only whole score and comment-count lines go; "The final score: 3-1" stays. */
+    @Test fun onlyWholeCountLinesGo() {
+        val hn = "<p>Article URL: https://x.org/a</p>\n<p>Comments URL: https://news.ycombinator.com/item?id=1</p>\n<p>Points:&nbsp;120</p>\n<p># Comments: 45</p>"
+        val out = cc.aaro.cosign.withoutCounts(hn)
+        assertTrue(out, !out.contains("120") && !out.contains("45") && out.contains("Comments URL"))
+        assertEquals("The final score: 3-1 tonight", cc.aaro.cosign.withoutCounts("The final score: 3-1 tonight"))
+        assertEquals("Votes: 12,000 people turned out", cc.aaro.cosign.withoutCounts("Votes: 12,000 people turned out"))
+    }
 }

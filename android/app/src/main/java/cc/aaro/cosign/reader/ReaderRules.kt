@@ -58,8 +58,9 @@ object ReaderRules {
         return o
     }
 
-    /** Still in Reader (§4): unread (up to 30 days, filtered before this), read but not aged yet, or starred. */
-    fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long, onScreen: Boolean = false): Boolean = !read || now - at < keepFor(type) || starred || onScreen
+    /** Still in Reader (§4): starred always; read (or kept unread) for its kind's time; unread, never marked, 30 days. */
+    fun stays(read: Boolean, at: Long, type: String, starred: Boolean, now: Long, onScreen: Boolean = false): Boolean =
+        starred || onScreen || now - at < (if (read) keepFor(type) else UNREAD_FOR)
     /** How long a read-again mark (−t) is kept: long enough to beat any Keep unread still on its way; a positive mark stays [UNREAD_FOR]. */
     const val CLEARED_FOR = 7 * 86_400L
 
@@ -77,6 +78,9 @@ object ReaderRules {
             maxOf(ca ?: Long.MIN_VALUE, cb ?: Long.MIN_VALUE)
         }
     }
+
+    /** An item that may hold read-up-to back: read, or unread and still showing (an unread one past its 30 days doesn't). */
+    fun holdsRise(read: Boolean, at: Long, now: Long) = read || now - at < UNREAD_FOR
 
     /** A Reader item for [ageUpto]: its source, its time, whether it's read, and whether it has aged out. */
     data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
@@ -173,6 +177,13 @@ object ReaderRules {
     }
 
     /** How long a read item stays in the river (seconds): news a day, people two, articles a week. Unread stay up to 30 days. */
-    fun keepFor(type: String): Long = when (type) { "news" -> 86_400L; "people" -> 2 * 86_400L; else -> 7 * 86_400L }
+    fun keepFor(type: String): Long = when (type) { "news" -> 86_400L; "people", "digest" -> 2 * 86_400L; else -> 7 * 86_400L }
     const val UNREAD_FOR = 30 * 86_400L
+
+    /**
+     * An Undo of one change: each entry [changes] set (before → after) goes back to before, but only where it still
+     * holds what that change set (a sync's newer value since then is left alone).
+     */
+    fun revert(m: Map<String, Long>, changes: Map<String, Pair<Long?, Long>>): Map<String, Long> =
+        changes.entries.fold(m) { acc, (k, v) -> if (acc[k] != v.second) acc else v.first?.let { acc + (k to it) } ?: (acc - k) }
 }

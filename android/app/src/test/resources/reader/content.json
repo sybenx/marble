@@ -147,7 +147,7 @@
    },
    {
     "source": "Ana Quote",
-    "title": "1 post",
+    "title": "Today's posts",
     "has": [
      "@Ben Builder"
     ]
@@ -170,7 +170,7 @@
    },
    {
     "source": "Eve Warns",
-    "title": "1 post",
+    "title": "Today's posts",
     "has": [
      "spoilers: show"
     ],
@@ -180,7 +180,7 @@
    },
    {
     "source": "Fay Emoji",
-    "title": "1 post",
+    "title": "Today's posts",
     "has": [
      "Party time :blobcat:"
     ]
@@ -219,7 +219,7 @@
    {
     "line": [
      "Ana Quote",
-     "1 post"
+     "Today's posts"
     ],
     "mention": "@Ben Builder"
    },
@@ -258,7 +258,7 @@
    {
     "line": [
      "Eve Warns",
-     "1 post"
+     "Today's posts"
     ],
     "warningGate": "spoilers"
    },
@@ -274,7 +274,7 @@
      "Jon Links",
      "Great essay example.org/essay"
     ],
-    "vOpens": "^https://example.org/essay"
+    "vOpens": "^/nevent1"
    }
   ],
   "openInNote": "With an app your follows recommend for the kind (NIP-89, 31989/31990), it comes first; these test people recommend none."

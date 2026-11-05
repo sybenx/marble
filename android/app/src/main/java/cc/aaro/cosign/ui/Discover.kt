@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.toPath
@@ -4446,14 +4447,32 @@ private fun ApprovalsScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Co
 
 private val READER_FOLDERS = listOf("first" to "Read first", "people" to "Your people", "news" to "News", "writers" to "Writers", "relays" to "Relays")
 
-/** "2:14 pm" today, else "Nov 3". */
+/** "9:41" today, else "Nov 3"; more than a year old, "Nov 3, 2025". */
 private fun shortDate(t: Long): String {
-    val d = java.util.Date(t * 1000); val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-    return if (today.format(d) == today.format(java.util.Date())) java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(d)
-        else java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(d)
+    val d = java.util.Date(t * 1000); val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+    return when {
+        day.format(d) == day.format(java.util.Date()) -> java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(d)
+        System.currentTimeMillis() / 1000 - t > 365 * 86_400L -> java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault()).format(d)
+        else -> java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(d)
+    }
 }
+/** "today", else "Nov 3": a day's name, for a digest. */
+private fun dayWords(t: Long): String = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault()).let { f ->
+    if (f.format(java.util.Date(t * 1000)) == f.format(java.util.Date())) "today" else java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(java.util.Date(t * 1000)) }
+/** "Nov 4, 9:12": the by-line's date. */
+private fun fullDate(t: Long): String = java.text.SimpleDateFormat("MMM d, ", java.util.Locale.getDefault()).format(java.util.Date(t * 1000)) +
+    java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(t * 1000))
 
-/** Reader: folders along the top (a dot when something's new, never a number), then a compact row per item. */
+/**
+ * The message line's Undo (Mark all as read, a star taken off, a note kept, a post about to go). [commit] is what
+ * happens if it isn't undone: when it runs out, and also when another takes its place or Reader closes (never dropped).
+ */
+private class ReaderUndo(val key: String, val text: String, val undo: () -> Unit, val commit: (() -> Unit)? = null, val cancel: (() -> Unit)? = null)
+
+/**
+ * Reader, as Google Reader (marble-reader-fidelity.md): chips along the top (bold for what arrived since you last
+ * opened one, never a number or a dot), the stream head as text, a row a story, one opened at a time.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyListState) {
@@ -4462,6 +4481,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
     social.readerReadAt.collectAsState().value
     val laterItems by social.later.items.collectAsState()
     val kept = remember(laterItems) { laterItems.filter { it.deleted == null }.mapNotNull { it.url }.toSet() }
+    // "all", "starred", a folder's id, or "src:<source id>" (one source's items).
     var folder by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("all") }
     var loading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -4469,12 +4489,17 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
     // The first time it's shown, then on a pull: Back from a post finds Reader as it was, nothing redrawn under you.
     LaunchedEffect(current) { if (current && items == null && !loading) refresh() }
     val all = items.orEmpty()
-    val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } }.map { it.id to it.name }
-    val folders = (listOf("all" to "All") + READER_FOLDERS + custom).filter { (id, _) -> id == "all" || all.any { it.folder == id } }
+    val people by People.known.collectAsState()
+    val custom = list.folders.filter { !it.gone && READER_FOLDERS.none { b -> b.first == it.id } && it.id != "all" && it.id != "starred" }.map { it.id to it.name }
+    val folders = (READER_FOLDERS + custom).filter { (id, _) -> all.any { it.folder == id } }
     // Muted or unsubscribed just now: gone at once; the list loaded again for what changed.
     val gone = remember(list) { list.muted.toSet() + list.sources.filter { it.gone }.map { it.id } }
-    val inFolder = if (folder == "all") all else all.filter { it.folder == folder }
-    val shown = inFolder.filter { it.source !in gone }
+    fun inFolder(id: String) = when {
+        id == "all" -> all
+        id == "starred" -> all.filter { social.starred(it, kept) }
+        id.startsWith("src:") -> all.filter { it.source == id.removePrefix("src:") }
+        else -> all.filter { it.folder == id }
+    }.filter { it.source !in gone }
     val shape = remember(list) { Triple(list.live.map { it.id to it.folder }, list.muted.toSet(), social.peopleOn()) }
     var lastShape by remember { mutableStateOf(shape) }
     // A change while a load is running waits for it, then loads again; the rows on screen stay.
@@ -4482,174 +4507,276 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
     LaunchedEffect(shape, loading) { if (shape != lastShape && items != null && !loading) { lastShape = shape; loading = true
         scope.launch { try { social.loadReader(keep = items.orEmpty().map { it.key }.toSet()) } finally { loading = false } } } }
     fun unread(i: Social.ReaderItem) = !social.itemRead(i)
-    val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
-    val open = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    // Opening a folder clears its bold (what arrived since it was last opened).
+    LaunchedEffect(folder) { social.openedFolder(folder) }
+    val head = when {
+        folder == "all" -> "All items"; folder == "starred" -> "Starred"
+        folder.startsWith("src:") -> all.firstOrNull { it.source == folder.removePrefix("src:") }?.let { liveSource(it, people) } ?: "Source"
+        else -> (READER_FOLDERS + custom).firstOrNull { it.first == folder }?.second ?: folder
+    }
+    // All, Starred and a source's view keep their List/Expanded on this phone; a folder's is in the synced list.
+    val pseudo = folder == "all" || folder == "starred" || folder.startsWith("src:")
+    var localView by remember(folder) { mutableStateOf(if (pseudo) social.localView(folder) else "list") }
+    val view = if (pseudo) localView else list.folders.firstOrNull { it.id == folder }?.view ?: "list"
+    val expanded = view == "river"
+    // The order is fixed when the folder loads: unread first, the "Earlier" line, then read. Reading only changes looks.
+    val order = remember(items, folder, gone) { inFolder(folder).let { l -> l.filter(::unread) + l.filterNot(::unread) } }
+    val earlier = remember(order) { order.indexOfFirst { !unread(it) }.takeIf { it > 0 } }
+    var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    // Undo is the account's (one per item, never dropped; cancelled on a switch of account), shown here.
+    val pendingShown by social.pending.shown.collectAsState()
+    fun offer(u: ReaderUndo) { social.pending.offer(u.key, u.text, u.undo, u.commit, cancel = u.cancel) }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
+        // Chips: All · Starred · the folders · Add. Bold: something arrived since you last opened it (never All or Starred).
         Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((id, name) in folders) {
+            for ((id, name) in listOf("all" to "All", "starred" to "Starred") + folders) {
                 val on = folder == id
-                val fresh = id != "all" && all.any { it.folder == id && unread(it) }
+                val fresh = id != "all" && id != "starred" && !on && social.arrivedSince(id, inFolder(id))
                 Box(Modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Vault.AccentGround else Color.Transparent).border(1.dp, if (on) Vault.AccentEdge else Vault.Edge, RoundedCornerShape(14.dp))
-                    .clickable { folder = id }.padding(horizontal = 11.dp, vertical = 5.dp)) {
-                    Text(name, color = if (on) Vault.Accent else Vault.Text, style = MaterialTheme.typography.labelLarge)
-                    if (fresh) Box(Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-3).dp).size(5.dp).clip(CircleShape).background(Vault.Accent))
+                    .clickable { folder = id; open = null }.padding(horizontal = 11.dp, vertical = 5.dp)) {
+                    Text(name, color = if (on) Vault.Accent else Vault.Text, style = MaterialTheme.typography.labelLarge, fontWeight = if (fresh) FontWeight.Bold else FontWeight.Normal)
                 }
             }
             Box(Modifier.clip(RoundedCornerShape(14.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(14.dp)).clickable { nav.open(Route.ReaderSources) }.padding(horizontal = 11.dp, vertical = 5.dp)) {
-                Text("+", color = Vault.Muted, style = MaterialTheme.typography.labelLarge)
+                Text("Add", color = Vault.Muted, style = MaterialTheme.typography.labelLarge)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(folders.firstOrNull { it.first == folder }?.second ?: "All", color = Vault.Text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            var menu by remember { mutableStateOf(false) }
-            Box {
-                IconButton({ menu = true }) { Icon(Icons.Filled.MoreVert, "Folder", tint = Vault.Muted) }
-                if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
-                    DropdownMenuItem({ Text("Mark all as read", color = Vault.Text) }, { menu = false; social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) }) })
-                    if (folder != "all") for ((v, label) in listOf("list" to "List view", "river" to "Expanded view")) DropdownMenuItem({ Text((if (view == v) "✓ " else "") + label, color = Vault.Text) }, {
-                        menu = false
-                        val name = folders.firstOrNull { it.first == folder }?.second ?: folder
-                        social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, name, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
-                    })
+        // The stream head, as text: List · Expanded, and Mark all as read (always there; Undo for a few seconds).
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(head, color = Vault.Text, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            @Composable fun Link(label: String, on: Boolean = true, onClick: () -> Unit) = Text(label, color = if (on) Vault.Accent else Vault.Muted, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(enabled = on, onClick = onClick).padding(horizontal = 4.dp, vertical = 8.dp))
+            fun setView(v: String) = if (pseudo) { social.setLocalView(folder, v); localView = v }
+                else social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, head, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
+            Link("List", on = expanded) { setView("list") }
+            Text("·", color = Vault.Muted)
+            Link("Expanded", on = !expanded) { setView("river"); open = null }
+            Spacer(Modifier.width(10.dp))
+            Link("Mark all as read") {
+                val shown = inFolder(folder)
+                if (folder == "starred") {
+                    // Starred: only these items (their sources' other items stay as they are), and only once the Undo is past.
+                    social.markStarredRead(shown.filter(::unread))
+                } else {
+                    // Its Undo puts back only what this changed, not what a sync brought in meanwhile.
+                    val change = social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) })
+                    offer(ReaderUndo("markall:$folder", "Marked all as read", { social.undoRead(change) }))
                 }
             }
         }
+        if (folder == "people" || folder.startsWith("src:")) Text("Source settings…", color = Vault.Accent, style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(start = 12.dp).clip(RoundedCornerShape(6.dp)).clickable { nav.open(Route.ReaderSources) }.padding(horizontal = 4.dp, vertical = 4.dp))
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(loading && items != null, ::refresh, Modifier.fillMaxSize()) {
-            // Expanded view: an item is read once it's been fully on screen for a second, not while flinging past it.
-            if (view == "river") LaunchedEffect(state, shown) {
+            // Expanded view: an item is read once its top has gone above the pane's top and a second has passed, not while flinging.
+            if (expanded) LaunchedEffect(state, order) {
                 val since = HashMap<String, Long>()
                 while (true) {
                     delay(250)
                     val now = System.currentTimeMillis()
                     val info = state.layoutInfo
-                    val whole = if (state.isScrollInProgress) emptySet() else info.visibleItemsInfo
-                        .filter { it.offset >= info.viewportStartOffset && it.offset + it.size <= info.viewportEndOffset }.mapNotNull { it.key as? String }.toSet()
-                    since.keys.retainAll(whole)
-                    for (k in whole) {
+                    val past = if (state.isScrollInProgress) emptySet() else info.visibleItemsInfo.filter { it.offset < info.viewportStartOffset }.mapNotNull { it.key as? String }.toSet()
+                    since.keys.retainAll(past)
+                    for (k in past) {
                         val t = since.getOrPut(k) { now }
-                        if (now - t >= 1000) shown.firstOrNull { it.key == k }?.let { if (!social.itemRead(it)) social.markItemRead(it) }
+                        // Kept unread stays so: scrolling never marks it.
+                        if (now - t >= 1000) order.firstOrNull { it.key == k }?.let { if (!social.itemRead(it) && !social.keptUnread(it)) social.markItemRead(it) }
                     }
                 }
             }
             LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
                 if (items == null) item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }
-                else if (shown.isEmpty()) item { Text(if (all.isEmpty()) "Add a site or a person with +." else "Nothing new here.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
-                items(shown, key = { it.key }) { i ->
-                    val isOpen = view == "river" || i.key in open
-                    ReaderRow(i, unread(i), social.starred(i, kept), isOpen, social, nav, onToggle = {
-                        if (i.key in open) open.remove(i.key) else { open.add(i.key); social.markItemRead(i, opened = true) }
-                    })
+                else if (order.isEmpty()) item { Text(if (all.isEmpty()) "Add a site or a person with Add." else "Nothing here.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+                order.forEachIndexed { n, i ->
+                    if (n == earlier) item(key = "earlier") { Text("Earlier", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) }
+                    item(key = i.key) {
+                        ReaderRow(i, unread(i), social.starred(i, kept), expanded || open == i.key, expanded, social, nav,
+                            onToggle = { if (open == i.key) open = null else { open = i.key; social.markItemRead(i, opened = true) } },
+                            onSource = { folder = "src:$it"; open = null }, onUndo = { offer(it) })
+                    }
                 }
+                // Expanded view: room after the last item, so the last ones can reach the top and be read.
+                if (expanded && order.isNotEmpty()) item(key = "room") { Spacer(Modifier.fillParentMaxHeight()) }
             }
         }
     }
+    // The message line: what just happened, and Undo.
+    pendingShown?.let { u -> Row(Modifier.align(Alignment.BottomCenter).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp))
+        .padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(u.text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+        TextButton({ social.pending.undo(u) }) { Text("Undo", color = Vault.Accent) }
+    } }
+    }
 }
 
-/** One item: ☆ · source · title (bold until read) · snippet · date; tapped, it opens in place; held, Keep unread and Share. */
+/** Reader's quiet text links in a row ("Star · Share with a note · …"). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ReaderLinks(links: List<Pair<String, () -> Unit>>, after: List<Pair<String, () -> Unit>> = emptyList(),
+                        middle: @Composable androidx.compose.foundation.layout.FlowRowScope.() -> Unit = {}) =
+    androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).background(Vault.ReadTint, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.Center) {
+        @Composable fun word(n: Int, label: String, act: () -> Unit) {
+            if (n > 0) Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.CenterVertically))
+            Text(label, color = Vault.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.CenterVertically).clip(RoundedCornerShape(4.dp)).clickable(onClick = act).padding(horizontal = 2.dp, vertical = 10.dp))
+        }
+        links.forEachIndexed { n, (label, act) -> word(n, label, act) }
+        middle()
+        after.forEach { (label, act) -> word(1, label, act) }
+    }
+
+/**
+ * One item. Closed: two lines (star · source · date; the title, bold until read, and the snippet), a faint tint once
+ * read. Open (or in Expanded view): the title as the way out, the by-line, the body in full, and the action bar.
+ */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, open: Boolean, social: Social, nav: Nav, onToggle: () -> Unit) {
+private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, open: Boolean, expanded: Boolean, social: Social, nav: Nav,
+                      onToggle: () -> Unit, onSource: (String) -> Unit, onUndo: (ReaderUndo) -> Unit) {
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
     val people by People.known.collectAsState()
-    val scope = rememberCoroutineScope()
-    Box {
-        Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }, onClick = onToggle).padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
-                modifier = Modifier.size(36.dp).clip(CircleShape).clickable { social.star(i) }.padding(9.dp))
-            Text(liveSource(i, people), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(76.dp))
-            Spacer(Modifier.width(8.dp))
-            // Drawn again as names arrive (the line has @names in it).
+    fun star() = social.star(i)
+    // The open row is one entry with its body: a thin accent edge down the left of both.
+    val accent = Vault.Accent
+    val edge = Modifier.drawBehind { if (open && !expanded) drawRect(accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }
+    Column(edge) {
+    if (!expanded) Box {
+        Column(Modifier.fillMaxWidth().background(if (!unread && !open) Vault.ReadTint else Color.Transparent)
+            .combinedClickable(onLongClick = { menu = true }, onClick = onToggle).padding(start = 4.dp, end = 14.dp, top = 2.dp, bottom = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
+                    modifier = Modifier.size(36.dp).clip(CircleShape).clickable { star() }.padding(9.dp))
+                Text(liveSource(i, people), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(shortDate(i.at), color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+            }
+            // Drawn again as names arrive (the line has @names in it). A day's posts are named by the day, not counted.
             val (title, snippet) = remember(i, people.size) { cc.aaro.cosign.ReaderRows.text(i, people) }
+            val shownTitle = if (i.posts.isNotEmpty()) cc.aaro.cosign.ReaderRows.dayTitle(i.at, System.currentTimeMillis() / 1000) else title
             Text(androidx.compose.ui.text.buildAnnotatedString {
-                withStyle(androidx.compose.ui.text.SpanStyle(color = if (unread) Vault.Text else Vault.Muted, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal)) { append(title) }
-                if (snippet.isNotBlank() && !open) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Field)) { append(" — " + snippet) }
-            }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(vertical = 10.dp))
-            // A day's several posts: each opened has its own Open in… (one for the row would open only one of them).
-            if (!open && i.posts.size <= 1) ReaderOpenIn(i, social, nav, 32)
-            Text(shortDate(i.at), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Text, fontWeight = if (unread && !open) FontWeight.Bold else FontWeight.Normal)) { append(shownTitle) }
+                if (snippet.isNotBlank()) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Muted)) { append(" — " + snippet) }
+            }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 9.dp))
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
             DropdownMenuItem({ Text("Keep unread", color = Vault.Text) }, { menu = false; social.keepUnread(i.key) })
-            DropdownMenuItem({ Text("Share with a note", color = Vault.Text) }, { menu = false; sharing = true })
+            DropdownMenuItem({ Text("Share with a note", color = Vault.Text) }, { menu = false; if (!open) onToggle(); sharing = true })
             DropdownMenuItem({ Text("Share", color = Vault.Text) }, { menu = false; share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) })
             DropdownMenuItem({ Text("Mute ${liveSource(i, people)}", color = Vault.Text) }, { menu = false; social.changeReader { it.withMute(i.source, true, cc.aaro.cosign.core.Clock.now()) } })
         }
     }
-    if (open) Column(Modifier.fillMaxWidth().background(Vault.Surface).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
-        // A story's heading; a post or article is its own (drawn below).
-        if (i.event == null && i.posts.isEmpty()) Text(i.title, color = Vault.Text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(liveSource(i, people) + " · " + shortDate(i.at), color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
-        // Posts drawn as everywhere else (the shared content rules): @names, quote and article cards, pictures (Blossom too), a warning's veil.
-        when {
-            i.posts.isNotEmpty() -> i.posts.forEachIndexed { n, p -> if (n > 0) HorizontalDivider(color = Vault.Edge)
-                // Tap a post to open it; hold it for Open in… (no icon on each: Reader keeps rows plain).
-                var menu by remember(p.id) { mutableStateOf(false) }
-                Box {
-                    ReaderPost(p, people, nav, compact = true, onLong = { menu = true })
-                    if (menu) OpenInMenu(i, p, null, social, nav) { menu = false }
-                } }
-            i.event?.kind == 30023 -> Veiled(i.event) { ArticleCard(i.event, people, nav) }
-            i.event != null -> ReaderPost(i.event, people, nav, compact = false)
-            else -> {
-                i.image?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
-                if (i.snippet.isNotBlank()) Text(i.snippet, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-            }
-        }
-        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (i.posts.size <= 1) ReaderOpenIn(i, social, nav, 40)
-            i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> Icon(Glyphs.talk, "Discussion", tint = Vault.Muted, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { openInBrowser(context, d, i.key) }.padding(10.dp)) }
-            Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Muted,
-                modifier = Modifier.size(40.dp).clip(CircleShape).clickable { social.star(i) }.padding(10.dp))
-        }
+    if (open) ReaderOpened(i, starred, unread, expanded, social, nav, people, sharing, { sharing = it }, ::star, onToggle, onSource, onUndo)
     }
     HorizontalDivider(color = Vault.Edge)
-    if (sharing) ShareWithNote(i, social) { sharing = false }
+}
+
+/** The opened item: the title (the way out), the by-line, the body in full, flat, and the action bar in words. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ReaderOpened(i: Social.ReaderItem, starred: Boolean, unread: Boolean, expanded: Boolean, social: Social, nav: Nav, people: Map<String, Person>,
+                         sharing: Boolean, setSharing: (Boolean) -> Unit, star: () -> Unit, onToggle: () -> Unit, onSource: (String) -> Unit, onUndo: (ReaderUndo) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val name = liveSource(i, people)
+    val post = cc.aaro.cosign.ReaderRows.openTarget(i)
+    val here = i.link?.let { cc.aaro.cosign.inAppRef(it) }
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 10.dp)) {
+        // The title: a story's headline (its site), an article's title (Marble's reader), a post's name and time (the post),
+        // a day's name and day (the person's page).
+        val (title, go) = when {
+            i.posts.size > 1 -> "$name · ${dayWords(i.at)}" to { i.pubkey?.let { nav.profile(it) }; Unit }
+            i.event?.kind == 30023 -> (i.event.firstTag("title")?.trim()?.ifEmpty { null } ?: i.title) to { nav.thread(i.event.id) }
+            post != null -> "$name · ${shortDate(post.createdAt)}" to { nav.thread(post.id) }
+            here != null -> i.title to { scope.launch { nav.ref(here, context) }; Unit }
+            else -> i.title to { i.link?.let { openInBrowser(context, it, i.key) }; Unit }
+        }
+        Row(verticalAlignment = Alignment.Top) {
+            if (expanded) Icon(if (starred) Glyphs.starOn else Glyphs.star, if (starred) "Starred" else "Star", tint = if (starred) Vault.Amber else Vault.Field,
+                modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = star).padding(7.dp))
+            Text(title, color = Vault.Accent, style = MaterialTheme.typography.titleMedium, fontWeight = if (expanded && unread) FontWeight.Bold else FontWeight.SemiBold,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(4.dp)).clickable { social.markItemRead(i, opened = true); go() }.padding(vertical = 4.dp))
+        }
+        // The by-line: from Source (its items alone) · the date.
+        Text(androidx.compose.ui.text.buildAnnotatedString {
+            append("from ")
+            withLink(androidx.compose.ui.text.LinkAnnotation.Clickable("source", androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(color = Vault.Accent))) { onSource(i.source) }) { append(name) }
+            append(" · " + fullDate(i.at))
+        }, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 6.dp))
+        // The body, flat and whole: no card, no avatar, no tap on it (only its links, names, pictures and quotes are live).
+        when {
+            i.posts.isNotEmpty() -> i.posts.sortedBy { it.createdAt }.forEachIndexed { n, p ->
+                if (i.posts.size > 1) {
+                    // Each post's name and time is its link (held: Open in… for it).
+                    var menu by remember(p.id) { mutableStateOf(false) }
+                    Box {
+                        Text("${liveSource(i, people)} · ${shortDate(p.createdAt)}", color = Vault.Accent, style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(top = if (n > 0) 10.dp else 0.dp).clip(RoundedCornerShape(4.dp))
+                                .combinedClickable(onLongClick = { menu = true }, onLongClickLabel = "Open in…") { social.markItemRead(i, opened = true); nav.thread(p.id) }.padding(vertical = 4.dp))
+                        if (menu) OpenInMenu(i, p, null, social, nav) { menu = false }
+                    }
+                }
+                ReaderPostBody(p, people, nav)
+            }
+            i.event?.kind == 30023 -> Veiled(i.event) {
+                i.event.firstTag("image")?.trim()?.takeIf { it.startsWith("https://") }?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
+                Text(i.event.firstTag("summary")?.trim()?.ifEmpty { null } ?: Markdown.line(i.event), color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+            }
+            i.event != null -> ReaderPostBody(i.event, people, nav)
+            else -> {
+                i.image?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), 1080) }
+                if (i.snippet.isNotBlank()) Text(i.snippet, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+                // A very long one: its site, in words.
+                if (i.snippet.length > 1500) i.link?.let { u -> Text("Read on ${try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { "the site" }}", color = Vault.Accent,
+                    style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp).clickable { openInBrowser(context, u, i.key) }) }
+            }
+        }
+        // The action bar, in Reader's order, as words: Star · Share with a note · Share · Keep unread · Open in… · Discussion.
+        var opener by remember { mutableStateOf(false) }
+        Box {
+            ReaderLinks(listOf(
+                (if (starred) "★ Starred" else "☆ Star") to star,
+                "Share with a note" to { setSharing(!sharing) },
+                "Share" to { share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) },
+            ), after = buildList {
+                if (post != null) add("Open in…" to { opener = true })
+                i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> add("Discussion" to { openInBrowser(context, d, i.key) }) }
+            }) {
+                // Keep unread: a real toggle; unticked, read again.
+                val keptNow = social.keptUnread(i)
+                Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.CenterVertically))
+                Row(Modifier.align(Alignment.CenterVertically).clip(RoundedCornerShape(4.dp)).clickable(role = androidx.compose.ui.semantics.Role.Checkbox) {
+                    if (keptNow) social.markItemRead(i, opened = true) else social.keepUnread(i.key) }, verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(keptNow, null, Modifier.size(32.dp))
+                    Text("Keep unread", color = Vault.Accent, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            if (opener && post != null) OpenInMenu(i, post, i.link?.takeIf { here == null }, social, nav) { opener = false }
+        }
+        if (sharing) ShareWithNote(i, social, onUndo) { setSharing(false) }
+    }
 }
 
 /**
- * Open in… (reader.md §5): a post or article (a day's newest post, for a digest) in Marble, your Nostr app or njump.me,
- * and the page it links to; a story straight to its page; a viewer's link (njump, primal, nostr.at…) here.
+ * Open in… (reader.md §5): a post or article in your Nostr app, Marble or njump.me, and the page it links to. In the
+ * opened item's action bar only, for Nostr items; never on the row.
  */
-@Composable
-private fun ReaderOpenIn(i: Social.ReaderItem, social: Social, nav: Nav, size: Int, tapped: Event? = null) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    // The post this Open in… is for: the one it sits on, never a day's first or newest by default.
-    val post = cc.aaro.cosign.ReaderRows.openTarget(i, tapped)
-    val here = i.link?.let { cc.aaro.cosign.inAppRef(it) }
-    val page = i.link?.takeIf { here == null }
-    var opener by remember { mutableStateOf(false) }
-    Box {
-        Icon(Glyphs.openIn, "Open in…", tint = Vault.Muted, modifier = Modifier.size(size.dp).clip(CircleShape).clickable {
-            when {
-                post != null -> opener = true
-                here != null -> { social.markItemRead(i, opened = true); scope.launch { nav.ref(here, context) } }
-                page != null -> { social.markItemRead(i, opened = true); openInBrowser(context, page, i.key) }
-            }
-        }.padding((size / 4).dp))
-        if (opener && post != null) OpenInMenu(i, post, page, social, nav) { opener = false }
-    }
-}
-
-/** Open in…'s choices for [post] (your Nostr app, Marble, njump.me, and the [page] it links to), as a menu. */
 @Composable
 private fun OpenInMenu(i: Social.ReaderItem, post: Event, page: String?, social: Social, nav: Nav, onClose: () -> Unit) {
     val context = LocalContext.current
     DropdownMenu(true, onClose, containerColor = Vault.Surface) {
-            val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
-            val (app, marble, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
-            DropdownMenuItem({ Text(app, color = Vault.Text) }, {
-                onClose()
-                social.markItemRead(i, opened = true)
-                try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
-            })
-            DropdownMenuItem({ Text(marble, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); nav.thread(post.id) })
-            DropdownMenuItem({ Text(njump, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, "https://njump.me/$ref", i.key) })
-            // A post about a page: the page too.
-            page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, u, i.key) }) }
+        val ref = remember(post.id) { if (post.kind in 30000..39999) cc.aaro.cosign.naddr(post.firstTag("d") ?: "", post.pubkey, post.kind) else cc.aaro.cosign.nevent(post.id, post.pubkey, post.kind, emptyList()) }
+        val (app, marble, njump) = cc.aaro.cosign.reader.ReaderRules.OPEN_IN
+        DropdownMenuItem({ Text(app, color = Vault.Text) }, {
+            onClose()
+            social.markItemRead(i, opened = true)
+            try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("nostr:$ref")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            catch (_: android.content.ActivityNotFoundException) { social.message.value = "No Nostr app on this phone." }
+        })
+        DropdownMenuItem({ Text(marble, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); nav.thread(post.id) })
+        DropdownMenuItem({ Text(njump, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, "https://njump.me/$ref", i.key) })
+        // A post about a page: the page too.
+        page?.let { u -> DropdownMenuItem({ Text(try { java.net.URI(u).host.removePrefix("www.") } catch (_: Exception) { u }, color = Vault.Text) }, { onClose(); social.markItemRead(i, opened = true); openInBrowser(context, u, i.key) }) }
     }
 }
 
@@ -4660,88 +4787,67 @@ private fun Veiled(e: Event, content: @Composable () -> Unit) {
     var unveiled by remember(e.id) { mutableStateOf(false) }
     if (warning != null && !unveiled) Text(warning.ifEmpty { "Sensitive" } + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Ground).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
-    else content()
+    else Column { content() }
 }
 
-/** A post inside Reader, by the shared renderer (Body): its text, its card, its first picture or video; a tap opens it. */
+/** A post's body in Reader, by the shared renderer (Body), flat: its text whole, its card, its first picture or video. */
 @Composable
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private fun ReaderPost(n: Event, people: Map<String, Person>, nav: Nav, compact: Boolean, onLong: (() -> Unit)? = null) {
+private fun ReaderPostBody(n: Event, people: Map<String, Person>, nav: Nav) {
     val body = remember(n.id) { Body.of(n) }
     LaunchedEffect(n.id) { People.want(body.mentions + n.pubkey) }
-    val warning = remember(n.id) { Body.warning(n) }
-    var unveiled by remember(n.id) { mutableStateOf(false) }
-    val veiled = warning != null && !unveiled
-    Column(Modifier.fillMaxWidth().combinedClickable(onLongClick = onLong, onLongClickLabel = if (onLong != null) "Open in…" else null) { nav.thread(n.id) }.padding(vertical = 6.dp)) {
-        if (compact) Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(people[n.pubkey], n.pubkey, 20)
-            Text(shortDate(n.createdAt), color = Vault.Field, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+    Veiled(n) {
+        val text = remember(body, people.size) { body.annotated(people, nav) }
+        if (text.isNotEmpty()) Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, inlineContent = remember(body) { body.emojiContent() }, modifier = Modifier.padding(top = 2.dp))
+        if (body.trailing.isNotEmpty()) MentionChips(body.trailing, people, nav)
+        when (val c = body.card) {
+            is Body.Part.Quote -> QuoteBox(c.id, people, nav)
+            is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
+            else -> {}
         }
-        if (veiled) Text(warning!!.ifEmpty { "Sensitive" } + ": show", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).background(Vault.Ground).clickable { unveiled = true }.padding(horizontal = 12.dp, vertical = 8.dp))
-        else {
-            val text = remember(body, people.size) { body.annotated(people, nav) }
-            if (text.isNotEmpty()) Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = if (compact) 8 else 20, overflow = TextOverflow.Ellipsis,
-                inlineContent = remember(body) { body.emojiContent() }, modifier = Modifier.padding(top = 4.dp))
-            if (body.trailing.isNotEmpty()) MentionChips(body.trailing, people, nav)
-            when (val c = body.card) {
-                is Body.Part.Quote -> QuoteBox(c.id, people, nav)
-                is Body.Part.QuoteAddr -> AddrBox(c.a, people, nav)
-                else -> {}
+        body.article?.let { AddrBox(it.a, people, nav) }
+        val urls = remember(body) { body.images.map { it.url } }
+        body.media.firstOrNull()?.let { m ->
+            Spacer(Modifier.height(6.dp))
+            when (m) {
+                is Body.Img -> PostImage(m.url, m.preview, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(1f, 2.2f)).clip(RoundedCornerShape(10.dp))) { nav.pictures(urls, 0) }
+                is Body.Vid -> VideoCard(m.v)
             }
-            body.article?.let { AddrBox(it.a, people, nav) }
-            val urls = remember(body) { body.images.map { it.url } }
-            body.media.firstOrNull()?.let { m ->
-                Spacer(Modifier.height(6.dp))
-                when (m) {
-                    is Body.Img -> PostImage(m.url, m.preview, Modifier.fillMaxWidth().aspectRatio(m.ratio.coerceIn(1f, 2.2f)).clip(RoundedCornerShape(10.dp))) { nav.pictures(urls, 0) }
-                    is Body.Vid -> VideoCard(m.v)
-                }
-            }
-            // As a post in a list: one picture, and how many more (a tap shows them, or the post).
-            if (body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, if (body.media[0] is Body.Img) 1 else 0) else nav.thread(n.id) })
         }
+        if (body.media.size > 1) Text("+${body.media.size - 1} more", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp).clickable { if (body.media.drop(1).all { it is Body.Img }) nav.pictures(urls, if (body.media[0] is Body.Img) 1 else 0) else nav.thread(n.id) })
     }
 }
 
 /**
- * Share with a note (marble-2009-spec §5), with its guards: Public is off every time it opens; your private note is
- * never put into the public one; with Public on the button says Post publicly; a few seconds to take it back first.
+ * Share with a note (marble-2009-spec §5), inline under the item, with its guards: Post publicly is off every time it
+ * opens; the button says Keep (to Notes, which stars it) or Post publicly; Undo for a few seconds before anything goes.
  */
 @Composable
-private fun ShareWithNote(i: Social.ReaderItem, social: Social, onClose: () -> Unit) {
+private fun ShareWithNote(i: Social.ReaderItem, social: Social, onUndo: (ReaderUndo) -> Unit, onClose: () -> Unit) {
     var public by remember { mutableStateOf(false) }
     var keepNote by remember { mutableStateOf("") }
     var postNote by remember { mutableStateOf("") }
-    var counting by remember { mutableStateOf(0) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(counting) {
-        if (counting <= 0) return@LaunchedEffect
-        delay(1000)
-        if (counting == 1) { counting = 0; val sent = social.shareWithNote(i, postNote); social.message.value = if (sent != null) "Posted." else "Couldn't post that right now."; onClose() } else counting--
-    }
-    androidx.compose.material3.AlertDialog(onDismissRequest = { if (counting == 0) onClose() }, containerColor = Vault.Surface,
-        title = { Text(social.shareTitle(i), color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column {
-                if (!public) androidx.compose.material3.OutlinedTextField(keepNote, { keepNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Why keep it? (only you)", color = Vault.Muted) })
-                else androidx.compose.material3.OutlinedTextField(postNote, { postNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Say something (everyone sees this)", color = Vault.Muted) })
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = counting == 0) { public = !public }, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Post publicly", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    androidx.compose.material3.Switch(public, { if (counting == 0) public = it })
-                }
-                if (counting > 0) Text("Posting in $counting…", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = {
-            if (counting > 0) TextButton({ counting = 0 }) { Text("Undo", color = Vault.Danger) }
-            else TextButton({
-                if (public) counting = 5
-                else { social.readerUrl(i)?.let { url -> social.later.keep(keepNote.ifBlank { social.shareTitle(i) }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }; social.message.value = "Kept in your notes."; onClose() }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp).background(Vault.ReadTint, RoundedCornerShape(8.dp)).padding(10.dp)) {
+        if (!public) androidx.compose.material3.OutlinedTextField(keepNote, { keepNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("A note (only you)", color = Vault.Muted) })
+        else androidx.compose.material3.OutlinedTextField(postNote, { postNote = it }, Modifier.fillMaxWidth(), placeholder = { Text("Say something (everyone sees this)", color = Vault.Muted) })
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp).clickable { public = !public }, verticalAlignment = Alignment.CenterVertically) {
+            Text("Post publicly", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(public, { public = it })
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClose) { Text("Cancel", color = Vault.Muted) }
+            TextButton({
+                if (public) {
+                    val text = postNote
+                    // Goes when the Undo runs out, or is replaced, or Reader closes; from Social, which nothing here cancels.
+                    onUndo(ReaderUndo("post:${i.key}", "Posting publicly", {}, commit = { social.postSoon(i, text) },
+                        // A switch of account first: said, not silently dropped; your words come with it.
+                        cancel = { social.message.value = "Not posted (you switched account): \u201c$text\u201d" }))
+                } else social.keepWithNote(i, keepNote)  // one Undo with the item's star: the note back as it was
+                onClose()
             }) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
-        },
-        dismissButton = { if (counting == 0) TextButton(onClose) { Text("Cancel", color = Vault.Muted) } })
+        }
+    }
 }
 
 /** Reader's folders and sources: add a site or a person; the people toggle; each source's Mute and Unsubscribe. */

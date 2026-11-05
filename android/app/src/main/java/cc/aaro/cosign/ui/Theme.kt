@@ -27,6 +27,8 @@ object Vault {
     val Ground get() = pick(0xFF13110F, 0xFFF7F3EC)
     val Surface get() = pick(0xFF1E1B18, 0xFFFFFDF9)
     val Edge get() = pick(0xFF2A2622, 0xFFE6DFD4)
+    /** Reader's read rows and its action strip: a faint tint off the ground (Google Reader's pale grey, in Marble's palette). */
+    val ReadTint get() = pick(0xFF1B1916, 0xFFEFE9DF)
     val Line get() = pick(0xFF34302B, 0xFFD6CDBF)
     val Field get() = pick(0xFF4A443C, 0xFFB3AA9B)
     val Text get() = pick(0xFFEDE6DA, 0xFF1F1B16)

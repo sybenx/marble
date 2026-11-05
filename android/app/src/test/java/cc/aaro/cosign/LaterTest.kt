@@ -226,4 +226,40 @@ class LaterTest {
         assertTrue(Later.same("fix the bike\n→ buy a tube", "Fix the bike"))
         assertFalse(Later.same("fix the bike\n→ buy a tube", "buy a tube"))
     }
+
+    /** Reader fidelity: Star and its Note are one; un-starring removes the Note, and Undo brings it back as it was. */
+    @Test fun anUnstarCanBeUndone() {
+        val l = Later(Prefs())
+        val n = l.keep("A story", "https://example.com/a", "its summary", "Example")!!
+        l.remove(n)
+        assertTrue(l.items.value.none { it.deleted == null && it.url == "https://example.com/a" })
+        l.bringBack(n)
+        val back = l.items.value.single { it.deleted == null && it.url == "https://example.com/a" }
+        assertEquals("A story", back.text)
+    }
+
+    /** gate 0.12.29: Share with a note's Keep on a url that had a Note: its Undo puts that Note back, words and all. */
+    @Test fun keepsUndoPutsBackTheNoteThereWas() {
+        val l = Later(Prefs())
+        val first = l.keep("my words about it", "https://example.com/a", null, "Example")!!
+        val was = l.forUrl("https://example.com/a")!!
+        l.keep("a new note", "https://example.com/a", null, "Example")
+        l.putBack(was)
+        assertEquals("my words about it", l.forUrl("https://example.com/a")!!.text)
+        assertEquals(first.id, l.forUrl("https://example.com/a")!!.id)
+    }
+
+    /** gate 0.12.29: an un-star's Undo comes back under a new id, so a removal marker synced meanwhile can't swallow it. */
+    @Test fun anUnstarsUndoIsANewNote() {
+        val l = Later(Prefs())
+        val n = l.keep("A story", "https://example.com/b", null, "Example")!!
+        l.remove(n)
+        val back = l.bringBack(n)
+        assertTrue(back.id != n.id)
+        val v = cc.aaro.cosign.notes.Vault(cc.aaro.cosign.notes.Layout("k1", ByteArray(32)))
+        // The marker for the old id, as a sync would bring it; the new one still goes in.
+        v.take(cc.aaro.cosign.notes.LaterNotes.note(l.items.value.first { it.id == n.id }))
+        assertTrue(v.take(cc.aaro.cosign.notes.LaterNotes.note(back)))
+        assertTrue(back.id in v.notes)
+    }
 }
