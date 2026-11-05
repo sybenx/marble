@@ -88,11 +88,22 @@ export function jot(text) {
   put(item);
   return { item, fresh: !have };
 }
-/** A page kept as a note (from Tabs): by its address; kept again, it comes back rather than doubling. */
-export function keepPage(url, title) {
-  const t = String(title || url).trim().slice(0, 500);
+/** A page kept as a note (from Tabs, Reader's star): by its address; kept again, it comes back rather than doubling. A
+ *  note written with it (Reader's Share with a note) goes on a line of its own. Returns {item, before} (before: the
+ *  note as it was, or null), for Undo. */
+export function keepPage(url, title, note = "") {
+  const n = String(note || "").trim();
   const have = doc.items.find((i) => i.url === url && !i.deleted);
-  put(have ? { ...have, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null, url });
+  const t = (have ? have.text : String(title || url).trim()) + (n ? `\n${n}` : "");
+  const item = have ? { ...have, text: t.slice(0, 500), done: null, updated: next(have) } : { id: newId(), text: t.slice(0, 500), created: now(), updated: now(), done: null, deleted: null, url };
+  put(item);
+  return { item, before: have || null };
+}
+/** Undo of a keepPage: the note as it was before (or removed, if it wasn't there). */
+export function unkeep({ item, before }) {
+  const i = own(item);
+  if (!i) return;
+  if (before) put({ ...before, updated: next(i) }); else remove(i);
 }
 // ── Searches ─────────────────────────────────────────────────────────────────────────────────────────
 // What you searched (Enter, or the browser's address bar), in this browser only, for 30 days: as the phone keeps them.
