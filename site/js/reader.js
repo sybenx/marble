@@ -245,6 +245,7 @@ if (typeof document !== "undefined") document.addEventListener("visibilitychange
 // name, for when it's back; the new one starts from its own copy here, and writes nothing until a read has reached it.
 const switching = new Set(); // (each Reader page's: its pending un-stars, posts and Undos, dropped)
 onMe(() => {
+  for (const u of [...unstars.values()]) u.cancel();
   switching.forEach((fn) => fn());
   clearTimeout(timer); timer = null;
   dirty.clear(); version.list = version.seen = 0; failures = 0; broken = new Set();
@@ -426,6 +427,10 @@ const ageOf = (i) => i.kind === "news" ? AGE.news : i.kind === "article" ? AGE.a
 const SITE = "https://marble.syb.lol";
 const starUrl = (i) => i.link && !i.link.startsWith("/") ? i.link : i.link ? SITE + i.link : i.event ? SITE + pathOf(i.event) : i.posts ? SITE + postPath(i.posts[0]) : "";
 const unstarring = new Set(); // (un-starred, the Note going in a few seconds unless you undo)
+// the pending un-stars, one per account and item, for whichever Reader page is on screen (Reader opened again
+// within the few seconds reaches the same one); signed out is the account "" (as this browser's copy is kept)
+const unstars = new Map(); // `${account}|${url}` → {cancel}
+const acctNow = () => current() || "";
 const starred = (i) => !!starUrl(i) && !unstarring.has(starUrl(i)) && notes.items().some((n) => n.url === starUrl(i));
 /** What a folder shows: unread (up to 30 days), then read ones not aged out; starred never age out. */
 function shown(items) {
@@ -792,18 +797,21 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
   const star = (el) => {
     const i = byKey.get(el.dataset.key), u = i && starUrl(i);
     if (!u) return;
-    if (pending.has(`unstar:${u}`)) return pending.get(`unstar:${u}`).cancel();
+    const acct = acctNow(), key = `${acct}|${u}`;
+    if (unstars.has(key)) return unstars.get(key).cancel();
     const have = notes.items().find((n) => n.url === u);
     if (!have) { notes.keepPage(u, i.kind === "digest" ? `${name(i.author)} · ${day(i.at)}` : i.title); rememberStar(i, true); restyle(); drawFolders(); return; }
-    const acct = current(), id = have.id, key = `unstar:${u}`;
+    const id = have.id;
     let line = null;
     const end = (commit) => {
-      clearTimeout(t); pending.delete(key); unstarring.delete(u); line?.close();
-      if (commit && current() === acct && who === acct) { const n = notes.items().find((x) => x.id === id); if (n) notes.remove(n); rememberStar(i, false); }
-      if (root.isConnected) restyle();
+      if (unstars.get(key) !== entry) return; // (done already)
+      clearTimeout(t); unstars.delete(key); unstarring.delete(u); line?.close();
+      if (commit && acctNow() === acct && who === acct) { const n = notes.items().find((x) => x.id === id); if (n) notes.remove(n); rememberStar(i, false); }
+      active?.restyle?.();
     };
+    const entry = { cancel: () => end(false) };
     const t = setTimeout(() => end(true), 5000);
-    pending.set(key, { cancel: () => end(false), drop: () => end(false) });
+    unstars.set(key, entry);
     unstarring.add(u);
     restyle();
     line = say("Removed from Notes", () => end(false));
@@ -977,7 +985,7 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     goBtn.onclick = () => {
       const note = ta.value.trim();
       if (!pub.checked) {
-        pending.get(`unstar:${starUrl(i)}`)?.cancel(); // (kept: not going after all)
+        unstars.get(`${acctNow()}|${starUrl(i)}`)?.cancel(); // (kept: not going after all)
         const kept = notes.keepPage(starUrl(i), i.kind === "digest" ? `${name(i.author)} · ${day(i.at)}` : i.title, note);
         if (!kept) return say(`That's too long for one note (${notes.NOTE_MAX} characters, with what's kept there already). Nothing was cut.`, null, 6000);
         rememberStar(i, true);
@@ -1045,7 +1053,7 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     for (const f of [...again]) { again.delete(f); fill(f, { quiet: true }); }
     drawFolders(); if (!root.querySelector(".r-row")) drawRiver(true); else refresh();
   });
-  const me_ = active = { root, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-more, .r-settings, [data-openin]")) closeMenu(); }, key: (ev) => {
+  const me_ = active = { root, restyle: () => { if (root.isConnected) restyle(); }, click: (ev) => { if (menu && !menu.contains(ev.target) && !ev.target.closest(".r-more, .r-settings, [data-openin]")) closeMenu(); }, key: (ev) => {
     if (ev.key === "Escape") { if (!$(".r-keys").hidden) $(".r-keys").hidden = true; return closeMenu(); }
     if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.target.closest?.("input, textarea, select, [contenteditable]") || document.querySelector("dialog[open]")) return;
     const all = rowsEl(), el = all[cur], k = ev.key;
