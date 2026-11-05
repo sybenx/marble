@@ -140,3 +140,12 @@ export function readUpTo(items, marks = []) {
   const upto = Math.min(Math.max(...aged), unread.length ? Math.min(...unread) - 1 : Infinity, marks.length ? Math.min(...marks) - 1 : Infinity);
   return upto > 0 ? upto : 0;
 }
+
+/**
+ * Still in the river (reader.md §4): starred, always; read or with a standing Keep unread mark, until its kind's clock
+ * runs out (news a day, people's posts and digests two, articles a week); unread and never marked, up to 30 days.
+ * {kind: "news" | "people" | "digest" | "article", at, read, kept, starred}, now → boolean.
+ */
+export const AGE = { news: 86400, people: 2 * 86400, digest: 2 * 86400, article: 7 * 86400 };
+export const stays = ({ kind, at, read = false, kept = false, starred = false }, now) =>
+  starred || now - at < (read || kept ? AGE[kind] ?? AGE.people : 30 * 86400);

@@ -13,7 +13,7 @@ import { decode, naddr, nevent } from "./ids.js";
 import { current, method, myFollows, nip44Self, sign, myWriteRelays, onMe } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";
-import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo, CLEARED_FOR } from "./reader-rules.js";
+import { kindOf, isMedia, digestKey, feedItemKey, eventKey, isRead, seenKeys, mergeReader, mergeSeen, discussionOf, fitSeen, readUpTo, CLEARED_FOR, stays } from "./reader-rules.js";
 import { decide, completeRead, fullRead, written, retryAfter, missesAgainst } from "./sync-guard.js";
 import { accountRelays, heard } from "./account-relays.js";
 
@@ -441,7 +441,7 @@ function shown(items) {
   if (raised) saveSeen();
   // Keep unread doesn't keep it longer: a marked item leaves on its kind's clock, as a read one does (reader.md §4)
   const kept = (i) => [i.key, ...(i.keys || [])].some((k) => seen.unread[k] > 0);
-  return all.filter((i) => starred(i) || t - i.at < (i.read || kept(i) ? ageOf(i) : UNREAD_FOR)).sort((a, b) => (a.read - b.read) || b.at - a.at);
+  return all.filter((i) => stays({ kind: i.kind === "kept" ? "people" : i.kind, at: i.at, read: i.read, kept: kept(i), starred: starred(i) }, t)).sort((a, b) => (a.read - b.read) || b.at - a.at);
 }
 let shownKeys = new Set();
 
