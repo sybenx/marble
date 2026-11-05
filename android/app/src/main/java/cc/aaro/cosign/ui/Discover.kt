@@ -4467,7 +4467,7 @@ private fun fullDate(t: Long): String = java.text.SimpleDateFormat("MMM d, ", ja
  * The message line's Undo (Mark all as read, a star taken off, a note kept, a post about to go). [commit] is what
  * happens if it isn't undone: when it runs out, and also when another takes its place or Reader closes (never dropped).
  */
-private class ReaderUndo(val key: String, val text: String, val undo: () -> Unit, val commit: (() -> Unit)? = null)
+private class ReaderUndo(val key: String, val text: String, val undo: () -> Unit, val commit: (() -> Unit)? = null, val cancel: (() -> Unit)? = null)
 
 /**
  * Reader, as Google Reader (marble-reader-fidelity.md): chips along the top (bold for what arrived since you last
@@ -4525,7 +4525,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
     var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     // Undo is the account's (one per item, never dropped; cancelled on a switch of account), shown here.
     val pendingShown by social.pending.shown.collectAsState()
-    fun offer(u: ReaderUndo) { social.pending.offer(u.key, u.text, u.undo, u.commit) }
+    fun offer(u: ReaderUndo) { social.pending.offer(u.key, u.text, u.undo, u.commit, cancel = u.cancel) }
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         // Chips: All · Starred · the folders · Add. Bold: something arrived since you last opened it (never All or Starred).
@@ -4556,10 +4556,8 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
             Link("Mark all as read") {
                 val shown = inFolder(folder)
                 if (folder == "starred") {
-                    // Starred: only these items (their sources' other items stay as they are).
-                    val were = shown.filter(::unread)
-                    were.forEach { social.markItemRead(it, opened = true) }
-                    offer(ReaderUndo("markall:$folder", "Marked all as read", { were.forEach { social.keepUnread(it.key) } }))
+                    // Starred: only these items (their sources' other items stay as they are), and only once the Undo is past.
+                    social.markStarredRead(shown.filter(::unread))
                 } else {
                     // Its Undo puts back only what this changed, not what a sync brought in meanwhile.
                     val change = social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) })
@@ -4639,7 +4637,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
     var menu by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
     val people by People.known.collectAsState()
-    fun star() { social.star(i)?.let { was -> onUndo(ReaderUndo("star:${i.key}", "Unstarred", { social.later.bringBack(was) })) } }
+    fun star() = social.star(i)
     // The open row is one entry with its body: a thin accent edge down the left of both.
     val accent = Vault.Accent
     val edge = Modifier.drawBehind { if (open && !expanded) drawRect(accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }
@@ -4842,13 +4840,10 @@ private fun ShareWithNote(i: Social.ReaderItem, social: Social, onUndo: (ReaderU
                 if (public) {
                     val text = postNote
                     // Goes when the Undo runs out, or is replaced, or Reader closes; from Social, which nothing here cancels.
-                    onUndo(ReaderUndo("post:${i.key}", "Posting publicly", {}) { social.postSoon(i, text) })
-                } else social.readerUrl(i)?.let { url ->
-                    // Undo: the note there was before (its words), or none, if this made it.
-                    val was = social.later.forUrl(url)
-                    social.later.keep(keepNote.ifBlank { social.shareTitle(i) }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName)?.let { n ->
-                        onUndo(ReaderUndo("keep:${i.key}", "Kept in Notes", { if (was != null) social.later.putBack(was) else social.later.remove(n) })) }
-                }
+                    onUndo(ReaderUndo("post:${i.key}", "Posting publicly", {}, commit = { social.postSoon(i, text) },
+                        // A switch of account first: said, not silently dropped; your words come with it.
+                        cancel = { social.message.value = "Not posted (you switched account): \u201c$text\u201d" }))
+                } else social.keepWithNote(i, keepNote)  // one Undo with the item's star: the note back as it was
                 onClose()
             }) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }
         }

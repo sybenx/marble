@@ -79,6 +79,9 @@ object ReaderRules {
         }
     }
 
+    /** An item that may hold read-up-to back: read, or unread and still showing (an unread one past its 30 days doesn't). */
+    fun holdsRise(read: Boolean, at: Long, now: Long) = read || now - at < UNREAD_FOR
+
     /** A Reader item for [ageUpto]: its source, its time, whether it's read, and whether it has aged out. */
     data class Aged(val source: String, val at: Long, val read: Boolean, val aged: Boolean)
 

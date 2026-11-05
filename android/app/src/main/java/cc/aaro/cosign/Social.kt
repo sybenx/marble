@@ -1021,7 +1021,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     private suspend fun sendInterests() {
         val me = me ?: return
-        if (newerProfile || !interestsReached) return
+        // Written only to the relays the pull reached (relays that arrived since weren't read).
+        if (newerProfile || interestsReachedFor == null || interestsReachedFor != smallTargets()) return
         val at = interests.at
         val text = toSelf(interests.toJson(), encrypt = true) ?: return
         val ev = Event(me, Clock.now(), 30078, listOf(listOf("d", interestsTag)), text).withId()
@@ -1037,7 +1038,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val w = smallTargets()
         val (found, answered) = Fetch.queryAnswered((w + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(interestsTag), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(w, it) }
         // Not reached: neither "none there" nor a copy to take; nothing is written on the strength of it.
-        interestsReached = cc.aaro.cosign.reader.SyncGuard.complete(w, answered)
+        interestsReachedFor = w.takeIf { cc.aaro.cosign.reader.SyncGuard.complete(w, answered) }
         val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return false
         val json = toSelf(got.content, encrypt = false) ?: return true
         // A later version than this app knows: leave it alone, and don't write over it.
@@ -1074,7 +1075,16 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
     /** Read in Reader: seen (here or on another device), or older than its source's read-up-to; not if kept unread. */
     fun isRead(key: String, source: String, at: Long, folder: String? = null): Boolean =
-        cc.aaro.cosign.reader.ReaderRules.isRead(key, source, at, readerSeen(key), folder)
+        key in softRead.value || cc.aaro.cosign.reader.ReaderRules.isRead(key, source, at, readerSeen(key), folder)
+    /** Read for now, while an Undo is open (Starred's Mark all as read): made real when it runs out, gone if undone. */
+    val softRead = MutableStateFlow<Set<String>>(emptySet())
+    /** Starred's Mark all as read: these items, and nothing else, read once the Undo has run out. */
+    fun markStarredRead(items: List<ReaderItem>) {
+        val keys = items.flatMap { itemKeys(it) }.toSet()
+        softRead.update { it + keys }; readerReadAt.value = System.currentTimeMillis()
+        fun drop() { softRead.update { it - keys }; readerReadAt.value = System.currentTimeMillis() }
+        pending.offer("markall:starred", "Marked all as read", undo = { drop() }, commit = { items.forEach { markItemRead(it, opened = true) }; drop() }, cancel = { drop() })
+    }
     /** The read state for one key, as the shared rule reads it (this phone's seen keys, with their day). */
     private fun readerSeen(key: String) = cc.aaro.cosign.reader.ReaderRules.Seen(
         if (key in seen) mapOf(key to Math.floorDiv(seen.timeOf(key) ?: 0L, 86_400L)) else emptyMap(), readerUpto.value, readerUnread.value)
@@ -2748,7 +2758,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         readerSending = scope.launch { delay(backoff(30_000, readerTries)); sendReader() }
     }
     private var readerTries = 0
-    @Volatile private var interestsReached = false
+    @Volatile private var interestsReachedFor: List<String>? = null
     @Volatile private var keptReached = false
     /**
      * Marbles and interests: your configured write relays; while those aren't known yet, what 0.12.28 used (these
@@ -2897,7 +2907,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val loaded = all.map { it.key }.toSet()
         val missing = readerUnreadSeen().filter { (k, v) -> k !in loaded && !isRead(k, v.first, v.second) }
             .map { (_, v) -> cc.aaro.cosign.reader.ReaderRules.Aged(v.first, v.second, read = false, aged = false) }
-        val rise = cc.aaro.cosign.reader.ReaderRules.ageUpto(all.map { i ->
+        // Only what still shows holds the rise back: an unread item past its 30 days (still listed, for Starred) never does.
+        val rise = cc.aaro.cosign.reader.ReaderRules.ageUpto(all.filter { i -> cc.aaro.cosign.reader.ReaderRules.holdsRise(itemRead(i), i.at, now) }.map { i ->
             val read = itemRead(i)
             val at = if (!read && i.posts.isNotEmpty()) i.posts.filter { p -> !isRead(cc.aaro.cosign.reader.ReaderRules.postKey(p.id), i.source, p.createdAt, i.folder) }.minOfOrNull { it.createdAt } ?: i.at else i.at
             cc.aaro.cosign.reader.ReaderRules.Aged(i.source, at, read, i in aged)
@@ -2938,12 +2949,38 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** Star: kept privately in Notes (and kept in Reader too); again, taken out. */
-    /** Star and its Note are one thing: starring keeps a Note, un-starring removes it (the Note it was: for Undo). */
-    fun star(i: ReaderItem): LaterItem? {
-        val url = readerUrl(i) ?: return null
-        later.items.value.firstOrNull { it.deleted == null && (it.url == url || (i.link != null && it.url == i.link)) }?.let { later.remove(it); return it }
-        later.keep(shareTitle(i), url, i.snippet.take(500).ifEmpty { null }, i.sourceName)
-        return null
+    /** Each item's Star/Keep in its Undo window (reader/NoteUndo), while that item's action is pending. */
+    private val noteChanges = java.util.concurrent.ConcurrentHashMap<String, cc.aaro.cosign.reader.NoteChange>()
+
+    /**
+     * A change to [i]'s note ([change]: from the note there now, the one written, or none), with one Undo for the item:
+     * a second change in the window folds into it, and Undo goes back to how the note was before the first.
+     */
+    private fun noteAct(i: ReaderItem, text: String, change: (LaterItem?) -> LaterItem?) {
+        val url = readerUrl(i) ?: return
+        val key = "note:${i.key}"
+        val cur = later.forUrl(url) ?: i.link?.let { later.forUrl(it) }
+        val before = noteChanges[key]?.takeIf { pending.get(key) != null }?.before ?: cur
+        val c = cc.aaro.cosign.reader.NoteChange(url, before, change(cur))
+        noteChanges[key] = c
+        pending.offer(key, text, undo = { noteChanges.remove(key)?.let { cc.aaro.cosign.reader.NoteUndo.undo(later, it) } },
+            commit = { noteChanges.remove(key, c) }, merge = true)
+    }
+
+    /** Star and its Note are one thing: starring keeps a Note, un-starring removes it. Re-starring inside an un-star's Undo is that Undo. */
+    fun star(i: ReaderItem) {
+        val url = readerUrl(i) ?: return
+        val key = "note:${i.key}"
+        val cur = later.forUrl(url) ?: i.link?.let { later.forUrl(it) }
+        val ch = noteChanges[key]; val p = pending.get(key)
+        if (cur == null && p != null && ch != null && ch.after == null && ch.before != null) { pending.undo(p); return }
+        noteAct(i, if (cur != null) "Unstarred" else "Starred") { now -> if (now != null) { later.remove(now); null } else later.keep(shareTitle(i), url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }
+    }
+
+    /** Share with a note's Keep: the note, with your words (one Undo with the item's star). */
+    fun keepWithNote(i: ReaderItem, words: String) {
+        val url = readerUrl(i) ?: return
+        noteAct(i, "Kept in Notes") { later.keep(words.ifBlank { shareTitle(i) }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName) }
     }
 
     /** Share with a note, public: a post with your words and the link (a Nostr item quoted). */
