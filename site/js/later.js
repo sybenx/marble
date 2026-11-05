@@ -90,12 +90,16 @@ export function jot(text) {
 }
 /** A page kept as a note (from Tabs, Reader's star): by its address; kept again, it comes back rather than doubling. A
  *  note written with it (Reader's Share with a note) goes on a line of its own. Returns {item, before} (before: the
- *  note as it was, or null), for Undo. */
+ *  note as it was, or null), for Undo; null, kept nothing, when the note won't fit (NOTE_MAX). */
+export const NOTE_MAX = 500;
 export function keepPage(url, title, note = "") {
   const n = String(note || "").trim();
   const have = doc.items.find((i) => i.url === url && !i.deleted);
-  const t = (have ? have.text : String(title || url).trim()) + (n ? `\n${n}` : "");
-  const item = have ? { ...have, text: t.slice(0, 500), done: null, updated: next(have) } : { id: newId(), text: t.slice(0, 500), created: now(), updated: now(), done: null, deleted: null, url };
+  // (your words are never cut: a note that won't fit isn't kept, null; a Note already there keeps its text as it is)
+  // (the item's own title, not yours, is shortened to leave room for your note)
+  const t = have ? have.text + (n ? `\n${n}` : "") : n ? `${String(title || url).trim().slice(0, Math.max(0, NOTE_MAX - n.length - 1))}\n${n}` : String(title || url).trim().slice(0, NOTE_MAX);
+  if (n && t.length > NOTE_MAX) return null;
+  const item = have ? { ...have, text: t, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null, url };
   put(item);
   return { item, before: have || null };
 }

@@ -67,13 +67,13 @@ function keepUnread(key) { seen.unread[key] = now(); saveSeen(); }
  * instead (Starred: never a whole source read). Returns its Undo: what it changed, put back.
  */
 function markAllRead(sources, list = [], folder = "", only = null) {
-  const t = now(), these = new Set(sources), was = [];
-  const set = (field, k, v) => { was.push([field, k, seen[field][k]]); seen[field][k] = v; };
+  const t = now(), these = new Set(sources), was = [], acct = who;
+  const set = (field, k, v) => { was.push([field, k, seen[field][k], v]); seen[field][k] = v; };
   const d = String(Math.floor(t / DAY));
   if (only) {
     for (const i of only) for (const k of [i.key, ...(i.keys || [])]) {
       if (seen.unread[k] > 0) set("unread", k, -t);
-      if (!keys.has(k)) { was.push(["day", d, k]); seen.days[d] = [seen.days[d], k].filter(Boolean).join(" "); }
+      if (!keys.has(k)) { was.push(["day", d, k, seen.unread[k]]); seen.days[d] = [seen.days[d], k].filter(Boolean).join(" "); }
     }
   } else {
     if (folder === "people" || folder === "first") set("upto", `folder:${folder}`, t);
@@ -81,9 +81,13 @@ function markAllRead(sources, list = [], folder = "", only = null) {
     for (const i of list) if (these.has(i.source) || folder && i.folder === folder) for (const k of [i.key, ...(i.keys || [])]) if (seen.unread[k] > 0) set("unread", k, -t);
   }
   saveSeen();
+  // Undo: only what this set, and only where nothing has changed it since (an item opened, or kept unread, in the few
+  // seconds stays as you left it); never in another account's copy
   return () => {
-    for (const [field, k, v] of was.reverse()) {
-      if (field === "day") seen.days[k] = String(seen.days[k] || "").split(" ").filter((x) => x && x !== v).join(" ");
+    if (who !== acct) return;
+    for (const [field, k, v, to] of was.reverse()) {
+      if (field === "day") { if (seen.unread[v] === to) seen.days[k] = String(seen.days[k] || "").split(" ").filter((x) => x && x !== v).join(" "); }
+      else if (seen[field][k] !== to) continue;
       else if (v === undefined) delete seen[field][k]; else seen[field][k] = v;
     }
     saveSeen();
@@ -239,7 +243,9 @@ export async function pushAccount() {
 if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pushAccount(); });
 // Another account (or nobody): nothing of the last one's goes on. Its unsent changes stay in this browser under its own
 // name, for when it's back; the new one starts from its own copy here, and writes nothing until a read has reached it.
+const switching = new Set(); // (each Reader page's: its pending un-stars, posts and Undos, dropped)
 onMe(() => {
+  switching.forEach((fn) => fn());
   clearTimeout(timer); timer = null;
   dirty.clear(); version.list = version.seen = 0; failures = 0; broken = new Set();
   who = null;
@@ -530,15 +536,30 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
   const said = (text) => { const p = $(".r-said"); p.textContent = text; p.hidden = !text; delete p.dataset.trouble; };
 
   // ── The message line: one at a time, with Undo for a few seconds ──
-  let msgTimer = null;
+  // (a line with Undo stays until it runs out, whatever else is said meanwhile; a plain line gives way to the next)
   function say(text, undo = null, ms = 5000) {
     const p = $(".r-msg");
-    clearTimeout(msgTimer);
-    p.innerHTML = esc(text) + (undo ? ` · <button type="button" class="link" data-undo>Undo</button>` : "");
+    for (const x of p.querySelectorAll(".r-m:not(.undo)")) x.remove();
+    const line = document.createElement("div");
+    line.className = `r-m${undo ? " undo" : ""}`;
+    line.innerHTML = esc(text) + (undo ? ` · <button type="button" class="link" data-undo>Undo</button>` : "");
+    p.append(line);
     p.hidden = false;
-    if (undo) p.querySelector("[data-undo]").onclick = () => { clearTimeout(msgTimer); undo(); };
-    msgTimer = setTimeout(() => { p.hidden = true; p.innerHTML = ""; }, ms);
+    const close = () => { clearTimeout(t); line.remove(); if (!p.querySelector(".r-m")) p.hidden = true; };
+    const t = setTimeout(close, ms);
+    if (undo) line.querySelector("[data-undo]").onclick = () => { close(); undo(); };
+    return { close };
   }
+  // one pending thing per item (an un-star, a post): it's done when its time is up, or undone, and never left half
+  // done; a change of account drops them all (an un-star or a post is cancelled; an Undo just goes)
+  const pending = new Map();
+  const onSwitch = () => {
+    if (!root.isConnected && signal.aborted) { switching.delete(onSwitch); return; }
+    for (const p of [...pending.values()]) p.drop();
+    pending.clear();
+    const m = $(".r-msg"); m.innerHTML = ""; m.hidden = true;
+  };
+  switching.add(onSwitch);
 
   const folders = () => {
     const mine = doc.folders.filter((f) => !f.gone && !FIXED.some((x) => x.id === f.id)).sort((a, b) => a.order - b.order);
@@ -649,7 +670,7 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     return `<div class="r-bar">${[
       `<button type="button" class="link" data-star aria-pressed="${on}">${on ? "Starred" : "Star"}</button>`,
       i.kind === "kept" ? "" : `<button type="button" class="link" data-share aria-expanded="false">Share with a note</button>`,
-      copyOf(i) ? `<button type="button" class="link" data-copy>Copy link</button>` : "",
+      copyOf(i) ? `<button type="button" class="link" data-copy-link>Copy link</button>` : "",
       i.kind === "kept" ? "" : `<label class="r-chk"><input type="checkbox" data-unread${kept ? " checked" : ""}> Keep unread</label>`,
       entityOf(i) ? `<button type="button" class="link" data-openin aria-haspopup="menu">Open in…</button>` : "",
       i.discussion ? `<a href="${esc(i.discussion)}" target="_blank" rel="noopener noreferrer">Discussion</a>` : "",
@@ -674,7 +695,8 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     for (const b of root.querySelectorAll("[data-view]")) b.setAttribute("aria-pressed", b.dataset.view === v);
     $(".r-settings").hidden = !(source || folder === "people" && me);
     let list = viewList();
-    if (reset || !layout || layout.view !== viewId()) layout = { view: viewId(), keys: list.map((i) => i.key), earlier: list.find((i, n) => i.read && n > 0)?.key || null };
+    const loading = virtual(folder) ? folders().some((x) => busy.has(x.id) || !items.has(x.id)) : busy.has(folder);
+    if (reset || !layout || layout.view !== viewId()) layout = { view: viewId(), keys: list.map((i) => i.key), earlier: list.find((i, n) => i.read && n > 0)?.key || null, loading };
     else { const pos = new Map(layout.keys.map((k, n) => [k, n])); list = list.filter((i) => pos.has(i.key)).sort((a, b) => pos.get(a.key) - pos.get(b.key)); }
     byKey = new Map(list.map((i) => [i.key, i]));
     shownKeys = new Set(list.flatMap((i) => [i.key, ...(i.keys || [])]));
@@ -740,7 +762,9 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
       const top = headerH(), t = Date.now();
       for (const el of root.querySelectorAll(".r-row:not(.read)")) {
         const s = since.get(el);
-        if (s && t - s >= 1000 && el.getBoundingClientRect().top < top) { readItem(byKey.get(el.dataset.key), false); el.classList.add("read"); restyle1(el); }
+        const i = byKey.get(el.dataset.key);
+        if (!i || [i.key, ...(i.keys || [])].some((k) => seen.unread[k] > 0)) { since.delete(el); io?.unobserve(el); continue; }
+        if (s && t - s >= 1000 && el.getBoundingClientRect().top < top) { since.delete(el); io?.unobserve(el); readItem(i, false); el.classList.add("read"); restyle1(el); }
       }
     };
     io = new IntersectionObserver((entries) => {
@@ -764,16 +788,25 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
   const readAgain = (el) => { readItem(byKey.get(el.dataset.key)); el.classList.add("read"); restyle1(el); };
   // Star and Note are one thing: starring keeps it in Notes; un-starring takes the Note away (a few seconds to undo, as
   // it can hold words you wrote); a Note deleted un-stars it
+  // (starred again within the few seconds: that's Undo; the Note goes only if it's still the one, in the same account)
   const star = (el) => {
     const i = byKey.get(el.dataset.key), u = i && starUrl(i);
     if (!u) return;
+    if (pending.has(`unstar:${u}`)) return pending.get(`unstar:${u}`).cancel();
     const have = notes.items().find((n) => n.url === u);
     if (!have) { notes.keepPage(u, i.kind === "digest" ? `${name(i.author)} · ${day(i.at)}` : i.title); rememberStar(i, true); restyle(); drawFolders(); return; }
+    const acct = current(), id = have.id, key = `unstar:${u}`;
+    let line = null;
+    const end = (commit) => {
+      clearTimeout(t); pending.delete(key); unstarring.delete(u); line?.close();
+      if (commit && current() === acct && who === acct) { const n = notes.items().find((x) => x.id === id); if (n) notes.remove(n); rememberStar(i, false); }
+      if (root.isConnected) restyle();
+    };
+    const t = setTimeout(() => end(true), 5000);
+    pending.set(key, { cancel: () => end(false), drop: () => end(false) });
     unstarring.add(u);
     restyle();
-    let undone = false;
-    const t = setTimeout(() => { if (undone) return; unstarring.delete(u); const n = notes.items().find((x) => x.url === u); if (n) notes.remove(n); rememberStar(i, false); restyle(); }, 5000);
-    say("Removed from Notes", () => { undone = true; clearTimeout(t); unstarring.delete(u); restyle(); say("Kept in Notes", null, 2500); });
+    line = say("Removed from Notes", () => end(false));
   };
   // v: exactly what the title does
   const wayOut = (el) => {
@@ -792,7 +825,9 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     else if (f === "all") { const all = folders().map((f) => markAllRead([...new Set((items.get(f.id) || []).map((i) => i.source))], items.get(f.id) || [], f.id)); undo = () => all.reverse().forEach((u) => u()); }
     else undo = markAllRead([...new Set(itemsOf(f).map((i) => i.source))], itemsOf(f), f);
     restyle(); drawFolders();
-    say("Marked all as read", () => { undo(); restyle(); drawFolders(); });
+    const key = `allread:${Date.now()}`, line = say("Marked all as read", () => { pending.delete(key); undo(); restyle(); drawFolders(); });
+    pending.set(key, { drop: () => line.close() }); // (switched account: the Undo goes; what's done stays done)
+    setTimeout(() => pending.delete(key), 5000);
   };
 
   const again = new Set(); // folders asked for again while their first fill was running (your account's list came in)
@@ -822,7 +857,8 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
   // new items for the view on screen: drawn at once only when it's empty; otherwise nothing moves under you, and a
   // quiet "Show new items" (or r) brings them in
   function refresh() {
-    if (!byKey.size) return drawRiver(true);
+    // (a view drawn while its folders were still coming, All items and Starred: drawn again once they're in)
+    if (!byKey.size || layout?.loading) return drawRiver(true);
     const had = new Set(layout?.keys || []);
     $(".r-new").hidden = !viewList().some((i) => !had.has(i.key));
   }
@@ -928,7 +964,7 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     if (!el.classList.contains("open")) openRow(el, true);
     const box = el.querySelector(".r-note"), b = el.querySelector("[data-share]");
     if (!box.hidden) { box.querySelector("textarea").focus(); return; }
-    box.innerHTML = `<textarea rows="3" maxlength="600" placeholder="Add a note (optional)" aria-label="Your note"></textarea>
+    box.innerHTML = `<textarea rows="3" maxlength="${notes.NOTE_MAX}" placeholder="Add a note (optional)" aria-label="Your note"></textarea>
       <div class="r-note-go"><label class="r-pub"><input type="checkbox" role="switch" data-pub> Post publicly</label><span class="r-sp"></span>
         <button type="button" class="link" data-cancel>Cancel</button><button type="button" class="r-btn" data-go>Keep</button></div>`;
     box.hidden = false; b?.setAttribute("aria-expanded", "true");
@@ -941,10 +977,13 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     goBtn.onclick = () => {
       const note = ta.value.trim();
       if (!pub.checked) {
+        pending.get(`unstar:${starUrl(i)}`)?.cancel(); // (kept: not going after all)
         const kept = notes.keepPage(starUrl(i), i.kind === "digest" ? `${name(i.author)} · ${day(i.at)}` : i.title, note);
+        if (!kept) return say(`That's too long for one note (${notes.NOTE_MAX} characters, with what's kept there already). Nothing was cut.`, null, 6000);
         rememberStar(i, true);
         close(); restyle();
-        return say("Kept in Notes", () => { notes.unkeep(kept); if (!kept.before) rememberStar(i, false); restyle(); });
+        const acct = current();
+        return say("Kept in Notes", () => { if (current() !== acct) return; notes.unkeep(kept); if (!kept.before) rememberStar(i, false); restyle(); });
       }
       if (!me) return say("Sign in to post publicly.");
       const ent = entityOf(i), ref = ent ? `nostr:${ent}` : i.link && !i.link.startsWith("/") ? i.link : "";
@@ -953,12 +992,19 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
       const e = i.event || i.posts?.[0];
       const tags = e ? [e.kind >= 30000 && e.kind < 40000 ? ["q", `${e.kind}:${e.pubkey}:${e.tags.find((t) => t[0] === "d")?.[1] || ""}`, foundOn(e.id)[0] || "", e.pubkey] : ["q", e.id, foundOn(e.id)[0] || "", e.pubkey], ["p", e.pubkey]] : [];
       // a few seconds to change your mind: nothing is signed until then
+      // (switched account meanwhile: not posted; and never as anyone but who pressed it)
+      const acct = current(), key = `post:${i.key}:${Date.now()}`;
       let undone = false;
-      say("Posting publicly", () => { undone = true; say("Not posted.", null, 2500); }, 5000);
-      setTimeout(async () => {
+      const stop = (why) => { undone = true; clearTimeout(t); pending.delete(key); line.close(); if (why) say(why, null, 2500); };
+      const line = say("Posting publicly", () => stop("Not posted."), 5000);
+      pending.set(key, { drop: () => stop("") });
+      const t = setTimeout(async () => {
+        pending.delete(key);
         if (undone) return;
+        if (current() !== acct) return say("Not posted: you switched account.", null, 3000);
         try {
           const ev = await sign({ kind: 1, tags, content: note ? `${note}\n\n${ref}` : ref });
+          if (ev.pubkey !== acct || current() !== acct) return say("Not posted: it was signed by another account.", null, 4000);
           const sent = await publish(await myWriteRelays(), ev);
           say(sent.ok.length ? "Posted." : "Couldn't reach your relays. Not posted.", null, 3000);
         } catch { say("Not posted: it wasn't signed.", null, 3000); }
@@ -1062,7 +1108,7 @@ export function showReader(root, signal, { page, fillLater, openTarget }) {
     for (const x of rowsEl()) x.classList.toggle("current", x === el);
     if (t.closest("[data-star]")) return star(el);
     if (t.closest("[data-share]")) return share(el);
-    if (t.closest("[data-copy]")) { const u = copyOf(byKey.get(el.dataset.key)); return navigator.clipboard?.writeText(u).then(() => say("Link copied.", null, 2500), () => say(u, null, 8000)); }
+    if (t.closest("[data-copy-link]")) { const u = copyOf(byKey.get(el.dataset.key)); return Promise.resolve().then(() => navigator.clipboard.writeText(u)).then(() => say("Link copied.", null, 2500), () => say(u, null, 8000)); }
     if (t.closest("[data-openin]")) return openIn(el, t.closest("[data-openin]"));
     if (t.closest("[data-toggle]")) return openRow(el, !el.classList.contains("open"));
     if (t.closest("[data-way-out]")) readItem(byKey.get(el.dataset.key)); // (the link itself is followed: Marble's own page, or the site)
