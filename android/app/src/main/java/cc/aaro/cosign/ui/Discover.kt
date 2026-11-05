@@ -4463,8 +4463,11 @@ private fun dayWords(t: Long): String = java.text.SimpleDateFormat("yyyyMMdd", j
 private fun fullDate(t: Long): String = java.text.SimpleDateFormat("MMM d, ", java.util.Locale.getDefault()).format(java.util.Date(t * 1000)) +
     java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(t * 1000))
 
-/** The message line's Undo (Mark all as read, a star taken off, a note kept, a post about to go): [expire] runs if not undone. */
-private class ReaderUndo(val text: String, val undo: () -> Unit, val expire: (suspend () -> Unit)? = null)
+/**
+ * The message line's Undo (Mark all as read, a star taken off, a note kept, a post about to go). [commit] is what
+ * happens if it isn't undone: when it runs out, and also when another takes its place or Reader closes (never dropped).
+ */
+private class ReaderUndo(val key: String, val text: String, val undo: () -> Unit, val commit: (() -> Unit)? = null)
 
 /**
  * Reader, as Google Reader (marble-reader-fidelity.md): chips along the top (bold for what arrived since you last
@@ -4511,14 +4514,18 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
         folder.startsWith("src:") -> all.firstOrNull { it.source == folder.removePrefix("src:") }?.let { liveSource(it, people) } ?: "Source"
         else -> (READER_FOLDERS + custom).firstOrNull { it.first == folder }?.second ?: folder
     }
-    val view = list.folders.firstOrNull { it.id == folder }?.view ?: "list"
+    // All, Starred and a source's view keep their List/Expanded on this phone; a folder's is in the synced list.
+    val pseudo = folder == "all" || folder == "starred" || folder.startsWith("src:")
+    var localView by remember(folder) { mutableStateOf(if (pseudo) social.localView(folder) else "list") }
+    val view = if (pseudo) localView else list.folders.firstOrNull { it.id == folder }?.view ?: "list"
     val expanded = view == "river"
     // The order is fixed when the folder loads: unread first, the "Earlier" line, then read. Reading only changes looks.
     val order = remember(items, folder, gone) { inFolder(folder).let { l -> l.filter(::unread) + l.filterNot(::unread) } }
     val earlier = remember(order) { order.indexOfFirst { !unread(it) }.takeIf { it > 0 } }
     var open by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-    var undo by remember { mutableStateOf<ReaderUndo?>(null) }
-    LaunchedEffect(undo) { val u = undo ?: return@LaunchedEffect; delay(5_000); if (undo === u) { undo = null; u.expire?.invoke() } }
+    // Undo is the account's (one per item, never dropped; cancelled on a switch of account), shown here.
+    val pendingShown by social.pending.shown.collectAsState()
+    fun offer(u: ReaderUndo) { social.pending.offer(u.key, u.text, u.undo, u.commit) }
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         // Chips: All · Starred · the folders · Add. Bold: something arrived since you last opened it (never All or Starred).
@@ -4540,16 +4547,24 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
             Text(head, color = Vault.Text, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             @Composable fun Link(label: String, on: Boolean = true, onClick: () -> Unit) = Text(label, color = if (on) Vault.Accent else Vault.Muted, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(enabled = on, onClick = onClick).padding(horizontal = 4.dp, vertical = 8.dp))
-            fun setView(v: String) = social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, head, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
+            fun setView(v: String) = if (pseudo) { social.setLocalView(folder, v); localView = v }
+                else social.changeReader { l -> l.withFolder(cc.aaro.cosign.reader.ReaderList.Folder(folder, head, l.folders.firstOrNull { it.id == folder }?.order ?: 0, v, cc.aaro.cosign.core.Clock.now(), false)) }
             Link("List", on = expanded) { setView("list") }
             Text("·", color = Vault.Muted)
             Link("Expanded", on = !expanded) { setView("river"); open = null }
             Spacer(Modifier.width(10.dp))
             Link("Mark all as read") {
-                val before = social.readSnapshot()
                 val shown = inFolder(folder)
-                social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) })
-                undo = ReaderUndo("Marked all as read", { social.restoreRead(before) })
+                if (folder == "starred") {
+                    // Starred: only these items (their sources' other items stay as they are).
+                    val were = shown.filter(::unread)
+                    were.forEach { social.markItemRead(it, opened = true) }
+                    offer(ReaderUndo("markall:$folder", "Marked all as read", { were.forEach { social.keepUnread(it.key) } }))
+                } else {
+                    // Its Undo puts back only what this changed, not what a sync brought in meanwhile.
+                    val change = social.markAllRead(social.uptoKeys(shown), shown.flatMap { social.itemKeys(it) })
+                    offer(ReaderUndo("markall:$folder", "Marked all as read", { social.undoRead(change) }))
+                }
             }
         }
         if (folder == "people" || folder.startsWith("src:")) Text("Source settings…", color = Vault.Accent, style = MaterialTheme.typography.labelMedium,
@@ -4566,7 +4581,8 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
                     since.keys.retainAll(past)
                     for (k in past) {
                         val t = since.getOrPut(k) { now }
-                        if (now - t >= 1000) order.firstOrNull { it.key == k }?.let { if (!social.itemRead(it)) social.markItemRead(it) }
+                        // Kept unread stays so: scrolling never marks it.
+                        if (now - t >= 1000) order.firstOrNull { it.key == k }?.let { if (!social.itemRead(it) && !social.keptUnread(it)) social.markItemRead(it) }
                     }
                 }
             }
@@ -4578,7 +4594,7 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
                     item(key = i.key) {
                         ReaderRow(i, unread(i), social.starred(i, kept), expanded || open == i.key, expanded, social, nav,
                             onToggle = { if (open == i.key) open = null else { open = i.key; social.markItemRead(i, opened = true) } },
-                            onSource = { folder = "src:$it"; open = null }, onUndo = { undo = it })
+                            onSource = { folder = "src:$it"; open = null }, onUndo = { offer(it) })
                     }
                 }
                 // Expanded view: room after the last item, so the last ones can reach the top and be read.
@@ -4587,10 +4603,10 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
         }
     }
     // The message line: what just happened, and Undo.
-    undo?.let { u -> Row(Modifier.align(Alignment.BottomCenter).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp))
+    pendingShown?.let { u -> Row(Modifier.align(Alignment.BottomCenter).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Vault.Surface).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp))
         .padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(u.text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
-        TextButton({ undo = null; u.undo() }) { Text("Undo", color = Vault.Accent) }
+        TextButton({ social.pending.undo(u) }) { Text("Undo", color = Vault.Accent) }
     } }
     }
 }
@@ -4598,14 +4614,17 @@ private fun ReaderPane(social: Social, nav: Nav, current: Boolean, state: LazyLi
 /** Reader's quiet text links in a row ("Star · Share with a note · …"). */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ReaderLinks(links: List<Pair<String, () -> Unit>>, extra: @Composable androidx.compose.foundation.layout.FlowRowScope.() -> Unit = {}) =
+private fun ReaderLinks(links: List<Pair<String, () -> Unit>>, after: List<Pair<String, () -> Unit>> = emptyList(),
+                        middle: @Composable androidx.compose.foundation.layout.FlowRowScope.() -> Unit = {}) =
     androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).background(Vault.ReadTint, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
         verticalArrangement = Arrangement.Center) {
-        links.forEachIndexed { n, (label, act) ->
+        @Composable fun word(n: Int, label: String, act: () -> Unit) {
             if (n > 0) Text(" · ", color = Vault.Muted, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.CenterVertically))
             Text(label, color = Vault.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.CenterVertically).clip(RoundedCornerShape(4.dp)).clickable(onClick = act).padding(horizontal = 2.dp, vertical = 10.dp))
         }
-        extra()
+        links.forEachIndexed { n, (label, act) -> word(n, label, act) }
+        middle()
+        after.forEach { (label, act) -> word(1, label, act) }
     }
 
 /**
@@ -4620,7 +4639,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
     var menu by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
     val people by People.known.collectAsState()
-    fun star() { social.star(i)?.let { was -> onUndo(ReaderUndo("Unstarred", { social.later.bringBack(was) })) } }
+    fun star() { social.star(i)?.let { was -> onUndo(ReaderUndo("star:${i.key}", "Unstarred", { social.later.bringBack(was) })) } }
     // The open row is one entry with its body: a thin accent edge down the left of both.
     val accent = Vault.Accent
     val edge = Modifier.drawBehind { if (open && !expanded) drawRect(accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }
@@ -4636,7 +4655,7 @@ private fun ReaderRow(i: Social.ReaderItem, unread: Boolean, starred: Boolean, o
             }
             // Drawn again as names arrive (the line has @names in it). A day's posts are named by the day, not counted.
             val (title, snippet) = remember(i, people.size) { cc.aaro.cosign.ReaderRows.text(i, people) }
-            val shownTitle = if (i.posts.isNotEmpty()) (if (dayWords(i.at) == "today") "Today's posts" else "Posts from ${dayWords(i.at)}") else title
+            val shownTitle = if (i.posts.isNotEmpty()) cc.aaro.cosign.ReaderRows.dayTitle(i.at, System.currentTimeMillis() / 1000) else title
             Text(androidx.compose.ui.text.buildAnnotatedString {
                 withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Text, fontWeight = if (unread && !open) FontWeight.Bold else FontWeight.Normal)) { append(shownTitle) }
                 if (snippet.isNotBlank()) withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Muted)) { append(" — " + snippet) }
@@ -4717,10 +4736,11 @@ private fun ReaderOpened(i: Social.ReaderItem, starred: Boolean, unread: Boolean
         // The action bar, in Reader's order, as words: Star · Share with a note · Share · Keep unread · Open in… · Discussion.
         var opener by remember { mutableStateOf(false) }
         Box {
-            ReaderLinks(buildList {
-                add((if (starred) "★ Starred" else "☆ Star") to star)
-                add("Share with a note" to { setSharing(!sharing) })
-                add("Share" to { share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) })
+            ReaderLinks(listOf(
+                (if (starred) "★ Starred" else "☆ Star") to star,
+                "Share with a note" to { setSharing(!sharing) },
+                "Share" to { share(context, social.shareTitle(i) + "\n" + (social.readerUrl(i) ?: ""), null) },
+            ), after = buildList {
                 if (post != null) add("Open in…" to { opener = true })
                 i.discussion?.takeIf { it.isNotEmpty() }?.let { d -> add("Discussion" to { openInBrowser(context, d, i.key) }) }
             }) {
@@ -4821,10 +4841,13 @@ private fun ShareWithNote(i: Social.ReaderItem, social: Social, onUndo: (ReaderU
             TextButton({
                 if (public) {
                     val text = postNote
-                    onUndo(ReaderUndo("Posting publicly", {}) { val sent = social.shareWithNote(i, text); social.message.value = if (sent != null) "Posted." else "Couldn't post that right now." })
+                    // Goes when the Undo runs out, or is replaced, or Reader closes; from Social, which nothing here cancels.
+                    onUndo(ReaderUndo("post:${i.key}", "Posting publicly", {}) { social.postSoon(i, text) })
                 } else social.readerUrl(i)?.let { url ->
+                    // Undo: the note there was before (its words), or none, if this made it.
+                    val was = social.later.forUrl(url)
                     social.later.keep(keepNote.ifBlank { social.shareTitle(i) }, url, i.snippet.take(500).ifEmpty { null }, i.sourceName)?.let { n ->
-                        onUndo(ReaderUndo("Kept in Notes", { social.later.remove(n) })) }
+                        onUndo(ReaderUndo("keep:${i.key}", "Kept in Notes", { if (was != null) social.later.putBack(was) else social.later.remove(n) })) }
                 }
                 onClose()
             }) { Text(if (public) "Post publicly" else "Keep", color = Vault.Accent) }

@@ -24,7 +24,8 @@ import java.io.File
  */
 class ReaderContentTest {
     private val fx = JSONObject(File(javaClass.getResource("/reader/content.json")!!.toURI()).readText())
-    private val now = 1_800_000_000L
+    // Now-relative, as the fixture's times are (a day's posts are "Today's posts").
+    private val now = System.currentTimeMillis() / 1000
     // Each person's key: distinct from the first character (a digest's key uses the first 8).
     private val keys = fx.getJSONObject("people").keys().asSequence().toList().associateWith { k ->
         java.security.MessageDigest.getInstance("SHA-256").digest(k.toByteArray()).joinToString("") { "%02x".format(it) } }
@@ -93,7 +94,11 @@ class ReaderContentTest {
                 if (r.event!!.kind == 30023) assertTrue(marbleLink(r.event!!).startsWith("https://marble.syb.lol/naddr1"))
             }
             w.optString("warningGate").takeIf { it.isNotEmpty() }?.let { want -> assertTrue("$src | $title: veiled", posts.any { Body.warning(it) == want }) }
-            w.optString("vOpens").takeIf { it.isNotEmpty() }?.let { want -> assertTrue("$src | $title: its page ${r.link}", r.link != null && inAppRef(r.link!!) == null && Regex(want).containsMatchIn(r.link!!)) }
+            // v goes where the title goes: a post (with or without a link in it) opens the post here.
+            w.optString("vOpens").takeIf { it.isNotEmpty() }?.let { want ->
+                val p = ReaderRows.openTarget(r)
+                val target = p?.let { "/" + nevent(it.id, it.pubkey, it.kind, emptyList()) } ?: r.link
+                assertTrue("$src | $title: the title opens $target", target != null && Regex(want).containsMatchIn(target)) }
             w.optString("linkHref").takeIf { it.isNotEmpty() }?.let { want ->
                 val here = inAppRef(r.link!!)
                 assertTrue("$src | $title: opens here", here is Ref.Note && here.id == events.getValue("quoted").id)

@@ -100,4 +100,12 @@ class ReaderRulesTest {
         // Written at 250, after the mark: it wins.
         assertEquals(mapOf("s" to 300L), ReaderRules.mergeUpto(mapOf("s" to 10L), Long.MAX_VALUE, mapOf("s" to 300L), 250, emptyList(), emptyList()))
     }
+
+    /** gate 0.12.29: Mark all as read's Undo puts back only what it set; a value a sync brought in since stays. */
+    @Test fun undoRevertsOnlyItsOwnChange() {
+        val change = mapOf("s" to (100L to 500L), "t" to (null to 500L))
+        // "s" was raised by a sync to 600 meanwhile: kept. "t" is as the change left it: removed again.
+        assertEquals(mapOf("s" to 600L, "u" to 7L), ReaderRules.revert(mapOf("s" to 600L, "t" to 500L, "u" to 7L), change))
+        assertEquals(mapOf("s" to 100L), ReaderRules.revert(mapOf("s" to 500L, "t" to 500L), change))
+    }
 }

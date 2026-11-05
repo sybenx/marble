@@ -214,7 +214,8 @@ object NewsSources {
         val cards = items.mapNotNull { m ->
             val link = m["link"]?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return@mapNotNull null
             val t = m["title"]?.let(HtmlText::decode)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            val summary = m["summary"]?.replace(Regex("<[^>]+>"), " ")?.let(HtmlText::decode)?.replace(Regex("\\s+"), " ")?.trim()?.take(300).orEmpty()
+            // The whole summary (Reader shows all of it), without the score and comment-count lines link aggregators add.
+            val summary = m["summary"]?.replace(Regex("<[^>]+>"), " ")?.let(HtmlText::decode)?.let(::withoutCounts)?.replace(Regex("\\s+"), " ")?.trim()?.take(8000).orEmpty()
             // Where it's discussed (reader.md §5): <comments>, rel=replies, a discussion page as its guid or link, hnrss's "Comments URL".
             val talk = cc.aaro.cosign.reader.ReaderRules.discussion(link, m["comments"], m["replies"], m["id"], m["summary"])
             TopicCard("own:" + sha(m["id"] ?: link), link, t, summary, m["image"]?.takeIf { it.startsWith("https://") }, src, name.ifEmpty { title }, date(m["date"]), topic,
@@ -233,3 +234,6 @@ object NewsSources {
         return 0
     }
 }
+
+/** A feed summary without "Points: 12" / "# Comments: 3" and the like (hnrss and other aggregators): no counts of other people's activity. */
+fun withoutCounts(s: String): String = s.replace(Regex("(?i)(?:^|\\s)(?:#\\s*)?(?:points|comments|score|votes|upvotes)\\s*:\\s*\\d[\\d,]*"), " ")

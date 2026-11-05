@@ -1747,5 +1747,106 @@
    ],
    "upto": 11
   }
+ ],
+ "stays": [
+  {
+   "name": "unread news, 20 days old: stays (30 days)",
+   "item": {
+    "kind": "news",
+    "at": 1791272000
+   },
+   "now": 1793000000,
+   "stays": true
+  },
+  {
+   "name": "unread news, 31 days old: gone",
+   "item": {
+    "kind": "news",
+    "at": 1790321600
+   },
+   "now": 1793000000,
+   "stays": false
+  },
+  {
+   "name": "read news, 23 hours: stays",
+   "item": {
+    "kind": "news",
+    "at": 1792917200,
+    "read": true
+   },
+   "now": 1793000000,
+   "stays": true
+  },
+  {
+   "name": "read news, 25 hours: gone",
+   "item": {
+    "kind": "news",
+    "at": 1792910000,
+    "read": true
+   },
+   "now": 1793000000,
+   "stays": false
+  },
+  {
+   "name": "Keep unread doesn't keep it longer: news marked, 25 hours: gone",
+   "item": {
+    "kind": "news",
+    "at": 1792910000,
+    "kept": true
+   },
+   "now": 1793000000,
+   "stays": false
+  },
+  {
+   "name": "Keep unread, a digest at 1 day: stays (2 days)",
+   "item": {
+    "kind": "digest",
+    "at": 1792913600,
+    "kept": true
+   },
+   "now": 1793000000,
+   "stays": true
+  },
+  {
+   "name": "Keep unread, a person's post at 3 days: gone",
+   "item": {
+    "kind": "people",
+    "at": 1792740800,
+    "kept": true
+   },
+   "now": 1793000000,
+   "stays": false
+  },
+  {
+   "name": "read article, 6 days: stays (a week)",
+   "item": {
+    "kind": "article",
+    "at": 1792481600,
+    "read": true
+   },
+   "now": 1793000000,
+   "stays": true
+  },
+  {
+   "name": "Keep unread, an article at 8 days: gone",
+   "item": {
+    "kind": "article",
+    "at": 1792308800,
+    "kept": true
+   },
+   "now": 1793000000,
+   "stays": false
+  },
+  {
+   "name": "starred, read, 40 days: stays (starred never ages out)",
+   "item": {
+    "kind": "news",
+    "at": 1789544000,
+    "read": true,
+    "starred": true
+   },
+   "now": 1793000000,
+   "stays": true
+  }
  ]
 }
