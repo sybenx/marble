@@ -349,7 +349,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val reactions = MutableStateFlow(prefs.getStringSet("reactions", emptySet())!!.mapNotNull { r -> r.split(' ', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap())
     /** How often you've used each emoji, for the row a long press on the heart opens. */
     private val emojiUse = HashMap<String, Int>().apply {
-        prefs.getString("emojiUse", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
+        // (Some older builds kept this as a set of strings: a getString on it throws, and Marble wouldn't open. Start over.)
+        val kept = try { prefs.getString("emojiUse", null) } catch (_: ClassCastException) { prefs.edit().remove("emojiUse").apply(); null }
+        kept?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
     }
     /** Who you follow, from your newest follow list. Null until it's known. */
     val follows = MutableStateFlow<Set<String>?>(null)
