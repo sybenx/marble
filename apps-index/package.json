@@ -1,0 +1,12 @@
+{
+  "name": "marble-apps-index",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build.ts",
+    "bundle": "bun build build.ts --target=bun --outfile dist/apps-index.js"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7"
+  }
+}

@@ -1,0 +1,596 @@
+{
+ "v": 1,
+ "apps": [
+  {
+   "a": "31990:1:jumble",
+   "kind": "web",
+   "about": "A user-friendly Nostr client for exploring relay feeds",
+   "icon": null,
+   "domain": "jumble.social",
+   "site": null,
+   "by": null,
+   "official": true,
+   "zapstore": null,
+   "score": 92,
+   "name": "Jumble",
+   "url": "https://jumble.social/",
+   "pk": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  {
+   "a": "35128:2:jumble",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "44 Mirror",
+   "official": false,
+   "zapstore": null,
+   "score": 20,
+   "name": "Jumble",
+   "url": "https://x.nsite.lol/",
+   "pk": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  {
+   "a": "35128:3:rj",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": null,
+   "official": false,
+   "zapstore": null,
+   "score": 30,
+   "name": "RogueJumble",
+   "url": "https://y.nsite.lol/",
+   "pk": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  {
+   "a": "31990:4:nostrudel",
+   "kind": "web",
+   "about": "A sandbox for exploring nostr",
+   "icon": null,
+   "domain": "nostrudel.ninja",
+   "site": null,
+   "by": null,
+   "official": true,
+   "zapstore": null,
+   "score": 86,
+   "name": "noStrudel",
+   "url": "https://nostrudel.ninja/",
+   "pk": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  {
+   "a": "31990:5:coracle",
+   "kind": "web",
+   "about": "Nostr, your way",
+   "icon": null,
+   "domain": "coracle.social",
+   "site": null,
+   "by": null,
+   "official": true,
+   "zapstore": "social.coracle",
+   "score": 133.7,
+   "name": "Coracle",
+   "url": "https://coracle.social/",
+   "pk": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  {
+   "a": "32267:6:amber",
+   "kind": "android",
+   "about": "Nostr event signer for Android",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "greenart7c3",
+   "official": false,
+   "zapstore": null,
+   "score": 67,
+   "name": "Amber",
+   "url": "https://zapstore.dev/apps/com.greenart7c3.nostrsigner",
+   "pk": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  {
+   "a": "15128:7",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "hzrd149",
+   "official": false,
+   "zapstore": null,
+   "score": 40,
+   "name": "Nostr Wallet Connect Tester",
+   "url": "https://z.nsite.lol/",
+   "pk": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  {
+   "a": "15128:8",
+   "kind": "nsite",
+   "about": "Write notes over coffee",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": null,
+   "official": false,
+   "zapstore": null,
+   "score": 25,
+   "name": "Café Notes",
+   "url": "https://c.nsite.lol/",
+   "pk": "8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  {
+   "a": "35128:9:a",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "Derek Ross",
+   "official": false,
+   "zapstore": null,
+   "score": 30,
+   "name": "Shakespeare demo a",
+   "url": "https://a.nsite.lol/",
+   "pk": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  {
+   "a": "35128:9:b",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "Derek Ross",
+   "official": false,
+   "zapstore": null,
+   "score": 29,
+   "name": "Shakespeare demo b",
+   "url": "https://b.nsite.lol/",
+   "pk": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  {
+   "a": "35128:9:c",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "Derek Ross",
+   "official": false,
+   "zapstore": null,
+   "score": 28,
+   "name": "Shakespeare demo c",
+   "url": "https://c.nsite.lol/",
+   "pk": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  {
+   "a": "35128:9:d",
+   "kind": "nsite",
+   "about": "",
+   "icon": null,
+   "domain": null,
+   "site": null,
+   "by": "Derek Ross",
+   "official": false,
+   "zapstore": null,
+   "score": 27,
+   "name": "Shakespeare demo d",
+   "url": "https://d.nsite.lol/",
+   "pk": "9999999999999999999999999999999999999999999999999999999999999999"
+  }
+ ],
+ "follows": [
+  "4444444444444444444444444444444444444444444444444444444444444444",
+  "8888888888888888888888888888888888888888888888888888888888888888"
+ ],
+ "cases": [
+  {
+   "q": "jumble",
+   "top": [
+    "31990:1:jumble",
+    "35128:2:jumble",
+    "35128:3:rj"
+   ],
+   "scores": [
+    100,
+    100,
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "Jum",
+   "top": [
+    "31990:1:jumble",
+    "35128:2:jumble"
+   ],
+   "scores": [
+    80,
+    80,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "jumble.social",
+   "top": [
+    "31990:1:jumble"
+   ],
+   "scores": [
+    75,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "nostr",
+   "top": [
+    "31990:4:nostrudel",
+    "15128:7",
+    "31990:5:coracle",
+    "31990:1:jumble",
+    "32267:6:amber"
+   ],
+   "scores": [
+    30,
+    0,
+    0,
+    80,
+    30,
+    30,
+    80,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "strudel",
+   "top": [
+    "31990:4:nostrudel"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    50,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "coracle",
+   "top": [
+    "31990:5:coracle"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    100,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "nostrudel",
+   "top": [
+    "31990:4:nostrudel"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    100,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "wallet tester",
+   "top": [
+    "15128:7"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    60,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "cafe",
+   "top": [
+    "15128:8"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    80,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "café",
+   "top": [
+    "15128:8"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    80,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "coffee",
+   "top": [
+    "15128:8"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    30,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "shakespeare",
+   "top": [
+    "35128:9:a",
+    "35128:9:b",
+    "35128:9:c"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    80,
+    80,
+    80,
+    80
+   ]
+  },
+  {
+   "q": "shakespeare demo",
+   "top": [
+    "35128:9:a",
+    "35128:9:b",
+    "35128:9:c"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    80,
+    80,
+    80,
+    80
+   ]
+  },
+  {
+   "q": "j",
+   "top": [],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "zz",
+   "top": [],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "derek",
+   "top": [
+    "35128:9:a",
+    "35128:9:b",
+    "35128:9:c"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    30,
+    30,
+    30,
+    30
+   ]
+  },
+  {
+   "q": "signer",
+   "top": [
+    "32267:6:amber"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    30,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "NOSTR wallet",
+   "top": [
+    "15128:7"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    80,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "q": "ross",
+   "top": [
+    "35128:9:a",
+    "35128:9:b",
+    "35128:9:c"
+   ],
+   "scores": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    30,
+    30,
+    30,
+    30
+   ]
+  }
+ ],
+ "lines": [
+  "jumble.social",
+  "nsite by 44 Mirror",
+  "nsite",
+  "nostrudel.ninja · You follow them",
+  "coracle.social · Also on Android",
+  "Android app on Zapstore",
+  "nsite by hzrd149",
+  "nsite · You follow them",
+  "nsite by Derek Ross",
+  "nsite by Derek Ross",
+  "nsite by Derek Ross",
+  "nsite by Derek Ross"
+ ]
+}
