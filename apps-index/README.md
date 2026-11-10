@@ -58,7 +58,12 @@ cd apps-index && bun install && OUT=public/apps.json STATE=state.json bun build.
 On the Mac 2026-11-10: about 3 minutes, 15 s of CPU, 215 MB peak; 538 apps (193 web, 284 nsites, 61 Android), 355 KB
 (about 75 KB gzipped).
 
-## On Took (not deployed yet: needs Aaron's OK)
+## On Took (deployed 2026-11-10, Aaron's OK)
+
+Live: `H:\Programs\marble-apps-index` (bundle + `run-apps-index.cmd`), `serve-feed.ts` swapped (old one at
+`H:\Programs\diamonds-feed\serve-feed.ts.bak-2026-11-10`), first build run by hand: 546 apps at
+https://discover.syb.lol/apps.json. **The daily task is not created yet**: this session's permission check refused
+it as a persistence change, so step 3 is for Aaron to run (or approve) himself.
 
 Took has no hands, so (feedback-took-remote-deploys): built on the Mac as one bundled file, one archive, a new
 folder, a swap by rename, `.prev` kept. Nothing is installed on Took; `H:\Programs\bun\bun.exe` runs the bundle.
@@ -70,9 +75,14 @@ folder, a swap by rename, `.prev` kept. Nothing is installed on Took; `H:\Progra
    `serve-feed.ts.bak-<date>`; the only change is `/apps.json` served from `public/` like `/diamonds.json`, cached an
    hour) and end its `bun.exe serve-feed.ts` process; `run-feed.cmd`'s loop restarts it in 5 s. The discover.syb.lol
    Worker already passes `/apps.json` through, so no Worker change.
-3. Daily task (SYSTEM is fine, it only needs the network), at an hour nobody plays:
-   `schtasks /create /tn marble-apps-index /tr "H:\Programs\marble-apps-index\run-apps-index.cmd" /sc daily /st 05:30 /ru SYSTEM`
-   then `schtasks /run /tn marble-apps-index` once, and check `https://discover.syb.lol/apps.json`.
+3. Daily task (SYSTEM is fine, it only needs the network), at an hour nobody plays, killed after 30 minutes. In an
+   elevated PowerShell on Took:
+   ```powershell
+   Register-ScheduledTask -TaskName marble-apps-index -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument '/c H:\Programs\marble-apps-index\run-apps-index.cmd') -Trigger (New-ScheduledTaskTrigger -Daily -At 05:30) -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -Priority 7 -StartWhenAvailable -MultipleInstances IgnoreNew) -Principal (New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount)
+   ```
+   Log: `H:\Programs\marble-apps-index-logs\build.log`. State: `H:\Programs\marble-apps-index-state.json`.
 
 It's light (one Bun process, Idle priority, a few minutes, nothing on C:\mc), so it doesn't take `heavy-job.lock`.
-Rollback: delete the task, rename `marble-apps-index.prev` back, restore `serve-feed.ts.bak-<date>`.
+Rollback: `schtasks /delete /tn marble-apps-index /f`; copy `serve-feed.ts.bak-2026-11-10` over `serve-feed.ts` and end
+its `bun.exe serve-feed.ts` (the loop restarts it); delete `H:\Programs\marble-apps-index` (or rename `.prev` back after
+a later deploy) and `H:\Programs\diamonds-feed\public\apps.json`.
