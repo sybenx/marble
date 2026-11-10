@@ -606,12 +606,20 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         var sheet by remember { mutableStateOf(false) }
         // On the web pane the page keeps its own sideways swipes (carousels, tabs): the strip is where a swipe moves
         // between panes. It drives the pager itself; it sits above it, so its drags never reach the pager on their own.
+        // Where a strip drag started and how far it went: past a fifth of a page, or flung, it goes to the next pane.
+        val stripFrom = remember { intArrayOf(0) }
+        val stripDragged = remember { floatArrayOf(0f) }
         val strip = if (!webMode) Modifier else Modifier.draggable(
-            androidx.compose.foundation.gestures.rememberDraggableState { d -> pager.dispatchRawDelta(-d) },
+            androidx.compose.foundation.gestures.rememberDraggableState { d -> stripDragged[0] += d; pager.dispatchRawDelta(-d) },
             androidx.compose.foundation.gestures.Orientation.Horizontal,
+            onDragStarted = { stripFrom[0] = pager.settledPage; stripDragged[0] = 0f },
             onDragStopped = { v ->
-                val at = pager.currentPage + pager.currentPageOffsetFraction
-                val to = when { v < -600f -> kotlin.math.ceil(at); v > 600f -> kotlin.math.floor(at); else -> kotlin.math.round(at) }.toInt().coerceIn(0, pager.pageCount - 1)
+                val far = pager.layoutInfo.pageSize * 0.2f
+                val to = when {
+                    v < -600f || stripDragged[0] < -far -> stripFrom[0] + 1
+                    v > 600f || stripDragged[0] > far -> stripFrom[0] - 1
+                    else -> stripFrom[0]
+                }.coerceIn(0, pager.pageCount - 1)
                 pager.animateScrollToPage(to)
             })
         Box(Modifier.fillMaxWidth().height(56.dp).then(strip)) {
@@ -644,6 +652,7 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
             }
         }
     }
+    if (webMode && !covered) cc.aaro.cosign.web.WebPrompts(web, phone)
 }
 
 /** The bottom of the Search pane: your notes, a swipe up (or a tap) away. */

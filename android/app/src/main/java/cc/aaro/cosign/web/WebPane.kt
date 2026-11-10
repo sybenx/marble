@@ -130,6 +130,7 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
 
     fun destroyAll() { views.keys.toList().forEach(::drop) }
 
+    /** Back in the site's own history; false when there's none (a step a page added without a tap doesn't count: WebView skips it). */
     fun back(): Boolean = current()?.takeIf { it.canGoBack() }?.let { it.goBack(); true } ?: false
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -149,6 +150,8 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, false)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+        // What the page doesn't scroll stays the page's: never handed on (nested scrolling) to the pager, which would turn pane.
+        isNestedScrollingEnabled = false
         webViewClient = Client(s)
         webChromeClient = Chrome(s)
         setDownloadListener { url, _, disposition, mime, _ -> download(context, s, url, disposition, mime) }
@@ -158,7 +161,9 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             // The origin a sign-in is named after is the WebView's own, and only while it's still on it.
             val onSite = WebRules.originOf(view.url ?: "") == s.origin
-            return when (val n = WebRules.decide(s, request.url.toString(), request.isForMainFrame, request.hasGesture())) {
+            val n = WebRules.decide(s, request.url.toString(), request.isForMainFrame, request.hasGesture())
+            if (debug) android.util.Log.d("MarbleWeb", "${s.id}: ${n::class.simpleName} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect} onSite=$onSite ${request.url.toString().take(80)}")
+            return when (n) {
                 Nav.Stay -> false
                 is Nav.OtherSite -> { show(n.site, n.url); true }
                 is Nav.Outside -> { openOutside(view.context, n.url); true }
@@ -255,6 +260,8 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         }
     }
 
+    private val debug = cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
     companion object { const val MAX_ALIVE = 3 }
 }
 
@@ -292,7 +299,6 @@ fun WebChips(state: WebPaneState, modifier: Modifier = Modifier) {
 fun WebPane(state: WebPaneState, phone: Phone, current: Boolean, onReview: () -> Unit) {
     val context = LocalContext.current
     val ui by phone.ui.collectAsState()
-    val account = remember(phone) { CosignSiteAccount.of(phone) }
 
     val pickOne = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u ->
         state.chooser?.onReceiveValue(u?.let { arrayOf(it) }); state.chooser = null
@@ -338,6 +344,16 @@ fun WebPane(state: WebPaneState, phone: Phone, current: Boolean, onReview: () ->
         }
     }
 
+}
+
+/**
+ * The web pane's prompts. Drawn outside the pager, over the panes (as Cosign's own connect sheet is): drawn inside the
+ * pane's page, beside the WebView, they never showed over it.
+ */
+@Composable
+fun WebPrompts(state: WebPaneState, phone: Phone) {
+    val ui by phone.ui.collectAsState()
+    val account = remember(phone) { CosignSiteAccount.of(phone) }
     state.signIn?.let { ask ->
         val label = ask.site.label
         val had = ui.sites.any { it.origin == label && it.parent == null }
