@@ -639,6 +639,14 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         if (sheet) PictureSheet(people[me], me, nav) { sheet = false }
         val wanted by PaneWanted.collectAsState()
         LaunchedEffect(wanted) { wanted?.let { pager.animateScrollToPage(it); PaneWanted.value = null } }
+        val ctx = LocalContext.current
+        val webWanted by WebWanted.collectAsState()
+        LaunchedEffect(webWanted) {
+            webWanted?.let { (site, url) ->
+                WebWanted.value = null
+                if (webMode) { web.show(site, url); pager.animateScrollToPage(PANE_WEB) } else openInBrowser(ctx, url)
+            }
+        }
         // Settled on the web pane, the pager takes no swipes: they're the page's.
         androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !onWeb) { page ->
             when (page) {
@@ -3239,7 +3247,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 AppRow(a, followSet) {
                     social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, a.url, a.name) }
                     SearchText.search.value = null
-                    openApp(context, a)
+                    openApp(context, a, nav)
                 }
             }
             items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
@@ -3609,6 +3617,9 @@ private val PLACES = listOf("Reader", "Notes", "Searches", "Settings", "Approval
 /** Asks home's pager for a pane (Go to Reader, from the box). */
 private val PaneWanted = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
 
+/** Asks home's web pane to show a site (an app opened from search). Home falls back to the browser when the pane isn't on. */
+private val WebWanted = kotlinx.coroutines.flow.MutableStateFlow<Pair<cc.aaro.cosign.web.WebSite, String>?>(null)
+
 private fun goToPlace(name: String, nav: Nav, context: android.content.Context) = when (name) {
     "Reader" -> { nav.home(); PaneWanted.value = PANE_WEB }
     "Notes" -> { LaterTab.value = "saved"; nav.open(Route.Later) }
@@ -3706,7 +3717,12 @@ private fun FocusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, what
  * (marble-app-search-research.md section 4). Until the web pane lands this is a Custom Tab; with the pane, a visiting
  * chip there with no window.nostr.
  */
-private fun openApp(context: android.content.Context, a: cc.aaro.cosign.AppEntry) = openInBrowser(context, a.url)
+/** An app from the index: a site the web pane holds (Marble Web, Jumble) opens on its chip there; anything else in the browser, until the pane can hold a visiting site (M3). */
+private fun openApp(context: android.content.Context, a: cc.aaro.cosign.AppEntry, nav: Nav) {
+    val site = cc.aaro.cosign.web.WebSites.byOrigin(cc.aaro.cosign.web.WebRules.originOf(a.url))
+    if (site == null) return openInBrowser(context, a.url)
+    nav.home(); WebWanted.value = site to a.url
+}
 
 /** An app or nsite from the index: its icon (or initial), its name (a tick when its own domain names its key), one line. */
 @Composable
