@@ -52,9 +52,11 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
         val label = WebRules.label(origin)
         val client = WebRules.clientOf(code)
         val site = WebSites.byOrigin(origin)
-        // One live sign-in by code per origin: an older one for the same site ends now (the page asked again, so it lost
-        // it). Sign-ins from elsewhere (the extension in a browser, an app) are left alone.
-        for (old in phone.ui.value.sites) if (replaces(old, label, client)) phone.removeSite(old)
+        // One live pane sign-in per origin: only a sign-in this pane made on this phone, for this account, ends now (the
+        // page asked again, so it lost it). Nothing else is touched: not a sign-in by code made anywhere else, not the
+        // extension's, not an app's (PaneGrants keeps the record).
+        val grants = PaneGrants.of(cc.aaro.cosign.CosignApp.instance)
+        for (old in grants.toReplace(phone.slot, label, phone.ui.value.sites, client)) { phone.removeSite(old); grants.forget(phone.slot, label, old.pk) }
         val errorBefore = phone.ui.value.error
         WebSignIn.confirming.value = label
         phone.scanned(WebRules.namedFor(code, origin))
@@ -66,6 +68,8 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
                 }
                 if (asked?.connect?.stage != Connect.Stage.CONFIRM) return@launch
                 phone.confirmConnect()
+                // From here the servers may take the site on, whatever this phone hears back: it's the pane's.
+                grants.record(phone.slot, label, client)
                 // Hidden until the signer has moved on from asking (to "Telling your servers…"), so it never flashes.
                 withTimeoutOrNull(5_000) { phone.ui.first { u -> u.connect?.stage != Connect.Stage.CONFIRM || u.connect?.origin != label } }
                 WebSignIn.confirming.value = null
@@ -81,9 +85,41 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
     }
 
     companion object {
-        /** A sign-in a new one by code for [label] ends: an earlier one by code (no [Site.via], no parent) for the same origin. */
-        fun replaces(old: cc.aaro.cosign.Site, label: String, client: String) = old.origin == label && old.parent == null && old.via == null && old.pk != client
         private val made = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Phone, CosignSiteAccount>())
         fun of(phone: Phone): CosignSiteAccount = made.getOrPut(phone) { CosignSiteAccount(phone) }
+    }
+}
+
+/**
+ * The sign-ins the web pane made on this phone: per account (slot) and site, the site keys it connected. A new pane
+ * sign-in for a site replaces only these, so a sign-in you made anywhere else (by code in a browser, on another phone,
+ * the extension) is never ended by the pane. Kept on this phone only.
+ */
+class PaneGrants(private val get: (String) -> String?, private val put: (String, String?) -> Unit) {
+    private fun key(slot: String, label: String) = "$slot|$label"
+    private fun read(slot: String, label: String) = get(key(slot, label))?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+
+    @Synchronized fun record(slot: String, label: String, pk: String) {
+        put(key(slot, label), (read(slot, label) + pk.lowercase()).joinToString(","))
+    }
+
+    @Synchronized fun forget(slot: String, label: String, pk: String) {
+        val left = read(slot, label) - pk.lowercase()
+        put(key(slot, label), left.takeIf { it.isNotEmpty() }?.joinToString(","))
+    }
+
+    /** The sign-ins a new pane sign-in for [label] with [client] ends: the pane's own earlier ones still listed. */
+    @Synchronized fun toReplace(slot: String, label: String, sites: List<cc.aaro.cosign.Site>, client: String): List<cc.aaro.cosign.Site> {
+        val mine = read(slot, label)
+        return sites.filter { it.pk.lowercase() in mine && it.origin == label && it.parent == null && it.pk.lowercase() != client.lowercase() }
+    }
+
+    companion object {
+        @Volatile private var made: PaneGrants? = null
+        fun of(context: android.content.Context): PaneGrants = made ?: synchronized(this) {
+            made ?: context.getSharedPreferences("web-pane-grants", android.content.Context.MODE_PRIVATE).let { p ->
+                PaneGrants({ p.getString(it, null) }, { k, v -> p.edit().apply { if (v == null) remove(k) else putString(k, v) }.apply() })
+            }.also { made = it }
+        }
     }
 }

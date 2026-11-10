@@ -356,10 +356,10 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
     val account = remember(phone) { CosignSiteAccount.of(phone) }
     state.signIn?.let { ask ->
         val label = ask.site.label
-        val had = ui.sites.any { CosignSiteAccount.replaces(it, label, WebRules.clientOf(ask.code)) }
+        val had = PaneGrants.of(LocalContext.current).toReplace(phone.slot, label, ui.sites, WebRules.clientOf(ask.code)).isNotEmpty()
         SitePrompt("Sign in to $label?", "$label can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
             yes = "Sign in to $label", no = "Not now",
-            note = if (had) "This replaces the sign-in by code $label already has. Sign-ins from your browser stay." else "Remove it under Your account any time.",
+            note = if (had) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Your account any time.",
             onYes = { state.signIn = null; account.connectSite(ask.site.origin, ask.code) }, onNo = { state.signIn = null })
     }
 

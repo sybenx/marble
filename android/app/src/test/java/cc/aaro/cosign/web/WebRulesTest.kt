@@ -77,12 +77,25 @@ class WebRulesTest {
         assertEquals(key, WebRules.clientOf(named))
     }
 
-    @Test fun onlyAnEarlierSignInByCodeIsReplaced() {
+    @Test fun paneReplacesOnlyWhatThePaneMade() {
         fun site(pk: String, origin: String, via: String? = null, parent: String? = null) = cc.aaro.cosign.Site(pk, origin, 0, 0, parent, via)
-        assertTrue(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social"), "jumble.social", key))
-        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social", via = "Brave on Mac"), "jumble.social", key))
-        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social", parent = "c".repeat(64)), "jumble.social", key))
-        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "marble.syb.lol"), "jumble.social", key))
-        assertFalse(CosignSiteAccount.replaces(site(key, "jumble.social"), "jumble.social", key))
+        val store = HashMap<String, String>()
+        val g = PaneGrants({ store[it] }, { k, v -> if (v == null) store.remove(k) else store[k] = v })
+        val mine = "b".repeat(64); val elsewhere1 = "c".repeat(64); val elsewhere2 = "d".repeat(64); val brave = "e".repeat(64)
+        // Aaron's account: sign-ins by code made from other places, and the extension's, for the same site.
+        val sites = listOf(site(elsewhere1, "jumble.social"), site(elsewhere2, "jumble.social"), site(brave, "jumble.social", via = "Brave on Mac"),
+            site(mine, "jumble.social"), site("f".repeat(64), "marble.syb.lol"))
+        // Nothing recorded yet (every sign-in that existed before this fix): nothing is replaced.
+        assertTrue(g.toReplace("0", "jumble.social", sites, key).isEmpty())
+        g.record("0", "jumble.social", mine)
+        assertEquals(listOf(mine), g.toReplace("0", "jumble.social", sites, key).map { it.pk })
+        // Not for another account on the phone, not for another site, not the new sign-in itself.
+        assertTrue(g.toReplace("1", "jumble.social", sites, key).isEmpty())
+        assertTrue(g.toReplace("0", "marble.syb.lol", sites, key).isEmpty())
+        assertTrue(g.toReplace("0", "jumble.social", sites, mine).isEmpty())
+        // Once ended, it's forgotten.
+        g.forget("0", "jumble.social", mine)
+        assertTrue(g.toReplace("0", "jumble.social", sites, key).isEmpty())
+        assertTrue(store.isEmpty())
     }
 }
