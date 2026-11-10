@@ -52,8 +52,9 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
         val label = WebRules.label(origin)
         val client = WebRules.clientOf(code)
         val site = WebSites.byOrigin(origin)
-        // One live sign-in per origin: an older one for the same site ends now (the page asked again, so it lost it).
-        for (old in phone.ui.value.sites) if (old.origin == label && old.parent == null && old.pk != client) phone.removeSite(old)
+        // One live sign-in by code per origin: an older one for the same site ends now (the page asked again, so it lost
+        // it). Sign-ins from elsewhere (the extension in a browser, an app) are left alone.
+        for (old in phone.ui.value.sites) if (replaces(old, label, client)) phone.removeSite(old)
         val errorBefore = phone.ui.value.error
         WebSignIn.confirming.value = label
         phone.scanned(WebRules.namedFor(code, origin))
@@ -80,6 +81,8 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
     }
 
     companion object {
+        /** A sign-in a new one by code for [label] ends: an earlier one by code (no [Site.via], no parent) for the same origin. */
+        fun replaces(old: cc.aaro.cosign.Site, label: String, client: String) = old.origin == label && old.parent == null && old.via == null && old.pk != client
         private val made = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Phone, CosignSiteAccount>())
         fun of(phone: Phone): CosignSiteAccount = made.getOrPut(phone) { CosignSiteAccount(phone) }
     }

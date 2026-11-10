@@ -76,4 +76,13 @@ class WebRulesTest {
         assertTrue(named.startsWith("nostrconnect://$key?relay=wss%3A%2F%2Frelay.example&secret=s3"))
         assertEquals(key, WebRules.clientOf(named))
     }
+
+    @Test fun onlyAnEarlierSignInByCodeIsReplaced() {
+        fun site(pk: String, origin: String, via: String? = null, parent: String? = null) = cc.aaro.cosign.Site(pk, origin, 0, 0, parent, via)
+        assertTrue(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social"), "jumble.social", key))
+        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social", via = "Brave on Mac"), "jumble.social", key))
+        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "jumble.social", parent = "c".repeat(64)), "jumble.social", key))
+        assertFalse(CosignSiteAccount.replaces(site("b".repeat(64), "marble.syb.lol"), "jumble.social", key))
+        assertFalse(CosignSiteAccount.replaces(site(key, "jumble.social"), "jumble.social", key))
+    }
 }
