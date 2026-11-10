@@ -5,6 +5,7 @@ import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from 
 import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
+import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
 import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
@@ -910,7 +911,7 @@ async function showSearch(q, signal) {
   const words = bareName ? plain.slice(1) : plain;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(words) ? words : null;
   const root = pageEl;
-  const got = { people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const got = { apps: [], people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
   const opened = new Set(); // lists "See all" has opened, kept across redraws
   const wideQuery = matchMedia("(min-width: 1000px)");
   // #top: what the box adds above the results (a site to go to, what a handle confirms, your own searches and notes)
@@ -938,6 +939,9 @@ async function showSearch(q, signal) {
     ${(opened.has(id) ? items : items.slice(0, 3)).map(draw).join("")}
     ${!opened.has(id) && items.length > 3 ? `<button type="button" class="more" data-open="${id}">See all ${items.length}</button>` : ""}</div></section>`;
   const personFor = (p) => personRow(p, { verified: got.extra.verified?.get(p.pubkey), followers: got.extra.followers?.get(p.pubkey), follow: got.follows.has(p.pubkey) });
+  // Nostr apps and nsites (apps.js, matched here in the page). An exact name goes first on phones; otherwise after People.
+  const appsExact = () => got.apps.length > 0 && appNorm(got.apps[0].name) === appNorm(words);
+  const appsSection = () => section("apps", "Apps", got.apps, (a) => appRow(a, got.follows));
   const postItem = (x) => card(x.e, { why: x.why, clamp: true });
   const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
   // Someone you follow named in the search ("thailand anarko"): their posts with the other words, as well as the rest
@@ -961,12 +965,14 @@ async function showSearch(q, signal) {
   };
 
   function drawSide() {
-    const people = got.people;
-    if (!people.length) { side.innerHTML = got.peopleDone ? "" : `<section><h2>People</h2><p class="muted loading-text">Searching…</p></section>`; return; }
-    if (!wideQuery.matches) { side.innerHTML = section("people", "People", people, personFor); fillLater(side); return; }
+    const people = got.people, wide = wideQuery.matches;
+    // (on phones this column comes first, so an exact name's apps go above People)
+    const apps = wide || appsExact() ? appsSection() : "", appsAfter = !wide && !appsExact() ? appsSection() : "";
+    if (!people.length) { side.innerHTML = apps + (got.peopleDone ? "" : `<section><h2>People</h2><p class="muted loading-text">Searching…</p></section>`) + appsAfter; return; }
+    if (!wide) { side.innerHTML = apps + section("people", "People", people, personFor) + appsAfter; fillLater(side); return; }
     const [top, ...rest] = people;
     const more = opened.has("people") ? rest : rest.slice(0, 7);
-    side.innerHTML = `<section><h2>People</h2>${topPerson(top, got)}</section>
+    side.innerHTML = apps + `<section><h2>People</h2>${topPerson(top, got)}</section>
       ${more.length ? `<section class="more-people"><h2>More people</h2>${more.map((p) => personLine(p, got)).join("")}
       ${!opened.has("people") && rest.length > more.length ? `<button type="button" class="see-all" data-open="people">See all ${people.length} people</button>` : ""}</section>` : ""}`;
   }
@@ -990,7 +996,7 @@ async function showSearch(q, signal) {
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
         + spamLine(postItem)
-        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
       fillLater(main);
       return;
     }
@@ -1019,7 +1025,7 @@ async function showSearch(q, signal) {
       + (list.length <= 3 ? (loose ? from : "") + mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
       + spamLine(postResult)
-      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
     fillLater(main);
   }
   redraw();
@@ -1029,6 +1035,12 @@ async function showSearch(q, signal) {
   // Your follows (read once a visit, usually in by now): at most a short wait before people are ranked.
   const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
   followsSoon.then((f) => { got.follows = f; });
+  // apps: the index once a visit, then matched here (nothing typed leaves the page)
+  if (!tagOnly && !bareName) Promise.all([loadApps(), followsSoon]).then(([list, follows]) => {
+    if (signal.aborted) return;
+    got.apps = searchApps(list, words, { follows, limit: 8 });
+    if (got.apps.length) { soon(drawSide); soon(drawMain); }
+  });
 
   if (!tagOnly && !bareName) followsSoon.then((follows) => {
     if (signal.aborted) return;
@@ -1142,6 +1154,22 @@ function storyRow(i) {
   return `<a class="story" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">
     <span class="story-text"><span class="story-src"><b>${esc(i.topic)}</b> · ${esc(i.source?.name || "")} · ${ago(i.published_at)}</span>
     <span class="story-title">${esc(i.title)}</span></span>${img}
+  </a>`;
+}
+
+// An app from the index: icon (its initial until the picture loads, or if it doesn't), name with a tick when the app's
+// own domain names its key, one line of what it is, its description. Opens the app in a new tab: Marble Web can't
+// host other sites or sign for them.
+function appRow(a, follows) {
+  const letter = esc((a.name.match(/[\p{L}\p{N}]/u) || ["?"])[0].toUpperCase());
+  const img = /^https:\/\//.test(a.icon || "") ? `<img src="${esc(a.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
+  return `<a class="person-row app-row" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer nofollow">
+    <span class="app-icon" aria-hidden="true">${letter}${img}</span>
+    <span class="pr-text">
+      <span class="pr-name">${esc(a.name)}${a.official ? `<span class="app-ok" title="${esc(a.domain || "Its site")} names this key">✓</span>` : ""}</span>
+      <span class="pr-sub"><span>${esc(appLine(a, follows))}</span></span>
+      ${a.about ? `<span class="pr-about">${esc(a.about.slice(0, 140))}</span>` : ""}
+    </span>
   </a>`;
 }
 

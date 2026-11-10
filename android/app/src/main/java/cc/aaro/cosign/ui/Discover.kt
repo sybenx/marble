@@ -3090,6 +3090,15 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     val pasted = remember(t) { Ref.parse(t) }
     // An address, or a well-known site's name: "Go to …". Enter opens it only when it's a sure thing.
     val site = remember(t) { cc.aaro.cosign.Sites.match(t) }
+    // Nostr apps and nsites (AppIndex: a list on the phone, refreshed once a day; nothing typed is sent). Up to three
+    // rows under "Go to"; a site the index knows ("jumble", "jumble.social") shows as its app instead of "Go to".
+    val appList by cc.aaro.cosign.AppIndex.apps.collectAsState()
+    LaunchedEffect(Unit) { cc.aaro.cosign.AppIndex.refresh(context) }
+    val followSet = follows ?: emptySet()
+    val apps = remember(t, appList, followSet) {
+        if (pasted != null || t.contains('@')) emptyList() else cc.aaro.cosign.AppIndex.search(appList, t, followSet, limit = 3)
+    }
+    val siteIsApp = site != null && apps.any { a -> a.domain != null && (a.domain == site.address || site.address.endsWith("." + a.domain)) }
     val place = remember(t, laterItems) { cc.aaro.cosign.HomeRules.goTo(t, PLACES, laterItems.filter { it.deleted == null && it.done == null }.map { cc.aaro.cosign.Later.wordsOf(it.text) }) }
     // A handle (alice@example.com, @name.bsky.social, @name): rows for what a quick lookup confirms, once it's whole and
     // you've stopped typing (at once for a paste). "@" is no mode: Enter searches the web all the same.
@@ -3189,7 +3198,14 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 }
                 item(key = "place") { GoToPlace(name) { goToPlace(name, nav, context) } }
             }
-            site?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
+            site?.takeUnless { siteIsApp }?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
+            items(apps, key = { "app:" + it.address + it.url }) { a ->
+                AppRow(a, followSet) {
+                    social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, a.url, a.name) }
+                    SearchText.search.value = null
+                    openApp(context, a)
+                }
+            }
             items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
                 if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
                 else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
@@ -3647,6 +3663,36 @@ private fun FocusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, what
     Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
     if (more != null) IconButton(more, Modifier.semantics { contentDescription = "Choices for this note" }) { Text("⋯", color = Vault.Muted, style = MaterialTheme.typography.titleLarge) }
+}
+
+/**
+ * Open an app found by search. It's a visit: nothing found by search gets signing by being found or opened
+ * (marble-app-search-research.md section 4). Until the web pane lands this is a Custom Tab; with the pane, a visiting
+ * chip there with no window.nostr.
+ */
+private fun openApp(context: android.content.Context, a: cc.aaro.cosign.AppEntry) = openInBrowser(context, a.url)
+
+/** An app or nsite from the index: its icon (or initial), its name (a tick when its own domain names its key), one line. */
+@Composable
+private fun AppRow(a: cc.aaro.cosign.AppEntry, follows: Set<String>, onOpen: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${a.name}", onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    NetImage(a.icon, Modifier.size(40.dp).clip(shape), 120) {
+        Box(Modifier.size(40.dp).background(Vault.Surface, shape).border(1.dp, Vault.Edge, shape), contentAlignment = Alignment.Center) {
+            Text(a.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?", color = Vault.Accent, fontWeight = FontWeight.SemiBold)
+        }
+    }
+    Spacer(Modifier.width(14.dp))
+    Column(Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(a.name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (a.official) Text(" ✓", color = Vault.Accent, style = MaterialTheme.typography.bodySmall)
+        }
+        val line = cc.aaro.cosign.AppIndex.line(a, follows)
+        Text(if (a.about.isNotEmpty()) (if (line.isNotEmpty()) "$line · " else "") + a.about else line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 /** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
