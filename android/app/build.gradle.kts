@@ -56,6 +56,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     // Custom Tabs with a session, so the Save button in a page Marble opened can show it was saved.
     implementation("androidx.browser:browser:1.8.0")
+    // The web pane (ui/web): document-start scripts and message listeners where the WebView has them (M2's bridge).
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")

@@ -1773,6 +1773,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (!p.getBoolean("feed3For2009", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 3)).putInt("feedVersion", 3).putBoolean("feed3For2009", true).apply()
         // Reader (marble-2009-spec step 6) takes Following's place once; Edition stays a switch in Advanced for a release.
         if (!p.getBoolean("readerFirst", false)) p.edit().putInt("feedVersion", 4).putBoolean("readerFirst", true).apply()
+        // The web apps (5: Marble Web and Jumble, marble-web-pane-plan M1) take the left pane once; Reader and Edition
+        // stay in Advanced for one release (decision 2), then go in M3.
+        if (!p.getBoolean("webFirst", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 4)).putInt("feedVersion", 5).putBoolean("webFirst", true).apply()
         p.getInt("feedVersion", 3)
     }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {
