@@ -13,7 +13,7 @@ case "${1:-}" in
   stage)
     bun build build.ts --target=bun --outfile dist/apps-index.js
     rm -f dist/marble-apps-index.tgz
-    tar -czf /tmp/marble-apps-index.tgz -C dist apps-index.js -C ../took run-apps-index.cmd
+    COPYFILE_DISABLE=1 tar -czf /tmp/marble-apps-index.tgz -C dist apps-index.js -C ../took run-apps-index.cmd
     mv /tmp/marble-apps-index.tgz dist/marble-apps-index.tgz
     scp -q dist/marble-apps-index.tgz took:'H:/Programs/marble-apps-index.tgz'
     ssh took '(if exist H:\Programs\marble-apps-index.new rmdir /s /q H:\Programs\marble-apps-index.new) & mkdir H:\Programs\marble-apps-index.new && tar -xzf H:\Programs\marble-apps-index.tgz -C H:\Programs\marble-apps-index.new && dir /b H:\Programs\marble-apps-index.new'
