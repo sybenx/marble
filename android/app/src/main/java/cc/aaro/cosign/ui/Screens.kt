@@ -113,7 +113,7 @@ fun App(phone: Phone, ui: Ui) {
         }
         // With several keys, every question says which one it's about.
         val which = if (CosignApp.instance.accounts.all.count { it.isMember } > 1) phone.label else null
-        ui.connect?.let { ConnectSheet(it, which, phone::confirmConnect, phone::closeConnect) }
+        ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, phone::confirmConnect, phone::closeConnect) }
         ui.moveIn?.let { MoveInSheet(it, phone::acceptMove, phone::closeMove) }
         ui.summary?.let { UndoSiteSheet(it, phone::confirmUndoSite, phone::closeSummary) }
         ui.adding?.let { AddDeviceSheet(it, phone) }
@@ -798,10 +798,10 @@ private fun FeedLogSetting() {
         val social = remember { cc.aaro.cosign.Social.of(cc.aaro.cosign.CosignApp.instance.phone) }
         val feed by social.feedVersion.collectAsState()
         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            Text("Following", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+            Text("Left pane", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
             Text("Now: " + cc.aaro.cosign.FeedNames.of(feed), color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (v in listOf(4, 3)) Text(cc.aaro.cosign.FeedNames.short(v), color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                for (v in listOf(5, 4, 3)) Text(cc.aaro.cosign.FeedNames.short(v), color = if (feed == v) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelMedium, maxLines = 1,
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (feed == v) Vault.Accent else Vault.Surface).border(1.dp, if (feed == v) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
                         .clickable { social.setFeedVersion(v) }.padding(horizontal = 10.dp, vertical = 6.dp))
             }

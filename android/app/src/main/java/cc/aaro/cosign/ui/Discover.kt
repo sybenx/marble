@@ -128,6 +128,7 @@ import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -545,8 +546,8 @@ private fun HomePill(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
     Text(label, color = Vault.Text, style = MaterialTheme.typography.labelLarge)
 }
 
-/** Which pane is which. */
-private const val PANE_FOLLOWING = 0
+/** Which pane is which. The left one is the web apps (Reader or Edition while chosen in Account › Advanced). */
+private const val PANE_WEB = 0
 private const val PANE_SEARCH = 1
 private const val PANE_MESSAGES = 2
 
@@ -586,19 +587,49 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
     val people by People.known.collectAsState()
     val me = ui.member!!.group.groupX
     val scope = rememberCoroutineScope()
+    // The left pane: the web apps (Feed 5, marble-web-pane-plan M1), or Reader or Edition while one is chosen in Account › Advanced.
+    val feedVersion by social.feedVersion.collectAsState()
+    val webMode = feedVersion == 5
+    val web = cc.aaro.cosign.web.rememberWebPaneState()
+    val onWeb = webMode && pager.settledPage == PANE_WEB
+    // The first WebView is made only once you head for the pane (the pager composes it beside Search from the start).
+    val headedForWeb = webMode && (pager.currentPage == PANE_WEB || pager.targetPage == PANE_WEB)
+    LaunchedEffect(headedForWeb) { if (headedForWeb) web.started = true }
     // The feed log (when on): which pane you settle on, for time per pane.
-    LaunchedEffect(pager.settledPage, covered) { if (!covered) cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_FOLLOWING -> "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
+    LaunchedEffect(pager.settledPage, covered) { if (!covered) cc.aaro.cosign.FeedLog.ev("pane", "to" to when (pager.settledPage) { PANE_WEB -> if (webMode) "web" else "following"; PANE_MESSAGES -> "messages"; else -> "search" }) }
+    // Back on the web pane: the site's own history first, then Search. Only with nothing open over the panes, so a
+    // screen on top (Discover's own BackHandler) always gets Back first.
+    androidx.activity.compose.BackHandler(enabled = onWeb && !covered) { if (!web.back()) scope.launch { pager.animateScrollToPage(PANE_SEARCH) } }
     Column(Modifier.fillMaxSize()
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         // Home's one place word top left (a tap, or a swipe, goes there); on it, the mark goes home. Your picture top right.
         var sheet by remember { mutableStateOf(false) }
-        Box(Modifier.fillMaxWidth().height(56.dp)) {
-            // The place word: Reader (Following only while the older feed is chosen in Advanced).
-            if (pager.currentPage == PANE_SEARCH) Text(if (social.feedVersion.collectAsState().value == 3) "Following" else "Reader", color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
+        // On the web pane the page keeps its own sideways swipes (carousels, tabs): the strip is where a swipe moves
+        // between panes. It drives the pager itself; it sits above it, so its drags never reach the pager on their own.
+        // Where a strip drag started and how far it went: past a fifth of a page, or flung, it goes to the next pane.
+        val stripFrom = remember { intArrayOf(0) }
+        val stripDragged = remember { floatArrayOf(0f) }
+        val strip = if (!webMode) Modifier else Modifier.draggable(
+            androidx.compose.foundation.gestures.rememberDraggableState { d -> stripDragged[0] += d; pager.dispatchRawDelta(-d) },
+            androidx.compose.foundation.gestures.Orientation.Horizontal,
+            onDragStarted = { stripFrom[0] = pager.settledPage; stripDragged[0] = 0f },
+            onDragStopped = { v ->
+                val far = pager.layoutInfo.pageSize * 0.2f
+                val to = when {
+                    v < -600f || stripDragged[0] < -far -> stripFrom[0] + 1
+                    v > 600f || stripDragged[0] > far -> stripFrom[0] - 1
+                    else -> stripFrom[0]
+                }.coerceIn(0, pager.pageCount - 1)
+                pager.animateScrollToPage(to)
+            })
+        Box(Modifier.fillMaxWidth().height(56.dp).then(strip)) {
+            // The place word: the site the web pane is on (Reader, or Following, while one of those is chosen in Advanced).
+            if (pager.currentPage == PANE_SEARCH) Text(if (webMode) web.site.name else if (feedVersion == 3) "Following" else "Reader", color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp).clip(RoundedCornerShape(8.dp))
-                    .clickable { scope.launch { pager.animateScrollToPage(PANE_FOLLOWING) } }.padding(horizontal = 12.dp, vertical = 12.dp))
+                    .clickable { scope.launch { pager.animateScrollToPage(PANE_WEB) } }.padding(horizontal = 12.dp, vertical = 12.dp))
             else Box(Modifier.align(Alignment.CenterStart).padding(start = 6.dp).clip(CircleShape).semantics { contentDescription = "Search" }
                 .clickable(onClickLabel = "Go to Search", role = androidx.compose.ui.semantics.Role.Button) { scope.launch { pager.animateScrollToPage(PANE_SEARCH) } }.padding(10.dp)) { Swirl(28f) }
+            if (webMode && pager.currentPage == PANE_WEB) cc.aaro.cosign.web.WebChips(web, Modifier.align(Alignment.Center).padding(horizontal = 64.dp))
             // 48 dp to tap, a button that opens your menu.
             Box(Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(48.dp).clip(CircleShape)
                 .clickable(onClickLabel = "Open your menu", role = androidx.compose.ui.semantics.Role.Button) { sheet = true }, contentAlignment = Alignment.Center) {
@@ -608,15 +639,20 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         if (sheet) PictureSheet(people[me], me, nav) { sheet = false }
         val wanted by PaneWanted.collectAsState()
         LaunchedEffect(wanted) { wanted?.let { pager.animateScrollToPage(it); PaneWanted.value = null } }
-        androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+        // Settled on the web pane, the pager takes no swipes: they're the page's.
+        androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1, userScrollEnabled = !onWeb) { page ->
             when (page) {
-                PANE_FOLLOWING -> if (social.feedVersion.collectAsState().value == 4) ReaderPane(social, nav, current = pager.settledPage == PANE_FOLLOWING && !covered, state = readerState)
-                    else FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_FOLLOWING && !covered, listState = feedState, place = place)
+                PANE_WEB -> when (feedVersion) {
+                    5 -> cc.aaro.cosign.web.WebPane(web, phone, current = onWeb && !covered, onReview = { nav.open(Route.Approvals) })
+                    4 -> ReaderPane(social, nav, current = pager.settledPage == PANE_WEB && !covered, state = readerState)
+                    else -> FeedScreen(social, nav, pane = true, current = pager.settledPage == PANE_WEB && !covered, listState = feedState, place = place)
+                }
                 PANE_MESSAGES -> MessagesPane()
                 else -> Home(phone, ui, social, nav)
             }
         }
     }
+    if (webMode && !covered) cc.aaro.cosign.web.WebPrompts(web, phone)
 }
 
 /** The bottom of the Search pane: your notes, a swipe up (or a tap) away. */
@@ -3558,7 +3594,7 @@ private val PLACES = listOf("Reader", "Notes", "Searches", "Settings", "Approval
 private val PaneWanted = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
 
 private fun goToPlace(name: String, nav: Nav, context: android.content.Context) = when (name) {
-    "Reader" -> { nav.home(); PaneWanted.value = PANE_FOLLOWING }
+    "Reader" -> { nav.home(); PaneWanted.value = PANE_WEB }
     "Notes" -> { LaterTab.value = "saved"; nav.open(Route.Later) }
     "Searches" -> nav.open(Route.Searches)
     "Approvals" -> nav.open(Route.Approvals)

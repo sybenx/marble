@@ -349,7 +349,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     val reactions = MutableStateFlow(prefs.getStringSet("reactions", emptySet())!!.mapNotNull { r -> r.split(' ', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap())
     /** How often you've used each emoji, for the row a long press on the heart opens. */
     private val emojiUse = HashMap<String, Int>().apply {
-        prefs.getString("emojiUse", null)?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
+        // (Some older builds kept this as a set of strings: a getString on it throws, and Marble wouldn't open. Start over.)
+        val kept = try { prefs.getString("emojiUse", null) } catch (_: ClassCastException) { prefs.edit().remove("emojiUse").apply(); null }
+        kept?.let { s -> try { val o = org.json.JSONObject(s); o.keys().forEach { k -> put(k, o.optInt(k)) } } catch (_: Exception) {} }
     }
     /** Who you follow, from your newest follow list. Null until it's known. */
     val follows = MutableStateFlow<Set<String>?>(null)
@@ -1773,6 +1775,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (!p.getBoolean("feed3For2009", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 3)).putInt("feedVersion", 3).putBoolean("feed3For2009", true).apply()
         // Reader (marble-2009-spec step 6) takes Following's place once; Edition stays a switch in Advanced for a release.
         if (!p.getBoolean("readerFirst", false)) p.edit().putInt("feedVersion", 4).putBoolean("readerFirst", true).apply()
+        // The web apps (5: Marble Web and Jumble, marble-web-pane-plan M1) take the left pane once; Reader and Edition
+        // stay in Advanced for one release (decision 2), then go in M3.
+        if (!p.getBoolean("webFirst", false)) p.edit().putInt("feedVersionBefore", p.getInt("feedVersion", 4)).putInt("feedVersion", 5).putBoolean("webFirst", true).apply()
         p.getInt("feedVersion", 3)
     }).also { FeedLog.RANKER = "following" + it.value }
     fun setFeedVersion(v: Int) {
