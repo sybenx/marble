@@ -40,6 +40,8 @@ data class Line(val ts: Long, val text: String, val kind: String = "info") : jav
 data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = null, val nsec: String? = null, val npub: String? = null, val twinUnknown: Boolean = false) : java.io.Serializable {
     enum class Stage { WAITING, SHOWING, FAILED }
 }
+/** Something hard to undo that the account page asked for: Yes or No, on this phone. */
+data class Tap(val id: String, val title: String, val text: String) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
 class NeedsApproval(val what: String) : Exception(what)
 class Revoked : Exception("revoked")
@@ -79,6 +81,7 @@ data class Ui(
     val needsCycle: Boolean = false,
     /** Something that needs the fingerprint is under way: what it is. */
     val working: String? = null,
+    val tap: Tap? = null,
     /** The account page's username, if this phone set one. */
     val username: String? = null,
     /** Where this account's login page is, as this phone last published it (Keykin SPEC 11.1). */

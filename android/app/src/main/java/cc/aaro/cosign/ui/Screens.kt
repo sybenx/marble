@@ -121,6 +121,7 @@ fun App(phone: Phone, ui: Ui) {
         // A bunker link and the whole key never come to this process: the signer shows them (SignerActivity).
         ui.bunker?.let { androidx.compose.runtime.LaunchedEffect(Unit) { phone.reveal() } }
         ui.working?.let { WorkingSheet(it) }
+        ui.tap?.let { TapSheet(it, phone::tap) }
         ui.takeOut?.let { if (it.stage == cc.aaro.cosign.TakeOut.Stage.SHOWING) androidx.compose.runtime.LaunchedEffect(Unit) { phone.reveal() } else TakeOutSheet(it, phone::closeTakeOut) }
     }
 }
@@ -1201,6 +1202,25 @@ internal fun BunkerSheet(link: String, onClose: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Done") }
+        }
+    }
+}
+
+/** Your account page asked for something hard to undo: Yes or No, here. */
+@Composable
+private fun TapSheet(t: cc.aaro.cosign.Tap, onAnswer: (Boolean) -> Unit) {
+    Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
+        Column(
+            Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
+                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+        ) {
+            Text(t.title, style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Spacer(Modifier.height(10.dp))
+            Text(t.text, style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("No", color = Vault.Text) }
+            Spacer(Modifier.height(10.dp))
+            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Danger, Vault.Ground)) { Text("Yes, remove them") }
         }
     }
 }

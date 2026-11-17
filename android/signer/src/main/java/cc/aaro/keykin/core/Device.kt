@@ -125,12 +125,15 @@ object Device {
     }
 
     /** Signs a Nostr event with the box. Returns the whole signed event. */
-    /** `grant` names the site or app this signature is for (SPEC 11.5); leave it out for the person's own use. */
-    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null): JSONObject {
+    /**
+     * `grant` names the site or app this signature is for (SPEC 11.5); leave it out for the person's own use.
+     * `tapped`: the person said Yes on this device to a hard-to-undo event ([destructive]). Without it the box answers `needs_tap`.
+     */
+    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false): JSONObject {
         val id = eventId(h.npub, createdAt, kind, tags, content)
         val ev = JSONObject().put("pubkey", h.npub).put("created_at", createdAt).put("kind", kind).put("tags", JSONArray(tags.map { JSONArray(it) })).put("content", content)
         lateinit var mine: Frost.Asked
-        val r = current(me, h, send) { mine = Frost.ask(h.piece, id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant) } }
+        val r = current(me, h, send) { mine = Frost.ask(h.piece, id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant); if (tapped) put("tapped", true) } }
         if (r.getString("id") != id) refuse("wrong_id")
         val c = r.getJSONObject("commit")
         return ev.put("id", id).put("sig", Frost.finish(h.piece, id, mine, Commit(c.getInt("i"), c.getString("D"), c.getString("E")), r.getString("z")))
@@ -147,14 +150,15 @@ object Device {
     fun unblock(me: Me, h: Held, key: String, fp: Fingerprint, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "unblock").put("key", key).put("account", h.npub), me, fp)) }
 
     /** Adds a device. Needs the fingerprint. This device and the box each give half of the newcomer's piece. */
-    fun add(me: Me, h: Held, inv: Invite, fp: Fingerprint, send: Send = http(h.addr)): Int {
+    /** `note`: a signed-in account page asked for it (SPEC 11.6), which stands in for the fingerprint. */
+    fun add(me: Me, h: Held, inv: Invite, fp: Fingerprint?, send: Send = http(h.addr), note: String? = null): Int {
         val (list, i) = listing(me, h, send)
         val boxI = list.firstOrNull { it.key == h.boxKey }?.i ?: refuse("no_box")
         var mine = emptyMap<Int, String>()
         val member = JSONObject().put("key", inv.key).put("name", inv.name).put("kind", "device").put("i", i).apply { if (inv.chip != null) put("chip", inv.chip) }
-        val r = current(me, h, send, fp) {
+        val r = current(me, h, send, if (note != null) null else fp) {
             mine = Frost.repairDeltas(h.piece, listOf(h.piece.i, boxI).sorted(), i)
-            JSONObject().put("op", "add").put("member", member).put("delta", Seal.to(me.sk, h.boxKey, "repair-delta", mine[boxI]!!))
+            JSONObject().put("op", "add").put("member", member).put("delta", Seal.to(me.sk, h.boxKey, "repair-delta", mine[boxI]!!)).apply { if (note != null) put("note", note) }
         }
         val sigma = Frost.repairSigma(listOf(mine[h.piece.i]!!, Seal.from(me.sk, h.boxKey, "repair-delta", r.getString("delta"))))
         call(send, seal(JSONObject().put("op", "welcome_put").put("account", h.npub).put("key", inv.key).put("sigma", Seal.to(me.sk, inv.key, "repair-sigma", sigma)), me))
@@ -184,14 +188,15 @@ object Device {
     }
 
     /** Cycles the keys. Needs the fingerprint. Blocked devices are dropped for good; the key does not change. */
-    fun cycle(me: Me, h: Held, fp: Fingerprint, send: Send = http(h.addr)) {
+    /** `note`: a signed-in account page asked for it and the person tapped Yes here, in place of the fingerprint. */
+    fun cycle(me: Me, h: Held, fp: Fingerprint?, send: Send = http(h.addr), note: String? = null) {
         val list = members(me, h, send)
         var b1 = BigInteger.ZERO
-        val r = current(me, h, send, fp) {
+        val r = current(me, h, send, if (note != null) null else fp) {
             b1 = BigInteger(1, random(32)).mod(N)
             val changes = JSONObject()
             for (m in list) if (!m.blocked && m.key != me.key && m.key != h.boxKey) changes.put(m.key, Seal.to(me.sk, m.key, "cycle", scalarHex(b1.multiply(BigInteger.valueOf(m.i.toLong())))))
-            JSONObject().put("op", "cycle").put("b1", Seal.to(me.sk, h.boxKey, "cycle", scalarHex(b1))).put("changes", changes)
+            JSONObject().put("op", "cycle").put("b1", Seal.to(me.sk, h.boxKey, "cycle", scalarHex(b1))).put("changes", changes).apply { if (note != null) put("note", note) }
         }
         val c = r.getJSONArray("commitment").let { a -> List(a.length()) { a.getString(it) } }
         adopt(h, c, h.piece.share.add(b1.multiply(BigInteger.valueOf(h.piece.i.toLong()))).mod(N), r.getInt("epoch"))
@@ -229,12 +234,10 @@ object Device {
 
     // --- Username and password for the account page (SPEC 11.3) --------------------------------------
 
-    /** PBKDF2-HMAC-SHA256, 600000 rounds, 32 bytes, over the password's NFKC form as UTF-8. Hex. Takes a second or two. */
+    /** PBKDF2-HMAC-SHA256, 600000 rounds, 32 bytes, over the password's NFKC form as UTF-8. Hex. The platform's own, which is native. */
     fun passwordVerifier(password: String, saltHex: String): String {
-        val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(utf8(java.text.Normalizer.normalize(password, java.text.Normalizer.Form.NFKC)).let { if (it.isEmpty()) ByteArray(1) else it }, "HmacSHA256")) }
-        var u = mac.doFinal(unhex(saltHex) + byteArrayOf(0, 0, 0, 1)); val out = u.copyOf()
-        repeat(600000 - 1) { u = mac.doFinal(u); for (k in out.indices) out[k] = (out[k].toInt() xor u[k].toInt()).toByte() }
-        return hex(out)
+        val spec = javax.crypto.spec.PBEKeySpec(java.text.Normalizer.normalize(password, java.text.Normalizer.Form.NFKC).toCharArray(), unhex(saltHex), 600000, 256)
+        return try { hex(javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded) } finally { spec.clearPassword() }
     }
     /** What the box stores for a verifier. */
     fun passwordCheck(verifierHex: String) = hex(sha256(utf8("keykin2-pw"), unhex(verifierHex)))
@@ -259,10 +262,29 @@ object Device {
 
     // --- Things the account page started for a device to finish (SPEC 11.6) --------------------------
 
-    data class Note(val id: String, val kind: String, val text: String, val at: Long)
+    /** `tap` is true when the device must ask the person Yes or No before doing it. */
+    data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean)
     fun notes(me: Me, h: Held, send: Send = http(h.addr)): List<Note> {
         val a = call(send, seal(JSONObject().put("op", "notes").put("account", h.npub), me)).optJSONArray("notes") ?: JSONArray()
-        return List(a.length()) { a.getJSONObject(it).let { n -> Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at")) } }
+        return List(a.length()) { a.getJSONObject(it).let { n -> Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap")) } }
     }
     fun noteDone(me: Me, h: Held, note: String, result: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "note_done").put("account", h.npub).put("note", note).put("result", result), me)) }
+    /** The person tapped No. The note goes, and the browser that asked is signed out of the account page. */
+    fun noteRefuse(me: Me, h: Held, note: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "note_refuse").put("account", h.npub).put("note", note), me)) }
+
+    /**
+     * Why an event is hard to undo, in a few words, or null if it is ordinary (the Keykin repo's
+     * src/destructive.ts, line for line). The box refuses such an event unless the device says the
+     * person tapped Yes.
+     */
+    fun destructive(kind: Int, tags: List<List<String>>, content: String): String? {
+        if (kind == 62) return "asks every relay to erase the whole account"
+        if (kind == 5 && tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") } >= 5) return "deletes five or more posts at once"
+        if (kind == 3 && tags.none { it.isNotEmpty() && it[0] == "p" }) return "empties the follow list"
+        if (kind == 0) {
+            val p = try { JSONObject(content) } catch (_: Exception) { null }
+            if (p == null || listOf("name", "display_name", "about", "picture", "nip05", "lud16").none { k -> (p.opt(k) as? String)?.isNotBlank() == true }) return "empties the profile"
+        }
+        return null
+    }
 }

@@ -142,6 +142,8 @@ class SignerService : Service() {
             "unblock" -> s.unblock(text ?: return)
             "digits" -> s.digits(flag)
             "makeBunker" -> s.makeBunker()
+            "tap" -> s.tap(flag)
+            "testRelays" -> s.testRelays(text ?: return)
             "setPassword" -> s.setPassword(text ?: return)
             "clearPassword" -> s.clearPassword()
             "setLoginPage" -> s.setLoginPage(text ?: "")

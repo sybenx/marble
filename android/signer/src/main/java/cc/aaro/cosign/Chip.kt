@@ -110,5 +110,8 @@ class FingerprintActivity : FragmentActivity() {
         ask = a
         if (b == null) Chip.prompt(this, a)
     }
+    // Sent to the background (Home, another app on top): the system cancels the prompt without a word, so the
+    // change it was for is cancelled too, at once, and nothing waits on a prompt that is no longer there.
+    override fun onStop() { super.onStop(); if (!isChangingConfigurations) { ask?.done?.countDown(); finish() } }
     override fun onDestroy() { if (isFinishing) ask?.done?.countDown(); super.onDestroy() }
 }

@@ -148,6 +148,10 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     /** A bunker:// link to paste into a site: made, then shown by the signer ([reveal]). */
     fun makeBunker() = act("makeBunker")
     fun closeBunker() = act("closeBunker")
+    /** Yes or No to something hard to undo that your account page asked for. */
+    fun tap(yes: Boolean) = act("tap", flag = yes)
+    /** Debug builds only: the relays this phone's bunker links name and its own events go to (a test's own relay). */
+    fun testRelays(urls: String) = act("testRelays", urls)
     /** The account page's username and password. Fingerprint. The box never sees the password. */
     fun setPassword(username: String, password: String) = act("setPassword", username + "\n" + password)
     fun clearPassword() = act("clearPassword")

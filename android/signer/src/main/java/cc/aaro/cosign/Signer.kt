@@ -113,19 +113,6 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun send(h: Held): Send = Device.withHelpers(Device.http(h.addr), helpers().map { Device.http(it) })
     private fun fp(title: String): Fingerprint = { bytes -> Chip.sign(context, slot, title, bytes) }
 
-    init {
-        secrets.load("held")?.let { try { Held.of(JSONObject(it)) } catch (_: Exception) { null } }?.let { h ->
-            held = h; h.changed = { secrets.save("held", it.json().toString()) }
-            val cached = secrets.load("members")?.let { try { JSONArray(it) } catch (_: Exception) { null } }
-            ui.update { it.copy(member = membership(h, cached?.let(::membersFrom) ?: emptyList())) }
-        }
-        secrets.loadLog()?.let { Json.parse(it) as? List<*> }?.let { lines ->
-            ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
-        }
-        if (held != null) { showSites(); showHistory() }
-        ui.update { it.copy(username = prefs.getString("username", null), loginPage = prefs.getString("login-page", null)?.ifEmpty { null }) }
-    }
-
     private fun membersFrom(a: JSONArray) = List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getInt("i"), m.getString("name"), m.getString("kind"), m.getString("key"), m.optBoolean("blocked"), m.optBoolean("chip"), m.optLong("added")) } }
     private fun membership(h: Held, members: List<Member>): Membership {
         val mine = me()
@@ -218,32 +205,54 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     // --- Things the account page started, for this phone to finish (Keykin SPEC 11.6) --------------
 
+    // A signed-in account page has the person's authority (Aaron, 2026-11-17), so this phone just does
+    // what it asks: add a device, make a bunker link, become a site's signer. Only what is hard to undo
+    // (removing blocked devices for good) asks Yes or No here first, and No signs that browser out.
+
     private val notesSeen = ConcurrentHashMap.newKeySet<String>()
-    /** The note being answered: when the sign-in or the added device is done, the page is told. */
-    @Volatile private var noteNow: Device.Note? = null
     private fun takeNotes(h: Held) {
-        if (ui.value.connect != null || ui.value.adding != null) return           // one question at a time
-        val n = Device.notes(me(), h, send(h)).firstOrNull { notesSeen.add(it.id) } ?: return
-        noteNow = n
-        when (n.kind) {
-            "nostrconnect" -> scannedNostrConnect(n.text)
-            "invite" -> scan(n.text, true)
-            "bunker" -> ui.update { it.copy(error = null, connect = Connect("a site, by a bunker link", Connect.Stage.CONFIRM, "Your account page asked for a bunker link.")) }
-            else -> noteNow = null
+        for (n in Device.notes(me(), h, send(h))) {
+            if (!notesSeen.add(n.id)) continue
+            try {
+                when (n.kind) {
+                    "invite" -> {
+                        val inv = Texts.readInvite(n.text)
+                        synchronized(boxLock) { Device.add(me(), h, inv, null, send(h), n.id) }
+                        Device.noteDone(me(), h, n.id, Texts.join(h), send(h))
+                        note("Added ${inv.name} to your account, from your account page", "approved")
+                    }
+                    "bunker" -> { Device.noteDone(me(), h, n.id, sites.bunker(signerRelays()), send(h)); note("Made a bunker link for your account page", "approved") }
+                    "nostrconnect" -> {
+                        val uri = Uri.parse(n.text.trim().replaceFirst(Regex("^nostrconnect:(?!//)"), "nostrconnect://"))
+                        val client = uri.host?.lowercase(); val secret = uri.getQueryParameter("secret")
+                        val relays = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
+                        if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
+                        val origin = uri.getQueryParameter("url")?.let { Uri.parse(it).host } ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "A site"
+                        sites.acceptNostrConnect(client!!, relays, secret, origin)
+                        Device.noteDone(me(), h, n.id, "ok", send(h))
+                        note("Connected $origin, from your account page", "approved")
+                    }
+                    "cycle" -> if (n.tap) {
+                        ui.update { it.copy(tap = Tap(n.id, "Remove blocked devices for good?", "Your account page asked. Their pieces stop working, and this can't be undone. No also signs that browser out of your account page.")) }
+                        listener?.onNotice("Your account page is waiting", "Open $appName to say Yes or No."); Cosign.host.joined(context)
+                    }
+                }
+            } catch (e: Exception) { note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied") }
         }
-        if (ui.value.connect != null || ui.value.adding != null) { listener?.onNotice("Your account page is waiting", "Open $appName to answer it."); Cosign.host.joined(context) }
     }
-    private fun noteDone(result: String) {
-        val n = noteNow ?: return; val h = held ?: return
-        noteNow = null
-        try { Device.noteDone(me(), h, n.id, result, send(h)) } catch (_: Exception) { }
+    /** Yes or No to something hard to undo that the account page asked for. */
+    fun tap(yes: Boolean) {
+        val t = ui.value.tap ?: return; val h = held ?: return
+        ui.update { it.copy(tap = null) }
+        if (yes) change("Removing blocked devices…") { me, _ ->
+            Device.cycle(me, h, null, send(h), t.id)
+            Device.noteDone(me, h, t.id, "ok", send(h))
+            note("Removed blocked devices for good, from your account page", "approved")
+        } else work.execute {
+            try { Device.noteRefuse(me(), h, t.id, send(h)) } catch (_: Exception) { }
+            note("Said No to your account page: removing blocked devices", "denied")
+        }
     }
-    /**
-     * A sign-in that began on the account page, not in front of this phone: a fingerprint first. The
-     * box cannot check this one (it is not an account change), so it is the plain kind: the prompt is
-     * shown and passed, and nothing is sent. A phone with no chip key is not asked.
-     */
-    private fun fingerprintForNote(title: String) { if (noteNow != null && me().chip != null) Chip.sign(context, slot, title, env.random(32)) }
 
     // --- Username and password for the account page, and where that page is -----------------------
 
@@ -431,10 +440,9 @@ class Signer(private val context: Context, val slot: String = "0") {
             pendingInvite = null
             ui.update { it.copy(joinText = Texts.join(h)) }
             note("Added ${inv.name} to your account", "approved")
-            noteDone(Texts.join(h))
         }
     }
-    fun cancelAddDevice() { pendingInvite = null; noteNow = null; ui.update { it.copy(adding = null) } }
+    fun cancelAddDevice() { pendingInvite = null; ui.update { it.copy(adding = null) } }
     fun closeJoinText() = ui.update { it.copy(joinText = null) }
     fun lockMissing() = ui.update { it.copy(adding = null, error = "Set up a fingerprint on this phone first: changing your account needs it.") }
 
@@ -511,6 +519,8 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Where sites reach this phone when they name no relay of their own (a bunker link). */
     private fun signerRelays(): List<String> = context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } ?: DEFAULT_RELAYS
+    /** A debug build's tests name a relay of their own (one on this machine), for bunker links and for what this phone publishes. */
+    fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
 
     private fun showSites() {
         val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via) } } catch (_: Exception) { emptyList() }
@@ -521,13 +531,6 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun confirmConnect() {
         if (pendingLogin != null) return confirmLogin()
         if (nostrConnect != null) return confirmNostrConnect()
-        if (noteNow?.kind == "bunker") return work.execute {
-            try {
-                fingerprintForNote("Make a bunker link")
-                noteDone(sites.bunker(signerRelays()))
-                ui.update { it.copy(connect = Connect("a site", Connect.Stage.DONE, "The link is on your account page. It works once, for 15 minutes.")) }
-            } catch (e: Exception) { noteNow = null; ui.update { it.copy(connect = Connect("a site", Connect.Stage.FAILED, why(e))) } }
-        }
         val params = connecting ?: return
         val origin = params.origin ?: "a site"
         useCode(params.token)
@@ -604,7 +607,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun closeConnect() {
         digitsAnswer?.complete(false)
         transfer?.let { transfer = null; try { it.cancel() } catch (_: Exception) { } }
-        connecting = null; nostrConnect = null; pendingLogin = null; noteNow = null
+        connecting = null; nostrConnect = null; pendingLogin = null
         ui.update { it.copy(connect = null) }
     }
 
@@ -632,7 +635,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         useCode(client)
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.WORKING, "Telling $origin…")) }
         work.execute {
-            try { fingerprintForNote("Sign in to $origin"); sites.acceptNostrConnect(client, relays, secret, origin); nostrConnect = null; noteDone("ok"); finishConnect(origin, Outcome.DELIVERED) }
+            try { sites.acceptNostrConnect(client, relays, secret, origin); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED) }
             catch (e: Exception) { nostrConnect = null; failConnect(origin, why(e)) }
         }
     }
@@ -656,7 +659,11 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun makeBunker() {
         if (!isMember) return
         work.execute {
-            try { ui.update { it.copy(bunker = sites.bunker(signerRelays()), error = null) } } catch (e: Exception) { ui.update { it.copy(error = why(e)) } }
+            try {
+                val link = sites.bunker(signerRelays())
+                if (debuggable) android.util.Log.i("Keykin", "bunker link $link")     // for tests on an emulator; never in a release build
+                ui.update { it.copy(bunker = link, error = null) }
+            } catch (e: Exception) { ui.update { it.copy(error = why(e)) } }
         }
     }
     fun closeBunker() = ui.update { it.copy(bunker = null) }
@@ -700,10 +707,14 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
 
     /** The signature itself: this phone's piece and the box's (or a helper's when the box is off). */
-    private fun signNow(ev: Event, grant: String? = null): Event {
+    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false): Event {
         val h = held ?: error("$appName isn't set up yet")
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant) } }
+        // The box wants to hear that you said Yes to the few things it calls hard to undo. What this phone itself
+        // signs to put something back (an undo, a repost) or at your own word is always that.
+        val yes = tapped && Device.destructive(ev.kind, ev.tags, ev.content) != null
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, yes) } }
             catch (e: KeykinException) {
+                if (e.code == "needs_tap") throw NeedsApproval(boxHold(ev))
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
                 blockedHere(e); if (e.code == "no_box") ui.update { it.copy(relaysUp = 0) }; throw IllegalStateException(why(e))
             }
@@ -718,19 +729,28 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null): Event {
         Policy.refuse(ev)?.let { throw IllegalStateException(it) }
         var held = approved
-        if (!approved) holdFor(ev)?.let { hold ->
+        // This phone's own rules (against the last version of a list it saw), and the box's shorter list.
+        if (!approved) (holdFor(ev) ?: Device.destructive(ev.kind, ev.tags, ev.content)?.let { boxHold(ev) })?.let { hold ->
             if (!mayAsk) throw NeedsApproval(hold)
             if (!askAndWait(by, ev, hold)) { note("Said no to $by: $hold", "denied"); throw KeykinException("denied") }
             held = true
         }
         val prev = lists.latest(Policy.keyOf(ev))
-        val signed = signNow(ev, grant)
+        val signed = signNow(ev, grant, held)
         remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
         if (ev.kind != 22242 || held) note("Signed ${Describe.kind(ev.kind)} for $by", if (held) "approved" else "auto")
         return signed
     }
 
+    /** What the box calls hard to undo, said the way this phone's own holds are. */
+    private fun boxHold(ev: Event) = when (Device.destructive(ev.kind, ev.tags, ev.content)) {
+        "asks every relay to erase the whole account" -> "Ask relays to erase everything you have ever published"
+        "deletes five or more posts at once" -> "Delete ${ev.tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") }} of your events"
+        "empties the follow list" -> "Empty your follow list"
+        "empties the profile" -> "Wipe your profile: everything"
+        else -> "Something that is hard to undo"
+    }
     private val answers = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
     private fun askAndWait(by: String, ev: Event, hold: String): Boolean {
         val ask = Ask(env.random(8).toHex(), by, ev, hold, System.currentTimeMillis() + ASK_LIFE)
@@ -890,7 +910,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
 
     /** Where this account's own events go: its write relays if this phone has seen its relay list, else a few well-known ones. */
-    private fun writeRelays(): List<String> = lists.latest("10002")?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }?.take(6)?.ifEmpty { null } ?: DEFAULT_RELAYS
+    private fun writeRelays(): List<String> = (if (debuggable) context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } else null) ?: lists.latest("10002")?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }?.take(6)?.ifEmpty { null } ?: DEFAULT_RELAYS
     private fun publish(e: Event) {
         val http = okhttp3.OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build()
         val done = java.util.concurrent.CountDownLatch(1)
@@ -911,7 +931,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             try {
                 val row = objects(readArray(history)).firstOrNull { it.getString("id") == change.id } ?: return@execute
                 val prev = Event.fromMap(Json.parse(row.getString("prev"))) ?: return@execute
-                val signed = signNow(Event(h.npub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId())
+                val signed = signNow(Event(h.npub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId(), tapped = true)
                 lists.record(signed, h.npub)
                 publish(signed)
                 synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") == change.id) it.put("undone", true) else it }).toString()) }
@@ -952,7 +972,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             try {
                 val events = objects(readArray(kept)).filter { it.optString("by") == s.origin && !it.has("deleted") }.mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }
                 if (events.isNotEmpty()) {
-                    val del = signNow(Event(h.npub, Clock.now(), 5, events.map { listOf("e", it.id) }, "").withId())
+                    val del = signNow(Event(h.npub, Clock.now(), 5, events.map { listOf("e", it.id) }, "").withId(), tapped = true)
                     publish(del); remember(del, null, appName, true)
                 }
                 // The oldest change it made to each list holds what the list was before it.
@@ -975,6 +995,20 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun note(text: String, kind: String = "info") {
         ui.update { it.copy(log = (listOf(Line(System.currentTimeMillis(), text, kind)) + it.log).take(60)) }
         secrets.saveLog(Json.stringify(ui.value.log.map { mapOf("ts" to it.ts, "text" to it.text, "kind" to it.kind) }))
+    }
+
+    // Last, once everything above exists: what this phone kept from before.
+    init {
+        secrets.load("held")?.let { try { Held.of(JSONObject(it)) } catch (_: Exception) { null } }?.let { h ->
+            held = h; h.changed = { secrets.save("held", it.json().toString()) }
+            val cached = secrets.load("members")?.let { try { JSONArray(it) } catch (_: Exception) { null } }
+            ui.update { it.copy(member = membership(h, cached?.let(::membersFrom) ?: emptyList())) }
+        }
+        secrets.loadLog()?.let { Json.parse(it) as? List<*> }?.let { lines ->
+            ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
+        }
+        if (held != null) { showSites(); showHistory() }
+        ui.update { it.copy(username = prefs.getString("username", null), loginPage = prefs.getString("login-page", null)?.ifEmpty { null }) }
     }
 
     companion object {
