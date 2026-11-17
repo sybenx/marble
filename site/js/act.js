@@ -199,6 +199,7 @@ async function withPhone() {
           <p>Scan this code with the sign-in app on your phone.</p>
           <p class="si-wait">${spinner}Waiting for your phone…</p>
           <p class="si-get">No sign-in app on your phone? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble</a></p>
+          <p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>
           <div class="si-actions">${hasExtension() ? `<button type="button" class="link" data-si="extension">Use the extension</button>` : ""}
             <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
       },

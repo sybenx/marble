@@ -514,9 +514,13 @@
   .empty-line { color: var(--muted); padding: 18px 4px; margin: 0; }
 
   /* Signing in */
-  dialog#signin { border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--ink); padding: 24px; width: min(400px, calc(100vw - 32px)); }
-  dialog#signin::backdrop { background: rgba(10, 9, 8, .55); }
-  dialog#signin:focus { outline: none; }
+  dialog#signin, dialog#acct { border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--ink); padding: 24px; width: min(400px, calc(100vw - 32px)); }
+  dialog#signin::backdrop, dialog#acct::backdrop { background: rgba(10, 9, 8, .55); }
+  dialog#signin:focus, dialog#acct:focus { outline: none; }
+  /* the account button's dialog (account-page.js): the address it found, in full, before the way there */
+  .acct-addr { font: 600 18px ui-monospace, Menlo, Consolas, monospace; color: var(--ink) !important; overflow-wrap: anywhere; margin: 10px 0; }
+  .acct-who { width: 100%; box-sizing: border-box; padding: 11px 14px; border: 1px solid var(--field-line); border-radius: 12px; background: var(--field, transparent); color: var(--ink); font: inherit; }
+  .acct-who:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .si h2 { font-size: 20px; margin: 0 0 10px; letter-spacing: 0; }
   .si p { color: var(--muted); }
   .si-wait { display: flex; align-items: center; gap: 10px; color: var(--ink) !important; }

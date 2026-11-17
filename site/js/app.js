@@ -10,6 +10,7 @@ import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
+import { openAccountPage } from "./account-page.js";
 import * as notes from "./later.js";
 import { showReader } from "./reader.js";
 import { follow, following } from "./follow.js";
@@ -485,6 +486,8 @@ function replyTags(e) {
 }
 
 document.addEventListener("click", (ev) => { if (ev.target.closest("[data-sign-in]")) openSignIn(); });
+// "Your account page", asked without being signed in here (in the sign-in dialog): whose is asked first
+document.addEventListener("click", (ev) => { if (ev.target.closest("[data-account-visitor]")) { document.getElementById("signin")?.close(); openAccountPage(null); } });
 document.addEventListener("submit", async (ev) => {
   const form = ev.target.closest("form.reply-box");
   if (!form) return;
@@ -1706,6 +1709,7 @@ function drawAccount() {
     account.innerHTML = `<button type="button" class="me" aria-label="Your account" aria-expanded="false" aria-haspopup="menu">${avatar(me, 36)}</button>
       <div class="menu sheet-rows" hidden role="menu">
         <a href="${personPath(me)}" class="who-row-me" role="menuitem">${avatar(me, 32)}<span><b data-name="${me}">${esc(name(me))}</b><small>Your profile</small></span></a>
+        <button type="button" data-account-page role="menuitem">Your account page</button>
         <a href="/notes" role="menuitem">Notes and searches</a>
         <a href="/about" role="menuitem">About Marble</a>
         <p class="sheet-note" role="note" hidden></p>
@@ -1726,6 +1730,8 @@ account.addEventListener("click", async (ev) => {
       menu.querySelector("a, button")?.focus(); // (a menu: focus goes in, arrows move, Esc closes)
     }
   } else if (ev.target.closest("[data-sign-out]")) signOut();
+  // where your account is managed: its own page, which your account names (account-page.js); Marble only points there
+  else if (ev.target.closest("[data-account-page]")) { menu.hidden = true; openAccountPage(currentMe()); }
 
   else if (ev.target.closest("a") && menu) menu.hidden = true;
 });
