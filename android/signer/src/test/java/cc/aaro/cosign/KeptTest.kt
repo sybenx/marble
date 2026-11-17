@@ -51,19 +51,19 @@ class KeptTest {
      * screen going off each forget everything kept.
      */
     @Test fun everythingThatEndsAccessForgetsThem() {
-        val src = File("src/main/java/cc/aaro/cosign/Phone.kt").readText()
+        val src = File("src/main/java/cc/aaro/cosign/Signer.kt").readText()
         fun calls(what: String, within: String) {
             val at = src.indexOf(within)
-            assert(at > 0) { "$within is gone from Phone.kt" }
+            assert(at > 0) { "$within is gone from Signer.kt" }
             // Around it, not after it: a receiver's body is written before the thing it listens for.
             val near = src.substring(maxOf(0, at - 600), minOf(src.length, at + 1200))
             assert(near.contains("sharedXs.forgetAll()")) { "$what doesn't forget the conversation keys" }
         }
         calls("removing an app", "fun removeSite(")
         calls("undoing everything an app did", "fun confirmUndoSite(")
-        calls("this phone reported lost", "\"removed\" ->")
+        calls("a device being blocked", "fun confirmReportLost(")
         calls("the screen going off", "ACTION_SCREEN_OFF")
-        calls("every server saying an app has no access", "Outcome.REVOKED_EVERYWHERE")
+        calls("the box saying a site or an app was revoked", "fun dropRevoked(")
         // And nothing writes them down: they live in memory only.
         assert(!src.contains("saveSharedX") && !Regex("""sharedXs[^\n]*(save|putString|edit\(\))""").containsMatchIn(src)) { "a conversation key is being written down" }
     }

@@ -155,6 +155,8 @@ class MainActivity : ComponentActivity() {
             "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
             "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
             "tapYes" -> p.tap(true); "tapNo" -> p.tap(false)
+            "addAccount" -> CosignApp.instance.accounts.add()
+            "show" -> CosignApp.instance.accounts.all.getOrNull(intent.getIntExtra("n", 0))?.let { CosignApp.instance.accounts.show(it.slot) }
             "deny" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, false) }
             "testRelays" -> p.testRelays(intent.getStringExtra("arg") ?: "")
             "closeAll" -> { p.closeConnect(); p.closeJoinText(); p.closeBunker(); p.closeTakeOut(); p.clearError() }

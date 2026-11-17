@@ -979,6 +979,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 val rows = objects(readArray(history)).filter { it.optString("by") == s.origin && !it.optBoolean("undone") }
                 for (r in rows.groupBy { it.getString("key") }.values.map { it.last() }) undo(Change(r.getString("id"), r.getString("text"), s.origin, r.getLong("at"), false, false))
                 ui.value.sites.firstOrNull { it.pk == s.pk }?.let(::removeSite)
+                sharedXs.forgetAll()
                 note("Took back what ${s.origin} did", "approved")
             } catch (e: Exception) { ui.update { it.copy(error = "Couldn't take that back: ${e.message}") } }
         }

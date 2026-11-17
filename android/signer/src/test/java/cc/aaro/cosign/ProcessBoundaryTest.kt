@@ -18,8 +18,8 @@ class ProcessBoundaryTest {
         // Comments may name anything.
         .replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""//[^\n]*"""), "")
 
-    /** What holds or uses a share. */
-    private val keyMaterial = Regex("""\b(Signer|Signers|Secrets|FrostNative|Frost\.(sign|commit|ecdh\w*|aggregate)|Lists|Relays|Dkg|Refresh|Backup|signers)\b""")
+    /** What holds or uses a piece. */
+    private val keyMaterial = Regex("""\b(Signer|Signers|Secrets|FrostNative|Frost\.(ask|finish|dkg\w*|repair\w*)|Device\.\w+|Held|Chip|SiteSigner|Lists|Relays|signers)\b""")
     /** What shows strangers' posts, pictures and video. */
     private val untrusted = Regex("""\b(Social|People|Sources|Fetch|Images|Translate|Places|TubeFeed|ExoPlayer|WebView|media3|Coil|instance\.accounts)\b""")
 
@@ -53,13 +53,13 @@ class ProcessBoundaryTest {
             assertTrue("$name takes a key to work with", !Regex("""\b(peer|pubkey|npub|recipient)\b""", RegexOption.IGNORE_CASE).containsMatchIn(args))
         // The signer pins the other side to this account's own key.
         assertTrue("nip44Self doesn't pin the other side to this account",
-            Regex("""fun nip44Self\([^)]*\)[\s\S]{0,800}?nip44\(\w+, m\.group\.groupX,""").containsMatchIn(read("Phone.kt")))
+            Regex("""fun nip44Self\([^)]*\)[^\n]*nip44With\(held\?\.npub """).containsMatchIn(read("Signer.kt")))
         // And the UI's side never reaches the forms that do take one.
         for (f in mainSide) assertTrue("$f calls a nip44/nip04 that takes a peer", !Regex("""\bnip(44|04)\(""").containsMatchIn(read(f)))
     }
 
     @Test fun libraryNeverNamesTheFeed() {
-        assertTrue("Phone.kt" in all && "core/Frost.kt" in all)
+        assertTrue("Signer.kt" in all && "core/Policy.kt" in all)
         for (f in all) {
             val hits = untrusted.findAll(read(f)).map { it.value }.toSet()
             assertTrue("$f names ${hits.joinToString()}", hits.isEmpty())
@@ -70,25 +70,27 @@ class ProcessBoundaryTest {
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val components = Regex("""<(activity|service|provider|receiver)\b([^>]*)>""").findAll(manifest)
             .associate { m -> Regex("""android:name="([^"]+)"""").find(m.groupValues[2])!!.groupValues[1] to Regex("""android:process="([^"]+)"""").find(m.groupValues[2])?.groupValues?.get(1) }
-        assertEquals(setOf("cc.aaro.cosign.SignerService", "cc.aaro.cosign.Nip55Provider"), components.keys)
+        assertEquals(setOf("cc.aaro.cosign.FingerprintActivity", "cc.aaro.cosign.SignerService", "cc.aaro.cosign.Nip55Provider"), components.keys)
         for (c in components.keys) assertEquals(c, ":signer", components[c])
         // The signer is reachable from other apps only through NIP-55; SignerService is the app's own.
         assertTrue(Regex("""android:name="cc\.aaro\.cosign\.SignerService"\s+android:process=":signer"\s+android:exported="false"""").containsMatchIn(manifest))
     }
 
     @Test fun theUiNeverGetsASecret() {
-        val m = Membership("aa".repeat(32), 1, listOf(Share(1, "bb".repeat(32)), Share(2, "cc".repeat(32))), "dd".repeat(32),
-            Group("ee".repeat(32), "npub1x", 4, listOf("wss://r"), emptyList()))
-        val u = Ui(member = m, offer = Offer("ff", "t", 1, "11".repeat(32), "dd", m.group), paper = "cosign:backup?k=" + "22".repeat(32),
+        // The state the screens get holds no piece and no member key to begin with; what is left to keep back
+        // is the whole key, once formed, and a bunker link.
+        val m = Membership(1, "dd".repeat(32), Group("ee".repeat(32), "npub1x", 2, listOf("wss://r"), emptyList()), box = "https://box.example", boxKey = "ff".repeat(32))
+        val u = Ui(member = m, bunker = "bunker://" + "dd".repeat(32) + "?relay=wss%3A%2F%2Fr&secret=" + "22".repeat(16),
             takeOut = TakeOut(TakeOut.Stage.SHOWING, nsec = "nsec1secret"))
         val sent = Wire.read(Wire.write(SignerService.forUi(u)))
         val all = sent.toString()
-        for (secret in listOf("aa".repeat(32), "bb".repeat(32), "cc".repeat(32), "11".repeat(32), "22".repeat(32), "nsec1secret"))
-            assertTrue("leaks $secret", secret !in all)
+        for (secret in listOf("22".repeat(16), "nsec1secret")) assertTrue("leaks $secret", secret !in all)
         // What the UI does need is still there.
         assertEquals(m.group, sent.member?.group)
-        assertEquals(listOf(1, 2), sent.member?.idxs)
-        assertEquals("", sent.paper)
+        assertEquals("", sent.bunker)
         assertEquals(TakeOut.Stage.SHOWING, sent.takeOut?.stage)
+        // And the classes that cross have no field for a piece or a secret key at all.
+        for (c in listOf(Membership::class.java, Member::class.java, Group::class.java, Ui::class.java))
+            assertTrue("${c.simpleName} has a field for a secret", c.declaredFields.none { it.name in setOf("sk", "share", "shares", "piece", "secret") })
     }
 }
