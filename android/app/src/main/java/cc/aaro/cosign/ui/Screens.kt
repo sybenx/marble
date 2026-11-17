@@ -102,10 +102,8 @@ fun App(phone: Phone, ui: Ui) {
             ui.member == null -> Column(Modifier.fillMaxSize()) {
                 // "I already have an account": its nsec first (straight to the signer), then the box's code, as for a new one.
                 var importing by remember { mutableStateOf(false) }
-                Box(Modifier.weight(1f)) { Welcome(if (ui.bringing && ui.error == null) "Your key is ready. Now scan the code on your Keykin box's page (tap Create your account), or paste it." else ui.error,
-                    onCreate = { phone.clearError(); scanning = true }, onJoin = phone::startJoin, onPaste = phone::pasted, onHave = { phone.clearError(); importing = true }, onAsk = phone::startAsk) }
-                if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars); scanning = true }
-                if (ui.bringing) TextButton({ phone.cancelImport() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Don't bring that key in after all", color = Vault.Muted) }
+                Box(Modifier.weight(1f)) { Welcome(ui.error, onCreate = phone::createLocal, onOther = { phone.clearError(); phone.receiveKey() }, onHave = { phone.clearError(); importing = true }) }
+                if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars) }
                 // A place for another key: the ones you have are a tap away.
                 val others = CosignApp.instance.accounts.all.filter { it !== phone && it.isMember }
                 if (others.isNotEmpty()) TextButton({ CosignApp.instance.accounts.forget(phone.slot); CosignApp.instance.accounts.show(others.first().slot) },
@@ -118,6 +116,7 @@ fun App(phone: Phone, ui: Ui) {
         ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, phone::confirmConnect, phone::digits, phone::closeConnect) }
         ui.joinText?.let { JoinTextSheet(it, phone::closeJoinText) }
         ui.loginAsk?.let { LoginSheet(it, phone::confirmConnect, phone::closeConnect) }
+        ui.move?.let { KeyMoveScreen(it, phone) }
         ui.summary?.let { UndoSiteSheet(it, phone::confirmUndoSite, phone::closeSummary) }
         ui.adding?.let { AddDeviceSheet(it, phone) }
         ui.reporting?.let { ReportLostSheet(it, phone) }
@@ -206,29 +205,22 @@ private fun Page(content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp), content = content)
 
 @Composable
-private fun Welcome(error: String?, onCreate: () -> Unit, onJoin: () -> Unit, onPaste: (String) -> Unit, onHave: () -> Unit, onAsk: () -> Unit = {}) = Page {
-    val context = androidx.compose.ui.platform.LocalContext.current
+private fun Welcome(error: String?, onCreate: () -> Unit, onOther: () -> Unit, onHave: () -> Unit) = Column(Modifier.fillMaxSize().background(Kk.Ground).safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
     Spacer(Modifier.weight(1f))
     Text(appName, style = MaterialTheme.typography.headlineMedium, color = Vault.Text)
     Spacer(Modifier.height(12.dp))
-    Text(
-        "Search and discover what people are posting. With an account you can like and follow, and sign in to sites; " +
-            "anything destructive waits for you on this phone.",
-        style = MaterialTheme.typography.bodyLarge, color = Vault.Muted,
-    )
+    Text("Search and discover what people are posting. With an account you can like and follow, and sign in to sites and apps.",
+        style = MaterialTheme.typography.bodyLarge, color = Vault.Muted)
     error?.let { Spacer(Modifier.height(16.dp)); Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodyMedium) }
     Spacer(Modifier.weight(1f))
-    Button(onCreate, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
-        Text("Create your account", style = MaterialTheme.typography.labelLarge)
-    }
+    Button(onCreate, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Create your account", style = MaterialTheme.typography.labelLarge) }
+    Spacer(Modifier.height(10.dp))
+    OutlinedButton(onOther, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("I have an account on another device", color = Vault.Text) }
     Spacer(Modifier.height(8.dp))
-    Text("Scan the code on your Keykin box's page. This phone and the box make it together; no one, this phone included, ever holds all of it.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted,
+    OutlinedButton(onHave, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("I have my secret key", color = Vault.Text) }
+    Spacer(Modifier.height(10.dp))
+    Text("Your key stays on this phone, sealed. It is never deleted unless you choose to.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted,
         modifier = Modifier.align(Alignment.CenterHorizontally))
-    Spacer(Modifier.height(8.dp))
-    TextButton(onJoin, Modifier.align(Alignment.CenterHorizontally)) { Text("Sign in with another device", color = Vault.Accent) }
-    TextButton(onHave, Modifier.align(Alignment.CenterHorizontally)) { Text("I already have an account", color = Vault.Accent) }
-    TextButton({ onPaste(pasted(context)) }, Modifier.align(Alignment.CenterHorizontally)) { Text("Paste your box's code instead", color = Vault.Muted) }
-    TextButton({ onAsk() }, Modifier.align(Alignment.CenterHorizontally)) { Text("No code? Ask a box for an account", color = Vault.Muted) }
 }
 
 /**
@@ -262,7 +254,7 @@ private fun ImportSheet(onClose: () -> Unit, onKey: (CharArray) -> Unit) {
         ) {
             Text("Bring your account", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
             Spacer(Modifier.height(10.dp))
-            Text("Paste its secret key (nsec). This phone splits it with your box, and signs with the pieces from then on. It also keeps the whole key here, sealed, as your backup, until you choose to forget it. Next you scan your box's code.",
+            Text("Paste its secret key (nsec). It is kept on this phone, sealed, and signs from here. It is never deleted unless you choose to.",
                 style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
             Spacer(Modifier.height(16.dp))
             androidx.compose.ui.viewinterop.AndroidView({ ctx ->
@@ -491,12 +483,19 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
         }
         if (!m.chip) item { Muted("This phone has no fingerprint set up, so it can sign but can't change your account (add a device, unblock, cycle keys, show the key).") }
-        item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
-        item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Log in to your box's page", color = Vault.Accent) } }
+        val tier1 = m.box.isEmpty()
+        if (ui.keptKey) item {
+            Column {
+                TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Send my key to another device", color = Vault.Accent) }
+                Muted("On the other device, choose I have an account on another device, then scan the code it shows.")
+            }
+        }
+        if (!tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
+        if (!tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Log in to your box's page", color = Vault.Accent) } }
 
         // Your account page (Keykin Login): where it is, and the username and password that can look and block there.
-        item { Heading("Your account page") }
-        item { AccountPageRows(ui, phone) }
+        if (!tier1) item { Heading("Your account page") }
+        if (!tier1) item { AccountPageRows(ui, phone) }
 
         item { Heading("Apps and sites you're signed in to") }
         item {
@@ -606,11 +605,14 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
 
         // The paper backup is not decided for Keykin (one paper piece does nothing alone). Until it is: a second device.
         item { Heading("Keep your account safe") }
-        if (ui.keptKey) item {
+        if (tier1) item {
+            Muted("Your key is on this phone, sealed, and it signs from here. It is never deleted unless you choose to. To keep a copy, send it to another device of yours.")
+        }
+        if (ui.keptKey && !tier1) item {
             var asking by remember { mutableStateOf(false) }
             Column {
                 Text("Backup: the whole key is on this phone", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
-                Muted("You brought this account in, so its whole key is kept here, sealed. It is how the account comes back if the pieces are lost. Signing uses the pieces.")
+                Muted("The whole key is kept here, sealed. It is how the account comes back if the pieces are lost. Signing uses the pieces.")
                 TextButton({ asking = true }, contentPadding = PaddingValues(0.dp)) { Text("Forget the whole key on this phone", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
             if (asking) AlertDialog(
@@ -645,7 +647,9 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
         if (advanced) {
             item {
-                Muted("Your account is a Nostr key in pieces: each of your devices holds one and your box holds one. Any two pieces sign; one alone can do nothing.")
+                if (tier1) Muted("Your account is a Nostr key, kept on this phone. A Keykin box is optional: signing in to one splits the key between this phone and the box, so a lost phone can be blocked. This phone keeps the whole key either way.")
+                if (tier1) TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Sign in to a Keykin box", color = Vault.Accent) }
+                if (!tier1) Muted("Your account is a Nostr key in pieces: each of your devices holds one and your box holds one. Any two pieces sign; one alone can do nothing.")
                 Spacer(Modifier.height(10.dp))
                 val context = androidx.compose.ui.platform.LocalContext.current
                 Text(short(m.group.npub), fontFamily = PlexMono, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clickable {
@@ -670,7 +674,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             items(ui.log.take(20)) { LogLine(it) }
             item {
                 Spacer(Modifier.height(12.dp))
-                Muted("Your box: ${m.box} · " + (if (ui.relaysUp == 0) "not reachable" else "reachable") + (if (m.group.relays.isEmpty()) "" else " · sites reach this phone on ${m.group.relays.size} relay${if (m.group.relays.size == 1) "" else "s"}"))
+                if (!tier1) Muted("Your box: ${m.box} · " + (if (ui.relaysUp == 0) "not reachable" else "reachable") + (if (m.group.relays.isEmpty()) "" else " · sites reach this phone on ${m.group.relays.size} relay${if (m.group.relays.size == 1) "" else "s"}"))
                 TextButton({ leaving = true }, contentPadding = PaddingValues(0.dp)) { Text("Remove this phone from your account", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
             item { FeedLogSetting() }
@@ -1367,5 +1371,111 @@ private fun AskScreen(a: cc.aaro.cosign.Asking, phone: Phone) {
             colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Ask") }
         else if (a.step < 3) OutlinedButton({ phone.cancelAsk() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Cancel the request", color = Kk.Danger) }
         TextButton({ phone.cancelAsk() }, Modifier.align(Alignment.CenterHorizontally)) { Text("I have a setup code instead", color = Kk.Text) }
+    }
+}
+
+
+/** The whole key moving between your devices by QRST, in QRST Signer's words. */
+@Composable
+private fun KeyMoveScreen(m: cc.aaro.cosign.KeyMove, phone: Phone) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    BackHandler { phone.closeMove() }
+    if (m.kind == "receive" && m.phase != "ENDED") androidx.compose.runtime.DisposableEffect(Unit) {
+        val a = context as? android.app.Activity
+        a?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); onDispose { a?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
+    }
+    val big: @Composable (String) -> Unit = { Text(it.chunked(1).joinToString(" "), fontFamily = PlexMono, style = MaterialTheme.typography.displaySmall, color = Kk.Text) }
+    Column(Modifier.fillMaxSize().background(Kk.Ground).safeDrawingPadding().padding(20.dp)) {
+        when {
+            m.kind == "consent" -> {
+                var sure by remember { mutableStateOf(false) }
+                Text("Key leaves this phone", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(8.dp))
+                Text("This is not a login. The other device keeps a working copy of your key. Once sent it can't be taken back.", color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                if (!m.viaCamera) { Spacer(Modifier.height(8.dp)); Text("Opened as a link, not by this app's scanner. Make sure the other device is yours.", color = Kk.Danger, style = MaterialTheme.typography.bodyMedium) }
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth().background(Kk.Card, RoundedCornerShape(12.dp)).border(1.dp, Kk.Line, RoundedCornerShape(12.dp)).clickable { sure = !sure }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(sure, { sure = it })
+                    Text("I understand this gives that device permanent control of my account", color = Kk.Text, style = MaterialTheme.typography.bodyMedium)
+                }
+                m.problem?.let { Spacer(Modifier.height(10.dp)); Text(it, color = Kk.Danger, style = MaterialTheme.typography.bodyMedium) }
+                Spacer(Modifier.weight(1f))
+                Button({ phone.sendKey() }, Modifier.fillMaxWidth().height(52.dp), enabled = sure, colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Send my key") }
+                TextButton({ phone.closeMove() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Kk.Text) }
+            }
+            m.phase == "ENDED" -> {
+                val ok = m.outcome == "delivered" || m.kept
+                Text(when { m.kind == "receive" && m.kept -> "Your key is on this phone"; ok -> "Sent"; m.outcome == "expired" -> "Ten minutes passed"; else -> "Nothing moved" },
+                    color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(8.dp))
+                Text(when {
+                    m.kind == "receive" && m.kept -> "It is kept here, sealed, and signs from here."
+                    ok -> "The other device confirmed it kept the key."
+                    m.outcome == "wrong-code" || m.outcome == "too-many-attempts" -> "Too many wrong digits. Nothing was sent. Start again from a fresh code on the other device."
+                    else -> "Nothing was sent or kept."
+                }, color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.weight(1f))
+                Button({ phone.closeMove() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Done") }
+            }
+            m.kind == "receive" && m.phase == "ACCEPT" -> {
+                Text("Your other device sent a key", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(12.dp))
+                Text(m.rendering ?: "", fontFamily = PlexMono, color = Kk.Text, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                Text("Keep it, and this phone signs as that account.", color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.weight(1f))
+                Button({ phone.keepKey() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Keep it") }
+                TextButton({ phone.declineKey() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Don't keep it", color = Kk.Danger) }
+            }
+            m.code != null && m.kind == "receive" -> {
+                Text("Type these on the device that's sending", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(20.dp)); big(m.code ?: ""); Spacer(Modifier.height(12.dp))
+                Text("This transfer only. Not a PIN.", color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.weight(1f))
+                TextButton({ phone.closeMove() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Kk.Text) }
+            }
+            m.kind == "send" && m.phase == "RELEASE" && m.check == "COMPARE" -> {
+                Text("Does the other device show these digits?", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(20.dp)); big(m.compare ?: ""); Spacer(Modifier.weight(1f))
+                Button({ phone.moveDigits("") }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("They match. Send my key") }
+                TextButton({ phone.moveDigits(null) }, Modifier.align(Alignment.CenterHorizontally)) { Text("The digits are different", color = Kk.Danger) }
+            }
+            m.kind == "send" && m.phase == "RELEASE" -> {
+                var digits by remember { mutableStateOf("") }
+                Text("Digits on your other device", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(8.dp))
+                Text("Type the digits the other device shows. They make sure the key goes to the device in front of you.", color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(16.dp))
+                TextField(digits, { digits = it.filter(Char::isDigit).take(8) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword))
+                Spacer(Modifier.weight(1f))
+                Button({ phone.moveDigits(digits) }, Modifier.fillMaxWidth().height(52.dp), enabled = digits.length >= 5, colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Send my key") }
+                TextButton({ phone.closeMove() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Kk.Text) }
+            }
+            m.kind == "receive" && m.uri != null && m.phase == "WAITING" -> {
+                Text("Receiving a key", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(8.dp))
+                Text("Scan this with the device that has the key. It sends the key here.", color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(14.dp))
+                val qr = remember(m.uri) { qrBitmap(m.uri ?: "", 720) }
+                androidx.compose.foundation.Image(qr.asImageBitmap(), "Pairing code", Modifier.fillMaxWidth().aspectRatio(1f).background(Color.White, RoundedCornerShape(12.dp)).padding(12.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("Only show this to your own devices. Whoever scans it can answer it.", color = Kk.Muted, style = MaterialTheme.typography.bodySmall)
+                if (!m.connected) Text("Not connected to a relay yet. Still trying.", color = Kk.Muted, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.weight(1f))
+                TextButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("QRST pairing link", m.uri ?: "")) },
+                    Modifier.align(Alignment.CenterHorizontally)) { Text("Copy the link instead", color = Kk.Text) }
+                TextButton({ phone.closeMove(); phone.startJoin() }, Modifier.align(Alignment.CenterHorizontally)) { Text("My account uses a Keykin box: join with an invite instead", color = Kk.Muted) }
+                TextButton({ phone.closeMove() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Kk.Text) }
+            }
+            else -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(22.dp), color = Kk.Green, strokeWidth = 2.dp); Spacer(Modifier.width(14.dp))
+                    Text(if (m.phase == "SENT") "Sent. Waiting for the other device to confirm it kept the key." else if (m.kind == "receive" && m.uri == null) "Testing relays before showing a code" else "Reaching the other device", color = Kk.Text)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton({ phone.closeMove() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Kk.Text) }
+            }
+        }
     }
 }

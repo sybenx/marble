@@ -143,6 +143,8 @@ class SignerService : Service() {
             "cancelImport" -> s.cancelImport()
             "forgetKey" -> s.forgetKey()
             "tap" -> s.tap(flag, text)
+            "createLocal" -> s.createLocal(); "receiveKey" -> s.receiveKey(); "keepKey" -> s.keepKey(); "declineKey" -> s.declineKey()
+            "sendKey" -> s.sendKey(); "moveDigits" -> s.moveDigits(text); "closeMove" -> s.closeMove()
             "askAccount" -> s.askAccount(text?.substringBefore('\n') ?: return, text.substringAfter('\n', ""))
             "cancelAsk" -> s.cancelAsk(); "startAsk" -> s.startAsk(); "closeAsk" -> s.closeAsk()
             "testRelays" -> s.testRelays(text ?: return)

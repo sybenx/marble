@@ -44,6 +44,14 @@ data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = n
 }
 /** Something hard to undo that the account page asked for: Yes or No, on this phone. */
 data class Tap(val id: String, val title: String, val text: String) : java.io.Serializable
+/**
+ * The whole key moving between your devices by QRST: this phone receiving it ("receive"), or sending it
+ * ("consent" before anything moves, then "send"). Only the session's public state; never the key.
+ */
+data class KeyMove(val kind: String, val uri: String? = null, val phase: String = "WAITING", val check: String = "TYPE",
+                   val code: String? = null, val compare: String? = null, val rendering: String? = null,
+                   val outcome: String? = null, val connected: Boolean = false, val viaCamera: Boolean = true,
+                   val kept: Boolean = false, val problem: String? = null) : java.io.Serializable
 /** A browser asks to log in to the account page: where, as whom, for how long. */
 data class LoginAsk(val host: String, val account: String, val lasts: String) : java.io.Serializable
 /** Asking a box for an account: the box, your note, and how far it got (1 asked, 2 waiting, 3 making the key). */
@@ -89,6 +97,7 @@ data class Ui(
     val working: String? = null,
     val tap: Tap? = null,
     val loginAsk: LoginAsk? = null,
+    val move: KeyMove? = null,
     val asking: Asking? = null,
     /** An nsec was pasted and waits for the box's code. The key itself stays in the signer process. */
     val bringing: Boolean = false,

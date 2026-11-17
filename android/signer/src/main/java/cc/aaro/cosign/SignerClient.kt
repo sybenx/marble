@@ -133,6 +133,11 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
         finally { chars.fill(' ') }
     }
     fun cancelImport() = act("cancelImport")
+    /** Tier 1: a new account with its key on this phone. No box. */
+    fun createLocal() = act("createLocal")
+    /** The whole key by QRST: receive it here, keep it, send it (after the consent and fingerprint), digits, close. */
+    fun receiveKey() = act("receiveKey"); fun keepKey() = act("keepKey"); fun declineKey() = act("declineKey")
+    fun sendKey() = act("sendKey"); fun moveDigits(digits: String?) = act("moveDigits", digits); fun closeMove() = act("closeMove")
     /** Your own choice: the whole key of a brought-in account goes from this phone. The pieces keep signing. */
     fun forgetKey() = act("forgetKey")
     fun clearError() = act("clearError")

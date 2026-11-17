@@ -53,7 +53,7 @@ class ProcessBoundaryTest {
             assertTrue("$name takes a key to work with", !Regex("""\b(peer|pubkey|npub|recipient)\b""", RegexOption.IGNORE_CASE).containsMatchIn(args))
         // The signer pins the other side to this account's own key.
         assertTrue("nip44Self doesn't pin the other side to this account",
-            Regex("""fun nip44Self\([^)]*\)[^\n]*nip44With\(held\?\.npub """).containsMatchIn(read("Signer.kt")))
+            Regex("""fun nip44Self\([^)]*\)[^\n]*nip44With\(accountHex\(\) """).containsMatchIn(read("Signer.kt")))
         // And the UI's side never reaches the forms that do take one.
         for (f in mainSide) assertTrue("$f calls a nip44/nip04 that takes a peer", !Regex("""\bnip(44|04)\(""").containsMatchIn(read(f)))
     }

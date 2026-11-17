@@ -109,6 +109,16 @@ class Signer(private val context: Context, val slot: String = "0") {
         }
     }
     @Volatile private var held: Held? = null
+    /**
+     * Tier 1: the whole key on this phone, sealed by Secrets, and nothing else needed. It signs for Marble, for
+     * apps and for sites by itself. Kept after a move to a box too (tier 2), as the backup, until you forget it.
+     */
+    private fun localKey(): ByteArray? = secrets.load("nsec")?.let { try { it.hexToBytes() } catch (_: Exception) { null } }
+    @Volatile private var localPub: String? = null
+    /** The account's public key (hex): the box account's, or the one of the key on this phone. */
+    private fun accountHex(): String? = held?.npub ?: localPub
+    /** Signing with the key on this phone, not with the box. */
+    private val tier1 get() = held == null && localPub != null
     private fun keep(h: Held) { held = h; h.changed = { secrets.save("held", it.json().toString()) }; secrets.save("held", h.json().toString()) }
     private fun helpers(): List<String> = secrets.load("helpers")?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
     /** The box, then devices that listen when it is off (Keykin SPEC §8g): those only sign and make message keys. */
@@ -116,6 +126,11 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun fp(title: String): Fingerprint = { bytes -> Chip.sign(context, slot, title, bytes) }
 
     private fun membersFrom(a: JSONArray) = List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getInt("i"), m.getString("name"), m.getString("kind"), m.getString("key"), m.optBoolean("blocked"), m.optBoolean("chip"), m.optLong("added")) } }
+    /** Tier 1: just this phone, no box. */
+    private fun localMembership(pub: String): Membership {
+        val mine = me()
+        return Membership(1, sites.pubkey, Group(pub, Nip19.npub(pub), 1, sites.sites().flatMap { it.relays }.distinct(), listOf(Member(1, mine.name, "device", mine.key, chip = mine.chip != null))), 0, "", "", mine.chip != null)
+    }
     private fun membership(h: Held, members: List<Member>): Membership {
         val mine = me()
         val list = members.ifEmpty { listOf(Member(h.piece.i, mine.name, "device", mine.key, chip = mine.chip != null), Member(0, "Your box", "box", h.boxKey)) }
@@ -154,7 +169,7 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Start answering sites and keep the device list fresh, if this phone is in an account. Called by the service. */
     fun start() {
-        if (held == null) return
+        if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
         if (screenOff == null) {
@@ -286,14 +301,14 @@ class Signer(private val context: Context, val slot: String = "0") {
      * which marble.syb.lol reads for its account button. An empty [url] takes it away again.
      */
     fun setLoginPage(url: String) {
-        val h = held ?: return
+        val pub = accountHex() ?: return
         val origin = url.trim().trimEnd('/')
         if (origin.isNotEmpty() && !Regex("^https://[a-z0-9.-]+(:[0-9]+)?$").matches(origin)) return ui.update { it.copy(error = "A login page's address is https:// and a name, with nothing after it.") }
         ui.update { it.copy(working = "Signing…", error = null) }
         work.execute {
             try {
                 val tags = listOf(listOf("d", "keykin/login")) + if (origin.isEmpty()) emptyList() else listOf(listOf("url", origin))
-                val signed = signNow(Event(h.npub, Clock.now(), 30078, tags, "").withId())
+                val signed = signNow(Event(pub, Clock.now(), 30078, tags, "").withId())
                 publish(signed)
                 prefs.edit().putString("login-page", origin).apply()
                 ui.update { it.copy(loginPage = origin.ifEmpty { null }) }
@@ -348,17 +363,23 @@ class Signer(private val context: Context, val slot: String = "0") {
                         ui.update { it.copy(error = null, joinCode = null, offer = Offer(j.addr, false, Nip19.npub(j.npub))) }
                     }
                     else -> {
-                        if (isMember) return err("This phone is already in an account. That code makes a new one: use Add another account first.")
+                        if (isMember && !tier1) return err("This phone is already in an account. That code makes a new one: use Add another account first.")
                         val qr = Texts.qr(t)
                         plainHttp(qr.addr)?.let { return err(it) }
                         pendingQr = qr; pendingJoin = null
-                        ui.update { it.copy(error = null, joinCode = null, offer = Offer(pendingQr!!.addr, true, bringing = bringing != null)) }
+                        ui.update { it.copy(error = null, joinCode = null, offer = Offer(pendingQr!!.addr, true, bringing = bringing != null || tier1)) }
                     }
                 }
             } catch (e: Exception) { err(why(e)) }
             return
         }
         if (t.startsWith("nostrconnect:")) return scannedNostrConnect(t)
+        // The whole key, by QRST: another device's code to send it to, or one that sends it here.
+        try { PairingUri.parse(t) } catch (_: Exception) { null }?.takeIf { it.profile == cc.aaro.qrst.core.NsecProfile.id }?.let { p ->
+            return if (cc.aaro.qrst.core.scannerRole(p.mode) == cc.aaro.qrst.core.Role.SENDER) { if (isMember) scannedKeyCode(p, pasted) else err("That device is asking for a key. Set up your account here first.") }
+            else if (isMember) err("That device is offering a key, and this phone already has an account. Use Add another account first.")
+            else startMove(Transfer.join(moveDeps(), p, !pasted), "receive", !pasted)
+        }
         if (t.startsWith("cosign:")) return err("That code is from the older Cosign servers. This version of $appName works with a Keykin box.")
         PairingUri.allowLoopback = debuggable
         val params = try { PairingUri.parse(t) } catch (_: Exception) { null }
@@ -391,6 +412,86 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     private var bringing: ByteArray? = null
     /** The nsec typed in, as characters, wiped once read. Next comes the box's code. */
+    // --- Moving the whole key between your devices by QRST (tier 1) ---------------------------------
+    //
+    // As QRST Signer does it: the receiving device shows a code, the sending device scans it, the person
+    // there types the receiver's digits and says they understand the other device gets permanent control,
+    // then gives a fingerprint. The key goes once, sealed, and the receiver keeps it.
+
+    private var keyMove: Transfer<ByteArray>? = null
+    private var sendTo: PairingParams? = null
+    private fun moveDeps() = TransferDeps(cc.aaro.qrst.core.NsecProfile, qrstStore, env, "https://qrst.aaro.cc/", CodeCheck.TYPE)
+    /** "I have an account on another device": show a code for that device to send the key to. */
+    fun receiveKey() {
+        if (isMember) return
+        startMove(Transfer.show(moveDeps(), cc.aaro.qrst.core.Role.RECEIVER), "receive", true)
+    }
+    private fun startMove(t: Transfer<ByteArray>, kind: String, viaCamera: Boolean) {
+        keyMove?.dispose(); keyMove = t
+        t.onChange = { showMove(t, kind, viaCamera) }
+        showMove(t, kind, viaCamera)
+    }
+    private fun showMove(t: Transfer<ByteArray>, kind: String, viaCamera: Boolean) {
+        if (keyMove !== t) return
+        val v = t.view(); val s = v.session
+        var kept = ui.value.move?.kept == true
+        // What arrived is on the view once the session has committed it; it is taken out (and wiped) off this callback.
+        if (kind == "receive" && s.phase == Phase.ENDED && !kept) v.value?.let { k ->
+            val copy = k.copyOf()
+            try { becomeLocal(copy, "Received your key from another device"); kept = true } finally { copy.fill(0) }
+            work.execute { t.takeValue()?.fill(0) }
+        }
+        ui.update { it.copy(move = KeyMove(kind, v.uri, s.phase.name, s.check.name, s.code, s.compare, s.rendering, s.outcome?.wire, v.connected, viaCamera, kept)) }
+    }
+    /** Receiving: keep what arrived. */
+    fun keepKey() { keyMove?.accept() }
+    fun declineKey() { keyMove?.decline() }
+    /** A device's receive code was read here: ask first, nothing moves yet. */
+    private fun scannedKeyCode(params: PairingParams, pasted: Boolean) {
+        val k = localKey() ?: return ui.update { it.copy(error = "There's no key on this phone to send.") }
+        k.fill(0)
+        sendTo = params
+        ui.update { it.copy(error = null, move = KeyMove("consent", viaCamera = !pasted)) }
+    }
+    /** The person said they understand, and gave the fingerprint: reach the other device. */
+    fun sendKey() {
+        val params = sendTo ?: return
+        val camera = ui.value.move?.viaCamera ?: true
+        work.execute {
+            try {
+                if (me().chip != null) Chip.sign(context, slot, "Send your key to that device", env.random(32))
+                startMove(Transfer.join(moveDeps(), params, camera), "send", camera)
+            } catch (e: Exception) { ui.update { it.copy(move = it.move?.copy(problem = why(e))) } }
+        }
+    }
+    /** Sending: the digits the other device shows (typed), or Yes to the compared ones. The key leaves only here. */
+    fun moveDigits(digits: String?) {
+        val t = keyMove ?: return
+        val k = localKey() ?: return
+        when (t.view().session.check) {
+            CodeCheck.TYPE -> t.enterCode(digits ?: "", k)
+            CodeCheck.COMPARE -> if (digits == null) t.rejectMatch() else t.confirmMatch(k)
+            else -> t.release(k)
+        }
+        note("Sent your key to another device", "approved")
+    }
+    fun closeMove() { keyMove?.let { try { if (it.view().session.phase != Phase.ENDED) it.cancel() } catch (_: Exception) { }; it.dispose() }; keyMove = null; sendTo = null; ui.update { it.copy(move = null) } }
+
+    /** Tier 1: a new account, its key made here and kept here. No box, no server. */
+    fun createLocal() {
+        if (isMember) return
+        val k = cc.aaro.qrst.core.generateSecretKey(env)
+        try { becomeLocal(k, "Made your account on this phone") } finally { k.fill(0) }
+    }
+    private fun becomeLocal(k: ByteArray, line: String) {
+        secrets.save("nsec", k.toHex())
+        val pub = cc.aaro.qrst.core.publicKeyHex(k)
+        localPub = pub
+        ui.update { it.copy(member = localMembership(pub), keptKey = true, bringing = false, error = null, joining = null, offer = null) }
+        note(line, "approved")
+        start(); Cosign.host.joined(context)
+    }
+
     fun importKey(chars: CharArray) {
         val t = chars.filter { !it.isWhitespace() }.toCharArray(); chars.fill(' ')
         val key = try {
@@ -398,13 +499,14 @@ class Signer(private val context: Context, val slot: String = "0") {
         } catch (_: Exception) { null } finally { t.fill(' ') }
         if (key == null || key.size != 32) return ui.update { it.copy(bringing = false, error = "That isn't an nsec (or a 64-character hex key). Nothing was kept.") }
         if (isMember) { key.fill(0); return ui.update { it.copy(error = "This phone is already in an account. Use Add another account first.") } }
-        bringing?.fill(0); bringing = key
-        ui.update { it.copy(bringing = true, error = null) }
+        // Tier 1: it signs from here at once. A box comes later, only if you sign in to one.
+        try { becomeLocal(key, "Brought your key to this phone") } finally { key.fill(0) }
     }
     fun cancelImport() { bringing?.fill(0); bringing = null; ui.update { it.copy(bringing = false) } }
     /** The person's own choice: the whole key goes from this phone. The pieces keep signing. */
     fun forgetKey() {
-        secrets.save("nsec", null)
+        if (held == null) return ui.update { it.copy(error = "On this phone your account is that key. To remove it, use Remove this phone from your account.") }
+        secrets.save("nsec", null); localPub = null
         ui.update { it.copy(keptKey = false) }
         note("Forgot the whole key on this phone", "denied")
     }
@@ -477,7 +579,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun accept() {
         val o = ui.value.offer ?: return
         val qr = pendingQr; val j = pendingJoin
-        val key = if (o.create) bringing else null
+        val key = if (o.create) (bringing ?: if (o.bringing) localKey() else null) else null
         ui.update { it.copy(offer = null, joining = if (key != null) "Bringing your account to your box…" else if (o.create) "Making your account with your box…" else "Collecting this phone's piece from your box…") }
         work.execute {
             try {
@@ -579,6 +681,19 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Form the whole key on this phone and show it (the old "take my account out"). The only place an nsec exists. */
     fun takeOutViaServers() {
+        if (held == null) {
+            val k0 = localKey() ?: return
+            k0.fill(0)
+            ui.update { it.copy(takeOut = TakeOut(TakeOut.Stage.WAITING, "Waiting for your fingerprint…"), error = null) }
+            return work.execute {
+                try {
+                    // The key is already here; the prompt is the plain kind: nothing a box could check.
+                    if (me().chip != null) Chip.sign(context, slot, "Show your secret key", env.random(32))
+                    val k = localKey() ?: return@execute
+                    try { ui.update { it.copy(takeOut = TakeOut(TakeOut.Stage.SHOWING, nsec = Nip19.nsec(k), npub = Nip19.npub(cc.aaro.qrst.core.publicKeyHex(k)))) } } finally { k.fill(0) }
+                } catch (e: Exception) { ui.update { it.copy(takeOut = if ((e as? KeykinException)?.code == "cancelled") null else TakeOut(TakeOut.Stage.FAILED, why(e))) } }
+            }
+        }
         val h = held ?: return
         ui.update { it.copy(takeOut = TakeOut(TakeOut.Stage.WAITING, "Waiting for your fingerprint…"), error = null) }
         work.execute {
@@ -603,7 +718,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val debuggable get() = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     private val sites: SiteSigner by lazy {
         val st = secrets.load("signer")?.let { try { JSONObject(it) } catch (_: Exception) { null } } ?: SiteSigner.fresh().also { secrets.save("signer", it.toString()) }
-        SiteSigner({ held?.npub }, ::siteAct, st, { secrets.save("signer", it.toString()); showSites(); grantsChanged() }, { if (debuggable) android.util.Log.i("Keykin", it) })
+        SiteSigner({ accountHex() }, ::siteAct, st, { secrets.save("signer", it.toString()); showSites(); grantsChanged() }, { if (debuggable) android.util.Log.i("Keykin", it) })
     }
     private val qrstStore = Store(object : KeyValue {
         private val prefs = context.getSharedPreferences("qrst", Context.MODE_PRIVATE)
@@ -802,14 +917,18 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** The event an app or a site sent, as it will be signed: under your key, with its id. */
     fun appEvent(json: String): Event {
-        val h = held ?: error("$appName isn't set up yet")
+        val pub = accountHex() ?: error("$appName isn't set up yet")
         val raw = Json.parse(json) as? Map<*, *> ?: throw IllegalArgumentException("not an event")
         val tags = (raw["tags"] as? List<*>)?.map { t -> (t as List<*>).map { it.toString() } } ?: emptyList()
-        return Event(h.npub, raw["created_at"] as? Long ?: env.now(), (raw["kind"] as Long).toInt(), tags, raw["content"] as? String ?: "").withId()
+        return Event(pub, raw["created_at"] as? Long ?: env.now(), (raw["kind"] as Long).toInt(), tags, raw["content"] as? String ?: "").withId()
     }
 
     /** The signature itself: this phone's piece and the box's (or a helper's when the box is off). */
     private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false): Event {
+        if (held == null) {
+            val k = localKey() ?: error("$appName isn't set up yet")
+            try { return Event.sign(cc.aaro.qrst.core.publicKeyHex(k), ev.createdAt, ev.kind, ev.tags, ev.content, k, env) } finally { k.fill(0) }
+        }
         val h = held ?: error("$appName isn't set up yet")
         // The box wants to hear that you said Yes to the few things it calls hard to undo. What this phone itself
         // signs to put something back (an undo, a repost) or at your own word is always that.
@@ -901,6 +1020,10 @@ class Signer(private val context: Context, val slot: String = "0") {
         // Kept per grant: a revoked site or app must not ride on a secret made for another.
         val slot = (grant ?: "") + ":" + peer
         sharedXs[slot]?.let { return it.copyOf() }
+        if (held == null) {
+            val k = localKey() ?: error("$appName isn't set up yet")
+            try { return cc.aaro.keykin.core.Secp.ecdhX(k, peer).also { sharedXs[slot] = it.copyOf() } } finally { k.fill(0) }
+        }
         val h = held ?: error("$appName isn't set up yet")
         val x = try { synchronized(boxLock) { Device.sharedX(me(), h, peer, send(h), grant) } }
             catch (e: KeykinException) {
@@ -932,7 +1055,7 @@ class Signer(private val context: Context, val slot: String = "0") {
      * Marble's own data, encrypted to this account itself (NIP-44 to self): what it keeps in app data
      * (NIP-78). The other side is always this account's own key, so this reads nobody else's messages.
      */
-    fun nip44Self(text: String, encrypt: Boolean): String = nip44With(held?.npub ?: error("$appName isn't set up yet"), text, encrypt)
+    fun nip44Self(text: String, encrypt: Boolean): String = nip44With(accountHex() ?: error("$appName isn't set up yet"), text, encrypt)
 
     // --- Apps on this phone (Android signer, NIP-55) -------------------------------------------------
 
@@ -976,8 +1099,8 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun objects(a: JSONArray) = List(a.length()) { a.getJSONObject(it) }
 
     @Synchronized private fun remember(signed: Event, prev: Event?, by: String, held: Boolean) {
-        val h = this.held ?: return
-        if (lists.record(signed, h.npub) && prev != null && prev.id != signed.id) {
+        val pub = accountHex() ?: return
+        if (lists.record(signed, pub) && prev != null && prev.id != signed.id) {
             val all = objects(readArray(history))
             val row = JSONObject().put("id", signed.id).put("text", changeText(prev, signed)).put("by", by).put("at", System.currentTimeMillis()).put("held", held).put("undone", false)
                 .put("key", Policy.keyOf(signed)).put("prev", prev.toJson())
@@ -1028,13 +1151,13 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Put a list back as it was before a change: the version it replaced, signed again as the newest. */
     fun undo(change: Change) {
-        val h = held ?: return
+        val pub = accountHex() ?: return
         work.execute {
             try {
                 val row = objects(readArray(history)).firstOrNull { it.getString("id") == change.id } ?: return@execute
                 val prev = Event.fromMap(Json.parse(row.getString("prev"))) ?: return@execute
-                val signed = signNow(Event(h.npub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId(), tapped = true)
-                lists.record(signed, h.npub)
+                val signed = signNow(Event(pub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId(), tapped = true)
+                lists.record(signed, pub)
                 publish(signed)
                 synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") == change.id) it.put("undone", true) else it }).toString()) }
                 note("Undid: ${change.text}", "approved"); showHistory()
@@ -1044,11 +1167,11 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Post a deleted thing again, from the copy this phone kept. It gets a new date; the old one stays deleted. */
     fun repost(d: Deleted) {
-        val h = held ?: return
+        val pub = accountHex() ?: return
         work.execute {
             try {
                 val old = objects(readArray(kept)).mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }.firstOrNull { it.id == d.id } ?: return@execute
-                val signed = signNow(Event(h.npub, Clock.now(), old.kind, old.tags, old.content).withId())
+                val signed = signNow(Event(pub, Clock.now(), old.kind, old.tags, old.content).withId())
                 publish(signed)
                 synchronized(this) { kept.writeText(JSONArray(objects(readArray(kept)).filter { Event.fromMap(Json.parse(it.getString("event")))?.id != d.id }).toString()) }
                 remember(signed, null, appName, true)
@@ -1068,13 +1191,13 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** Delete what it posted, put back the lists it changed, and sign it out. */
     fun confirmUndoSite() {
         val s = ui.value.summary ?: return
-        val h = held ?: return
+        val pub = accountHex() ?: return
         ui.update { it.copy(summary = null) }
         work.execute {
             try {
                 val events = objects(readArray(kept)).filter { it.optString("by") == s.origin && !it.has("deleted") }.mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }
                 if (events.isNotEmpty()) {
-                    val del = signNow(Event(h.npub, Clock.now(), 5, events.map { listOf("e", it.id) }, "").withId(), tapped = true)
+                    val del = signNow(Event(pub, Clock.now(), 5, events.map { listOf("e", it.id) }, "").withId(), tapped = true)
                     publish(del); remember(del, null, appName, true)
                 }
                 // The oldest change it made to each list holds what the list was before it.
@@ -1111,7 +1234,9 @@ class Signer(private val context: Context, val slot: String = "0") {
             ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
         }
         if (held != null) { showSites(); showHistory() }
-        if (held != null && secrets.load("nsec") != null) ui.update { it.copy(keptKey = true) }
+        localKey()?.let { k -> localPub = cc.aaro.qrst.core.publicKeyHex(k); k.fill(0) }
+        if (localPub != null) ui.update { it.copy(keptKey = true) }
+        if (held == null) localPub?.let { pub -> ui.update { it.copy(member = localMembership(pub)) }; showSites(); showHistory() }
         // A request to a box that was still waiting when the app stopped: keep checking it.
         if (held == null) prefs.getString("ask", null)?.let(::JSONObject)?.let { o -> ui.update { it.copy(asking = Asking(o.getString("box"), o.optString("note"), 2)) }; watchAsk() }
         ui.update { it.copy(username = prefs.getString("username", null), loginPage = prefs.getString("login-page", null)?.ifEmpty { null }) }
