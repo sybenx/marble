@@ -6,6 +6,8 @@ plugins {
 
 // Release: phones and tablets only (arm64). The x86_64 copies are for the emulator (debug builds keep them), and ML
 // Kit's translator alone is ~17 MB each.
+if (project.hasProperty("sideBySide")) android.sourceSets.getByName("debug").res.srcDir("src/sideBySide/res")
+
 androidComponents {
     onVariants(selector().withBuildType("release")) { it.packaging.jniLibs.excludes.add("lib/x86_64/**") }
 }
@@ -26,6 +28,9 @@ android {
     }
 
     buildTypes {
+        // Beside the Marble that is already on a phone, not over it: -PsideBySide gives the debug build its own
+        // id (cc.aaro.cosign.keykin) and name ("Marble Keykin"), so trying it touches nothing of the installed app's.
+        if (project.hasProperty("sideBySide")) debug { applicationIdSuffix = ".keykin" }
         // Release builds are signed with the debug key here, then re-signed by release.sh
         // with the app's release key (rotated from the debug key, so each installs over the last).
         release {
