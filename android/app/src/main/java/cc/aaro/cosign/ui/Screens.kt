@@ -97,12 +97,13 @@ fun App(phone: Phone, ui: Ui) {
             }
             ui.offer != null -> JoinPrompt(ui.offer!!, phone::accept, phone::decline)
             ui.joining != null -> Joining(ui.joining!!, phone::decline)
+            ui.asking != null && ui.member == null -> AskScreen(ui.asking!!, phone)
             ui.joinCode != null && ui.member == null -> JoinCode(ui.joinCode!!, ui.error, onScan = { phone.clearError(); scanning = true }, onPaste = phone::pasted, onCancel = phone::cancelJoin)
             ui.member == null -> Column(Modifier.fillMaxSize()) {
                 // "I already have an account": its nsec first (straight to the signer), then the box's code, as for a new one.
                 var importing by remember { mutableStateOf(false) }
                 Box(Modifier.weight(1f)) { Welcome(if (ui.bringing && ui.error == null) "Your key is ready. Now scan the code on your Keykin box's page (tap Create your account), or paste it." else ui.error,
-                    onCreate = { phone.clearError(); scanning = true }, onJoin = phone::startJoin, onPaste = phone::pasted, onHave = { phone.clearError(); importing = true }) }
+                    onCreate = { phone.clearError(); scanning = true }, onJoin = phone::startJoin, onPaste = phone::pasted, onHave = { phone.clearError(); importing = true }, onAsk = phone::startAsk) }
                 if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars); scanning = true }
                 if (ui.bringing) TextButton({ phone.cancelImport() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Don't bring that key in after all", color = Vault.Muted) }
                 // A place for another key: the ones you have are a tap away.
@@ -116,6 +117,7 @@ fun App(phone: Phone, ui: Ui) {
         val which = if (CosignApp.instance.accounts.all.count { it.isMember } > 1) phone.label else null
         ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, phone::confirmConnect, phone::digits, phone::closeConnect) }
         ui.joinText?.let { JoinTextSheet(it, phone::closeJoinText) }
+        ui.loginAsk?.let { LoginSheet(it, phone::confirmConnect, phone::closeConnect) }
         ui.summary?.let { UndoSiteSheet(it, phone::confirmUndoSite, phone::closeSummary) }
         ui.adding?.let { AddDeviceSheet(it, phone) }
         ui.reporting?.let { ReportLostSheet(it, phone) }
@@ -204,7 +206,7 @@ private fun Page(content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp), content = content)
 
 @Composable
-private fun Welcome(error: String?, onCreate: () -> Unit, onJoin: () -> Unit, onPaste: (String) -> Unit, onHave: () -> Unit) = Page {
+private fun Welcome(error: String?, onCreate: () -> Unit, onJoin: () -> Unit, onPaste: (String) -> Unit, onHave: () -> Unit, onAsk: () -> Unit = {}) = Page {
     val context = androidx.compose.ui.platform.LocalContext.current
     Spacer(Modifier.weight(1f))
     Text(appName, style = MaterialTheme.typography.headlineMedium, color = Vault.Text)
@@ -226,6 +228,7 @@ private fun Welcome(error: String?, onCreate: () -> Unit, onJoin: () -> Unit, on
     TextButton(onJoin, Modifier.align(Alignment.CenterHorizontally)) { Text("Sign in with another device", color = Vault.Accent) }
     TextButton(onHave, Modifier.align(Alignment.CenterHorizontally)) { Text("I already have an account", color = Vault.Accent) }
     TextButton({ onPaste(pasted(context)) }, Modifier.align(Alignment.CenterHorizontally)) { Text("Paste your box's code instead", color = Vault.Muted) }
+    TextButton({ onAsk() }, Modifier.align(Alignment.CenterHorizontally)) { Text("No code? Ask a box for an account", color = Vault.Muted) }
 }
 
 /**
@@ -1066,18 +1069,18 @@ private fun ReportLostSheet(d: cc.aaro.cosign.Member, phone: Phone) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Report ${d.name} lost?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text("Report ${d.name} lost?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
             Text("It is blocked at once: your box stops helping it, so it can't sign or read anything. Then your keys are cycled with your fingerprint, and what it holds stops fitting. Your account stays the same.",
-                style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+                style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(6.dp))
-            Text("If you find it before the keys are cycled, you can unblock it. After that, add it again as a new device.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+            Text("If you find it before the keys are cycled, you can unblock it. After that, add it again as a new device.", style = MaterialTheme.typography.bodySmall, color = Kk.Muted)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ phone.cancelReportLost() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Cancel", color = Vault.Text) }
+            OutlinedButton({ phone.cancelReportLost() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Cancel", color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ phone.confirmReportLost() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Danger, Vault.Ground)) { Text("Block it") }
+            Button({ phone.confirmReportLost() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Danger, Color.White)) { Text("Block it") }
         }
     }
 }
@@ -1090,15 +1093,15 @@ private fun RemovedSheet(by: String, phone: Phone) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("This phone is blocked", style = MaterialTheme.typography.titleLarge, color = Vault.Danger)
+            Text("This phone is blocked", style = MaterialTheme.typography.titleLarge, color = Kk.Danger)
             Spacer(Modifier.height(10.dp))
             Text("It was blocked by $by, so it can't sign any more. If that was a mistake, unblock it from another of your devices or from your box's page. If the keys were cycled since, remove this phone here and add it again.",
-                style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+                style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(16.dp))
-            OutlinedButton({ phone.refresh() }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Check again", color = Vault.Text) }
-            TextButton({ hidden = true }, Modifier.align(Alignment.CenterHorizontally)) { Text("Close", color = Vault.Muted) }
+            OutlinedButton({ phone.refresh() }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Check again", color = Kk.Text) }
+            TextButton({ hidden = true }, Modifier.align(Alignment.CenterHorizontally)) { Text("Close", color = Kk.Muted) }
         }
     }
 }
@@ -1110,18 +1113,18 @@ private fun AddDeviceSheet(a: cc.aaro.cosign.AddingDevice, phone: Phone) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Add ${a.name} to your account?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text("Add ${a.name} to your account?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
             Text("It gets its own piece of your account and can sign with your box, like this phone. This phone and your box each give half of that piece; nothing ever holds all of your account.",
-                style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+                style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(6.dp))
-            Text("$appName asks for your fingerprint, and your box checks it.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+            Text("$appName asks for your fingerprint, and your box checks it.", style = MaterialTheme.typography.bodySmall, color = Kk.Muted)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ phone.cancelAddDevice() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't add", color = Vault.Text) }
+            OutlinedButton({ phone.cancelAddDevice() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Don't add", color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ phone.confirmAddDevice() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Add with my fingerprint") }
+            Button({ phone.confirmAddDevice() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Add with my fingerprint") }
         }
     }
 }
@@ -1192,20 +1195,20 @@ private fun JoinTextSheet(text: String, onClose: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Now scan this with the new device", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text("Now scan this with the new device", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
-            Text("It tells the new device where your box is, so it can collect its piece. It holds no secret.", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+            Text("It tells the new device where your box is, so it can collect its piece. It holds no secret.", style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(14.dp))
             val qr = remember(text) { qrBitmap(text, 720) }
             androidx.compose.foundation.Image(qr.asImageBitmap(), "Join code", Modifier.fillMaxWidth().then(Modifier.aspectRatio(1f)).background(Color.White, RoundedCornerShape(12.dp)).padding(12.dp))
             Spacer(Modifier.height(12.dp))
             var copied by remember { mutableStateOf(false) }
             OutlinedButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("Join code", text)); copied = true },
-                Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text(if (copied) "Copied" else "Copy it instead", color = Vault.Text) }
+                Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Kk.Line)) { Text(if (copied) "Copied" else "Copy it instead", color = Kk.Text) }
             Spacer(Modifier.height(8.dp))
-            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Done") }
+            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Done") }
         }
     }
 }
@@ -1218,21 +1221,21 @@ internal fun BunkerSheet(link: String, onClose: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Your bunker link", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text("Your bunker link", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
             Text("Paste it into a site that asks for a bunker or remote signer. It works once, for 15 minutes. The site then signs as you through this phone, until you remove it under Your account.",
-                style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+                style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(12.dp))
-            Text(link, fontFamily = PlexMono, color = Vault.Text, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Text(link, fontFamily = PlexMono, color = Kk.Text, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(14.dp))
             var copied by remember { mutableStateOf(false) }
-            OutlinedButton({ copySecret(context, "Bunker link", link); copied = true }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) {
-                Text(if (copied) "Copied" else "Copy", color = Vault.Text)
+            OutlinedButton({ copySecret(context, "Bunker link", link); copied = true }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Kk.Line)) {
+                Text(if (copied) "Copied" else "Copy", color = Kk.Text)
             }
             Spacer(Modifier.height(8.dp))
-            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Done") }
+            Button(onClose, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Done") }
         }
     }
 }
@@ -1243,15 +1246,15 @@ private fun TapSheet(t: cc.aaro.cosign.Tap, onAnswer: (Boolean) -> Unit) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text(t.title, style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text(t.title, style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
-            Text(t.text, style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+            Text(t.text, style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("No", color = Vault.Text) }
+            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("No", color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Danger, Vault.Ground)) { Text("Yes, remove them") }
+            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Danger, Color.White)) { Text("Yes, remove them") }
         }
     }
 }
@@ -1262,13 +1265,107 @@ private fun WorkingSheet(what: String) {
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
-                .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(22.dp), color = Vault.Accent, strokeWidth = 2.dp)
+                CircularProgressIndicator(Modifier.size(22.dp), color = Kk.Green, strokeWidth = 2.dp)
                 Spacer(Modifier.width(14.dp))
-                Text(what, color = Vault.Text)
+                Text(what, color = Kk.Text)
             }
         }
+    }
+}
+
+// --- Keykin's own screens, in the approved mockup's look: neutral gray, white cards, one green accent ---
+
+/** The mockup's palette (no tinted surfaces): gray ground, white cards, 1px lines, green on main buttons only. */
+internal object Kk {
+    private fun pick(night: Long, day: Long) = Color(if (Vault.dark) night else day)
+    val Ground get() = pick(0xFF161616, 0xFFF4F4F4)
+    val Card get() = pick(0xFF222222, 0xFFFFFFFF)
+    val Line get() = pick(0xFF3A3A3A, 0xFFDCDCDC)
+    val Text get() = pick(0xFFEDEDED, 0xFF1B1B1B)
+    val Muted get() = pick(0xFFA3A3A3, 0xFF5F5F5F)
+    val Green get() = Color(0xFF0B7A5C)
+    val Danger get() = pick(0xFFF08A80, 0xFFB3261E)
+}
+
+@Composable
+private fun KkRow(label: String, value: String) = Row(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+    Text(label, color = Kk.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(96.dp))
+    Text(value, color = Kk.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+}
+
+/** A browser asks to log in to your account page by the code it shows. Your fingerprint, then it is in. */
+@Composable
+private fun LoginSheet(l: cc.aaro.cosign.LoginAsk, onLogIn: () -> Unit, onNotMe: () -> Unit) {
+    BackHandler { onNotMe() }
+    Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
+        Column(Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp).background(Kk.Ground, RoundedCornerShape(20.dp)).padding(20.dp)) {
+            Text("A browser wants to sign in", color = Kk.Muted, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(6.dp))
+            Text("Log in to ${l.host}?", color = Kk.Text, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("That browser will have your account page: your devices, what is signed in, and what you can do there. Signing still goes through this phone.",
+                color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(14.dp))
+            Column(Modifier.fillMaxWidth().background(Kk.Card, RoundedCornerShape(12.dp)).border(1.dp, Kk.Line, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp)) {
+                KkRow("Account", l.account)
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Kk.Line))
+                KkRow("Box", "Your box, checked")
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Kk.Line))
+                KkRow("Lasts", l.lasts)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text("Confirm with your fingerprint", color = Kk.Muted, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(16.dp))
+            Button(onLogIn, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Log in") }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onNotMe, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Not me", color = Kk.Danger) }
+        }
+    }
+}
+
+/** No setup code: ask a box for an account. Its owner sees your note and approves; then this phone and the box make the key. */
+@Composable
+private fun AskScreen(a: cc.aaro.cosign.Asking, phone: Phone) {
+    var box by remember { mutableStateOf(a.box.removePrefix("https://")) }
+    var note by remember { mutableStateOf(a.note) }
+    BackHandler { phone.closeAsk() }
+    Column(Modifier.fillMaxSize().background(Kk.Ground).safeDrawingPadding().padding(20.dp)) {
+        Text("Ask for an account", color = Kk.Text, style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(8.dp))
+        Text("This box is run by someone you know. They see your note and approve it. Then this phone and the box make your key together.",
+            color = Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(16.dp))
+        Column(Modifier.fillMaxWidth().background(Kk.Card, RoundedCornerShape(12.dp)).border(1.dp, Kk.Line, RoundedCornerShape(12.dp)).padding(14.dp)) {
+            Text("Box", color = Kk.Muted, style = MaterialTheme.typography.labelMedium)
+            if (a.step == 0) TextField(box, { box = it.trim().take(120) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            else Text(box, color = Kk.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(vertical = 6.dp))
+            Spacer(Modifier.height(10.dp))
+            Text("A note so they know it is you", color = Kk.Muted, style = MaterialTheme.typography.labelMedium)
+            if (a.step == 0) TextField(note, { note = it.take(200) }, modifier = Modifier.fillMaxWidth())
+            else Text(note.ifBlank { "(none)" }, color = Kk.Text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(vertical = 6.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        for ((n, label) in listOf(1 to "Asked", 2 to "Waiting for approval", 3 to "Make the key with the box")) {
+            val done = a.step > n; val now = a.step == n
+            Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(26.dp).background(if (done || now) Kk.Green else Kk.Card, CircleShape).border(1.dp, if (done || now) Kk.Green else Kk.Line, CircleShape), contentAlignment = Alignment.Center) {
+                    Text(if (done) "✓" else "$n", color = if (done || now) Color.White else Kk.Muted, style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(label, color = if (done || now) Kk.Text else Kk.Muted, style = MaterialTheme.typography.bodyMedium)
+                    if (n == 2 && now) Text("You can close the app. It keeps checking.", color = Kk.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        a.error?.let { Spacer(Modifier.height(10.dp)); Text(it, color = Kk.Danger, style = MaterialTheme.typography.bodyMedium) }
+        Spacer(Modifier.weight(1f))
+        if (a.step == 0) Button({ phone.askAccount(box, note) }, Modifier.fillMaxWidth().height(52.dp), enabled = box.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Ask") }
+        else if (a.step < 3) OutlinedButton({ phone.cancelAsk() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Cancel the request", color = Kk.Danger) }
+        TextButton({ phone.cancelAsk() }, Modifier.align(Alignment.CenterHorizontally)) { Text("I have a setup code instead", color = Kk.Text) }
     }
 }

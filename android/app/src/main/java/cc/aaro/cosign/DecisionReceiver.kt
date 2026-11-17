@@ -11,6 +11,7 @@ class DecisionReceiver : BroadcastReceiver() {
         val phone = intent.getStringExtra("slot")?.let { accounts.signer(it) } ?: accounts.active
         val approve = intent.getBooleanExtra("approve", false)
         intent.getStringExtra("cancel")?.let { return phone.cancelDeletion(it) }
+        if (intent.hasExtra("tap")) { androidx.core.app.NotificationManagerCompat.from(context).cancel(("tap" + intent.getStringExtra("tap")).hashCode()); return phone.tap(approve, intent.getStringExtra("tap")) }
         intent.getStringExtra("batch")?.let { return phone.decideBatch(it, approve) }
         val id = intent.getStringExtra("id") ?: return
         phone.decide(id, approve)

@@ -71,6 +71,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         fun onBatch(b: BatchAsk) {}; fun onBatchGone(batch: String) {}
         /** Something to say while the app isn't on screen (a sign-in that didn't go through). */
         fun onNotice(title: String, text: String) {}
+        /** Something hard to undo waits for Yes or No: shown with both as buttons. */
+        fun onTap(t: Tap) {}; fun onTapGone(id: String) {}
     }
 
     private val secrets = Secrets(context, slot)
@@ -233,17 +235,21 @@ class Signer(private val context: Context, val slot: String = "0") {
                         note("Connected $origin, from your account page", "approved")
                     }
                     "cycle" -> if (n.tap) {
+                        ui.value.tap?.let { old -> listener?.onTapGone(old.id) }
                         ui.update { it.copy(tap = Tap(n.id, "Remove blocked devices for good?", "Your account page asked. Their pieces stop working, and this can't be undone. No also signs that browser out of your account page.")) }
-                        listener?.onNotice("Your account page is waiting", "Open $appName to say Yes or No."); Cosign.host.joined(context)
+                        ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
                     }
                 }
             } catch (e: Exception) { note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied") }
         }
     }
     /** Yes or No to something hard to undo that the account page asked for. */
-    fun tap(yes: Boolean) {
+    /** [id] names the request a notification's button was for; an older one's buttons answer nothing. */
+    fun tap(yes: Boolean, id: String? = null) {
         val t = ui.value.tap ?: return; val h = held ?: return
+        if (id != null && id != t.id) return
         ui.update { it.copy(tap = null) }
+        listener?.onTapGone(t.id)
         if (yes) change("Removing blocked devices…") { me, _ ->
             Device.cycle(me, h, null, send(h), t.id)
             Device.noteDone(me, h, t.id, "ok", send(h))
@@ -321,8 +327,11 @@ class Signer(private val context: Context, val slot: String = "0") {
                 when {
                     o.has("login") -> {
                         if (!isMember) return err("Set up your account on this phone first.")
+                        val addr = o.getJSONObject("login").optString("addr")
+                        val host = try { java.net.URI(addr).host ?: addr } catch (_: Exception) { addr }
                         pendingLogin = t; connecting = null; nostrConnect = null
-                        ui.update { it.copy(error = null, connect = Connect("your box's page", Connect.Stage.CONFIRM)) }
+                        val who = prefs.getString("username", null) ?: ui.value.member?.group?.npub?.let { it.take(12) + "…" + it.takeLast(6) } ?: ""
+                        ui.update { it.copy(error = null, loginAsk = LoginAsk(host, who, "12 hours")) }
                     }
                     o.has("invite") -> {
                         if (!isMember) return err("That's a new device's code. Scan it with a device that's already in your account.")
@@ -399,6 +408,60 @@ class Signer(private val context: Context, val slot: String = "0") {
         ui.update { it.copy(keptKey = false) }
         note("Forgot the whole key on this phone", "denied")
     }
+
+    // --- Asking a box for an account (Keykin SPEC 11.4) -------------------------------------------
+    //
+    // For someone with no setup code: ask, and the box's admin approves. The answer carries the box's
+    // member key, so it is only taken over https: whoever answers that address is trusted as the box.
+
+    private var askPoll: java.util.concurrent.ScheduledFuture<*>? = null
+    fun askAccount(addr: String, note: String) {
+        val box = addr.trim().trimEnd('/').let { if (it.contains("://")) it else "https://$it" }
+        if (!box.startsWith("https://") && !(debuggable && box.startsWith("http://"))) return ui.update { it.copy(asking = Asking(box, note, 0, "A box's address starts with https://.")) }
+        ui.update { it.copy(asking = Asking(box, note, 1), error = null) }
+        work.execute {
+            try {
+                val id = Device.askBox(me(), "make", note.take(200), Device.http(box))
+                prefs.edit().putString("ask", JSONObject().put("box", box).put("note", note).put("request", id).toString()).apply()
+                ui.update { it.copy(asking = Asking(box, note, 2)) }
+                watchAsk()
+            } catch (e: Exception) { ui.update { it.copy(asking = Asking(box, note, 0, if ((e as? KeykinException)?.code == "no_box") "Couldn't reach a box at $box." else why(e))) } }
+        }
+    }
+    private fun watchAsk() {
+        askPoll?.cancel(false)
+        askPoll = timer.scheduleWithFixedDelay({
+            val o = prefs.getString("ask", null)?.let(::JSONObject) ?: run { askPoll?.cancel(false); return@scheduleWithFixedDelay }
+            val box = o.getString("box"); val note = o.optString("note"); val id = o.getString("request")
+            try {
+                val (state, key) = Device.askedWithKey(me(), id, Device.http(box))
+                when (state) {
+                    "approved" -> {
+                        askPoll?.cancel(false); prefs.edit().remove("ask").apply()
+                        ui.update { it.copy(asking = Asking(box, note, 3)) }
+                        pendingQr = Qr(box, key, id); pendingJoin = null
+                        ui.update { it.copy(offer = Offer(box, true, bringing = bringing != null)) }
+                        accept()
+                        ui.update { it.copy(asking = null) }
+                    }
+                    "refused", "gone" -> {
+                        askPoll?.cancel(false); prefs.edit().remove("ask").apply()
+                        ui.update { it.copy(asking = Asking(box, note, 0, if (state == "refused") "The box's owner said no." else "That request is gone. Ask again.")) }
+                    }
+                    else -> ui.update { it.copy(asking = it.asking ?: Asking(box, note, 2)) }
+                }
+            } catch (_: Exception) { }     // the box out of reach for a moment: ask again next time
+        }, 0, 5, TimeUnit.SECONDS)
+    }
+    fun cancelAsk() {
+        askPoll?.cancel(false)
+        val o = prefs.getString("ask", null)?.let(::JSONObject)
+        prefs.edit().remove("ask").apply()
+        ui.update { it.copy(asking = null) }
+        if (o != null) work.execute { try { Device.askCancel(me(), o.getString("request"), Device.http(o.getString("box"))) } catch (_: Exception) { } }
+    }
+    fun startAsk() = ui.update { it.copy(asking = Asking("https://account.syb.lol", "", 0)) }
+    fun closeAsk() { if (prefs.getString("ask", null) == null) ui.update { it.copy(asking = null) } }
 
     /** "Create your account": it is made with a box, so the next thing is the box's code. */
     fun createAccount() = ui.update { it.copy(error = "Open your Keykin box's page and scan the code it shows (or copy it and tap Paste a code). Your account is made by this phone and the box together.") }
@@ -647,7 +710,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         digitsAnswer?.complete(false)
         transfer?.let { transfer = null; try { it.cancel() } catch (_: Exception) { } }
         connecting = null; nostrConnect = null; pendingLogin = null
-        ui.update { it.copy(connect = null) }
+        ui.update { it.copy(connect = null, loginAsk = null) }
     }
 
     private fun scannedNostrConnect(text: String) {
@@ -683,7 +746,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun confirmLogin() {
         val text = pendingLogin ?: return
         val h = held ?: return
-        ui.update { it.copy(connect = Connect("your box's page", Connect.Stage.WORKING, "Waiting for your fingerprint…")) }
+        ui.update { it.copy(loginAsk = null, connect = Connect("your box's page", Connect.Stage.WORKING, "Waiting for your fingerprint…")) }
         work.execute {
             try {
                 synchronized(boxLock) { Device.approveLogin(me(), h, text, fp("Log in to your box's page"), send(h)) }
@@ -1049,6 +1112,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         }
         if (held != null) { showSites(); showHistory() }
         if (held != null && secrets.load("nsec") != null) ui.update { it.copy(keptKey = true) }
+        // A request to a box that was still waiting when the app stopped: keep checking it.
+        if (held == null) prefs.getString("ask", null)?.let(::JSONObject)?.let { o -> ui.update { it.copy(asking = Asking(o.getString("box"), o.optString("note"), 2)) }; watchAsk() }
         ui.update { it.copy(username = prefs.getString("username", null), loginPage = prefs.getString("login-page", null)?.ifEmpty { null }) }
     }
 

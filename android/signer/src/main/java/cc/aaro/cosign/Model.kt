@@ -44,6 +44,10 @@ data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = n
 }
 /** Something hard to undo that the account page asked for: Yes or No, on this phone. */
 data class Tap(val id: String, val title: String, val text: String) : java.io.Serializable
+/** A browser asks to log in to the account page: where, as whom, for how long. */
+data class LoginAsk(val host: String, val account: String, val lasts: String) : java.io.Serializable
+/** Asking a box for an account: the box, your note, and how far it got (1 asked, 2 waiting, 3 making the key). */
+data class Asking(val box: String, val note: String, val step: Int, val error: String? = null) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
 class NeedsApproval(val what: String) : Exception(what)
 class Revoked : Exception("revoked")
@@ -84,6 +88,8 @@ data class Ui(
     /** Something that needs the fingerprint is under way: what it is. */
     val working: String? = null,
     val tap: Tap? = null,
+    val loginAsk: LoginAsk? = null,
+    val asking: Asking? = null,
     /** An nsec was pasted and waits for the box's code. The key itself stays in the signer process. */
     val bringing: Boolean = false,
     /** The whole key of a brought-in account is kept on this phone, sealed, as its backup, until you choose to forget it. */

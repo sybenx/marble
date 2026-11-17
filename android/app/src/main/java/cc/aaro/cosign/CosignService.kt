@@ -32,6 +32,8 @@ class CosignService : Service() {
         override fun onBatch(b: BatchAsk) = batch(p, b)
         override fun onBatchGone(batch: String) = NotificationManagerCompat.from(this@CosignService).cancel(("batch" + batch).hashCode())
         override fun onNotice(title: String, text: String) = notice(p, title, text)
+        override fun onTap(t: Tap) = tap(p, t)
+        override fun onTapGone(id: String) = NotificationManagerCompat.from(this@CosignService).cancel(("tap" + id).hashCode())
     }
 
     /** "for npub1…" when there's more than one key here; nothing when there's one. */
@@ -157,6 +159,24 @@ class CosignService : Service() {
             .addAction(NotificationCompat.Action.Builder(0, "Approve", action(p, "batch", b.batch, true)).setAuthenticationRequired(true).build())
             .build()
         NotificationManagerCompat.from(this).notify(("batch" + b.batch).hashCode(), n)
+    }
+
+    /** Something hard to undo that your account page asked for: Yes and No right in the notification. */
+    private fun tap(p: Signer, t: Tap) {
+        if (!canNotify()) return
+        val n = NotificationCompat.Builder(this, ASKS)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(t.title + forKey(p))
+            .setContentText("Your account page asked")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(t.text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setTimeoutAfter(10 * 60_000L)
+            .setAutoCancel(true)
+            .setContentIntent(openApp())
+            .addAction(NotificationCompat.Action.Builder(0, "No", action(p, "tap", t.id, false)).build())
+            .addAction(NotificationCompat.Action.Builder(0, "Yes", action(p, "tap", t.id, true)).setAuthenticationRequired(true).build())
+            .build()
+        NotificationManagerCompat.from(this).notify(("tap" + t.id).hashCode(), n)
     }
 
     private fun notice(p: Signer, title: String, text: String) {
