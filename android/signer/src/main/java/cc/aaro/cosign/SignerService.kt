@@ -97,10 +97,8 @@ class SignerService : Service() {
             }
         }
 
-        // Keykin v2 never puts a raw nsec on a device (SPEC §2, §9), so nothing is read: it is wiped and you are told.
         override fun importKey(slot: String, secret: CharArray) {
-            secret.fill(' ')
-            main.post { signers.signer(slot)?.showError("Bringing an existing key in isn't possible yet: your box has to take it, and that part isn't built. Nothing was kept.") }
+            main.post { signers.signer(slot)?.importKey(secret) ?: secret.fill(' ') }
         }
 
         // Blocks for a few seconds (your servers sign too): the UI calls it off its main thread.
@@ -142,6 +140,8 @@ class SignerService : Service() {
             "unblock" -> s.unblock(text ?: return)
             "digits" -> s.digits(flag)
             "makeBunker" -> s.makeBunker()
+            "cancelImport" -> s.cancelImport()
+            "forgetKey" -> s.forgetKey()
             "tap" -> s.tap(flag)
             "testRelays" -> s.testRelays(text ?: return)
             "setPassword" -> s.setPassword(text ?: return)

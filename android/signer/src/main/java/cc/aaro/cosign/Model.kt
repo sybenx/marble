@@ -18,7 +18,9 @@ data class Membership(val idx: Int, val signer: String, val group: Group, val ep
                       val chip: Boolean = false) : java.io.Serializable
 
 /** A code was read and waits for a yes: make an account with the box at [box], or join the account [npub]. */
-data class Offer(val box: String, val create: Boolean, val npub: String? = null) : java.io.Serializable
+data class Offer(val box: String, val create: Boolean, val npub: String? = null,
+                 /** The account is one you already have: its key was pasted and waits, in the signer, to be split with this box. */
+                 val bringing: Boolean = false) : java.io.Serializable
 /** Something destructive that an app or a site asked for, waiting for you. */
 data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long) : java.io.Serializable
 /** A site or an app that can sign as you. [via] says how it got in. */
@@ -82,6 +84,10 @@ data class Ui(
     /** Something that needs the fingerprint is under way: what it is. */
     val working: String? = null,
     val tap: Tap? = null,
+    /** An nsec was pasted and waits for the box's code. The key itself stays in the signer process. */
+    val bringing: Boolean = false,
+    /** The whole key of a brought-in account is kept on this phone, sealed, as its backup, until you choose to forget it. */
+    val keptKey: Boolean = false,
     /** The account page's username, if this phone set one. */
     val username: String? = null,
     /** Where this account's login page is, as this phone last published it (Keykin SPEC 11.1). */

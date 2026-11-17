@@ -124,6 +124,27 @@ object Device {
         return Held(Piece(done.c, 1, done.share), done.npub, qr.key, qr.addr)
     }
 
+    /**
+     * Brings in a key the person already has (hex). This device splits it, keeps one piece and sends the
+     * box the other, sealed. The caller KEEPS the whole key, encrypted at rest, as the tier 1 backup. It is
+     * forgotten only when the person chooses to. (The Keykin repo's importKey, as written there.)
+     */
+    fun importKey(me: Me, qr: Qr, nsecHex: String, send: Send = http(qr.addr)): Held {
+        if (!Regex("^[0-9a-f]{64}$").matches(nsecHex)) refuse("bad_key")
+        var a0 = BigInteger(nsecHex, 16).mod(N)
+        if (a0.signum() == 0) refuse("bad_key")
+        if (Secp.mulG(a0).startsWith("03")) a0 = N.subtract(a0)          // the form whose public key has even y (BIP-340)
+        var a1 = BigInteger(1, random(32)).mod(N)
+        while (a1.signum() == 0) a1 = BigInteger(1, random(32)).mod(N)
+        val c = listOf(Secp.mulG(a0), Secp.mulG(a1))
+        val piece = { i: Int -> a0.add(a1.multiply(BigInteger.valueOf(i.toLong()))).mod(N) }
+        val npub = c[0].substring(2)
+        val r = call(send, seal(JSONObject().put("op", "import").put("request", qr.code).put("commitment", JSONArray(c))
+            .put("share", Seal.to(me.sk, qr.key, "import", scalarHex(piece(2)))).put("name", me.name).apply { if (me.chip != null) put("chip", me.chip) }, me))
+        if (r.getString("npub") != npub) refuse("bad_keygen")
+        return Held(Piece(c, 1, piece(1)), npub, qr.key, qr.addr)
+    }
+
     /** Signs a Nostr event with the box. Returns the whole signed event. */
     /**
      * `grant` names the site or app this signature is for (SPEC 11.5); leave it out for the person's own use.
@@ -229,6 +250,11 @@ object Device {
     /** Asks to make an account on a box (or to move `account` to it). Returns the request id to wait on. */
     fun askBox(me: Me, what: String, note: String, send: Send, account: String? = null): String =
         call(send, seal(JSONObject().put("op", "ask").put("what", what).put("name", me.name).put("note", note).apply { if (me.chip != null) put("chip", me.chip); if (account != null) put("account", account) }, me)).getString("request")
+    /** The state and the box's member key. A phone that learns the key this way trusts the address it asked: https only. */
+    fun askedWithKey(me: Me, request: String, send: Send): Pair<String, String> =
+        call(send, seal(JSONObject().put("op", "asked").put("request", request), me)).let { it.getString("state") to it.getString("key") }
+    /** Takes the request back. Only the device that asked can. */
+    fun askCancel(me: Me, request: String, send: Send) { call(send, seal(JSONObject().put("op", "ask_cancel").put("request", request), me)) }
     /** `waiting`, `approved`, `refused` or `gone`. Once approved, the id is the `code` of [create]. */
     fun asked(me: Me, request: String, send: Send): String = call(send, seal(JSONObject().put("op", "asked").put("request", request), me)).getString("state")
 

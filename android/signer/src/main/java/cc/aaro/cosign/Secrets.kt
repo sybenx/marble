@@ -38,7 +38,7 @@ class Secrets(context: Context, private val slot: String = "0") {
     }
 
     /** Everything of this key's, and only this key's. The Keystore key stays: other keys use it too. */
-    fun clear() = prefs.edit().also { e -> for (k in listOf("membership", "log", "restoring", "making", "device", "held", "members", "helpers", "signer")) e.remove(n(k)) }.apply()
+    fun clear() = prefs.edit().also { e -> for (k in listOf("membership", "log", "restoring", "making", "device", "held", "members", "helpers", "signer", "nsec")) e.remove(n(k)) }.apply()
 
     /** Anything small and secret, under [name]: sealed the same way. Null removes it. */
     fun save(name: String, json: String?) {

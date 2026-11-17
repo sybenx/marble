@@ -48,6 +48,7 @@ repo, and the rules are its `SPEC.md`.
 | Remove this phone from an account | Blocked at the box, wiped here, other account untouched |
 | The app restarted with an account and sites | Sites keep working |
 | Unit tests | 289 in the app and 10 in the signer pass |
+| Bring in an existing nsec | Same npub, signature verifies, the key is kept across a restart, and Forget removes it |
 | Release build | Assembles, and keeps the native signing library. Not run |
 
 ## Not verified
@@ -69,6 +70,7 @@ repo, and the rules are its `SPEC.md`.
 
 | Old | New |
 |---|---|
+| I already have an account (paste an nsec) | Unchanged to use: paste the nsec, then scan the box's code. The phone splits the key with the box and signs with the pieces. It keeps the whole key, sealed, as the backup, until you press "Forget the whole key on this phone" (Aaron, 2026-11-17) |
 | Create your account (with public Cosign servers) | Create it with your box: scan or paste the code on the box's page |
 | Set up with a server's code | The same thing: the box's code |
 | Sign in with another device (one scan) | Two scans: the new phone shows its code, a device in the account scans it and gives a fingerprint, then the new phone scans that device's answer. There is no relay between devices any more, so the second scan carries where the box is |
@@ -114,8 +116,7 @@ repo, and the rules are its `SPEC.md`.
 
 | Old | Why it cannot carry over as it is | Nearest equivalent |
 |---|---|---|
-| **I already have an account** (paste an nsec) | Keykin never puts a raw nsec on a device, and the box's transfer is not built (Keykin spec 11.4) | The button stays and says so. Moving an existing npub in needs the Keykin session to build transfer or an import |
-| **Accounts already in Marble on Cosign servers** | Weighted pieces cannot become Keykin pieces. A phone updated to this build opens on the welcome screen | The same import. Until then, do not release this build over a phone that holds a Cosign account |
+| **Accounts already in Marble on Cosign servers** | Weighted pieces cannot become Keykin pieces. A phone updated to this build opens on the welcome screen | Take the nsec out of the old Marble first (Advanced, Take my account out), then bring it in here. Do not install this build over a phone that still holds a Cosign account |
 | **Paper backup:** make it, the nudge, restore from it, the "someone is restoring" card | One paper piece does nothing alone under "any two sign". Open in `PLAN.md` | The nudge now says "Add a second device". Forming the whole key and keeping the nsec safe is the other way today |
 | **Add a server, choose a server** | There is one box. A second box, or changing boxes, is the transfer that is not built | None yet |
 | **Three-day waits and "Stop it" notices** for taking the account out | The fingerprint replaces the wait. Forming the key is immediate | The box's list of what happened shows it on the account page |
@@ -126,12 +127,11 @@ repo, and the rules are its `SPEC.md`.
 
 ## Things to decide or know
 
-1. **Marble refuses plain `http`, and the box on the tailnet speaks plain `http`.** A release
-   build cannot reach `http://100.101.35.120:8711`. The planned public address
-   (`https://account.syb.lol`, Keykin Login in front of the box) solves it. Debug builds are
-   allowed that one tailnet address, and the emulator's host.
-2. **Asking a box for an account** (Keykin spec 11.4, `ask`) is in the core but has no screen.
-   The phone would need the box's address and key before any code exists.
+1. **Marble connects over `https` only.** The box's public address, `https://account.syb.lol`,
+   is live and is what its codes name, so this is no longer in the way. Debug builds may also
+   reach the emulator's host over plain `http`.
+2. **Asking a box for an account** (Keykin spec 11.4, `ask`) is in the core but has no screen
+   yet. The box now returns its key with the answer, so the screen can be built.
 3. **A link opened on the same phone, and the web pane, still skip the five digits,** as they
    did before. Only "Paste a code" compares. The Keykin spec says a handed-over code should
    compare.

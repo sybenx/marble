@@ -132,6 +132,9 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
         try { signer()?.importKey(slot, chars) ?: Log.w("CosignClient", "importKey: the signer isn't connected") } catch (e: Exception) { Log.w("CosignClient", "importKey: $e") }
         finally { chars.fill(' ') }
     }
+    fun cancelImport() = act("cancelImport")
+    /** Your own choice: the whole key of a brought-in account goes from this phone. The pieces keep signing. */
+    fun forgetKey() = act("forgetKey")
     fun clearError() = act("clearError")
     fun showError(text: String) = act("showError", text)
     fun lockMissing() = act("lockMissing")

@@ -85,7 +85,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     val label get() = ui.value.member?.group?.npub?.let { if (it.length > 20) it.take(12) + "…" + it.takeLast(6) else it } ?: "New key"
     val isMember get() = ui.value.member != null
     /** One device and one box: lose this phone and the account is gone. (The old paper backup's nudge.) */
-    val needsPaper get() = ui.value.member?.group?.members?.let { ms -> ms.count { !it.blocked } <= 2 } ?: false
+    val needsPaper get() = !ui.value.keptKey && (ui.value.member?.group?.members?.let { ms -> ms.count { !it.blocked } <= 2 } ?: false)
 
     private val prefs = context.getSharedPreferences(named("keykin-account"), Context.MODE_PRIVATE)
     private val work = Executors.newCachedThreadPool()
@@ -343,7 +343,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val qr = Texts.qr(t)
                         plainHttp(qr.addr)?.let { return err(it) }
                         pendingQr = qr; pendingJoin = null
-                        ui.update { it.copy(error = null, joinCode = null, offer = Offer(pendingQr!!.addr, true)) }
+                        ui.update { it.copy(error = null, joinCode = null, offer = Offer(pendingQr!!.addr, true, bringing = bringing != null)) }
                     }
                 }
             } catch (e: Exception) { err(why(e)) }
@@ -373,6 +373,33 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     // --- Making an account with a box, or joining one ----------------------------------------------
 
+    // --- Bringing in an account you already have (Keykin SPEC 2) ----------------------------------
+    //
+    // This phone splits the key with the box and signs with the pieces from then on. It KEEPS the whole
+    // key, sealed like everything else here, as the account's backup (Aaron, 2026-11-17): it is how the
+    // account comes back if the pieces are lost. Only you forget it, with "Forget the whole key on this
+    // phone". Nothing else does, except removing this phone from the account, which says so first.
+
+    private var bringing: ByteArray? = null
+    /** The nsec typed in, as characters, wiped once read. Next comes the box's code. */
+    fun importKey(chars: CharArray) {
+        val t = chars.filter { !it.isWhitespace() }.toCharArray(); chars.fill(' ')
+        val key = try {
+            if (t.size == 64 && t.all { it in '0'..'9' || it in 'a'..'f' }) String(t).hexToBytes() else cc.aaro.qrst.core.Bech32.decodeNsec(t)
+        } catch (_: Exception) { null } finally { t.fill(' ') }
+        if (key == null || key.size != 32) return ui.update { it.copy(bringing = false, error = "That isn't an nsec (or a 64-character hex key). Nothing was kept.") }
+        if (isMember) { key.fill(0); return ui.update { it.copy(error = "This phone is already in an account. Use Add another account first.") } }
+        bringing?.fill(0); bringing = key
+        ui.update { it.copy(bringing = true, error = null) }
+    }
+    fun cancelImport() { bringing?.fill(0); bringing = null; ui.update { it.copy(bringing = false) } }
+    /** The person's own choice: the whole key goes from this phone. The pieces keep signing. */
+    fun forgetKey() {
+        secrets.save("nsec", null)
+        ui.update { it.copy(keptKey = false) }
+        note("Forgot the whole key on this phone", "denied")
+    }
+
     /** "Create your account": it is made with a box, so the next thing is the box's code. */
     fun createAccount() = ui.update { it.copy(error = "Open your Keykin box's page and scan the code it shows (or copy it and tap Paste a code). Your account is made by this phone and the box together.") }
 
@@ -387,17 +414,29 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun accept() {
         val o = ui.value.offer ?: return
         val qr = pendingQr; val j = pendingJoin
-        ui.update { it.copy(offer = null, joining = if (o.create) "Making your account with your box…" else "Collecting this phone's piece from your box…") }
+        val key = if (o.create) bringing else null
+        ui.update { it.copy(offer = null, joining = if (key != null) "Bringing your account to your box…" else if (o.create) "Making your account with your box…" else "Collecting this phone's piece from your box…") }
         work.execute {
             try {
-                val h = if (o.create) Device.create(me(), qr ?: error("no code")) else Device.join(me(), j ?: error("no code"))
+                val h = when {
+                    key != null -> Device.importKey(me(), qr ?: error("no code"), key.toHex())
+                    o.create -> Device.create(me(), qr ?: error("no code"))
+                    else -> Device.join(me(), j ?: error("no code"))
+                }
                 keep(h)
-                ui.update { it.copy(joining = null, error = null, member = membership(h, emptyList())) }
-                note(if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
+                // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
+                if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
+                ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
+                note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
             } catch (e: Exception) {
-                ui.update { it.copy(joining = null, error = if ((e as? KeykinException)?.code == "no_box") "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?" else why(e)) }
+                ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
+                    "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
+                    "already_here" -> "That box already holds this account. Sign in with another device instead."
+                    "bad_key" -> "That key can't be used. Nothing was kept."
+                    else -> why(e)
+                }) }
             } finally { pendingQr = null; pendingJoin = null }
         }
     }
@@ -1009,6 +1048,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
         }
         if (held != null) { showSites(); showHistory() }
+        if (held != null && secrets.load("nsec") != null) ui.update { it.copy(keptKey = true) }
         ui.update { it.copy(username = prefs.getString("username", null), loginPage = prefs.getString("login-page", null)?.ifEmpty { null }) }
     }
 

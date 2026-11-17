@@ -99,10 +99,12 @@ fun App(phone: Phone, ui: Ui) {
             ui.joining != null -> Joining(ui.joining!!, phone::decline)
             ui.joinCode != null && ui.member == null -> JoinCode(ui.joinCode!!, ui.error, onScan = { phone.clearError(); scanning = true }, onPaste = phone::pasted, onCancel = phone::cancelJoin)
             ui.member == null -> Column(Modifier.fillMaxSize()) {
-                // "I already have an account" (an nsec) can't be brought in yet: Keykin never puts a raw nsec on a device, and
-                // the box's side of a transfer isn't built. The sheet for it (ImportSheet) stays for when it is.
-                Box(Modifier.weight(1f)) { Welcome(ui.error, onCreate = { phone.clearError(); scanning = true }, onJoin = phone::startJoin, onPaste = phone::pasted,
-                    onHave = { phone.showError("Bringing an existing key (nsec) in isn't possible yet: your box has to take it, and that part isn't built. For now, make a new account with your box, or sign in with another device.") }) }
+                // "I already have an account": its nsec first (straight to the signer), then the box's code, as for a new one.
+                var importing by remember { mutableStateOf(false) }
+                Box(Modifier.weight(1f)) { Welcome(if (ui.bringing && ui.error == null) "Your key is ready. Now scan the code on your Keykin box's page (tap Create your account), or paste it." else ui.error,
+                    onCreate = { phone.clearError(); scanning = true }, onJoin = phone::startJoin, onPaste = phone::pasted, onHave = { phone.clearError(); importing = true }) }
+                if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars); scanning = true }
+                if (ui.bringing) TextButton({ phone.cancelImport() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Don't bring that key in after all", color = Vault.Muted) }
                 // A place for another key: the ones you have are a tap away.
                 val others = CosignApp.instance.accounts.all.filter { it !== phone && it.isMember }
                 if (others.isNotEmpty()) TextButton({ CosignApp.instance.accounts.forget(phone.slot); CosignApp.instance.accounts.show(others.first().slot) },
@@ -257,7 +259,7 @@ private fun ImportSheet(onClose: () -> Unit, onKey: (CharArray) -> Unit) {
         ) {
             Text("Bring your account", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
             Spacer(Modifier.height(10.dp))
-            Text("Paste its secret key (nsec). This phone splits it with your servers, so no one place holds it, then forgets it. You'll make a backup next.",
+            Text("Paste its secret key (nsec). This phone splits it with your box, and signs with the pieces from then on. It also keeps the whole key here, sealed, as your backup, until you choose to forget it. Next you scan your box's code.",
                 style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
             Spacer(Modifier.height(16.dp))
             androidx.compose.ui.viewinterop.AndroidView({ ctx ->
@@ -288,7 +290,7 @@ private fun Joining(text: String, onCancel: () -> Unit) = Page {
 }
 
 @Composable
-private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) = if (offer.create) MakeKeyPrompt(offer.box, onJoin, onCancel) else Page {
+private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) = if (offer.create) MakeKeyPrompt(offer.box, offer.bringing, onJoin, onCancel) else Page {
     Spacer(Modifier.height(24.dp))
     Text("Use your account on this phone?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
     Spacer(Modifier.height(8.dp))
@@ -307,7 +309,19 @@ private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) =
 
 /** The box's code was read: this phone and the box make the account together. */
 @Composable
-private fun MakeKeyPrompt(box: String, onJoin: () -> Unit, onCancel: () -> Unit) = Page {
+private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: () -> Unit, onCancel: () -> Unit) = if (bringing) Page {
+    Spacer(Modifier.height(24.dp))
+    Text("Bring your account to this box?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
+    Spacer(Modifier.height(20.dp))
+    Text("This phone splits your key with your box at $box. From then on the two sign together, and each of your other devices gets a piece of its own. Your account and its npub stay the same.",
+        color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+    Spacer(Modifier.height(12.dp))
+    Text("The whole key stays on this phone too, sealed, as your backup. You can forget it later under Your account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+    Spacer(Modifier.weight(1f))
+    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Bring it in", style = MaterialTheme.typography.labelLarge) }
+    Spacer(Modifier.height(8.dp))
+    TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
+} else Page {
     Spacer(Modifier.height(24.dp))
     Text("Create your account?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
     Spacer(Modifier.height(20.dp))
@@ -589,7 +603,23 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
 
         // The paper backup is not decided for Keykin (one paper piece does nothing alone). Until it is: a second device.
         item { Heading("Keep your account safe") }
-        item {
+        if (ui.keptKey) item {
+            var asking by remember { mutableStateOf(false) }
+            Column {
+                Text("Backup: the whole key is on this phone", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                Muted("You brought this account in, so its whole key is kept here, sealed. It is how the account comes back if the pieces are lost. Signing uses the pieces.")
+                TextButton({ asking = true }, contentPadding = PaddingValues(0.dp)) { Text("Forget the whole key on this phone", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
+            }
+            if (asking) AlertDialog(
+                onDismissRequest = { asking = false },
+                title = { Text("Forget the whole key?") },
+                text = { Text("This phone keeps only its piece. Unless you have the key somewhere else, there is then no backup: the account lives in its pieces alone.") },
+                confirmButton = { TextButton({ asking = false; phone.forgetKey() }) { Text("Forget it", color = Vault.Danger) } },
+                dismissButton = { TextButton({ asking = false }) { Text("Keep it") } },
+                containerColor = Vault.Surface,
+            )
+        }
+        if (!ui.keptKey) item {
             val devices = m.group.members.count { !it.isBox && !it.blocked }
             Muted(if (devices <= 1) "Your account is on this phone and your box only. If you lose this phone, you can't get it back: add a second device, or keep your secret key somewhere safe (Advanced, Take my account out)."
                 else "Your account is on $devices devices and your box. Any one device with the box can sign, so losing one loses nothing: block it from another.")
@@ -663,7 +693,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     if (leaving) AlertDialog(
         onDismissRequest = { leaving = false },
         title = { Text("Remove this phone?") },
-        text = { Text("This blocks this phone at your box and deletes its piece of your account. Sites and apps signed in through this phone stop working. Your other devices keep working; cycle your keys from one of them afterwards.") },
+        text = { Text("This blocks this phone at your box and deletes its piece of your account. Sites and apps signed in through this phone stop working. Your other devices keep working; cycle your keys from one of them afterwards." +
+            if (ui.keptKey) " The whole key kept on this phone as your backup is deleted too: copy it out first (Advanced, Take my account out) if you have it nowhere else." else "") },
         confirmButton = { TextButton({ leaving = false; phone.leave() }) { Text("Remove this phone", color = Vault.Danger) } },
         dismissButton = { TextButton({ leaving = false }) { Text("Keep it") } },
         containerColor = Vault.Surface,
