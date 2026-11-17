@@ -12,12 +12,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import cc.aaro.cosign.ui.CosignTheme
-import cc.aaro.cosign.ui.PaperSheet
+import cc.aaro.cosign.ui.BunkerSheet
 import cc.aaro.cosign.ui.TakeOutSheet
 
 /**
- * What only the signer process may put on screen: the paper backup's code, shown once,
- * and a key taken out. It opens over the app when the UI says one is ready (the UI only
+ * What only the signer process may put on screen: a bunker link, and the whole key formed
+ * after a fingerprint. It opens over the app when the UI says one is ready (the UI only
  * knows that it is, never what it says) and closes when it's been dealt with.
  */
 class SignerActivity : ComponentActivity() {
@@ -30,11 +30,10 @@ class SignerActivity : ComponentActivity() {
         setContent {
             CosignTheme {
                 val ui by s.ui.collectAsState()
-                val paper = ui.paper
+                val bunker = ui.bunker
                 val takeOut = ui.takeOut?.takeIf { it.stage == TakeOut.Stage.SHOWING }
                 when {
-                    // Shown once: back doesn't throw it away; "I've kept it safe" does.
-                    paper != null -> { BackHandler {}; PaperSheet(paper, s::closePaper) }
+                    bunker != null -> BunkerSheet(bunker, s::closeBunker)
                     takeOut != null -> TakeOutSheet(takeOut, s::closeTakeOut)
                     else -> LaunchedEffect(Unit) { finish() }
                 }

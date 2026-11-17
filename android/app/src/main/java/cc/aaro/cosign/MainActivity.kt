@@ -139,6 +139,25 @@ class MainActivity : ComponentActivity() {
     private fun testHook(intent: Intent?) {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
         intent?.getStringExtra("pair")?.let { CosignApp.instance.phone.scanned(it) }
+        // The same as a pasted code (--es paste '<text>'), and one of the account's actions with no tap (--es act accept),
+        // so an emulator with no camera can go through making, joining and changing an account.
+        intent?.getStringExtra("paste")?.let { CosignApp.instance.phone.pasted(it) }
+        intent?.getStringExtra("act")?.let { a -> CosignApp.instance.phone.let { p -> when (a) {
+            "accept" -> p.accept(); "startJoin" -> p.startJoin(); "confirmAddDevice" -> p.confirmAddDevice(); "confirmConnect" -> p.confirmConnect()
+            "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(); "leave" -> p.leave()
+            "confirmReportLost" -> p.confirmReportLost(); "refresh" -> p.refresh()
+            "reportLost" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::askReportLost)
+            "unblock" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::unblock)
+            "password" -> p.setPassword(intent.getStringExtra("arg") ?: "", intent.getStringExtra("arg2") ?: "")
+            "loginPage" -> p.setLoginPage(intent.getStringExtra("arg") ?: "")
+            "removeSite" -> p.ui.value.sites.firstOrNull { it.origin == intent.getStringExtra("arg") }?.let(p::removeSite)
+            "undo" -> p.ui.value.changes.firstOrNull()?.let(p::undo)
+            "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
+            "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
+            "approve" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, true) }
+            "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })
+            else -> {}
+        } } }
         // A relay of the test's own (a local one, say) for the home screen to read from too.
         intent?.getStringExtra("relay")?.let { cc.aaro.cosign.Sources.extra.value = it.split(',').filter(String::isNotBlank) }
         // Stand-in videos from "Tube" in Discover, until its endpoint is live (--es places fake).

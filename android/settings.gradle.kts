@@ -14,6 +14,9 @@ dependencyResolutionManagement {
 }
 rootProject.name = "marble"
 include(":app")
-// The Cosign library, from the submodule (github.com/sybenx/cosign): Gradle builds it from
-// source and gives it to `implementation("cc.aaro.cosign:cosign")`, as it would for any app.
-includeBuild("../cosign/android")
+// The signer (Keykin v2: this phone and its box each hold a piece, any two sign). It began as the
+// Cosign library in the submodule and keeps its seam to the app; the engine under it is the Keykin
+// repo's Kotlin core.
+include(":signer")
+// The QRST core and relay layer (sign-in by a scanned code), still from the Cosign submodule's own submodule.
+includeBuild("../cosign/qr-secret-transfer/kotlin")

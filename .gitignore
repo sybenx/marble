@@ -8,3 +8,4 @@ android/.kotlin/
 .DS_Store
 *.apk
 .wrangler/
+android/signer/build/

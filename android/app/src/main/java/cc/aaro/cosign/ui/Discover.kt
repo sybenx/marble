@@ -1855,7 +1855,6 @@ private sealed class Need {
     data class Approve(val ask: cc.aaro.cosign.Ask) : Need()
     data class Batch(val b: cc.aaro.cosign.BatchAsk) : Need()
     data class Deleting(val d: cc.aaro.cosign.Deleting) : Need()
-    data class Recovery(val name: String, val until: Long) : Need()
     data class Future(val f: cc.aaro.cosign.Future) : Need()
     data object Paper : Need()
 }
@@ -1864,7 +1863,6 @@ private fun needs(phone: Phone, ui: Ui): List<Need> = buildList {
     ui.asks.forEach { add(Need.Approve(it)) }
     ui.batchAsks.forEach { add(Need.Batch(it)) }
     ui.deleting.forEach { add(Need.Deleting(it)) }
-    ui.recovery?.let { if (!RecoveryOk.has(it.second)) add(Need.Recovery(it.first, it.second)) }
     ui.future.forEach { add(Need.Future(it)) }
     if (phone.needsPaper) add(Need.Paper)
 }
@@ -1874,7 +1872,6 @@ private fun NeedCard(n: Need, phone: Phone, now: Long) = when (n) {
     is Need.Approve -> AskCard(n.ask, now, quiet = true) { approve -> phone.decide(n.ask.id, approve) }
     is Need.Batch -> BatchCard(n.b, now, quiet = true) { approve -> phone.decideBatch(n.b.batch, approve) }
     is Need.Deleting -> DeletingCard(n.d, now, quiet = true) { phone.cancelDeletion(n.d.batch) }
-    is Need.Recovery -> RecoveryCard(n.name, n.until, phone)
     is Need.Future -> FutureCard(n.f) { phone.removeFuture(n.f) }
     Need.Paper -> PaperCard(phone)
 }

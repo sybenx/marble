@@ -102,11 +102,11 @@
         </activity>
 
         <!-- Everything below that holds or uses your key runs in its own process, ":signer"
-             (Proc.kt): the shares, FROST, the relays your servers use, NIP-55 and site sign-in.
+             (Proc.kt): this phone's piece, FROST, the box, NIP-55 and site sign-in.
              It draws nothing from strangers (no feed, pictures, video or web views). The app
              above reaches it only through SignerService, which the Cosign library declares
              (with its NIP-55 provider) in its own manifest. -->
-        <!-- The paper backup's code and a key taken out: shown by the signer, never by the app. -->
+        <!-- A bunker link and the whole key, formed after a fingerprint: shown by the signer, never by the app. -->
         <activity
             android:name=".SignerActivity"
             android:process=":signer"
@@ -133,8 +133,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Keeps the relay connection open so a request can reach the phone while the
-             app isn't on screen. Only runs once the phone has joined a group. -->
+        <!-- Keeps the relay connections open so a site's request can reach the phone while the
+             app isn't on screen. Only runs once the phone is in an account. -->
         <service
             android:name=".CosignService"
             android:process=":signer"
@@ -142,7 +142,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Holds one share of a threshold signing key and answers co-signing requests from the user's own servers." />
+                android:value="Holds one piece of a threshold signing key and answers signing requests from the sites the user signed in to with it." />
         </service>
 
         <!-- Keep in Marble, in other apps' share sheet: your words and what was shared, in Later. -->

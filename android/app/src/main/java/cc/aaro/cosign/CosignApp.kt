@@ -18,6 +18,7 @@ class CosignApp : Application() {
         Startup.mark("app")
         Cosign.init(this, object : Cosign.Host {
             override fun reveal(context: Context, slot: String) = SignerActivity.open(context, slot)
+            override fun joined(context: Context) { try { CosignService.start(context) } catch (_: Exception) { } }
         })
         // After the app's first screen is drawn. Signing never waits on this (it connects by itself); boot and push start it directly.
         if (Proc.isSigner && signers.all.any { it.isMember }) android.os.Handler(mainLooper).postDelayed({ CosignService.start(this) }, 1500)

@@ -14,8 +14,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
- * Keeps the phone reachable: one relay connection, kept open, so a server can ask
- * for a signature while the app isn't on screen. Shows an ongoing notification
+ * Keeps the phone reachable: the relay connections its signed-in sites use stay open, so a site
+ * can ask for a signature while the app isn't on screen. Shows an ongoing notification
  * (Android requires one) and a heads-up notification for each request.
  */
 class CosignService : Service() {
@@ -73,9 +73,8 @@ class CosignService : Service() {
         if (keys.isEmpty()) return "Not in a group"
         if (keys.size > 1) return "${keys.size} keys · " + keys.joinToString(" · ") { p -> "${p.label} ${if (p.ui.value.relaysUp == 0) "offline" else "connected"}" }
         val u = keys[0].ui.value
-        val m = u.member!!
-        val servers = m.group.members.filter { it.role == "server" }.joinToString(" · ") { "${it.name} ${if (u.online[it.idx] == true) "online" else "offline"}" }
-        return if (u.relaysUp == 0) "No relay connection · retrying" else servers
+        val sites = u.sites.count { it.via != "App on this phone" }
+        return (if (u.relaysUp == 0) "Can't reach your box · retrying" else "Your box is reachable") + if (sites > 0) " · answering $sites site${if (sites == 1) "" else "s"}" else ""
     }
 
     private fun statusNote() = NotificationCompat.Builder(this, STATUS)
