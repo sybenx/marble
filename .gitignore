@@ -2,6 +2,8 @@ node_modules/
 android/.gradle/
 android/build/
 android/app/build/
+android/vaults/build/
+android/signer/build/
 android/local.properties
 android/keystore.properties
 android/.kotlin/
