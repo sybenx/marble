@@ -41,6 +41,7 @@ class Accounts(private val context: Context) {
             p.label = label
             p.needsPaper = needsPaper
             p.ui.value = try { Wire.read(ui) } catch (e: Exception) { Log.w(TAG, "state: $e"); return }
+            p.heard.value = true
         }
     }
 
@@ -100,6 +101,9 @@ class Accounts(private val context: Context) {
  */
 class Phone internal constructor(val slot: String, private val signer: () -> ISigner?) {
     val ui = MutableStateFlow(Ui())
+    /** The signer has sent this account's state at least once. Before that, [ui] is an empty
+     *  placeholder that looks like no account, so the app draws nothing rather than the sign-in screen. */
+    val heard = MutableStateFlow(false)
     /** Which key this is, for a list: its npub, shortened (from the signer, with each state). */
     @Volatile var label = "New key"; internal set
     /** One device and one box: lose this phone and the account is gone. */
