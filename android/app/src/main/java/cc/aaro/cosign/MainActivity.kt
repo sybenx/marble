@@ -159,6 +159,8 @@ class MainActivity : ComponentActivity() {
             "moveDigits" -> p.moveDigits(intent.getStringExtra("arg")); "closeMove" -> p.closeMove()
             "import" -> p.importKey((intent.getStringExtra("arg") ?: "").toCharArray()); "forgetKey" -> p.forgetKey()
             "addAccount" -> CosignApp.instance.accounts.add()
+            // A child key for a place (--es arg <place>, "-<place>" to forget it first): signed and encrypted as it, logged under MarbleState.
+            "child" -> p.testChild(intent.getStringExtra("arg") ?: "")
             "show" -> CosignApp.instance.accounts.all.getOrNull(intent.getIntExtra("n", 0))?.let { CosignApp.instance.accounts.show(it.slot) }
             "deny" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, false) }
             "testRelays" -> p.testRelays(intent.getStringExtra("arg") ?: "")

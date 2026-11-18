@@ -133,6 +133,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
         finally { chars.fill(' ') }
     }
     fun cancelImport() = act("cancelImport")
+    /** Debug builds only: make or find the child for a place, sign and encrypt as it, and log it for a test ("-place" forgets it first). */
+    fun testChild(place: String) = act("testChild", place)
     /** Tier 1: a new account with its key on this phone. No box. */
     fun createLocal() = act("createLocal")
     /** The whole key by QRST: receive it here, keep it, send it (after the consent and fingerprint), digits, close. */

@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import cc.aaro.cosign.core.Clock
 import cc.aaro.cosign.core.Policy
+import cc.aaro.keykin.core.Child
+import cc.aaro.keykin.core.Children
 import cc.aaro.keykin.core.Device
 import cc.aaro.keykin.core.Fingerprint
 import cc.aaro.keykin.core.Held
@@ -924,16 +926,24 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
 
     /** The signature itself: this phone's piece and the box's (or a helper's when the box is off). */
-    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false): Event {
+    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null): Event {
         if (held == null) {
             val k = localKey() ?: error("$appName isn't set up yet")
+            if (asChild != null) {
+                // Tier 1 as a child: the key moved by the tweak, for this one signature, then wiped. Never kept or shown.
+                val s = try { Children.localSecret(k, Children.tweakOf(asChild.t)) } finally { k.fill(0) }
+                try {
+                    if (cc.aaro.qrst.core.publicKeyHex(s) != asChild.npub) throw KeykinException("wrong_account")
+                    return Event.sign(asChild.npub, ev.createdAt, ev.kind, ev.tags, ev.content, s, env)
+                } finally { s.fill(0) }
+            }
             try { return Event.sign(cc.aaro.qrst.core.publicKeyHex(k), ev.createdAt, ev.kind, ev.tags, ev.content, k, env) } finally { k.fill(0) }
         }
         val h = held ?: error("$appName isn't set up yet")
         // The box wants to hear that you said Yes to the few things it calls hard to undo. What this phone itself
         // signs to put something back (an undo, a repost) or at your own word is always that.
         val yes = tapped && Device.destructive(ev.kind, ev.tags, ev.content) != null
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, yes) } }
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, yes, asChild) } }
             catch (e: KeykinException) {
                 if (e.code == "needs_tap") throw NeedsApproval(boxHold(ev))
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
@@ -1016,16 +1026,19 @@ class Signer(private val context: Context, val slot: String = "0") {
     private var screenOff: android.content.BroadcastReceiver? = null
 
     /** The x of the shared point with [peer], from this phone's part and the box's. The key is never whole. */
-    private fun sharedX(peer: String, grant: String?): ByteArray {
-        // Kept per grant: a revoked site or app must not ride on a secret made for another.
-        val slot = (grant ?: "") + ":" + peer
+    private fun sharedX(peer: String, grant: String?, asChild: Child? = null): ByteArray {
+        // Kept per grant: a revoked site or app must not ride on a secret made for another. And per child.
+        val slot = (grant ?: "") + ":" + (asChild?.npub?.let { "$it:" } ?: "") + peer
         sharedXs[slot]?.let { return it.copyOf() }
         if (held == null) {
             val k = localKey() ?: error("$appName isn't set up yet")
-            try { return cc.aaro.keykin.core.Secp.ecdhX(k, peer).also { sharedXs[slot] = it.copyOf() } } finally { k.fill(0) }
+            if (asChild == null) try { return cc.aaro.keykin.core.Secp.ecdhX(k, peer).also { sharedXs[slot] = it.copyOf() } } finally { k.fill(0) }
+            // Tier 1 as a child: the key moved by the tweak for this one moment, then wiped.
+            val s = try { Children.localSecret(k, Children.tweakOf(asChild.t)) } finally { k.fill(0) }
+            try { return cc.aaro.keykin.core.Secp.ecdhX(s, peer).also { sharedXs[slot] = it.copyOf() } } finally { s.fill(0) }
         }
         val h = held ?: error("$appName isn't set up yet")
-        val x = try { synchronized(boxLock) { Device.sharedX(me(), h, peer, send(h), grant) } }
+        val x = try { synchronized(boxLock) { Device.sharedX(me(), h, peer, send(h), grant, asChild) } }
             catch (e: KeykinException) {
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
                 blockedHere(e); throw IllegalStateException(why(e))
@@ -1033,12 +1046,12 @@ class Signer(private val context: Context, val slot: String = "0") {
         sharedXs[slot] = x.copyOf()
         return x
     }
-    private fun nip44With(peer: String, text: String, encrypt: Boolean, grant: String? = null): String {
-        val key = cc.aaro.keykin.core.Nip44.conversationKey(sharedX(peer, grant))
+    private fun nip44With(peer: String, text: String, encrypt: Boolean, grant: String? = null, asChild: Child? = null): String {
+        val key = cc.aaro.keykin.core.Nip44.conversationKey(sharedX(peer, grant, asChild))
         return if (encrypt) cc.aaro.keykin.core.Nip44.encrypt(text, key) else cc.aaro.keykin.core.Nip44.decrypt(text, key)
     }
-    private fun nip04With(peer: String, text: String, encrypt: Boolean, grant: String? = null): String {
-        val key = SecretKeySpec(sharedX(peer, grant), "AES")
+    private fun nip04With(peer: String, text: String, encrypt: Boolean, grant: String? = null, asChild: Child? = null): String {
+        val key = SecretKeySpec(sharedX(peer, grant, asChild), "AES")
         val c = Cipher.getInstance("AES/CBC/PKCS5Padding")
         val b64 = Base64.getEncoder()
         if (encrypt) {
@@ -1056,6 +1069,83 @@ class Signer(private val context: Context, val slot: String = "0") {
      * (NIP-78). The other side is always this account's own key, so this reads nobody else's messages.
      */
     fun nip44Self(text: String, encrypt: Boolean): String = nip44With(accountHex() ?: error("$appName isn't set up yet"), text, encrypt)
+
+    // --- Child keys, one per place (Keykin SPEC 8k) -------------------------------------------------
+    //
+    // Engine only; no screen uses it yet. A place (a site, an app: any name) can get a child of this
+    // account: another public key, which nothing published ties to this one. The same place always gives
+    // the same child, from the key on this phone (tier 1) or with the box (tier 2), and the child is
+    // remembered for this account (sealed: its name, tweak and public key) so it is made only once.
+    // The child signs and makes message keys through this account, moved by its tweak for that one
+    // moment. Its secret is never kept, shown or offered for export: with the tweak it gives this account's.
+
+    private val childLock = Any()
+    private fun children(): JSONObject = secrets.load("children")?.let { try { JSONObject(it) } catch (_: Exception) { null } } ?: JSONObject()
+
+    /** The child for [place]: the one this account remembers, or made now and remembered. Blocks (the box may take part). */
+    fun childFor(place: String): Child {
+        if (accountHex() == null) error("$appName isn't set up yet")
+        synchronized(childLock) {
+            val all = children()
+            all.optJSONObject(place)?.let { o -> return Child(place, o.getString("t"), o.getString("npub")) }
+            val c = makeChild(place)
+            secrets.save("children", all.put(place, JSONObject().put("t", c.t).put("npub", c.npub)).toString())
+            return c
+        }
+    }
+    /** The public key (x-only hex) of [place]'s child, if this account has made one. Asks nothing. */
+    fun childKnown(place: String): String? = children().optJSONObject(place)?.optString("npub")?.ifEmpty { null }
+    /** Forget the child remembered for [place]. Nothing is lost: the same place makes the same child again. */
+    fun forgetChild(place: String) = synchronized(childLock) { secrets.save("children", children().apply { remove(place) }.toString()) }
+    /** The child for a place: from the whole key here (tier 1), or with the box (tier 2). The same either way. */
+    private fun makeChild(place: String): Child {
+        val h = held
+        if (h == null) {
+            val k = localKey() ?: error("$appName isn't set up yet")
+            try { return Children.local(k, place) } finally { k.fill(0) }
+        }
+        return try { synchronized(boxLock) { Device.makeChild(me(), h, place, send(h)) } }
+            catch (e: KeykinException) { blockedHere(e); throw IllegalStateException(why(e)) }
+    }
+
+    /**
+     * Sign [ev] as [place]'s child (its pubkey is replaced by the child's). Some things are never signed;
+     * anything hard to undo throws [NeedsApproval] unless [approved]. No list of the child's is kept here, so
+     * a change is judged on its own. Blocks; never call on the main thread.
+     */
+    fun signAs(place: String, ev: Event, approved: Boolean = false, grant: String? = null): Event {
+        val c = childFor(place)
+        val e = Event(c.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId()
+        Policy.refuse(e)?.let { throw IllegalStateException(it) }
+        if (!approved) (Policy.hold(e, null) ?: Device.destructive(e.kind, e.tags, e.content)?.let { boxHold(e) })?.let { throw NeedsApproval(it) }
+        return signNow(e, grant, approved, c)
+    }
+    /** NIP-44 as [place]'s child, with [peer]. */
+    fun nip44As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip44With(peer, text, encrypt, grant, childFor(place))
+    /** NIP-04 as [place]'s child, with [peer]. */
+    fun nip04As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip04With(peer, text, encrypt, grant, childFor(place))
+    /** NIP-44 to [place]'s child itself: that place's own data, readable by nothing else. */
+    fun nip44SelfAs(place: String, text: String, encrypt: Boolean): String { val c = childFor(place); return nip44With(c.npub, text, encrypt, null, c) }
+
+    /**
+     * Debug builds only, for tests on an emulator: make (or find) [place]'s child, sign a note as it and
+     * encrypt to itself, and log both (never the tweak) under MarbleState, for a computer to check.
+     * "-" before the place forgets the remembered child first.
+     */
+    fun testChild(arg: String) {
+        if (!debuggable) return
+        val forget = arg.startsWith("-"); val place = arg.removePrefix("-")
+        work.execute {
+            try {
+                if (forget) forgetChild(place)
+                val known = childKnown(place)
+                val c = childFor(place)
+                val ev = signAs(place, Event(c.npub, Clock.now(), 1, emptyList(), "as $place").withId())
+                val enc = nip44SelfAs(place, "hello $place", true)
+                android.util.Log.i("MarbleState", "child place=$place remembered=${known != null} npub=${c.npub} account=${accountHex()} tier=${if (held == null) 1 else 2} signed=${ev.toJson()} verifies=${ev.verify()} nip44=$enc back=${nip44SelfAs(place, enc, false)}")
+            } catch (e: Exception) { android.util.Log.i("MarbleState", "child failed: $e") }
+        }
+    }
 
     // --- Apps on this phone (Android signer, NIP-55) -------------------------------------------------
 
