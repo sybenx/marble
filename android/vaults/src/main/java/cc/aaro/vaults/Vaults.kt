@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class Vaults(
-    val account: Account, val relays: Relays, blobs: Blobs, val store: Store, val clock: Clock,
+    val account: Account, val relays: RelayNet, blobs: Blobs, val store: Store, val clock: Clock,
     /** The account's own write relays (NIP-65): where keyring entries live (§3.6). */
     val accountRelays: () -> List<String>,
     /** This device's name, for its sub-certs (§3.4). */

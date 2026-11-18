@@ -9,7 +9,7 @@ import cc.aaro.vaults.Answer
 import cc.aaro.vaults.Blobs
 import cc.aaro.vaults.Ev
 import cc.aaro.vaults.KeykinView
-import cc.aaro.vaults.Relays
+import cc.aaro.vaults.RelayNet
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -19,7 +19,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /** The vault engine's relays and Blossom servers, as Marble reaches them (Fetch, OkHttp). Blocking: background threads only. */
-object VaultNet : Relays, Blobs {
+object VaultNet : RelayNet, Blobs {
     private fun toMap(o: JSONObject): Map<String, Any> = o.keys().asSequence().associateWith { k ->
         when (val v = o.get(k)) { is JSONArray -> List(v.length()) { v.get(it) }; else -> v }
     }

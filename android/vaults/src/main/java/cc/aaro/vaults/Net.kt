@@ -7,7 +7,7 @@ import org.json.JSONObject
 /** What relays sent back, and which of them finished (EOSE) in time. */
 class Answer(val events: List<Ev>, val answered: Set<String>)
 
-interface Relays {
+interface RelayNet {
     fun query(relays: List<String>, filter: JSONObject, timeoutMs: Long = 10_000): Answer
     /** The relays that said OK. */
     fun publish(relays: List<String>, ev: Ev): Set<String>

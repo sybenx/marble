@@ -1404,7 +1404,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val before = later.items.value
             // The first run after the update: the old notes, once, into the vault (made now if there's none).
             if (!vn.imported) {
-                val old = notesSync.pull(before, full = true)
+                val old = notesSync.pull(before, full = true)?.let { it + notesSync.removals() }
                 if (old != null) { val n = vn.import(old); if (debuggable) android.util.Log.i("MarbleVault", "import: $n notes") }
             }
             var after = vn.pull(before) ?: return

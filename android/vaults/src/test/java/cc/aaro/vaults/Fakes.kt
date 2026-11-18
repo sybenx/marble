@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 /** Relays in memory: the newest event at each addressable address, as real relays keep. */
-class FakeRelays : Relays {
+class FakeRelays : RelayNet {
     val events = ConcurrentHashMap<String, Ev>()
     var down = false
     private fun addr(e: Ev) = if (e.kind in 30000..39999) "${e.kind}:${e.pubkey}:${e.tag("d")}" else null

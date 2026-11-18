@@ -65,6 +65,8 @@ class NotesSync(private val net: NotesNet, private val store: NotesStore, privat
 
     /** The notes as Later shows them. */
     fun items(): List<LaterItem> = vault.notes.values.map(LaterNotes::item).sortedByDescending { it.created }
+    /** The removals held (packs' markers and marble/later's), as removed items: what the vault import carries as deletions. */
+    fun removals(): List<LaterItem> = vault.markers.values.map { LaterItem(it.id, "", it.deleted, it.deleted, deleted = it.deleted) }
 
     /**
      * What the relays hold, merged with [held] (Later's items now): the old list, then the packs under every key. [full]:

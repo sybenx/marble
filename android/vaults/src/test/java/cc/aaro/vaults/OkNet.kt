@@ -14,7 +14,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /** Real relays and Blossom servers over OkHttp, for the end-to-end tests (the app has its own, over Fetch). */
-class OkNet : Relays, Blobs {
+class OkNet : RelayNet, Blobs {
     val http = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
 
     override fun query(relays: List<String>, filter: JSONObject, timeoutMs: Long): Answer {
