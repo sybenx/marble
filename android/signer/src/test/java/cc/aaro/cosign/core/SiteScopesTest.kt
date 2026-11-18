@@ -97,6 +97,27 @@ class SiteScopesTest {
             assertFalse(dm, SiteScopes.vaultData(dm, me))
     }
 
+    @Test fun anOwnerEntryNeedsItsGenerationsAndYouAsOwner() {
+        val base = """"vault":"$v","genesis":"$g","role":"owner","d":"$d""""
+        val gens = """"gens":[{"id":"$kid","secret":"$k","prev":null,"because":{}}]"""
+        assertTrue(SiteScopes.vaultData("""{$base,"owner":"$me",$gens}""", me))
+        assertFalse("no gens", SiteScopes.vaultData("""{$base,"owner":"$me"}""", me))
+        assertFalse("empty gens", SiteScopes.vaultData("""{$base,"owner":"$me","gens":[]}""", me))
+        assertFalse("someone else as owner", SiteScopes.vaultData("""{$base,"owner":"$stranger",$gens}""", me))
+        assertFalse("a reader entry with gens", SiteScopes.vaultData("""{"vault":"$v","genesis":"$g","role":"reader","d":"$d","owner":"$stranger","keys":{"$kid":"$k"},$gens}""", me))
+    }
+
+    @Test fun membersAddedLaterAreAllowed() {
+        // §2: an unknown member is ignored, so a field a later app adds doesn't lock browsers out.
+        val p = org.json.JSONObject(kr.getString("payload")).put("pinned", true).put("color", "blue")
+        p.getJSONArray("gens").getJSONObject(0).put("note", "x").getJSONObject("because").put("later", 1)
+        assertTrue(SiteScopes.vaultData(p.toString(), krOwner))
+        assertTrue(SiteScopes.vaultData("""{"vault":"$v","keys":{"$kid":"$k"},"inboxes":{"$kid":"$stranger"},"note":"hi"}""", me))
+        assertTrue(SiteScopes.vaultData("""{"vault":"$v","genesis":"$g","owner":"$stranger","role":"reader","keys_ref":{"alg":"nv1","key":"$k","size":10,"parts":["$k"],"v":2},"d":"$d","x":[1]}""", me))
+        // A known member of the wrong type is still refused.
+        assertFalse(SiteScopes.vaultData(org.json.JSONObject(kr.getString("payload")).put("relays", "wss://one").toString(), krOwner))
+    }
+
     @Test fun nearMissesAreRefused() {
         val good = """{"vault":"$v","genesis":"$g","owner":"$me","role":"owner","gens":[{"id":"$kid","secret":"$k","prev":null,"because":{}}],"d":"$d"}"""
         assertTrue(SiteScopes.vaultData(good, me))
@@ -105,7 +126,6 @@ class SiteScopesTest {
             good.replace(",\"d\":\"$d\"", ""),                                                // no d
             good.replace("\"gens\":[{\"id\":\"$kid\",\"secret\":\"$k\",\"prev\":null,\"because\":{}}]", "\"gens\":[]"),  // an owner with no generations
             good.replace("\"role\":\"owner\"", "\"role\":\"admin\""),
-            good.dropLast(1) + ",\"text\":\"hi\"}",                                             // a field the spec doesn't list
             good.dropLast(1) + ",\"vault\":\"$v\"}",                                             // a duplicate key
             good.replace("\"vault\":", "vault:"),                                               // bare key (org.json would take it)
             good.replace("\"", "'"),                                                             // single quotes
@@ -113,8 +133,6 @@ class SiteScopesTest {
             good.replace(v, v.uppercase()),                                                       // hex must be lowercase
             good.replace(v, v.dropLast(2)),                                                       // short id
             good.replace("\"prev\":null", "\"prev\":\"nope\""),
-            good.replace("\"because\":{}", "\"because\":{\"why\":1}"),
-            """{"vault":"$v","keys":{"$kid":"$k"},"inboxes":{"$kid":"$stranger"},"note":"hi"}""",   // a key wrap with extra
             """{"vault":"$v","keys":{"${"3".repeat(64)}":"$k"}}""",                                // a kid of the wrong length
             """{"vault":"$v","keys":{}}""",
             """{"vault":"$v","genesis":"$g","owner":"$stranger","role":"reader","gens":[],"keys":{"$kid":"$k"},"d":"$d"}""") // a reader with gens

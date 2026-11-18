@@ -30,8 +30,10 @@ object SiteScopes {
 
     /**
      * Whether [plain], from a NIP-44 decrypt with someone else's key that a site with private lists on (but DMs off)
-     * asked for, is the account's own vault data, which private lists covers, so it may be answered. Exactly two shapes,
-     * parsed strictly (RFC 8259, no duplicate keys, no fields the spec doesn't list):
+     * asked for, is the account's own vault data, which private lists covers, so it may be answered. Two shapes, parsed
+     * strictly (RFC 8259, no duplicate keys, nothing after the value), their required fields checked; other members are
+     * allowed (§2: an unknown member is ignored), so a field added later doesn't lock browsers out. That leaks nothing:
+     * whoever seals something to you only gets back what they sealed, and a real DM never has the required fields.
      *  - a keyring payload (vaults §3.6), sealed to your own npub with a one-time key: an owner's entry names you as
      *    owner and carries its generations; a reader's carries the keys it was given;
      *  - a key wrap (§3.5): `{"vault", "keys", "inboxes"}`, epoch keys sent to you.
@@ -44,12 +46,11 @@ object SiteScopes {
 
     fun vaultData(plain: String, me: String): Boolean {
         val o = StrictJson.parse(plain) as? Map<*, *> ?: return false
-        return keyring(o, me.lowercase()) || keyWrap(o)
+        // Something with a role is a keyring entry, and judged only as one (a reader's entry with gens isn't a key wrap).
+        return if ("role" in o) keyring(o, me.lowercase()) else keyWrap(o)
     }
 
-    private val KEYRING = setOf("vault", "genesis", "owner", "name", "profile", "role", "gens", "start", "keys", "keys_ref", "inboxes", "relays", "servers", "d")
     private fun keyring(o: Map<*, *>, me: String): Boolean {
-        if (!o.keys.all { it in KEYRING }) return false
         if (!hex(o["vault"], 32) || !hex(o["genesis"], 32) || !hex(o["owner"], 32) || !hex(o["d"], 16)) return false
         if (!optString(o, "name") || !optString(o, "profile") || !opt(o, "start") { hex(it, 16) }) return false
         if (!opt(o, "keys") { keyMap(it, 32) } || !opt(o, "inboxes") { keyMap(it, 32) } || !opt(o, "keys_ref", ::blobRef)) return false
@@ -63,21 +64,19 @@ object SiteScopes {
         }
     }
     private fun keyWrap(o: Map<*, *>): Boolean =
-        o.keys.all { it == "vault" || it == "keys" || it == "inboxes" } && hex(o["vault"], 32) &&
+        hex(o["vault"], 32) &&
             keyMap(o["keys"], 32) && (o["keys"] as Map<*, *>).isNotEmpty() && opt(o, "inboxes") { keyMap(it, 32) }
 
-    private val GEN = setOf("id", "secret", "prev", "because")
-    private val BECAUSE = setOf("roots", "members", "grants", "fresh")
     private fun gen(g: Any?): Boolean {
         val m = g as? Map<*, *> ?: return false
-        if (!m.keys.all { it in GEN } || !hex(m["id"], 16) || !hex(m["secret"], 32) || "prev" !in m || !(m["prev"] == null || hex(m["prev"], 16))) return false
+        if (!hex(m["id"], 16) || !hex(m["secret"], 32) || "prev" !in m || !(m["prev"] == null || hex(m["prev"], 16))) return false
         val b = m["because"] as? Map<*, *> ?: return false
-        return b.keys.all { it in BECAUSE } && listOf("roots", "members", "grants").all { opt(b, it, ::strings) } && opt(b, "fresh") { it == true }
+        return listOf("roots", "members", "grants").all { opt(b, it, ::strings) } && opt(b, "fresh") { it == true }
     }
     /** A blob ref (§6.2): `{"alg", "key", "size", "chunks", "parts"}`. */
     private fun blobRef(r: Any?): Boolean {
         val m = r as? Map<*, *> ?: return false
-        return m.keys.all { it in setOf("alg", "key", "size", "chunks", "parts") } && m["alg"] is String && hex(m["key"], 32) &&
+        return m["alg"] is String && hex(m["key"], 32) &&
             (m["size"] as? Long ?: -1) >= 0 && opt(m, "chunks") { (it as? Long ?: -1) >= 0 } &&
             (m["parts"] as? List<*>)?.let { p -> p.isNotEmpty() && p.all { hex(it, 32) } } == true
     }
