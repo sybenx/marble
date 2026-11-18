@@ -177,6 +177,9 @@ class SignerService : Service() {
             "confirmUndoSite" -> s.confirmUndoSite()
             "closeSummary" -> s.closeSummary()
             "undo" -> u.changes.firstOrNull { it.id == text }?.let(s::undo)
+            // A version of one of your lists the app's reader found (the signer checks it is yours and signed), and a look now.
+            "seen" -> s.seen(text ?: return)
+            "checkLists" -> s.checkListsSoon()
             "repost" -> u.deleted.firstOrNull { it.id == text }?.let(s::repost)
             "removeFuture" -> u.future.firstOrNull { it.id == text }?.let(s::removeFuture)
             "takeOutViaServers" -> s.takeOutViaServers()

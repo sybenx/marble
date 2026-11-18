@@ -27,7 +27,11 @@ data class Ask(val id: String, val app: String, val event: Event, val hold: Stri
 data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
                 /** The site signed in with an account of its own (made for it), not the main account. */
                 val own: Boolean = false) : java.io.Serializable
-data class Change(val id: String, val text: String, val by: String, val at: Long, val held: Boolean, val undone: Boolean) : java.io.Serializable
+data class Change(val id: String, val text: String, val by: String, val at: Long, val held: Boolean, val undone: Boolean,
+                  /** Made somewhere else (another app with your key, another device with your box), found on your relays. */
+                  val outside: Boolean = false,
+                  /** For one made somewhere else: when the version Undo puts back was made (seconds). */
+                  val since: Long = 0) : java.io.Serializable
 data class Deleting(val batch: String, val by: String, val count: Int, val until: Long) : java.io.Serializable
 data class BatchAsk(val batch: String, val text: String, val by: String, val expiresAt: Long) : java.io.Serializable
 /** Something you deleted through this phone, with the copy it kept. */
