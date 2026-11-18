@@ -445,14 +445,17 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
     // Opened for Recent changes (a notification's tap): its place depends on what is above it, so scroll until its heading is drawn.
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
-    val toChanges by DebugOpen.changes.collectAsState()
-    LaunchedEffect(toChanges) {
-        if (!toChanges) return@LaunchedEffect
-        DebugOpen.changes.value = false
-        repeat(40) {
-            list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "recent" }?.let { list.animateScrollToItem(it.index); return@LaunchedEffect }
-            if (!list.canScrollForward) return@LaunchedEffect
-            list.scrollBy(1200f)
+    // Collected, not a key: clearing the request must not restart (and so cancel) the scroll it asked for.
+    LaunchedEffect(Unit) {
+        DebugOpen.changes.collect { asked ->
+            if (!asked) return@collect
+            DebugOpen.changes.value = false
+            for (i in 0 until 40) {
+                val at = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "recent" }
+                if (at != null) { list.animateScrollToItem(at.index); break }
+                if (!list.canScrollForward) break
+                list.scrollBy(1200f)
+            }
         }
     }
 
