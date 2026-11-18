@@ -9,7 +9,7 @@ import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
 import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
-import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
+import { heart, reactionsRow, addReaction, markReactions, openSignIn, strongerSignIn, sendReply, canAct, toast } from "./act.js";
 import { openAccountPage } from "./account-page.js";
 import * as notes from "./later.js";
 import * as vault from "./notes-vault.js";
@@ -487,6 +487,7 @@ function replyTags(e) {
 }
 
 document.addEventListener("click", (ev) => { if (ev.target.closest("[data-sign-in]")) openSignIn(); });
+document.addEventListener("click", (ev) => { if (ev.target.closest("[data-stronger]")) strongerSignIn(); });
 // "Your account page", asked without being signed in here (in the sign-in dialog): whose is asked first
 document.addEventListener("click", (ev) => { if (ev.target.closest("[data-account-visitor]")) { document.getElementById("signin")?.close(); openAccountPage(null); } });
 document.addEventListener("submit", async (ev) => {
@@ -1547,6 +1548,7 @@ function showNotes(signal, tab) {
   let show = tab === "done" || tab === "searches" ? tab : "notes"; // (Tabs: hidden, marble-2009-spec step 2; its data and code kept)
   root.innerHTML = `<div class="notes">
     <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes and searches</h1><span class="only-you"></span></div>
+    <p class="weak-note" hidden>Your notes need a stronger sign-in: a passkey or your phone. <button type="button" class="link" data-stronger>Confirm it</button></p>
     <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
       <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
     <p class="strays" hidden></p>
@@ -1616,6 +1618,7 @@ function showNotes(signal, tab) {
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : shelfHtml + (these.length ? these.map((i) => noteRow(i, f)).join("") : shelf.length ? "" : empty);
     const vs = vault.state();
+    $(".weak-note", root).hidden = vs !== "weak";
     $(".only-you", root).innerHTML = `${LOCK}Only you${vault.active() ? vs === "removed" ? " · this browser was removed from your account, so changes here aren't saved" : vs === "opening" ? " · opening…" : vault.syncing() ? " · syncing…" : notes.syncFailing() ? " · can't reach your relays right now, changes wait here" : ""
       : notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)

@@ -47,6 +47,16 @@ export function openSignIn() {
   p ? atLoginPage(p.url, { pending: p }) : askName();
 }
 
+/**
+ * Signed in with a password alone, which only lets this site post: sign in again for the same account, at its login
+ * page (the same #connect= link) with a passkey or your phone. Not a sign-out: you stay signed in meanwhile.
+ */
+export function strongerSignIn() {
+  if (!current()) return openSignIn();
+  if (!dialog.open) dialog.showModal();
+  lookUp(current(), { stronger: true });
+}
+
 // Signed out somewhere else (the phone, the login page): said once, quietly.
 onSignedOut(() => toast("Signed out"));
 // Signed in with the browser extension, which Marble no longer uses: signed out (me.js), and told so once.
@@ -170,7 +180,7 @@ function askName(note = "", typed = "") {
     <p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>`);
 }
 
-async function lookUp(typed) {
+async function lookUp(typed, { stronger = false } = {}) {
   const mine = ++attempt;
   view(`<h2 id="si-title">Sign in</h2><p class="si-wait">${spinner}Looking for ${esc(typed)}…</p>
     <div class="si-actions"><button type="button" class="si-button" data-si="name">Cancel</button></div>`);
@@ -180,18 +190,19 @@ async function lookUp(typed) {
   if (!pk) return askName(`Marble couldn't find ${esc(typed)}. Check the name, or <button type="button" class="link" data-si="code">sign in with a code</button>.`, typed);
   const r = await loginPage(pk);
   if (mine !== attempt) return;
-  r.url ? atLoginPage(r.url, { who: pk }) : withMarble();
+  r.url ? atLoginPage(r.url, { who: pk, stronger }) : withMarble();
 }
 
 // ── Your account names a login page ──
-function atLoginPage(url, { who = null, pending = null } = {}) {
+function atLoginPage(url, { who = null, pending = null, stronger = false } = {}) {
   const host = new URL(url).host;
   who ??= pending?.who || null;
   run((uri) => view(`<h2 id="si-title">Sign in</h2>
       ${who ? `<div class="si-who">${avatar(who, 40)}<span class="si-acct"><span class="si-name">${esc(name(who))}</span><span class="si-fp">${npub(who).slice(0, 12)}…<b>${npub(who).slice(-6)}</b></span></span></div>` : ""}
+      ${stronger ? `<p class="si-note">Your notes and other private things need a stronger sign-in: a passkey or your phone. A password alone only lets Marble post.</p>` : ""}
       <p>Your account names this page to sign in at:</p>
       <p class="acct-addr">${esc(host)}</p>
-      <p>It isn't part of Marble. You sign in there with your password, or a device of yours, and come back here signed in.</p>
+      <p>It isn't part of Marble. You sign in there with a passkey or your phone, and come back here signed in.</p>
       <a class="si-button si-open" href="${esc(loginLink(url, uri))}" target="_blank" rel="noopener noreferrer" data-si="away">Sign in at ${esc(host)}</a>
       <p class="si-wait"${pending ? "" : " hidden"}>${spinner}Waiting for ${esc(host)}…</p>
       <div class="si-actions"><button type="button" class="link" data-si="name">Not you?</button><button type="button" class="link" data-si="code">Use your phone instead</button></div>`),
