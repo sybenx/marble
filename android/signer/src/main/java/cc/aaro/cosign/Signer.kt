@@ -176,8 +176,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
-        held?.let { pointerCheck(it) }
-        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() }; held?.let { pointerCheck(it) } }, 1, 30, TimeUnit.MINUTES)
+        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
             context.registerReceiver(r, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
@@ -253,6 +252,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                         if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
                         val origin = uri.getQueryParameter("url")?.let { Uri.parse(it).host } ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "A site"
                         sites.acceptNostrConnect(client!!, relays, secret, origin)
+                        pointerCheck(h)
                         Device.noteDone(me(), h, n.id, "ok", send(h))
                         note("Connected $origin, from your account page", "approved")
                     }
@@ -327,15 +327,15 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /**
      * Keep the account's login-page pointer on its relays (Keykin SPEC 11.1). Right after joining a box,
-     * then about once a day. The newest pointer, if it names this box's login page, is sent again as it
+     * and whenever this phone signs a site in by a nostrconnect code: a site looking someone up by name
+     * (Marble Web, marking its code kk_login=missing) found no pointer, so this is when it matters. The newest pointer, if it names this box's login page, is sent again as it
      * is to any write relay that lacks it (no new signature). A new one is signed only when no relay has
      * any. A pointer removed on purpose (no url) or naming another page is the person's choice: left alone.
      */
-    private fun pointerCheck(h: Held, force: Boolean = false) {
-        if (!force && Clock.now() - prefs.getLong("pointer-at", 0) < 20 * 3600) return
+    private fun pointerCheck(h: Held) {
         if (!pointerBusy.compareAndSet(false, true)) return
         work.execute {
-            try { if (pointerStep(h)) prefs.edit().putLong("pointer-at", Clock.now()).apply() }
+            try { pointerStep(h) }
             catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             finally { pointerBusy.set(false) }
         }
@@ -365,7 +365,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val more = targets - look.toSet()
         if (more.isNotEmpty()) byRelay = byRelay + queryEach(more, filter)
         val plan = LoginPointer.plan(origin, pub, byRelay, targets)
-        if (debuggable) android.util.Log.i("Keykin", "pointer: $plan (origin $origin, ${byRelay.size} of ${(look + more).size} relays answered)")
+        if (debuggable) android.util.Log.i("Keykin", "pointer for ${pub.take(8)}: $plan (origin $origin, ${byRelay.size} of ${(look + more).size} relays answered)")
         when (plan) {
             is LoginPointer.Plan.Wait -> return false
             is LoginPointer.Plan.Leave -> return true
@@ -669,7 +669,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
-                pointerCheck(h, force = true)
+                pointerCheck(h)
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
@@ -814,7 +814,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** A debug build's tests name a relay of their own (one on this machine), for bunker links and for what this phone publishes. */
     fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
     /** Debug builds: the login-page pointer step again, as after joining a box. */
-    fun pointerNow() { if (debuggable) held?.let { pointerCheck(it, force = true) } }
+    fun pointerNow() { if (debuggable) held?.let { pointerCheck(it) } }
 
     private fun showSites() {
         val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null) } } catch (_: Exception) { emptyList() }
@@ -951,7 +951,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         useCode(client)
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.WORKING, "Telling $origin…")) }
         work.execute {
-            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null) }
+            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null); held?.let { pointerCheck(it) } }
             catch (e: Exception) { nostrConnect = null; failConnect(origin, why(e)) }
         }
     }
