@@ -22,9 +22,12 @@ export function memoryNet() {
       return { ok: urls.slice(), failed: [] };
     },
     async get(_servers, sha) { return blobs.get(sha) || null; },
-    async put(_server, bytes, auth) {
+    refuse: new Set(), auths: [],
+    async put(server, bytes, auth) {
+      if (net.refuse.has(server)) return { ok: false, why: "401 not allowed" };
       if (!C.eventOK(auth) || auth.kind !== 24242 || !auth.tags.some((t) => t[0] === "x" && t[1] === C.hex(C.sha256(bytes)))) return false;
-      net.puts++; blobs.set(C.hex(C.sha256(bytes)), bytes); return true;
+      net.auths.push({ server, auth });
+      net.puts++; blobs.set(C.hex(C.sha256(bytes)), bytes); return { ok: true, sha256: C.hex(C.sha256(bytes)) };
     },
   };
   return net;

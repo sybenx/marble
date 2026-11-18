@@ -129,4 +129,28 @@ ok(refused && a.removed(), "a removed browser refuses to write");
   ok(big && big.note.text === null && big.note.blob && C.unutf8(await s3.blob(big.note.blob)) === long, "a note over 4 KiB reads from its blob");
 }
 
+// Blossom (the person's decision, 2026-11-18): the account's own list, in order; a refusing server is skipped
+{
+  const { normalizeServers, serverList } = await import("../site/js/vault/sync.js");
+  ok(normalizeServers([" https://A.test/ ", "https://a.test", "ftp://x.test", "http://b.test//", "https://c.test"]).join() === "https://A.test,http://b.test,https://c.test", "server list normalized");
+  const list = C.signEvent(ownerSec, { kind: 10063, tags: [["server", "https://refuses.test"], ["server", "https://first.test/"], ["server", "https://FIRST.test"], ["server", "https://second.test"], ["server", "https://third.test"]], content: "", created_at: 1793750000 });
+  const bl = serverList([list], me);
+  ok(bl.join() === "https://refuses.test,https://first.test,https://second.test,https://third.test", "the account's kind 10063, in its order");
+  net.refuse.add("https://refuses.test");
+  const s4 = new Session({ me, entries: notesVault(await readKeyrings({ me, relays, net, signer })), net, signer, store: memoryStore(), blossom: [list.tags[0][1], ...bl] });
+  await s4.open();
+  net.auths.length = 0;
+  const big = new Uint8Array(9 * 1024 * 1024); big.fill(7);
+  const ref = await s4.upload(null, big, 2);
+  const servers = [...new Set(net.auths.map((x) => x.server))];
+  ok(servers.join() === "https://first.test,https://second.test", "uploaded to the first two that take it");
+  ok(s4.uploadLog.some((x) => x.server === "https://refuses.test" && /401/.test(x.why)), "the refusal recorded");
+  const a0 = net.auths.find((x) => x.server === "https://first.test").auth;
+  ok(a0.pubkey === me && ref.parts.length === 2 && ref.parts.every((p) => a0.tags.some((t) => t[0] === "x" && t[1] === p)) && a0.tags.find((t) => t[0] === "server")[1] === "first.test",
+    "one auth per server, signed by the account, an x per part, the server's domain");
+  ok(net.auths.filter((x) => x.server === "https://first.test").every((x) => x.auth.id === a0.id), "the same auth for every part");
+  ok(s4.servers[0] === "https://refuses.test" && s4.servers.includes("https://s1.test"), "read from the list, then the vault's own");
+  net.refuse.clear();
+}
+
 console.log(`all ${n} sync checks pass`);

@@ -63,12 +63,15 @@ const net = {
     }
     return null;
   },
+  /** BUD-02 upload: {ok, why, sha256 (as the server describes the blob)}. */
   async put(server, bytes, auth) {
     try {
       const r = await fetch(`${server.replace(/\/+$/, "")}/upload`, { method: "PUT", body: bytes, signal: AbortSignal.timeout(30000),
         headers: { "Content-Type": "application/octet-stream", Authorization: "Nostr " + btoa(JSON.stringify(auth)) } });
-      return r.ok;
-    } catch { return false; }
+      if (!r.ok) return { ok: false, why: `${r.status} ${r.headers.get("X-Reason") || ""}`.trim() };
+      const d = await r.json().catch(() => null);
+      return { ok: true, sha256: typeof d?.sha256 === "string" ? d.sha256 : null };
+    } catch (err) { return { ok: false, why: String(err?.message || err) }; }
   },
 };
 const signer = (pk) => ({ pubkey: pk, sign: (t) => sign(t), decrypt: (eph, ct) => nip44DecryptFrom(eph, ct) });
@@ -100,7 +103,10 @@ export function start(pk = current()) {
     if (who !== pk) return null;
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
     try {
-      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store: storeFor(pk), deviceName: deviceName(), accountRelays: a?.write || [] });
+      // your Blossom servers (kind 10063): where this page's blobs go, in your order (the vault's own when you have none)
+      const lists = await req(mine, { kinds: [10063], authors: [pk] }, { timeout: 5000, settle: 1000 }).catch(() => []);
+      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store: storeFor(pk), deviceName: deviceName(), accountRelays: a?.write || [],
+        blossom: sync.serverList(lists, pk) });
       await s.open();
       if (who !== pk) return null;
       session = s;

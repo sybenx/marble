@@ -41,8 +41,9 @@ export function notesVault(entries) {
 }
 
 export class Session {
-  constructor({ me, entries, net, signer, store, deviceName = "Marble Web", accountRelays = [], log = () => {} }) {
-    Object.assign(this, { me, net, signer, store, deviceName, accountRelays, log });
+  constructor({ me, entries, net, signer, store, deviceName = "Marble Web", accountRelays = [], blossom = null, log = () => {} }) {
+    Object.assign(this, { me, net, signer, store, deviceName, accountRelays, log, blossom: blossom && normalizeServers(blossom) });
+    this.uploadLog = []; // [{server, why}] for servers skipped
     const p = entries[0].payload;
     this.vid = p.vault; this.genesis = p.genesis;
     this.entries = entries; // keyring entries for this vault (every d)
@@ -62,10 +63,17 @@ export class Session {
     const c = this.vault?.config();
     return [...new Set([...(c?.relays || []), ...this.entries.flatMap((x) => x.payload.relays || [])])];
   }
-  get servers() {
+  /** The vault's own servers: its config's, then its keyring entries'. */
+  get configServers() {
     const c = this.vault?.config();
-    return [...new Set([...(c?.servers || []), ...this.entries.flatMap((x) => x.payload.servers || [])])];
+    return normalizeServers([...(c?.servers || []), ...this.entries.flatMap((x) => x.payload.servers || [])]);
   }
+  /**
+   * Where blobs go (the person's decision, 2026-11-18): the account's own kind 10063 list (BUD-03) in its order, else
+   * the vault's servers. Where they're read from: that list, then the vault's.
+   */
+  get writeServers() { return this.blossom?.length ? this.blossom : this.configServers; }
+  get servers() { return normalizeServers([...(this.blossom || []), ...this.configServers]); }
   gen(id) { return this.gens.find((g) => g.id === id); }
 
   // ── reading ──
@@ -402,18 +410,27 @@ export class Session {
     return { ref, through, size: bytes.length };
   }
   /** Uploads a blob (nv1) to the vault servers: true once on `need` of them (§6.3). Returns its ref. */
-  async upload(dev, plain, need = 1, key) {
+  /**
+   * Uploads a blob (nv1) to the first two write servers that take every part (one if the list has one), with one
+   * upload auth per server signed by the account (the person's decision, 2026-11-18). Returns its ref.
+   */
+  async upload(_dev, plain, need = 2, key) {
     const { ref, parts } = await V.nv1Seal(plain, key);
+    const servers = this.writeServers, want = Math.min(need, servers.length);
     let on = 0;
-    for (const server of this.servers) {
-      let all = true;
-      for (let i = 0; i < parts.length; i++) {
-        const auth = signEvent(dev.storageSec, blossomAuth("upload", ref.parts[i], server));
-        if (!(await this.net.put(server, parts[i], auth))) { all = false; break; }
-      }
-      if (all) on++;
+    for (const server of servers) {
+      if (on >= want) break;
+      let why = null;
+      try {
+        const auth = await this.signer.sign(blossomAuth("upload", ref.parts, server));
+        for (let i = 0; i < parts.length && !why; i++) {
+          const r = await this.net.put(server, parts[i], auth);
+          if (r !== true && !(r && r.ok && (!r.sha256 || r.sha256 === ref.parts[i]))) why = (r && r.why) || "refused";
+        }
+      } catch (err) { why = String(err?.message || err); }
+      if (why) this.uploadLog.push({ server, why, at: now() }); else on++;
     }
-    if (on < need) throw new Error("storage unavailable");
+    if (!want || on < want) throw new Error("storage unavailable");
     return ref;
   }
 
@@ -448,8 +465,26 @@ export class Session {
 }
 
 /** BUD-11 auth for a vault blob (Android's contract): kind 24242, content "nostr-vault", server tag the domain. */
-export function blossomAuth(verb, sha, server) {
+/** BUD-11 auth for a vault blob: kind 24242, content "nostr-vault", one x per part, server the domain[:port]. */
+export function blossomAuth(verb, shas, server) {
   return { kind: 24242, content: "nostr-vault", created_at: now(),
-    tags: [["t", verb], ["x", sha], ["expiration", String(now() + 300)], ["server", new URL(server).host.toLowerCase()]] };
+    tags: [["t", verb], ...[].concat(shas).map((x) => ["x", x]), ["expiration", String(now() + 300)], ["server", new URL(server).host.toLowerCase()]] };
+}
+/** A server list as both apps read it: trimmed, no trailing "/", http(s) only, no duplicates (ignoring case), in order. */
+export function normalizeServers(list) {
+  const out = [], seen = new Set();
+  for (const raw of list || []) {
+    if (typeof raw !== "string") continue;
+    const u = raw.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\/[^\s/]/i.test(u)) continue;
+    const k = u.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(u); }
+  }
+  return out;
+}
+/** The account's server list (kind 10063, BUD-03): its `server` tags, newest event, normalized; null when there's none. */
+export function serverList(events, me) {
+  const e = events.filter((x) => x.kind === 10063 && x.pubkey === me).sort((a, b) => b.created_at - a.created_at)[0];
+  return e ? normalizeServers(e.tags.filter((t) => t[0] === "server").map((t) => t[1])) : null;
 }
 export { random, sha256 };
