@@ -202,6 +202,13 @@ class MainActivity : ComponentActivity() {
             cc.aaro.cosign.ui.DebugOpen.screen.value = "relay:" + r.address
             return
         }
+        // A nostr: link (NIP-21) from anywhere on the phone: that post, article or person, in Marble's viewer; one it can't read, said so.
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme.equals("nostr", ignoreCase = true)) {
+            val r = intent.dataString?.let { cc.aaro.cosign.nostrLinkRef(it) }
+            if (r != null) cc.aaro.cosign.ui.OpenPost.ref.value = r
+            else cc.aaro.cosign.Social.of(CosignApp.instance.phone).message.value = "Marble can't open that nostr: link."
+            return
+        }
         // A marble.syb.lol link to a post or someone (an app link): that post or profile, in Marble.
         if (intent.action == Intent.ACTION_VIEW) intent.dataString?.let(::marbleRef)?.let { r ->
             when (r) { is Ref.Note -> cc.aaro.cosign.ui.OpenPost.id.value = r.id; is Ref.Profile -> cc.aaro.cosign.ui.DebugOpen.profile.value = r.pubkey; is Ref.Addr -> cc.aaro.cosign.ui.OpenPost.ref.value = r }

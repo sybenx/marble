@@ -66,6 +66,12 @@ class KeepActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT), SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
+        // Shared text that's only a post or someone (nostr:…, a bare nevent1…, a viewer's link): opened in Marble, not kept.
+        intent?.takeIf { it.action == Intent.ACTION_SEND }?.getStringExtra(Intent.EXTRA_TEXT)?.let(::sharedRef)?.let { r ->
+            cc.aaro.cosign.ui.OpenPost.ref.value = r
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+            return finish()
+        }
         val shared = intent?.takeIf { it.action == Intent.ACTION_SEND }
             ?.let { Shared.of(it.getStringExtra(Intent.EXTRA_TEXT), it.getStringExtra(Intent.EXTRA_SUBJECT)) }
             ?: return finish()

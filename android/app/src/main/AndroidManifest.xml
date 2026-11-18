@@ -103,6 +103,14 @@
                 <action android:name="android.intent.action.SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- A nostr: link anywhere on the phone (nostr:nevent1…, nostr:npub1…, NIP-21): that post or
+                 person in Marble's own viewer. Another Nostr app may claim it too; Android then asks which. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostr" />
+            </intent-filter>
             <!-- A site's nostrconnect:// code, from the camera app or a link on this phone.
                  Another signer app may claim it too; Android then asks which. -->
             <intent-filter>
