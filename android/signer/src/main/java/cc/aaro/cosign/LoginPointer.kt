@@ -30,24 +30,30 @@ object LoginPointer {
 
     fun urlOf(e: Event): String? = e.tags.firstOrNull { it.size > 1 && it[0] == "url" }?.get(1)?.trimEnd('/')
 
-    sealed class Decision {
-        /** Publish a pointer naming [origin]. */
-        data class Publish(val origin: String) : Decision()
-        /** Leave it: [why] says what was found. */
-        data class Skip(val why: String) : Decision()
+    sealed class Plan {
+        /** No relay answered: try again next time. */
+        object Wait : Plan() { override fun toString() = "Wait" }
+        /** Nothing to do, and that's settled: [why]. */
+        data class Leave(val why: String) : Plan()
+        /** Send the same signed [event] again to the write relays [to] that lack it. */
+        data class Resend(val event: Event, val to: List<String>) : Plan()
+        /** No relay has any pointer: sign a new one naming [origin]. */
+        data class Sign(val origin: String) : Plan()
     }
 
     /**
-     * Whether to publish after joining a box whose login page is [origin] (null: this box has none we
-     * know of). [heard] is false when no relay answered, so we don't know whether one exists.
-     * An existing pointer, even one naming another box, or one removed on purpose (no url), is left alone.
+     * What to do about the pointer, given what each relay that answered had ([byRelay]; one that didn't
+     * answer isn't there), this box's login page [origin] (null if unknown), and the account's write
+     * relays [writes]. The person's choices stand: a pointer removed on purpose (no url), or one naming
+     * another page, is never replaced or sent around again.
      */
-    fun decide(origin: String?, existing: Event?, heard: Boolean): Decision = when {
-        origin == null -> Decision.Skip("no login page")
-        !heard -> Decision.Skip("no relay answered")
-        existing == null -> Decision.Publish(origin)
-        urlOf(existing) == null -> Decision.Skip("removed on purpose")
-        urlOf(existing).equals(origin, ignoreCase = true) -> Decision.Skip("already names $origin")
-        else -> Decision.Skip("names ${urlOf(existing)}")
+    fun plan(origin: String?, pubkey: String, byRelay: Map<String, List<Event>>, writes: List<String>): Plan {
+        if (byRelay.isEmpty()) return Plan.Wait
+        val newest = newest(byRelay.values.flatten(), pubkey)
+            ?: return if (origin != null) Plan.Sign(origin) else Plan.Leave("no login page")
+        val url = urlOf(newest) ?: return Plan.Leave("removed on purpose")
+        if (origin != null && !url.equals(origin, ignoreCase = true)) return Plan.Leave("names $url")
+        val missing = writes.filter { r -> byRelay[r]?.none { it.id == newest.id } == true }
+        return if (missing.isEmpty()) Plan.Leave("on every write relay that answered") else Plan.Resend(newest, missing)
     }
 }

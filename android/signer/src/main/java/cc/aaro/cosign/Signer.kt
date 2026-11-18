@@ -176,8 +176,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
-        pointerOnce()
-        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
+        held?.let { pointerCheck(it) }
+        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() }; held?.let { pointerCheck(it) } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
             context.registerReceiver(r, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
@@ -242,7 +242,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                     "invite" -> {
                         val inv = Texts.readInvite(n.text)
                         synchronized(boxLock) { Device.add(me(), h, inv, null, send(h), n.id) }
-                        Device.noteDone(me(), h, n.id, Texts.join(h), send(h))
+                        Device.noteDone(me(), h, n.id, Texts.join(h, prefs.getString("login-origin", null)?.ifEmpty { null }), send(h))
                         note("Added ${inv.name} to your account, from your account page", "approved")
                     }
                     "bunker" -> { Device.noteDone(me(), h, n.id, sites.bunker(signerRelays()), send(h)); note("Made a bunker link for your account page", "approved") }
@@ -326,46 +326,60 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
 
     /**
-     * Just joined a box (its code, or another device's invite): if the account names no login page yet,
-     * name this box's, so marble.syb.lol can send you there by name (Keykin SPEC 11.1). The box's address
-     * is its login page when Keykin Login is in front of it, which is checked by asking. A pointer that
-     * names another box, or was removed on purpose, is left alone.
+     * Keep the account's login-page pointer on its relays (Keykin SPEC 11.1). Right after joining a box,
+     * then about once a day. The newest pointer, if it names this box's login page, is sent again as it
+     * is to any write relay that lacks it (no new signature). A new one is signed only when no relay has
+     * any. A pointer removed on purpose (no url) or naming another page is the person's choice: left alone.
      */
-    private fun pointerAfterJoin(h: Held): Boolean {
-        val pub = accountHex() ?: return false
-        val origin = LoginPointer.origin(h.addr, allowHttp = debuggable)?.takeIf(::isKeykinLogin)
-        if (origin == null) { if (debuggable) android.util.Log.i("Keykin", "pointer: ${h.addr} is not a login page"); return true }
-        // A debug build told to use test relays stays on them; otherwise ask the account's own and Marble's.
-        val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
-        val look = if (testing) writeRelays() else (writeRelays() + DEFAULT_RELAYS).distinct()
-        val answered = java.util.concurrent.atomic.AtomicInteger()
-        val found = query(look, "{\"kinds\":[10002,30078],\"authors\":[\"$pub\"]}", answered = answered)
-        val outbox = found.filter { it.kind == 10002 && it.pubkey == pub && it.verify() }.maxByOrNull { it.createdAt }
-            ?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }.orEmpty()
-        val d = LoginPointer.decide(origin, LoginPointer.newest(found, pub), answered.get() > 0)
-        if (debuggable) android.util.Log.i("Keykin", "pointer: $d (asked ${look.size} relays, ${answered.get()} answered)")
-        if (d !is LoginPointer.Decision.Publish) return d != LoginPointer.Decision.Skip("no relay answered")
-        val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", d.origin)), "").withId())
-        publish(signed, if (testing) writeRelays() else (writeRelays() + outbox.take(6) + DEFAULT_RELAYS).distinct())
-        prefs.edit().putString("login-page", d.origin).apply()
-        ui.update { it.copy(loginPage = d.origin) }
-        note("Your account's sign-in page is now ${d.origin}", "approved")
-        return true
-    }
-    /**
-     * Accounts that joined a box before Marble published pointers: the same step once, when the signer
-     * starts. It is marked done once it has settled (published, or found one, or the box has no login
-     * page); if no relay answered or something failed, it tries again on the next start.
-     */
-    private fun pointerOnce() {
-        val h = held ?: return
-        if (prefs.getBoolean("pointer-done", false) || !pointerBusy.compareAndSet(false, true)) return
+    private fun pointerCheck(h: Held, force: Boolean = false) {
+        if (!force && Clock.now() - prefs.getLong("pointer-at", 0) < 20 * 3600) return
+        if (!pointerBusy.compareAndSet(false, true)) return
         work.execute {
-            try { if (pointerAfterJoin(h)) prefs.edit().putBoolean("pointer-done", true).apply() } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
+            try { if (pointerStep(h)) prefs.edit().putLong("pointer-at", Clock.now()).apply() }
+            catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             finally { pointerBusy.set(false) }
         }
     }
     private val pointerBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** Where this box's login page is: from the box's code, else the box address if Keykin Login answers there. Remembered. */
+    private fun loginOrigin(h: Held): String? {
+        prefs.getString("login-origin", null)?.let { return it.ifEmpty { null } }
+        val o = LoginPointer.origin(h.addr, allowHttp = debuggable)?.takeIf(::isKeykinLogin)
+        prefs.edit().putString("login-origin", o ?: "").apply()
+        return o
+    }
+    /** One check. True when it settled (nothing more to do until the next one), false when no relay answered. */
+    private fun pointerStep(h: Held): Boolean {
+        val pub = accountHex() ?: return false
+        val origin = loginOrigin(h)
+        // A debug build told to use test relays stays on them; otherwise ask the account's own and Marble's.
+        val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
+        val writes = writeRelays()
+        val look = if (testing) writes else (writes + DEFAULT_RELAYS).distinct()
+        val filter = "{\"kinds\":[10002,30078],\"authors\":[\"$pub\"]}"
+        var byRelay = queryEach(look, filter)
+        // The account's own write list, if a relay had it and this phone hadn't seen it.
+        val outbox = byRelay.values.flatten().filter { it.kind == 10002 && it.pubkey == pub && it.verify() }.maxByOrNull { it.createdAt }
+            ?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }.orEmpty().take(6)
+        val targets = if (testing) writes else (writes + outbox).distinct()
+        val more = targets - look.toSet()
+        if (more.isNotEmpty()) byRelay = byRelay + queryEach(more, filter)
+        val plan = LoginPointer.plan(origin, pub, byRelay, targets)
+        if (debuggable) android.util.Log.i("Keykin", "pointer: $plan (origin $origin, ${byRelay.size} of ${(look + more).size} relays answered)")
+        when (plan) {
+            is LoginPointer.Plan.Wait -> return false
+            is LoginPointer.Plan.Leave -> return true
+            is LoginPointer.Plan.Resend -> { publish(plan.event, plan.to); return true }
+            is LoginPointer.Plan.Sign -> {
+                val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", plan.origin)), "").withId())
+                publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
+                prefs.edit().putString("login-page", plan.origin).apply()
+                ui.update { it.copy(loginPage = plan.origin) }
+                note("Your account's sign-in page is now ${plan.origin}", "approved")
+                return true
+            }
+        }
+    }
     /** Keykin Login answers a call to its page API without the page's header with 403 forbidden; a bare box has no /api. */
     private fun isKeykinLogin(origin: String): Boolean = try {
         val c = java.net.URL("$origin/api").openConnection() as java.net.HttpURLConnection
@@ -647,13 +661,15 @@ class Signer(private val context: Context, val slot: String = "0") {
                     else -> Device.join(me(), j ?: error("no code"))
                 }
                 keep(h)
+                // The box's code (or the device's join text) may say where its login page is (SPEC 11.1).
+                (qr?.login ?: j?.login)?.let { LoginPointer.origin(it, allowHttp = debuggable) }?.let { prefs.edit().putString("login-origin", it).apply() }
                 // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
                 if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
                 ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
-                try { if (pointerAfterJoin(h)) prefs.edit().putBoolean("pointer-done", true).apply() } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
+                pointerCheck(h, force = true)
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
@@ -701,7 +717,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         change("Adding ${inv.name}…") { me, h ->
             Device.add(me, h, inv, fp("Add ${inv.name} to your account"), send(h))
             pendingInvite = null
-            ui.update { it.copy(joinText = Texts.join(h)) }
+            ui.update { it.copy(joinText = Texts.join(h, prefs.getString("login-origin", null)?.ifEmpty { null })) }
             note("Added ${inv.name} to your account", "approved")
         }
     }
@@ -798,7 +814,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** A debug build's tests name a relay of their own (one on this machine), for bunker links and for what this phone publishes. */
     fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
     /** Debug builds: the login-page pointer step again, as after joining a box. */
-    fun pointerNow() { if (debuggable) work.execute { held?.let { try { pointerAfterJoin(it) } catch (e: Exception) { android.util.Log.i("Keykin", "pointer failed: $e") } } } }
+    fun pointerNow() { if (debuggable) held?.let { pointerCheck(it, force = true) } }
 
     private fun showSites() {
         val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null) } } catch (_: Exception) { emptyList() }
@@ -1415,20 +1431,27 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun checkListsSoon() = work.execute { checkLists() }
 
     /** One REQ to each of [relays], until each says it has sent all (or a few seconds pass): every event that came. */
-    private fun query(relays: List<String>, filter: String, seconds: Long = 6, answered: java.util.concurrent.atomic.AtomicInteger? = null): List<Event> {
+    /** [query], relay by relay: what each relay that answered (sent EOSE) had. A relay missing from the map didn't answer. */
+    private fun queryEach(relays: List<String>, filter: String): Map<String, List<Event>> {
+        val per = ConcurrentHashMap<String, List<Event>>()
+        query(relays, filter, perRelay = per)
+        return per.toMap()
+    }
+    private fun query(relays: List<String>, filter: String, seconds: Long = 6, perRelay: ConcurrentHashMap<String, List<Event>>? = null): List<Event> {
         val http = okhttp3.OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
         val got = ConcurrentHashMap<String, Event>()
         val done = java.util.concurrent.CountDownLatch(relays.size)
         for (url in relays) try {
             val over = java.util.concurrent.atomic.AtomicBoolean(false)
+            val mine = java.util.Collections.synchronizedList(mutableListOf<Event>())
             fun finish(ws: okhttp3.WebSocket?) { if (over.compareAndSet(false, true)) { done.countDown(); ws?.close(1000, null) } }
             http.newWebSocket(okhttp3.Request.Builder().url(url).build(), object : okhttp3.WebSocketListener() {
                 override fun onOpen(ws: okhttp3.WebSocket, response: okhttp3.Response) { ws.send("[\"REQ\",\"lists\",$filter]") }
                 override fun onMessage(ws: okhttp3.WebSocket, text: String) {
                     val m = try { Json.parse(text) as? List<*> } catch (_: Exception) { null } ?: return
                     when (m.getOrNull(0)) {
-                        "EVENT" -> Event.fromMap(m.getOrNull(2))?.let { got.putIfAbsent(it.id, it) }
-                        "EOSE" -> { answered?.incrementAndGet(); finish(ws) }
+                        "EVENT" -> Event.fromMap(m.getOrNull(2))?.let { got.putIfAbsent(it.id, it); mine.add(it) }
+                        "EOSE" -> { perRelay?.put(url, mine.toList()); finish(ws) }
                         "CLOSED" -> finish(ws)
                     }
                 }
