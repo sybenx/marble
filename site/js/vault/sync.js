@@ -25,13 +25,19 @@ export async function readKeyrings({ me, relays, net, signer, opened = new Map()
     const o = newest.get(d);
     if (!o || e.created_at > o.created_at) newest.set(d, e);
   }
-  const out = [];
+  const out = [], refused = [];
   for (const e of newest.values()) {
-    if (!opened.has(e.id)) opened.set(e.id, await V.openKeyring(e, me, (eph, ct) => signer.decrypt(eph, ct)));
+    if (!opened.has(e.id)) {
+      // (a signer that won't decrypt is told apart from an entry that isn't for us: it isn't remembered, and it's said)
+      let err = null;
+      const p = await V.openKeyring(e, me, (eph, ct) => signer.decrypt(eph, ct).catch((x) => { err = x; throw x; }));
+      if (err) { refused.push(err); continue; }
+      opened.set(e.id, p);
+    }
     const p = opened.get(e.id);
     if (p) out.push({ event: e, payload: p });
   }
-  return Object.assign(out, { answered: got.answered });
+  return Object.assign(out, { answered: got.answered, refused, found: newest.size });
 }
 /** The account's notes vault (Android's rule): among owner entries of profile "notes", the lowest genesis id. */
 export function notesVault(entries) {

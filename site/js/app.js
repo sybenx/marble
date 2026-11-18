@@ -1588,6 +1588,7 @@ function showNotes(signal, tab) {
     <div class="notes-head"><a class="back" href="/" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></a><h1>Notes and searches</h1><span class="only-you"></span></div>
     <label class="filter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
       <input type="text" placeholder="Filter your notes" aria-label="Filter your notes" autocomplete="off" spellcheck="false"></label>
+    <p class="strays vault-why" hidden></p>
     <p class="strays" hidden></p>
     <div class="chips" role="tablist"></div>
     <div class="note-list"></div>
@@ -1657,8 +1658,14 @@ function showNotes(signal, tab) {
     const vs = vault.state();
     $(".only-you", root).innerHTML = `${LOCK}Only you${vault.active() ? vs === "removed" ? " · this browser was removed from your account, so changes here aren't saved" : vs === "opening" ? " · opening…" : vault.syncing() ? " · syncing…" : notes.syncFailing() ? " · can't reach your relays right now, changes wait here" : ""
       : notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
+    // the vault wouldn't open: say so, and that what shows is only this browser's copy (notes-vault.js)
+    const why = $(".vault-why", root), stuck = !vault.active() && (vs === "refused" || vs === "error");
+    why.hidden = !stuck;
+    if (stuck) why.innerHTML = vs === "refused"
+      ? `Your notes from your phone can't open here: your phone didn't let Marble Web read them. Until that's fixed, these are only the notes this browser kept.`
+      : `Your notes from your phone couldn't open here (${esc(vault.reason().slice(0, 80))}). Marble tries again when you come back to this page. Until then, these are only the notes this browser kept.`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
-    const strays = notes.strays(), bar = $(".strays", root);
+    const strays = notes.strays(), bar = $(".strays:not(.vault-why)", root);
     bar.hidden = !strays.length;
     if (strays.length) bar.innerHTML = `${strays.length === 1 ? "A note" : `${strays.length} notes`} from while nobody was signed in here.
       <button type="button" class="link" data-strays="add">Add to your notes</button> <button type="button" class="link" data-strays="drop">Remove them</button>`;
