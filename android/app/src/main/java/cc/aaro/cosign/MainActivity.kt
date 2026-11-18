@@ -30,6 +30,8 @@ class MainActivity : ComponentActivity() {
     /** A link that came before the signer said which account is on screen, and whether it was new then. */
     private var waiting: Pair<Intent, Boolean>? = null
     private val handled by lazy { HandledLinks(getSharedPreferences("links", MODE_PRIVATE)) }
+    /** The first real screen (home, or sign-in for nobody) is composed: the window may draw. */
+    @Volatile private var drawn = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +44,7 @@ class MainActivity : ComponentActivity() {
         // The bars' icons follow the phone's light or dark setting, as the app does.
         enableEdgeToEdge(SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT), SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         val accounts = CosignApp.instance.accounts
+        holdFirstFrame()
         // The link this activity was created with may be one from long ago (see [HandledLinks]).
         if (savedInstanceState == null) opened(intent, fresh = false)
         setContent {
@@ -54,6 +57,11 @@ class MainActivity : ComponentActivity() {
                 val slot by accounts.activeSlot.collectAsState()
                 val phone = accounts.phone(slot) ?: accounts.active
                 key(slot) {
+                // Until the signer has sent this account's state, it looks like no account: drawing then
+                // would flash the sign-in screen at someone signed in. Draw nothing until it's known.
+                val heard by phone.heard.collectAsState()
+                if (heard) {
+                androidx.compose.runtime.SideEffect { if (!drawn) Startup.mark("first screen"); drawn = true }
                 val ui by phone.ui.collectAsState()
                 val notify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
                 // Once in a group: stay reachable, and be allowed to say so.
@@ -93,8 +101,28 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(ui.error) { if (ui.error != null && ui.member != null) { kotlinx.coroutines.delay(12_000); phone.clearError() } }
                 App(phone, ui)
                 }
+                }
             }
         }
+    }
+
+    /**
+     * Keep the window from drawing until [drawn]: the launch splash (a plain ground, no icon) stays
+     * up until the first screen is the right one. On a phone without the splash (Android 11), the
+     * window's own ground does the same. A signer that never answers lets go after a few seconds,
+     * onto the plain ground, never the sign-in screen.
+     */
+    private fun holdFirstFrame() {
+        val content = findViewById<android.view.View>(android.R.id.content)
+        val start = android.os.SystemClock.uptimeMillis()
+        content.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!drawn && android.os.SystemClock.uptimeMillis() - start < 4_000) return false
+                content.viewTreeObserver.removeOnPreDrawListener(this)
+                if (!drawn) Startup.mark("first screen late", once = false)
+                return true
+            }
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
