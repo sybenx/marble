@@ -324,6 +324,41 @@ class Signer(private val context: Context, val slot: String = "0") {
         }
     }
 
+    /**
+     * Just joined a box (its code, or another device's invite): if the account names no login page yet,
+     * name this box's, so marble.syb.lol can send you there by name (Keykin SPEC 11.1). The box's address
+     * is its login page when Keykin Login is in front of it, which is checked by asking. A pointer that
+     * names another box, or was removed on purpose, is left alone.
+     */
+    private fun pointerAfterJoin(h: Held) {
+        val pub = accountHex() ?: return
+        val origin = LoginPointer.origin(h.addr, allowHttp = debuggable)?.takeIf(::isKeykinLogin)
+        if (origin == null) { if (debuggable) android.util.Log.i("Keykin", "pointer: ${h.addr} is not a login page"); return }
+        // A debug build told to use test relays stays on them; otherwise ask the account's own and Marble's.
+        val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
+        val look = if (testing) writeRelays() else (writeRelays() + DEFAULT_RELAYS).distinct()
+        val answered = java.util.concurrent.atomic.AtomicInteger()
+        val found = query(look, "{\"kinds\":[10002,30078],\"authors\":[\"$pub\"]}", answered = answered)
+        val outbox = found.filter { it.kind == 10002 && it.pubkey == pub && it.verify() }.maxByOrNull { it.createdAt }
+            ?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }.orEmpty()
+        val d = LoginPointer.decide(origin, LoginPointer.newest(found, pub), answered.get() > 0)
+        if (debuggable) android.util.Log.i("Keykin", "pointer: $d (asked ${look.size} relays, ${answered.get()} answered)")
+        if (d !is LoginPointer.Decision.Publish) return
+        val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", d.origin)), "").withId())
+        publish(signed, if (testing) writeRelays() else (writeRelays() + outbox.take(6) + DEFAULT_RELAYS).distinct())
+        prefs.edit().putString("login-page", d.origin).apply()
+        ui.update { it.copy(loginPage = d.origin) }
+        note("Your account's sign-in page is now ${d.origin}", "approved")
+    }
+    /** Keykin Login answers a call to its page API without the page's header with 403 forbidden; a bare box has no /api. */
+    private fun isKeykinLogin(origin: String): Boolean = try {
+        val c = java.net.URL("$origin/api").openConnection() as java.net.HttpURLConnection
+        c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 5000; c.doOutput = true
+        c.setRequestProperty("content-type", "application/json"); c.outputStream.use { it.write("{}".toByteArray()) }
+        val code = c.responseCode; val body = (c.errorStream ?: c.inputStream)?.bufferedReader()?.use { it.readText() }.orEmpty(); c.disconnect()
+        code == 403 && body.contains("forbidden")
+    } catch (_: Exception) { false }
+
     // --- Scanning: the box's code, a device's invite, the join text, a site's code -----------------
 
     private var pendingQr: Qr? = null
@@ -602,6 +637,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
+                try { pointerAfterJoin(h) } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
@@ -745,6 +781,8 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun signerRelays(): List<String> = context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } ?: DEFAULT_RELAYS
     /** A debug build's tests name a relay of their own (one on this machine), for bunker links and for what this phone publishes. */
     fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
+    /** Debug builds: the login-page pointer step again, as after joining a box. */
+    fun pointerNow() { if (debuggable) work.execute { held?.let { try { pointerAfterJoin(it) } catch (e: Exception) { android.util.Log.i("Keykin", "pointer failed: $e") } } } }
 
     private fun showSites() {
         val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null) } } catch (_: Exception) { emptyList() }
@@ -1361,7 +1399,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun checkListsSoon() = work.execute { checkLists() }
 
     /** One REQ to each of [relays], until each says it has sent all (or a few seconds pass): every event that came. */
-    private fun query(relays: List<String>, filter: String, seconds: Long = 6): List<Event> {
+    private fun query(relays: List<String>, filter: String, seconds: Long = 6, answered: java.util.concurrent.atomic.AtomicInteger? = null): List<Event> {
         val http = okhttp3.OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
         val got = ConcurrentHashMap<String, Event>()
         val done = java.util.concurrent.CountDownLatch(relays.size)
@@ -1374,10 +1412,11 @@ class Signer(private val context: Context, val slot: String = "0") {
                     val m = try { Json.parse(text) as? List<*> } catch (_: Exception) { null } ?: return
                     when (m.getOrNull(0)) {
                         "EVENT" -> Event.fromMap(m.getOrNull(2))?.let { got.putIfAbsent(it.id, it) }
-                        "EOSE", "CLOSED" -> finish(ws)
+                        "EOSE" -> { answered?.incrementAndGet(); finish(ws) }
+                        "CLOSED" -> finish(ws)
                     }
                 }
-                override fun onFailure(ws: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) = finish(null)
+                override fun onFailure(ws: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) { if (debuggable && !over.get()) android.util.Log.i("Keykin", "query $url failed: $t"); finish(null) }
                 override fun onClosed(ws: okhttp3.WebSocket, code: Int, reason: String) = finish(null)
             })
         } catch (_: Exception) { done.countDown() }
@@ -1388,10 +1427,10 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Where this account's own events go: its write relays if this phone has seen its relay list, else a few well-known ones. */
     private fun writeRelays(): List<String> = (if (debuggable) context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } else null) ?: lists.latest("10002")?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }?.take(6)?.ifEmpty { null } ?: DEFAULT_RELAYS
-    private fun publish(e: Event) {
+    private fun publish(e: Event, relays: List<String> = writeRelays()) {
         val http = okhttp3.OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).build()
         val done = java.util.concurrent.CountDownLatch(1)
-        for (url in writeRelays()) try {
+        for (url in relays) try {
             http.newWebSocket(okhttp3.Request.Builder().url(url).build(), object : okhttp3.WebSocketListener() {
                 override fun onOpen(ws: okhttp3.WebSocket, response: okhttp3.Response) { ws.send("[\"EVENT\",${e.toJson()}]") }
                 override fun onMessage(ws: okhttp3.WebSocket, text: String) { if (text.startsWith("[\"OK\"")) { done.countDown(); ws.close(1000, null) } }

@@ -166,6 +166,7 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun cancelAsk() = act("cancelAsk"); fun startAsk() = act("startAsk"); fun closeAsk() = act("closeAsk")
     /** Debug builds only: the relays this phone's bunker links name and its own events go to (a test's own relay). */
     fun testRelays(urls: String) = act("testRelays", urls)
+    fun pointerNow() = act("pointerNow")
     /** The account page's username and password. Fingerprint. The box never sees the password. */
     fun setPassword(username: String, password: String) = act("setPassword", username + "\n" + password)
     fun clearPassword() = act("clearPassword")
