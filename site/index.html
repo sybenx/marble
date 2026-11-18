@@ -182,12 +182,14 @@
   .nstep { display: block; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
   .place-word:hover { text-decoration: underline; }
   body[data-page="home"][data-signed] .place-word { display: block; } /* (a visitor: the mark, the box, Sign in, one line) */
-  body[data-page="home"] .word { display: none; }
+  /* home's mark, as in the app: a small marble, the name under it, 20px clear of the box */
+  body[data-page="home"] .marble { width: 76px; filter: drop-shadow(0 3px 5px var(--shadow)); }
+  body[data-page="home"] .word { font-size: 32px; line-height: 40px; font-weight: 700; margin: 4px 0 20px; }
   /* the go-chip on a phone only; on a computer Enter does its job */
   @media (hover: hover) and (pointer: fine) { .go-chip { display: none; } }
   /* the box's middle 41% of the way down, as in the app (HOME_BOX_AT) */
-  body[data-page="home"] .top { min-height: calc(100svh - 80px); justify-content: flex-start; padding-top: max(64px, calc(41svh - 156px)); }
-  @media (min-width: 760px) { body[data-page="home"] .top { padding-top: max(64px, calc(41svh - 194px)); } }
+  body[data-page="home"] .top { min-height: calc(100svh - 80px); justify-content: flex-start; padding-top: max(64px, calc(41svh - 166px)); }
+  @media (min-width: 760px) { body[data-page="home"] .top { padding-top: max(64px, calc(41svh - 166px)); } }
 
   body:not([data-page="home"]) .top {
     position: sticky; top: 0; z-index: 5; flex-direction: row; gap: 14px; padding: 10px 16px;
