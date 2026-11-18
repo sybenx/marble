@@ -183,6 +183,10 @@ class MainActivity : ComponentActivity() {
         if (intent?.hasExtra("marble_day") == true) cc.aaro.cosign.ui.Marbles.shift = intent.getIntExtra("marble_day", 0).toLong()
         // Your own events to the test relay alone (--ez local_only true).
         if (intent?.getBooleanExtra("local_only", false) == true) cc.aaro.cosign.Sources.localOnly = true
+        // Notes vault tests: Blossom servers for a new vault (--es vault_servers http://10.0.2.2:7447,http://10.0.2.2:7448), and
+        // the vault's actions (--es vault state|sync|checkpoint|lost|edit --es arg …), logged under MarbleVault.
+        intent?.getStringExtra("vault_servers")?.let { cc.aaro.cosign.Sources.vaultServers = it.split(",").map(String::trim).filter(String::isNotEmpty) }
+        intent?.getStringExtra("vault")?.let { cc.aaro.cosign.Social.of(CosignApp.instance.phone).vaultDebug(it, intent.getStringExtra("arg")) }
         // Back on the main page after this long away, instead of five minutes (--el away_ms 20000).
         intent?.getLongExtra("away_ms", 0L)?.takeIf { it > 0 }?.let { cc.aaro.cosign.ui.Away.after = it }
     }

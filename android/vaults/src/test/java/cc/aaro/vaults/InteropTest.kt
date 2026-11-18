@@ -53,6 +53,12 @@ class InteropTest {
                 val edits = parts.drop(2).flatMap { it.split(",") }.filter { '=' in it }.map { it.substringBefore('=') to it.substringAfter('=') }
                 val now = WallClock.now()
                 for ((k, value) in edits) {
+                    // "R<id>=<text>": settle a conflict, one put superseding every current version (§5.4).
+                    if (k.startsWith("R")) {
+                        val e = v.state().entries[entryOf(k.drop(1))] ?: error("no note")
+                        val m = e.shown.meta.copy().put("updated", now)
+                        v.enqueue(listOf(Put.make(e.id, e.current.map { it.ver }, m, JSONObject().put("text", value), false).json)); continue
+                    }
                     val ids = if (k == "done") listOf(value) else listOf(k)
                     val base = note(v, ids[0]) ?: error("no note ${ids[0]}")
                     val meta = base.meta.copy().put("updated", now)

@@ -57,6 +57,8 @@ object Sources {
     const val POPULAR_ONLY = true
     /** Debug builds only: more relays to read from (a local relay for tests). */
     val extra = MutableStateFlow<List<String>>(emptyList())
+    /** Debug builds only: Blossom servers for a new notes vault (local test servers), instead of yours. */
+    @Volatile var vaultServers: List<String> = emptyList()
     /** Debug builds only: publish your own likes, follows and mutes to [extra] alone, nowhere public. */
     @Volatile var localOnly = false
     /**
@@ -1222,12 +1224,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private fun laterChanged() {
         if (Sources.viewAs != null) return
         if (laterSending?.isActive == true) return
-        laterSending = scope.launch { delay(180_000); sendLater() }
+        // One version per pause (vaults §11.1): half a minute after a change, and at once on leaving.
+        laterSending = scope.launch { delay(30_000); sendLater() }
     }
 
     private var answering: kotlinx.coroutines.Job? = null
     /** Marble open: another of your devices setting up can catch up from this one (notes sync, option D). */
     fun answerDevices() {
+        // Notes are in a vault now: a new device reads its checkpoint, not another device (v3's option D).
+        if (true) return
         if (me == null || Sources.viewAs != null || answering?.isActive == true) return
         answering = scope.launch { notesSync.serve { later.items.value } }
     }
@@ -1352,26 +1357,111 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { pullLater() }
     }
 
+    // --- Notes in a vault (~/nostr-sync-nip/vaults.md, the notes profile) ------------------------------
+    //
+    // Your notes live in one vault of your account's: found from your keyring entries, or made by this phone on the
+    // first run after the update, when it also brings in your v3 packs and marble/later once, as one batch (§17).
+    // Until that import has been read back whole, the old packs are still read (read only) so nothing seems lost.
+    // Nothing is written to packs or marble/later any more; the old events stay as they are.
+
+    private val vaultLock = kotlinx.coroutines.sync.Mutex()
+    private val vaultNotesBy = HashMap<String, cc.aaro.cosign.notes.VaultNotes>()
+    /** This account's notes vault (null before there's an account). */
+    val vaultNotes: cc.aaro.cosign.notes.VaultNotes? get() {
+        val me = me ?: return null
+        return synchronized(vaultNotesBy) {
+            vaultNotesBy.getOrPut(me) {
+                val vs = cc.aaro.vaults.Vaults(cc.aaro.cosign.notes.PhoneAccount(phone, me), cc.aaro.cosign.notes.VaultNet, cc.aaro.cosign.notes.VaultNet,
+                    cc.aaro.cosign.notes.VaultStore(CosignApp.instance, me), { Clock.now() }, { listTargets().ifEmpty { writeRelays() } },
+                    (android.os.Build.MODEL ?: "").ifBlank { "Phone" }.take(40))
+                cc.aaro.cosign.notes.VaultNotes(vs, Clock::now) { kotlinx.coroutines.runBlocking { newVaultPlaces(vs) } }
+            }
+        }
+    }
+
+    /**
+     * Where a new notes vault lives (§8.2): your write relays and your Blossom servers (kind 10063), each server only if it
+     * keeps a blob per owner (the §6.4 probe); with fewer than two of either, Marble's defaults that pass too.
+     */
+    private suspend fun newVaultPlaces(vs: cc.aaro.vaults.Vaults): Pair<List<String>, List<String>>? {
+        val me = me ?: return null
+        if (Sources.localOnly && debuggable) return Sources.extra.value to Sources.vaultServers.ifEmpty { return null }
+        val relays = (listTargets().filter { it.startsWith("wss://") }.take(4).let { if (it.size >= 2) it else (it + VAULT_RELAYS).distinct().take(4) })
+        val probeKey = cc.aaro.vaults.Keys.storage(vs.root)
+        val mine = Blossom.serversOf(me).map { it.trimEnd('/') }.filter { it.startsWith("https://") }.take(3)
+        val servers = mine.filter { vs.storage.probe(it, probeKey) }.let { ok -> if (ok.size >= 2) ok else (ok + VAULT_SERVERS.filter { it !in ok && vs.storage.probe(it, probeKey) }).take(3) }
+        if (debuggable) android.util.Log.i("MarbleVault", "new vault places: relays $relays, servers $servers (yours: $mine)")
+        return if (servers.isEmpty()) null else relays to servers
+    }
+
     /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
     private suspend fun pullLater(sending: Boolean = false) {
         laterPulledAt = System.currentTimeMillis()
         if (me == null || Sources.viewAs != null) return
-        // Everything once a day; otherwise what's new since the last pull.
-        val full = System.currentTimeMillis() - prefs.getLong("notesFull", 0) > 86_400_000L
-        val before = later.items.value
-        val after = notesSync.pull(before, full) ?: return
-        if (full) prefs.edit().putLong("notesFull", System.currentTimeMillis()).apply()
-        later.synced(before, after)
-        if (debuggable) android.util.Log.i("CosignSync", "notes pulled: ${after.size}${if (notesSync.halted) ", stopped (too many removals)" else ""}${if (notesSync.partial) ", not all pages" else ""}")
-        if (notesSync.pending && !sending) laterChanged()
+        val vn = vaultNotes ?: return
+        vaultLock.lock()
+        try {
+            val before = later.items.value
+            // The first run after the update: the old notes, once, into the vault (made now if there's none).
+            if (!vn.imported) {
+                val old = notesSync.pull(before, full = true)
+                if (old != null) { val n = vn.import(old); if (debuggable) android.util.Log.i("MarbleVault", "import: $n notes") }
+            }
+            var after = vn.pull(before) ?: return
+            if (vn.imported && !vn.importChecked && !vn.checkImport()) {
+                // Not read back whole yet: what the old packs hold that the vault doesn't is still shown (read only).
+                notesSync.pull(before, full = false)?.let { old ->
+                    val have = after.map { vn.entryOf(it) }.toSet()
+                    after = after + old.filter { it.deleted == null && cc.aaro.cosign.notes.VaultNotes.entryFor(it.id) !in have }
+                }
+            }
+            later.synced(before, after)
+            if (debuggable) android.util.Log.i("MarbleVault", "notes pulled: ${after.size}, ${vn.vault?.debug()}")
+            if (!sending && after.any { vn.vault != null && it.extra["vv"] == null && it.deleted == null }) laterChanged()
+        } catch (e: Exception) {
+            if (debuggable) android.util.Log.i("MarbleVault", "pull failed: $e")
+        } finally { vaultLock.unlock() }
     }
 
     private suspend fun sendLater() {
         if (me == null || Sources.viewAs != null) return
-        val before = later.items.value
-        val after = notesSync.flush(before) ?: return Unit.also { if (debuggable) android.util.Log.i("CosignSync", "notes not sent") }
-        later.synced(before, after)
-        if (debuggable) android.util.Log.i("CosignSync", "notes sent: ${after.size}${if (notesSync.pending) ", some still waiting" else ""}")
+        val vn = vaultNotes ?: return
+        vaultLock.lock()
+        try {
+            val before = later.items.value
+            val after = vn.push(before) ?: return Unit.also { if (debuggable) android.util.Log.i("MarbleVault", "notes not sent: ${vn.trouble.value}") }
+            later.synced(before, after)
+            if (debuggable) android.util.Log.i("MarbleVault", "notes sent: ${after.size}, ${vn.vault?.debug()}")
+        } catch (e: Exception) {
+            if (debuggable) android.util.Log.i("MarbleVault", "send failed: $e")
+        } finally { vaultLock.unlock() }
+    }
+
+    /** A note with two versions settled: one side kept ([ver]), both kept, or [text] written by hand (§5.4). */
+    fun resolveNote(itemId: String, ver: String? = null, text: String? = null, keepBoth: Boolean = false) = scope.launch {
+        vaultNotes?.let { vn -> vaultLock.lock(); try { vn.resolve(itemId, ver, text, keepBoth) } finally { vaultLock.unlock() } }
+        sendLater()
+    }
+    /** A removed note back from Trash. */
+    fun restoreNote(entry: String) = scope.launch {
+        vaultNotes?.let { vn -> vaultLock.lock(); try { vn.restore(entry) } finally { vaultLock.unlock() } }
+        sendLater()
+    }
+    /** Empty Trash, after the person's Yes (§12.4). */
+    fun emptyTrash() = scope.launch { vaultNotes?.let { vn -> vaultLock.lock(); try { vn.emptyTrash() } finally { vaultLock.unlock() } } }
+    /** Debug builds: the vault's state for tests on an emulator (logged under MarbleVault). */
+    fun vaultDebug(what: String, arg: String?) = scope.launch {
+        val vn = vaultNotes ?: return@launch
+        when (what) {
+            "sync" -> { pullLater(); sendLater() }
+            "checkpoint" -> { vaultLock.lock(); try { vn.vault?.writeCheckpoint() } finally { vaultLock.unlock() } }
+            "lost" -> { vaultLock.lock(); try { arg?.let { r -> vn.vault?.reportLost(r) } } finally { vaultLock.unlock() } }
+            "save" -> { later.save(arg ?: return@launch); sendLater() }
+            "remove" -> { later.items.value.firstOrNull { it.text == arg && it.deleted == null }?.let { later.remove(it) }; sendLater() }
+            "edit" -> { val (id, t) = (arg ?: return@launch).split("=", limit = 2); later.items.value.firstOrNull { it.id == id }?.let { later.setText(it, t) }; sendLater() }
+        }
+        android.util.Log.i("MarbleVault", "state: " + (vn.vault?.debug() ?: "no vault") + " devices " + vn.vault?.devices() + " conflicts " + vn.conflicts.value.keys +
+            " items " + later.items.value.filter { it.deleted == null }.joinToString { it.id + "=" + it.text.take(40) + (if (it.done != null) " ✓" else "") })
     }
 
     // --- Your marbles: the ones you kept -------------------------------------------------------
@@ -2104,6 +2194,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The relays a post's replies and reactions are looked for on, first: the big ones (with search). */
+    /** A new notes vault's relays and servers when you have published fewer than two (vaults §8.2). */
+    private val VAULT_RELAYS = listOf("wss://syb.lol", "wss://nos.lol", "wss://relay.damus.io", "wss://relay.primal.net")
+    private val VAULT_SERVERS = listOf("https://blossom.syb.lol", "https://blossom.primal.net")
     private val POST_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
 
     /** What can be shown of thread [id] right now, with no network: as opened before, or the note itself (under its first note, if that's here). Null if neither is. */

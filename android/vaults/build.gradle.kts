@@ -18,7 +18,8 @@ android {
     tasks.withType<Test> {
         // The end-to-end tests against a running vaults-test-server and Keykin box are skipped unless these are set.
         outputs.upToDateWhen { false }
-        listOf("VAULTS_INTEROP", "VAULTS_SERVER", "VAULTS_SERVER2", "KEYKIN_BOX", "KEYKIN_SETUP").forEach { k -> System.getenv(k)?.let { environment(k, it) } }
+        System.getenv("KEYKIN_FROSTLIB")?.let { systemProperty("keykin.frostlib", it) }
+        listOf("ANDROID_SERIAL", "VAULTS_INTEROP", "VAULTS_SERVER", "VAULTS_SERVER2", "KEYKIN_BOX", "KEYKIN_SETUP").forEach { k -> System.getenv(k)?.let { environment(k, it) } }
     }
 }
 

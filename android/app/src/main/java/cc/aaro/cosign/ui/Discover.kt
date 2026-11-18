@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -149,7 +150,6 @@ import cc.aaro.cosign.TopicFeeds
 import cc.aaro.cosign.Pick
 import cc.aaro.cosign.Preview
 import cc.aaro.cosign.Calm
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.withStyle
 import androidx.lifecycle.repeatOnLifecycle
 import cc.aaro.cosign.OtherApps
@@ -3402,13 +3402,17 @@ private fun LaterScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize(
     }
     FilterBox(filter, "Filter your notes") { filter = it }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((k, label) in listOf("saved" to "Notes", "done" to "Done")) {
+        for ((k, label) in listOf("saved" to "Notes", "done" to "Done", "trash" to "Trash")) {
             val on = show == k
             Text(label, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Vault.Accent else Vault.Surface).border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(18.dp))
                     .clickable { show = k }.padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
+    val vn = social.vaultNotes
+    val trouble = vn?.trouble?.collectAsState()?.value
+    if (trouble != null) Text(trouble, color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+    if (show == "trash") { TrashList(social, f, Modifier.weight(1f)); return@Column }
     val shelf by cc.aaro.cosign.NotesTrial.shelf.collectAsState()
     val answer by cc.aaro.cosign.NotesTrial.answer.collectAsState()
     val trial = cc.aaro.cosign.NotesTrial.on
@@ -3544,6 +3548,14 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
             // No ages (home-rules.md: no counts, no ages).
             val age: String? = null
             listOfNotNull(site, age).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.labelMedium) }
+            // Edited on two devices at once: "2 versions", and a tap shows both (vaults §5.4).
+            val versions = social.vaultNotes?.conflicts?.collectAsState()?.value?.get(item.id)
+            if (versions != null) {
+                var open by remember { mutableStateOf(false) }
+                Text("${versions.size} versions" + (if (versions.any { it.deleted }) " · removed on another device" else ""), color = Vault.Accent, style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp).clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 4.dp))
+                if (open) ConflictDialog(item, versions, social) { open = false }
+            }
         }
         if (menu) DropdownMenu(true, { menu = false }, containerColor = Vault.Surface) {
             if (cc.aaro.cosign.NotesTrial.on && item.done == null) {
@@ -3556,6 +3568,66 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
         }
     }
     HorizontalDivider(color = Vault.Edge)
+}
+
+/**
+ * Notes removed in the last year (vaults: a removal is a version, so it can come back): each with Restore. Empty Trash
+ * can't be undone, so it asks Yes or No first, and only here in the app (vaults §12.4).
+ */
+@Composable
+private fun TrashList(social: Social, filter: String, modifier: Modifier) = Column(modifier.fillMaxWidth()) {
+    val vn = social.vaultNotes
+    val trash = (vn?.trash?.collectAsState()?.value ?: emptyList()).filter { filter.isEmpty() || it.text.contains(filter, ignoreCase = true) }
+    var asking by remember { mutableStateOf(false) }
+    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (trash.isEmpty()) item { Text(if (filter.isEmpty()) "Nothing in Trash." else "Nothing matches “$filter”.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
+        items(trash, key = { "t" + it.entry }) { t ->
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(t.text.ifEmpty { "(no words)" }, color = Vault.Muted, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                TextButton({ social.restoreNote(t.entry) }) { Text("Restore", color = Vault.Accent) }
+            }
+            HorizontalDivider(color = Vault.Edge)
+        }
+    }
+    if (trash.isNotEmpty()) TextButton({ asking = true }, Modifier.padding(start = 12.dp, bottom = 8.dp)) { Text("Empty Trash", color = Vault.Danger) }
+    if (asking) AlertDialog({ asking = false },
+        title = { Text("Empty Trash?") },
+        text = { Text("These notes go from Trash on this phone, and can't be brought back here.") },
+        confirmButton = { TextButton({ asking = false; social.emptyTrash() }) { Text("Yes", color = Vault.Danger) } },
+        dismissButton = { TextButton({ asking = false }) { Text("No") } })
+}
+
+/**
+ * A note edited on two devices at once (vaults §5.4, §11.1): both texts side by side, with Keep this under each, Keep
+ * both, and Edit to write one from the two by hand. Whatever is chosen becomes the note everywhere.
+ */
+@Composable
+private fun ConflictDialog(item: cc.aaro.cosign.LaterItem, versions: List<cc.aaro.cosign.notes.VaultNotes.Version>, social: Social, onClose: () -> Unit) {
+    var editing by remember { mutableStateOf<String?>(null) }
+    AlertDialog(onClose,
+        title = { Text(if (editing != null) "Edit the note" else "${versions.size} versions") },
+        text = {
+            val e = editing
+            if (e != null) TextField(e, { editing = it }, Modifier.fillMaxWidth().heightIn(min = 120.dp))
+            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (v in versions) Column(Modifier.weight(1f).border(1.dp, Vault.Edge, RoundedCornerShape(10.dp)).padding(10.dp)) {
+                    Text(if (v.deleted) "Removed on another device" else v.text, color = if (v.deleted) Vault.Muted else Vault.Text,
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.heightIn(max = 260.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()))
+                    if (v.done) Text("Done", color = Vault.Muted, style = MaterialTheme.typography.labelMedium)
+                    TextButton({ social.resolveNote(item.id, ver = v.ver); onClose() }) { Text("Keep this", color = Vault.Accent) }
+                }
+            }
+        },
+        confirmButton = {
+            val e = editing
+            if (e != null) TextButton({ social.resolveNote(item.id, text = e.trim()); onClose() }) { Text("Save", color = Vault.Accent) }
+            else TextButton({ social.resolveNote(item.id, keepBoth = true); onClose() }) { Text("Keep both", color = Vault.Accent) }
+        },
+        dismissButton = {
+            if (editing == null) TextButton({ editing = versions.filter { !it.deleted }.joinToString("\n\n") { it.text } }) { Text("Edit") }
+            else TextButton({ editing = null }) { Text("Back") }
+        })
 }
 
 /** On what's yours alone (Later, a thought you keep): a small lock and [text]. */

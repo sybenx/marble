@@ -8,6 +8,10 @@
 // DELETE /<sha256>, BUD-02 GET /list/<pubkey>. It keeps a blob per owner (spec §6.4): a DELETE drops only the signer's
 // claim, and the bytes go when nobody claims them. A second port can be started for a second server.
 //
+// State is kept in $TMPDIR/vaults-test-<port>.json (or the third argument), written a moment after each change, and read
+// back at start, so a restart loses nothing; POST /_test {"reset":true} empties it. Every HTTP answer carries CORS
+// (BUD-01), so pages in a browser can use it.
+//
 // Misbehaviour for tests, by HTTP: POST /_test {"alterBlobs": true} serves altered bytes; {"dropHalf": true} drops half
 // of the blobs; {"reset": true} forgets everything.
 
@@ -20,6 +24,23 @@ type Ev = { id: string; pubkey: string; created_at: number; kind: number; tags: 
 let events = new Map<string, Ev>(); // by id
 let blobs = new Map<string, { bytes: Uint8Array; owners: Set<string>; uploaded: number }>();
 let behaviour: Record<string, boolean> = {};
+const statePath = process.argv[3] ?? `${require('node:os').tmpdir()}/vaults-test-${port}.json`;
+const fs = require('node:fs');
+try {
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  for (const e of saved.events ?? []) events.set(e.id, e);
+  for (const [sha, b] of Object.entries<any>(saved.blobs ?? {})) blobs.set(sha, { bytes: Uint8Array.from(Buffer.from(b.b64, 'base64')), owners: new Set(b.owners), uploaded: b.uploaded });
+} catch {}
+let saving: any = null;
+function changed() {
+  if (saving) return;
+  saving = setTimeout(() => {
+    saving = null;
+    const out = { events: [...events.values()], blobs: Object.fromEntries([...blobs].map(([s, b]) => [s, { b64: Buffer.from(b.bytes).toString('base64'), owners: [...b.owners], uploaded: b.uploaded }])) };
+    fs.writeFileSync(statePath + '.tmp', JSON.stringify(out)); fs.renameSync(statePath + '.tmp', statePath);
+  }, 300);
+}
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, PUT, DELETE', 'access-control-allow-headers': 'Authorization, Content-Type, X-SHA-256, X-Content-Length, X-Content-Type', 'access-control-max-age': '86400' };
 const subs = new Map<any, Map<string, any[]>>();
 
 const addressOf = (e: Ev) => {
@@ -52,6 +73,7 @@ async function accept(e: Ev): Promise<[boolean, string]> {
       }
     }
     events.set(e.id, e);
+    changed();
   }
   for (const [ws, m] of subs) for (const [sid, fs] of m) if (fs.some((f) => matches(f, e))) ws.send(JSON.stringify(['EVENT', sid, e]));
   return [true, ''];
@@ -70,10 +92,8 @@ function authOf(req: Request, verb: string): { pubkey: string; xs: string[] } | 
 }
 const descriptor = (sha: string, b: Uint8Array, at: number) => ({ url: `http://127.0.0.1:${port}/${sha}`, sha256: sha, size: b.length, type: 'application/octet-stream', uploaded: at });
 
-Bun.serve({
-  port,
-  async fetch(req, server) {
-    if (server.upgrade(req)) return;
+async function answer(req: Request): Promise<Response> {
+  {
     const url = new URL(req.url);
     const path = url.pathname.slice(1);
     if (req.method === 'POST' && path === '_test') {
@@ -118,8 +138,9 @@ Bun.serve({
       return new Response(bytes, { headers: { 'content-type': 'application/octet-stream' } });
     }
     return new Response('vaults test server', { status: 200 });
-  },
-  websocket: {
+  }
+}
+const WS: any = {
     open(ws) { subs.set(ws, new Map()); },
     close(ws) { subs.delete(ws); },
     async message(ws, raw) {
@@ -137,6 +158,17 @@ Bun.serve({
         ws.send(JSON.stringify(['EOSE', sid]));
       } else if (m[0] === 'CLOSE') subs.get(ws)?.delete(m[1]);
     },
+};
+Bun.serve({
+  port,
+  async fetch(req, server) {
+    if (server.upgrade(req)) return;
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    const res = await answer(req);
+    for (const [k, v] of Object.entries(CORS)) res.headers.set(k, v);
+    if (req.method !== 'GET' && req.method !== 'HEAD') changed();
+    return res;
   },
+  websocket: WS,
 });
 console.log(`vaults test server on ws://127.0.0.1:${port} and http://127.0.0.1:${port}`);
