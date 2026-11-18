@@ -127,6 +127,40 @@ fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
  */
 fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, VIEWERS)
 
+/**
+ * The post, article or person a web page is showing, from its address alone: any https (or http) page whose path has
+ * a segment that is a note1, nevent1, naddr1, npub1 or nprofile1 (Jumble's /notes/nevent1…, /users/npub1…; any
+ * site's), or a known viewer's link (inAppRef). For the web pane's "Open in Marble". A query or fragment doesn't count,
+ * and neither does a bare hex anywhere but a viewer's /e/… or /p/….
+ */
+fun pageRef(url: String?): Ref? {
+    if (url.isNullOrBlank()) return null
+    val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }
+    if (u.scheme?.lowercase() !in setOf("https", "http")) return null
+    inAppRef(url)?.let { return it }
+    return u.path.orEmpty().split('/').filter { PAGE_ENTITY.matches(it.lowercase()) }.asReversed().firstNotNullOfOrNull { Ref.parse(it) }
+}
+private val PAGE_ENTITY = Regex("(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+")
+
+/**
+ * What a nostr: link (NIP-21) names, as Android hands it over: nostr:nevent1…, nostr:npub1…, and the nostr://… some
+ * apps write. Null for nsec (never taken from a link) and anything else Marble can't read.
+ */
+fun nostrLinkRef(link: String): Ref? {
+    val s = link.trim()
+    if (!s.startsWith("nostr:", ignoreCase = true)) return null
+    val id = s.substring(6).removePrefix("//").substringBefore('?').substringBefore('#').trimEnd('/')
+    if (id.isEmpty() || id.contains('/') || !PAGE_ENTITY.matches(id.lowercase())) return null
+    return Ref.parse(id.lowercase())
+}
+
+/** Shared text that is nothing but a post, article or someone: nostr:…, a bare note1/nevent1/naddr1/npub1/nprofile1, or a viewer's link (inAppRef). */
+fun sharedRef(text: String): Ref? {
+    val t = text.trim()
+    if (t.isEmpty() || t.any { it.isWhitespace() }) return null
+    return nostrLinkRef(t) ?: (if (PAGE_ENTITY.matches(t.lowercase())) Ref.parse(t.lowercase()) else null) ?: inAppRef(t)
+}
+
 /** Sites that show a post or a person by its reference: their links open it in Marble instead. */
 private val VIEWERS = setOf("marble.syb.lol", "njump.me", "njump.to", "primal.net", "nostr.at", "nostr.com", "snort.social", "iris.to", "coracle.social",
     "nostrudel.ninja", "yakihonne.com", "habla.news", "highlighter.com", "jumble.social", "nostter.app")

@@ -102,6 +102,8 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
     private val scope = kotlinx.coroutines.MainScope()
     fun saveNow(context: Context, ask: SaveAsk) { save = null; scope.launch { cc.aaro.cosign.ui.Saving.save(context.applicationContext, ask.url, ask.kind) } }
     var loading by mutableStateOf(false)
+    /** Each site's page address as it is now, pushState steps included: for "Open in Marble" (OpenInMarble.kt). */
+    val pageUrls = androidx.compose.runtime.mutableStateMapOf<String, String>()
     /** Set the first time the pane is headed for: until then no WebView is made, so opening Marble costs nothing. */
     var started by mutableStateOf(false)
     var health by mutableStateOf(WebHealth.State.OK)
@@ -305,6 +307,8 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         }
         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { if (s.origin == site.origin) loading = true }
         override fun onPageFinished(view: WebView, url: String?) { if (s.origin == site.origin) loading = false }
+        // Every address change, a page's own (Jumble's pushState from one post to the next) as well as a load.
+        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) { url?.let { pageUrls[s.id] = it } }
         // A crashed (or killed) renderer: this site's WebView goes, and a new one is made where it was.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             if (views[s.id] === view) { pendingUrl[s.id] = view.url ?: s.start; drop(s.id) }
@@ -532,7 +536,7 @@ fun WebPane(state: WebPaneState, phone: Phone, current: Boolean, onReview: () ->
         WebBar(state, ui, context, onReview)
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         else Box(Modifier.height(2.dp))
-        if (state.started) AndroidView({ c -> FrameLayout(c) }, Modifier.fillMaxSize(), update = { frame ->
+        if (state.started) Box(Modifier.fillMaxSize()) { AndroidView({ c -> FrameLayout(c) }, Modifier.fillMaxSize(), update = { frame ->
             // Read here, so a new site or a rebuilt WebView attaches again.
             state.generation
             val v = state.view(frame.context, state.site)
@@ -542,6 +546,7 @@ fun WebPane(state: WebPaneState, phone: Phone, current: Boolean, onReview: () ->
                 frame.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             }
         })
+        OpenInMarble(state, Modifier.align(Alignment.BottomEnd)) }
     }
 
     state.fullscreen?.let { (view, callback) ->
