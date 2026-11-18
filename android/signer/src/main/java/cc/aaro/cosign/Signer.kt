@@ -1020,11 +1020,20 @@ class Signer(private val context: Context, val slot: String = "0") {
         // Its switches (SiteScopes): DMs and private lists only when they're on; refused outright, never asked.
         val me = own?.npub ?: accountHex() ?: error("$appName isn't set up yet")
         val kind = if (method == "sign_event") try { ((Json.parse(params[0]) as? Map<*, *>)?.get("kind") as? Long)?.toInt() } catch (_: Exception) { null } else null
-        SiteScopes.lacks(method, params, me, site.lists, site.dms, kind)?.let { lacking ->
+        fun refuse(lacking: String): Nothing {
             // Said once an hour per site and switch: a page retrying its decrypts mustn't push everything else out of the log.
             val at = refusedNoted["${site.key}:$lacking"]
             if (at == null || env.now() - at > 3600) { refusedNoted["${site.key}:$lacking"] = env.now(); note("Refused ${if (lacking == "dms") "a DM" else "a private list"} for $by: off for this site", "denied") }
             throw KeykinException(SiteScopes.refusal(lacking))
+        }
+        SiteScopes.lacks(method, params, me, site.lists, site.dms, kind)?.let { lacking ->
+            // Your own vaults' keys are sealed to you with a one-time key, so they arrive as someone else's: with private
+            // lists on they're opened, and answered only if they are that (never a DM's text).
+            if (SiteScopes.mayOpenAsVault(lacking, method, site.lists)) {
+                val plain = nip44With(params[0], params[1], false, site.grant, own)
+                if (SiteScopes.vaultData(plain, me)) return plain
+            }
+            refuse(lacking)
         }
         return when (method) {
             "sign_event" -> signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
