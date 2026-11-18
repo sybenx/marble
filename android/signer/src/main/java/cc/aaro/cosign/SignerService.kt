@@ -164,7 +164,7 @@ class SignerService : Service() {
             "decide" -> s.decide(text ?: return, flag)
             "decideBatch" -> s.decideBatch(text ?: return, flag)
             "cancelDeletion" -> s.cancelDeletion(text ?: return)
-            "confirmConnect" -> s.confirmConnect()
+            "confirmConnect" -> s.confirmConnect(text)
             "closeConnect" -> s.closeConnect()
             "connectInBackground" -> s.connectInBackground = flag
             "confirmAddDevice" -> s.confirmAddDevice()

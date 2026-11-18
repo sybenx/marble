@@ -24,7 +24,9 @@ data class Offer(val box: String, val create: Boolean, val npub: String? = null,
 /** Something destructive that an app or a site asked for, waiting for you. */
 data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long) : java.io.Serializable
 /** A site or an app that can sign as you. [via] says how it got in. */
-data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null) : java.io.Serializable
+data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
+                /** The site signed in with an account of its own (made for it), not the main account. */
+                val own: Boolean = false) : java.io.Serializable
 data class Change(val id: String, val text: String, val by: String, val at: Long, val held: Boolean, val undone: Boolean) : java.io.Serializable
 data class Deleting(val batch: String, val by: String, val count: Int, val until: Long) : java.io.Serializable
 data class BatchAsk(val batch: String, val text: String, val by: String, val expiresAt: Long) : java.io.Serializable
@@ -36,7 +38,13 @@ data class AddingDevice(val pk: String, val name: String, val relays: List<Strin
 data class Future(val id: String, val text: String) : java.io.Serializable
 data class Connect(val origin: String, val stage: Stage, val message: String? = null,
                    /** Five digits to compare with the site's, when the code was pasted and not scanned. */
-                   val digits: String? = null) : java.io.Serializable { enum class Stage { CONFIRM, COMPARE, WORKING, DONE, FAILED } }
+                   val digits: String? = null,
+                   /** A site new to this account: offer an account of its own (the main choice) or the main account. */
+                   val ask: Boolean = false,
+                   /** The site already has an account of its own here, and signs in with it again. */
+                   val own: Boolean = false,
+                   /** A Keykin account page: it gets the main account only (no choice), and the card says so. */
+                   val accountPage: Boolean = false) : java.io.Serializable { enum class Stage { CONFIRM, COMPARE, WORKING, DONE, FAILED } }
 data class Line(val ts: Long, val text: String, val kind: String = "info") : java.io.Serializable
 /** The whole key, formed after a fingerprint. [nsec] never leaves the signer process. */
 data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = null, val nsec: String? = null, val npub: String? = null, val twinUnknown: Boolean = false) : java.io.Serializable {

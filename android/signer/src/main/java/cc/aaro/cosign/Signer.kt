@@ -389,7 +389,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val rest = if ('#' in t) t.substringAfter('#') else t.substringAfter('?', "")
         val nc = rest.split('&').firstOrNull { it.startsWith("nc=") }?.let { Uri.decode(it.removePrefix("nc=")) }
         if (nc != null && nc.startsWith("nostrconnect:") && (params == null || params.profile != SignerTicketProfile.id || params.mode != Mode.OFFER))
-            return scannedNostrConnect(nc)
+            return scannedNostrConnect(nc, SiteChoice.marked(t))
         when {
             params == null -> err("That isn't a code $appName understands.")
             !isMember -> err("Set up your account on this phone first.")
@@ -398,7 +398,8 @@ class Signer(private val context: Context, val slot: String = "0") {
             usedCode(params.token) -> err("You've already used that code. Ask the site for a new one.")
             else -> {
                 connecting = params; connectPasted = pasted; nostrConnect = null; pendingLogin = null
-                ui.update { it.copy(error = null, connect = Connect(params.origin ?: "This site", Connect.Stage.CONFIRM)) }
+                choice = siteChoice(params.origin, SiteChoice.marked(t))
+                ui.update { it.copy(error = null, connect = confirmCard(params.origin ?: "This site", choice)) }
             }
         }
     }
@@ -720,7 +721,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val debuggable get() = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     private val sites: SiteSigner by lazy {
         val st = secrets.load("signer")?.let { try { JSONObject(it) } catch (_: Exception) { null } } ?: SiteSigner.fresh().also { secrets.save("signer", it.toString()) }
-        SiteSigner({ accountHex() }, ::siteAct, st, { secrets.save("signer", it.toString()); showSites(); grantsChanged() }, { if (debuggable) android.util.Log.i("Keykin", it) })
+        SiteSigner({ accountHex() }, ::siteAct, st, { secrets.save("signer", it.toString()); showSites(); grantsChanged() }, { if (debuggable) android.util.Log.i("Keykin", it) }, ::childKnown)
     }
     private val qrstStore = Store(object : KeyValue {
         private val prefs = context.getSharedPreferences("qrst", Context.MODE_PRIVATE)
@@ -742,14 +743,19 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
 
     private fun showSites() {
-        val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via) } } catch (_: Exception) { emptyList() }
+        val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null) } } catch (_: Exception) { emptyList() }
         val fromApps = apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Site(it.pk, it.label, appTimes.getLong(it.pkg + ":added", 0), appTimes.getLong(it.pkg + ":used", 0), null, "App on this phone") }
         ui.update { u -> u.copy(sites = fromSites + fromApps, member = u.member?.let { m -> m.copy(group = m.group.copy(relays = try { sites.sites().flatMap { it.relays }.distinct() } catch (_: Exception) { emptyList() })) }) }
     }
 
-    fun confirmConnect() {
+    /**
+     * Yes to a site's sign-in. [pick] answers the choice for a site new to this account: "new" signs it in
+     * with an account of its own, anything else (or nothing: the web pane, older callers) with the main account.
+     */
+    fun confirmConnect(pick: String? = null) {
         if (pendingLogin != null) return confirmLogin()
-        if (nostrConnect != null) return confirmNostrConnect()
+        val place = placeFor(choice, pick); choice = SiteChoice.Decision.Main
+        if (nostrConnect != null) return confirmNostrConnect(place)
         val params = connecting ?: return
         val origin = params.origin ?: "a site"
         useCode(params.token)
@@ -767,7 +773,9 @@ class Signer(private val context: Context, val slot: String = "0") {
                 val v = until(30_000) { it.session.phase == Phase.RELEASE || it.stage == TransferView.Stage.ENDED }
                 if (v.stage == TransferView.Stage.ENDED) return@execute finishConnect(origin, v.session.outcome)
                 // The ticket is made only now, at the moment it is released.
-                fun ticket() = sites.mint(params.origin, params.relays.ifEmpty { signerRelays() }).let { j ->
+                // A site's own account is made (or found) first: with a box this asks it, once per place.
+                place?.let { childFor(it) }
+                fun ticket() = sites.mint(params.origin, params.relays.ifEmpty { signerRelays() }, place = place).let { j ->
                     SignerTicket(j.getString("pubkey"), j.getString("signer"), params.relays.ifEmpty { signerRelays() }, j.getString("t"), j.getLong("expires"))
                 }
                 when (v.session.check) {
@@ -782,12 +790,24 @@ class Signer(private val context: Context, val slot: String = "0") {
                     }
                     else -> throw KeykinException("site_wants_typing")
                 }
-                finishConnect(origin, until(60_000) { it.stage == TransferView.Stage.ENDED }.session.outcome)
+                finishConnect(origin, until(60_000) { it.stage == TransferView.Stage.ENDED }.session.outcome, place != null)
             } catch (e: Exception) {
                 if ((e as? KeykinException)?.code != "cancelled") failConnect(origin, if ((e as? KeykinException)?.code == "site_silent") "$origin didn't answer. Ask it for a new code." else why(e))
             } finally { if (transfer === t) transfer = null; t.dispose() }
         }
     }
+    // --- Which account a site signs in with (SiteChoice): a new one of its own by default, or the main one ---
+
+    /** What the sign-in being asked about gets, worked out when its code was read. */
+    @Volatile private var choice: SiteChoice.Decision = SiteChoice.Decision.Main
+    private fun siteChoice(origin: String?, accountPage: Boolean) = SiteChoice.decide(origin, try { sites.sites() } catch (_: Exception) { emptyList() }, accountPage)
+    private fun confirmCard(origin: String, d: SiteChoice.Decision) = Connect(origin, Connect.Stage.CONFIRM, ask = d is SiteChoice.Decision.Ask, own = d is SiteChoice.Decision.Own, accountPage = d == SiteChoice.Decision.AccountPage)
+    private fun placeFor(d: SiteChoice.Decision, pick: String?): String? = when (d) {
+        is SiteChoice.Decision.Ask -> if (pick == "new") d.place else null
+        is SiteChoice.Decision.Own -> d.place
+        SiteChoice.Decision.Main, SiteChoice.Decision.AccountPage -> null
+    }
+
     /** The five digits were compared with the site's: the same, or not. */
     fun digits(same: Boolean) { digitsAnswer?.complete(same) }
 
@@ -796,12 +816,12 @@ class Signer(private val context: Context, val slot: String = "0") {
         connectInBackground = false; connecting = null
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.FAILED, message)) }
     }
-    private fun finishConnect(origin: String, outcome: Outcome?) {
+    private fun finishConnect(origin: String, outcome: Outcome?, own: Boolean = false) {
         when (outcome) {
             Outcome.DELIVERED, Outcome.SENT_UNCONFIRMED -> {
-                note("Connected $origin", "approved")
+                note(if (own) "Connected $origin with a new account" else "Connected $origin", "approved")
                 connectInBackground = false; connecting = null
-                ui.update { it.copy(connect = Connect(origin, Connect.Stage.DONE, "$origin can sign as you now. Remove it under Your account any time.")) }
+                ui.update { it.copy(connect = Connect(origin, Connect.Stage.DONE, if (own) "$origin has its own account now. Remove it under Your account any time." else "$origin can sign as you now. Remove it under Your account any time.")) }
                 // A success needs no tap to dismiss, and mustn't sit over an approval that arrives next.
                 timer.schedule({ ui.update { u -> if (u.connect?.stage == Connect.Stage.DONE) u.copy(connect = null) else u } }, 2500, TimeUnit.MILLISECONDS)
                 Cosign.host.joined(context)
@@ -824,13 +844,15 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
 
     fun closeConnect() {
+        choice = SiteChoice.Decision.Main
         digitsAnswer?.complete(false)
         transfer?.let { transfer = null; try { it.cancel() } catch (_: Exception) { } }
         connecting = null; nostrConnect = null; pendingLogin = null
         ui.update { it.copy(connect = null, loginAsk = null) }
     }
 
-    private fun scannedNostrConnect(text: String) {
+    /** [accountPage]: the code that carried this link was marked as a Keykin account page's. */
+    private fun scannedNostrConnect(text: String, accountPage: Boolean = false) {
         val uri = Uri.parse(text.replaceFirst(Regex("^nostrconnect:(?!//)"), "nostrconnect://"))
         val client = uri.host?.lowercase()
         val relayList = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
@@ -844,17 +866,18 @@ class Signer(private val context: Context, val slot: String = "0") {
                 val site = uri.getQueryParameter("url")?.let { Uri.parse(it).let { u -> u.host?.let { h -> if (u.port > 0) "$h:${u.port}" else h } } }
                     ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "This app"
                 nostrConnect = Triple(client, relayList, secret); connecting = null; pendingLogin = null
-                ui.update { it.copy(error = null, connect = Connect(site, Connect.Stage.CONFIRM)) }
+                choice = siteChoice(uri.getQueryParameter("url"), accountPage || SiteChoice.marked(text))
+                ui.update { it.copy(error = null, connect = confirmCard(site, choice)) }
             }
         }
     }
-    private fun confirmNostrConnect() {
+    private fun confirmNostrConnect(place: String? = null) {
         val (client, relays, secret) = nostrConnect ?: return
         val origin = ui.value.connect?.origin ?: "a site"
         useCode(client)
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.WORKING, "Telling $origin…")) }
         work.execute {
-            try { sites.acceptNostrConnect(client, relays, secret, origin); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED) }
+            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null) }
             catch (e: Exception) { nostrConnect = null; failConnect(origin, why(e)) }
         }
     }
@@ -902,12 +925,14 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** One request from a site that is signed in. Anything destructive waits for you here first. */
     private fun siteAct(site: SiteSigner.Site, method: String, params: List<String>): String {
         val by = site.origin ?: "A site"
+        // A site with an account of its own signs and reads as that account only.
+        val own = site.place?.let { childFor(it) }
         return when (method) {
-            "sign_event" -> signChecked(appEvent(params[0]), by, approved = false, mayAsk = true, grant = site.grant).toJson()
-            "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant)
-            "nip44_decrypt" -> nip44With(params[0], params[1], false, site.grant)
-            "nip04_encrypt" -> nip04With(params[0], params[1], true, site.grant)
-            "nip04_decrypt" -> nip04With(params[0], params[1], false, site.grant)
+            "sign_event" -> signChecked(appEvent(params[0], own?.npub), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
+            "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant, own)
+            "nip44_decrypt" -> nip44With(params[0], params[1], false, site.grant, own)
+            "nip04_encrypt" -> nip04With(params[0], params[1], true, site.grant, own)
+            "nip04_decrypt" -> nip04With(params[0], params[1], false, site.grant, own)
             else -> throw KeykinException("unsupported")
         }
     }
@@ -918,8 +943,8 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun holdFor(ev: Event): String? = Policy.hold(ev, lists.latest(Policy.keyOf(ev)))
 
     /** The event an app or a site sent, as it will be signed: under your key, with its id. */
-    fun appEvent(json: String): Event {
-        val pub = accountHex() ?: error("$appName isn't set up yet")
+    fun appEvent(json: String, asKey: String? = null): Event {
+        val pub = asKey ?: accountHex() ?: error("$appName isn't set up yet")
         val raw = Json.parse(json) as? Map<*, *> ?: throw IllegalArgumentException("not an event")
         val tags = (raw["tags"] as? List<*>)?.map { t -> (t as List<*>).map { it.toString() } } ?: emptyList()
         return Event(pub, raw["created_at"] as? Long ?: env.now(), (raw["kind"] as Long).toInt(), tags, raw["content"] as? String ?: "").withId()
@@ -957,18 +982,20 @@ class Signer(private val context: Context, val slot: String = "0") {
      * signed, and anything destructive needs your yes. With [mayAsk] the question is put on screen and
      * waited for; without it the caller hears [NeedsApproval] and asks you itself.
      */
-    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null): Event {
+    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null): Event {
         Policy.refuse(ev)?.let { throw IllegalStateException(it) }
         var held = approved
-        // This phone's own rules (against the last version of a list it saw), and the box's shorter list.
-        if (!approved) (holdFor(ev) ?: Device.destructive(ev.kind, ev.tags, ev.content)?.let { boxHold(ev) })?.let { hold ->
+        // This phone's own rules (against the last version of a list it saw), and the box's shorter list. A site's own
+        // account has no lists kept here: its change is judged on its own, never against the main account's lists.
+        if (!approved) ((if (asChild == null) holdFor(ev) else Policy.hold(ev, null)) ?: Device.destructive(ev.kind, ev.tags, ev.content)?.let { boxHold(ev) })?.let { hold ->
             if (!mayAsk) throw NeedsApproval(hold)
             if (!askAndWait(by, ev, hold)) { note("Said no to $by: $hold", "denied"); throw KeykinException("denied") }
             held = true
         }
-        val prev = lists.latest(Policy.keyOf(ev))
-        val signed = signNow(ev, grant, held)
-        remember(signed, prev, by, held)
+        val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
+        val signed = signNow(ev, grant, held, asChild)
+        // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
+        if (asChild == null) remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
         if (ev.kind != 22242 || held) note("Signed ${Describe.kind(ev.kind)} for $by", if (held) "approved" else "auto")
         return signed

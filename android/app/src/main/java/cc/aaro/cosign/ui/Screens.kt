@@ -113,9 +113,9 @@ fun App(phone: Phone, ui: Ui) {
         }
         // With several keys, every question says which one it's about.
         val which = if (CosignApp.instance.accounts.all.count { it.isMember } > 1) phone.label else null
-        ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, phone::confirmConnect, phone::digits, phone::closeConnect) }
+        ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, { pick -> phone.confirmConnect(pick) }, phone::digits, phone::closeConnect) }
         ui.joinText?.let { JoinTextSheet(it, phone::closeJoinText) }
-        ui.loginAsk?.let { LoginSheet(it, phone::confirmConnect, phone::closeConnect) }
+        ui.loginAsk?.let { LoginSheet(it, { phone.confirmConnect() }, phone::closeConnect) }
         ui.move?.let { KeyMoveScreen(it, phone) }
         ui.summary?.let { UndoSiteSheet(it, phone::confirmUndoSite, phone::closeSummary) }
         ui.adding?.let { AddDeviceSheet(it, phone) }
@@ -336,7 +336,7 @@ private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: () -> Unit, on
 
 /** Connecting a site: the one-tap consent of QRST at its lowest check, then progress. */
 @Composable
-private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onDigits: (Boolean) -> Unit, onClose: () -> Unit) {
+private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?) -> Unit, onDigits: (Boolean) -> Unit, onClose: () -> Unit) {
     BackHandler { onClose() }
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
@@ -344,8 +344,31 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onDi
                 .background(Vault.Surface, RoundedCornerShape(20.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
             when (c.stage) {
-                Connect.Stage.CONFIRM -> {
+                // A site new to this account: a new account of its own is the main choice, the main account the small one.
+                Connect.Stage.CONFIRM -> if (c.ask) {
+                    Text("Sign in to ${c.origin}?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+                    which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Accent, style = MaterialTheme.typography.bodyMedium) }
+                    Spacer(Modifier.height(10.dp))
+                    Text("A new account is made just for this site, empty to start. Nothing from your main account goes with it.",
+                        style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Anything destructive comes to this phone first. Remove it under Your account any time.",
+                        style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+                    Spacer(Modifier.height(20.dp))
+                    OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't connect", color = Vault.Text) }
+                    Spacer(Modifier.height(10.dp))
+                    Button({ onConnect("new") }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                        Text("Sign in with a new account", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    TextButton({ onConnect("main") }, Modifier.align(Alignment.CenterHorizontally)) {
+                        Text("Use my main account", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                } else {
                     Text("Use your account on ${c.origin}?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+                    // Signed in before with an account of its own: it gets that one again.
+                    if (c.own) Text("Its own account, as before", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                    // A Keykin account page: it is about the main account, so there is no other to choose.
+                    if (c.accountPage) Text("This is an account page, so it uses your main account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                     which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Accent, style = MaterialTheme.typography.bodyMedium) }
                     Spacer(Modifier.height(10.dp))
                     Text("It can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
@@ -357,7 +380,7 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: () -> Unit, onDi
                     // Declining is never the weaker control; the affirmative one names the site.
                     OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't connect", color = Vault.Text) }
                     Spacer(Modifier.height(10.dp))
-                    Button(onConnect, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    Button({ onConnect(null) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                         Text("Use it on ${c.origin}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -882,7 +905,9 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
     }
     for (g in grants.sortedByDescending { it.lastUsed }) Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "${g.via ?: if (g.parent == null) "Connected by code" else "Connected"} · used ${ago(g.lastUsed)}",
+            // Which account it signed in with, for sites (an app on this phone always has the main one).
+            (if (g.via == "App on this phone") "" else if (g.own) "Own account · " else "Main account · ") +
+                "${g.via ?: if (g.parent == null) "Connected by code" else "Connected"} · used ${ago(g.lastUsed)}",
             color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
         )
         TextButton({ onUndo(g) }) { Text("Undo all", color = Vault.Accent) }

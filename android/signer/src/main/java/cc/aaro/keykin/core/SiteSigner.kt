@@ -30,13 +30,21 @@ class SiteSigner(
     private val state: JSONObject,
     private val changed: (JSONObject) -> Unit,
     private val log: (String) -> Unit = {},
+    /**
+     * The public key of the account made for a place (a child of this account, Keykin SPEC 8k), if this
+     * device has made it. A site signed in with one ("as" in its record) gets that key and nothing else.
+     */
+    private val accountAs: (place: String) -> String? = { null },
 ) {
     companion object {
         const val TICKET_SECONDS = 900L
         fun fresh(): JSONObject = JSONObject().put("sk", hex(random(32))).put("clients", JSONArray()).put("tickets", JSONArray())
     }
-    /** `grant` is this site's id at the box (SPEC 11.5): the box refuses it everywhere once it is revoked. */
-    data class Site(val key: String, val origin: String?, val relays: List<String>, val added: Long, val used: Long, val via: String, val grant: String)
+    /**
+     * `grant` is this site's id at the box (SPEC 11.5): the box refuses it everywhere once it is revoked.
+     * `place`: the site was signed in with an account of its own, the child for this place; null is the account itself.
+     */
+    data class Site(val key: String, val origin: String?, val relays: List<String>, val added: Long, val used: Long, val via: String, val grant: String, val place: String? = null)
 
     private val sk = unhex(state.getString("sk"))
     val pubkey: String = Secp.pub(sk)
@@ -51,17 +59,18 @@ class SiteSigner(
 
     fun sites(): List<Site> = synchronized(state) { list("clients") {
         Site(it.getString("key"), if (it.has("origin")) it.getString("origin") else null, strings(it.optJSONArray("relays")), it.optLong("added"), it.optLong("used"), it.optString("via", "A scanned code"),
-            it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } })
+            it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } }, it.optString("as").ifEmpty { null })
     } }
     /** How many relays this signer is connected to, of how many it wants. */
     fun relaysUp(): Pair<Int, Int> = opened.size to sockets.size
 
     /** A ticket for `origin`, good once and for 15 minutes, to be handed to the site that showed the code. */
-    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code"): JSONObject {
-        val npub = account() ?: refuse("no_account")
+    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code", place: String? = null): JSONObject {
+        // With a place, the site gets that place's own account (made before this is called), not this one.
+        val npub = (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         val t = JSONObject().put("v", 1).put("pubkey", npub).put("signer", pubkey).put("relays", JSONArray(relays)).put("t", hex(random(16))).put("expires", now() + TICKET_SECONDS)
         synchronized(state) {
-            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).apply { if (origin != null) put("origin", origin) })
+            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
             changed(state)
         }
         start()
@@ -78,10 +87,10 @@ class SiteSigner(
      * A site's nostrconnect:// code, after the person said yes: the site is put on the list and told so
      * with the code's own secret, on the relays the code names.
      */
-    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?) {
-        account() ?: refuse("no_account")
+    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?, place: String? = null) {
+        (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         synchronized(state) {
-            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").apply { if (origin != null) put("origin", origin) })
+            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
             changed(state)
         }
         start()
@@ -177,13 +186,14 @@ class SiteSigner(
                 val t = ticket ?: refuse("bad_secret")          // a ticket works once
                 state.put("tickets", keep)
                 state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", t.optJSONArray("relays") ?: JSONArray()).put("added", now()).put("used", now()).put("grant", hex(random(16)))
-                    .put("via", t.optString("via", "A scanned code")).apply { if (t.has("origin")) put("origin", t.getString("origin")) })
+                    .put("via", t.optString("via", "A scanned code")).apply { if (t.has("origin")) put("origin", t.getString("origin")); if (t.has("as")) put("as", t.getString("as")) })
                 changed(state)
             }
             return params.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: "ack"
         }
         val site = sites().firstOrNull { it.key == client } ?: refuse("not_connected")
-        val npub = account() ?: refuse("no_account")
+        // A site with an account of its own only ever sees that one.
+        val npub = (if (site.place != null) accountAs(site.place) else account()) ?: refuse("no_account")
         used(client)
         return when (method) {
             "ping" -> "pong"
