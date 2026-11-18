@@ -216,6 +216,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     /** The box says these were revoked: they go from this phone's lists too. */
     private fun dropRevoked(ids: Set<String>) {
+        rememberRevoked(ids)
         for (s in sites.sites()) if (s.grant in ids) { sites.signOut(s.key); note("${s.origin ?: "A site"} was signed out from your account page", "denied") }
         for (g in apps.all.keys.mapNotNull { appGrant(it) }) if (grantOf(g) in ids) { apps.edit().remove(g.pkg).apply(); note("${g.label} was signed out from your account page", "denied") }
         sharedXs.forgetAll(); showSites()
@@ -915,7 +916,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val grant = app?.let(::grantOf) ?: sites.sites().firstOrNull { it.key == site.pk }?.grant
         if (app != null) apps.edit().remove(app.pkg).apply() else sites.signOut(site.pk)
         // Revoked at the box too, so it sticks whichever device let it in. An older box has no such list.
-        held?.let { h -> if (grant != null) work.execute { try { Device.revoke(me(), h, grant, send(h)) } catch (_: Exception) { }; grantsChanged() } }
+        held?.let { h -> if (grant != null) { rememberRevoked(listOf(grant)); work.execute { try { Device.revoke(me(), h, grant, send(h)) } catch (_: Exception) { }; grantsChanged() } } }
         // Access has ended: what it could read with goes now, not when the screen does.
         sharedXs.forgetAll()
         showSites()
@@ -928,13 +929,26 @@ class Signer(private val context: Context, val slot: String = "0") {
         // A site with an account of its own signs and reads as that account only.
         val own = site.place?.let { childFor(it) }
         return when (method) {
-            "sign_event" -> signChecked(appEvent(params[0], own?.npub), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
+            "sign_event" -> signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
             "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant, own)
             "nip44_decrypt" -> nip44With(params[0], params[1], false, site.grant, own)
             "nip04_encrypt" -> nip04With(params[0], params[1], true, site.grant, own)
             "nip04_decrypt" -> nip04With(params[0], params[1], false, site.grant, own)
             else -> throw KeykinException("unsupported")
         }
+    }
+
+    /**
+     * A vault device cert a site asks this phone to sign (kind 4811, type "device") names the site's grant as its
+     * `keykin` label (vaults §3.4, as of adb7f42): a page can't know its grant id, and the label lets your other devices
+     * find the page's root when the grant is revoked. Only on a box account, and only as the account itself.
+     */
+    private fun labelled(e: Event, grant: String, asChild: Child?): Event {
+        if (e.kind != 4811 || held == null || asChild != null) return e
+        val o = try { JSONObject(e.content) } catch (_: Exception) { return e }
+        if (o.optString("type") != "device") return e
+        o.put("keykin", "grant:$grant")
+        return Event(e.pubkey, e.createdAt, e.kind, e.tags, cc.aaro.keykin.core.jcs(o)).withId()
     }
 
     // --- Signing -----------------------------------------------------------------------------------
@@ -1053,10 +1067,11 @@ class Signer(private val context: Context, val slot: String = "0") {
     private var screenOff: android.content.BroadcastReceiver? = null
 
     /** The x of the shared point with [peer], from this phone's part and the box's. The key is never whole. */
-    private fun sharedX(peer: String, grant: String?, asChild: Child? = null): ByteArray {
+    private fun sharedX(peer: String, grant: String?, asChild: Child? = null, keep: Boolean = true): ByteArray {
         // Kept per grant: a revoked site or app must not ride on a secret made for another. And per child.
         val slot = (grant ?: "") + ":" + (asChild?.npub?.let { "$it:" } ?: "") + peer
-        sharedXs[slot]?.let { return it.copyOf() }
+        if (keep) sharedXs[slot]?.let { return it.copyOf() }
+        val sharedXs = if (keep) sharedXs else Kept()
         if (held == null) {
             val k = localKey() ?: error("$appName isn't set up yet")
             if (asChild == null) try { return cc.aaro.keykin.core.Secp.ecdhX(k, peer).also { sharedXs[slot] = it.copyOf() } } finally { k.fill(0) }
@@ -1096,6 +1111,40 @@ class Signer(private val context: Context, val slot: String = "0") {
      * (NIP-78). The other side is always this account's own key, so this reads nobody else's messages.
      */
     fun nip44Self(text: String, encrypt: Boolean): String = nip44With(accountHex() ?: error("$appName isn't set up yet"), text, encrypt)
+
+    // --- Vaults (~/nostr-sync-nip/vaults.md §3.6, §12.2) --------------------------------------------
+    //
+    // A vault's keyring entry is sealed to this account with a one-time key: opening it is one `ecdh` with the box,
+    // between the account and that key. The ECDH output is used once and wiped, never kept (§3.2), and only a vault
+    // keyring payload comes back, so this can't be used to read anyone's messages.
+
+    /** The keyring payload sealed in `{eph, ct}`, or null if it doesn't open or isn't one. Blocks. */
+    fun openVaultSeal(eph: String, ct: String): String? {
+        if (!isHex32(eph)) return null
+        val x = sharedX(eph, null, keep = false)
+        val key = try { cc.aaro.keykin.core.Nip44.conversationKey(x) } finally { x.fill(0) }
+        val text = try { cc.aaro.keykin.core.Nip44.decrypt(ct, key) } catch (_: Exception) { return null } finally { key.fill(0) }
+        val o = try { JSONObject(text) } catch (_: Exception) { return null }
+        val hex64 = Regex("^[0-9a-f]{64}$"); val hex32 = Regex("^[0-9a-f]{32}$")
+        return text.takeIf { hex64.matches(o.optString("vault")) && hex64.matches(o.optString("genesis")) && hex32.matches(o.optString("d")) && o.has("role") }
+    }
+
+    /**
+     * Keykin's view for vaults, as JSON: this device's member key, the account's key epoch, the members (key → blocked)
+     * or null when the box can't be asked now, and every grant id the box has reported revoked to this phone. Null for
+     * an account with no box (the key on this phone). Blocks.
+     */
+    fun vaultKeykin(): String? {
+        val h = held ?: return null
+        val o = JSONObject().put("me", me().key).put("epoch", h.epoch).put("revokedGrants", JSONArray(revokedGrants().sorted()))
+        try {
+            val (list, epoch) = synchronized(boxLock) { Device.membersWithEpoch(me(), h, send(h)) }
+            o.put("epoch", epoch).put("members", JSONObject().apply { list.filter { it.kind != "box" }.forEach { put(it.key, it.blocked) } })
+        } catch (e: Exception) { blockedHere(e) }
+        return o.toString()
+    }
+    private fun revokedGrants(): Set<String> = secrets.load("revokedGrants")?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) }.toSet() } ?: emptySet()
+    private fun rememberRevoked(ids: Collection<String>) = synchronized(childLock) { secrets.save("revokedGrants", JSONArray((revokedGrants() + ids).sorted()).toString()) }
 
     // --- Child keys, one per place (Keykin SPEC 8k) -------------------------------------------------
     //

@@ -17,7 +17,8 @@ android {
     testOptions { unitTests.isReturnDefaultValues = true }
     tasks.withType<Test> {
         // The end-to-end tests against a running vaults-test-server and Keykin box are skipped unless these are set.
-        listOf("VAULTS_SERVER", "VAULTS_SERVER2", "KEYKIN_BOX", "KEYKIN_SETUP").forEach { k -> System.getenv(k)?.let { environment(k, it) } }
+        outputs.upToDateWhen { false }
+        listOf("VAULTS_INTEROP", "VAULTS_SERVER", "VAULTS_SERVER2", "KEYKIN_BOX", "KEYKIN_SETUP").forEach { k -> System.getenv(k)?.let { environment(k, it) } }
     }
 }
 

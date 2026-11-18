@@ -119,6 +119,10 @@ class SignerService : Service() {
             signers.signer(slot)?.nip44Self(text, encrypt)
         } catch (e: Exception) { null }
 
+        // Both block (the box takes part): the app calls them off its main thread.
+        override fun vaultSeal(slot: String, eph: String, ct: String): String? = try { signers.signer(slot)?.openVaultSeal(eph, ct) } catch (e: Exception) { null }
+        override fun vaultKeykin(slot: String): String? = try { signers.signer(slot)?.vaultKeykin() } catch (e: Exception) { null }
+
         override fun latest(slot: String, key: String): String? = signers.signer(slot)?.latest(key)?.toJson()
 
         override fun add(): String = onMain { signers.add().slot }

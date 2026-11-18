@@ -175,6 +175,11 @@ object Device {
     }
 
     fun membersAndNext(me: Me, h: Held, send: Send) = listing(me, h, send)
+    /** The members and the account's key epoch as the box answers now (vaults count a member gone after a cycle by it). */
+    fun membersWithEpoch(me: Me, h: Held, send: Send = http(h.addr)): Pair<List<Member>, Int> {
+        val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me)); val a = r.getJSONArray("members")
+        return List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getString("key"), m.getInt("i"), m.getString("name"), m.getString("kind"), m.has("chip"), m.getBoolean("blocked"), m.getLong("added"), if (m.has("addr")) m.getString("addr") else null) } } to r.optInt("epoch", h.epoch)
+    }
     fun members(me: Me, h: Held, send: Send = http(h.addr)): List<Member> = listing(me, h, send).first
     private fun listing(me: Me, h: Held, send: Send): Pair<List<Member>, Int> {
         val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me)); val a = r.getJSONArray("members")

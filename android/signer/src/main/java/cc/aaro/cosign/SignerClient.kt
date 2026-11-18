@@ -215,6 +215,11 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
      */
     fun nip44Self(text: String, encrypt: Boolean): String? = try { signer()?.nip44Own(slot, text, encrypt) } catch (e: Exception) { null }
 
+    /** Vaults: a keyring entry's seal opened (one `ecdh` with your box), or null. Blocks; never on the main thread. */
+    fun vaultSeal(eph: String, ct: String): String? = try { signer()?.vaultSeal(slot, eph, ct) } catch (e: Exception) { null }
+    /** Vaults: Keykin's view of the account (JSON), or null without a box or a signer. Blocks. */
+    fun vaultKeykin(): String? = try { signer()?.vaultKeykin(slot) } catch (e: Exception) { null }
+
     /** The latest version of one of your lists this phone has seen signed ("3": your follows). */
     fun latest(key: String): Event? = try { signer()?.latest(slot, key)?.let { Event.fromMap(Json.parse(it)) } } catch (e: Exception) { null }
 }

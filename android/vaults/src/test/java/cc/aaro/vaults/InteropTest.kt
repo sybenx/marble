@@ -1,0 +1,90 @@
+package cc.aaro.vaults
+
+import cc.aaro.keykin.core.hex
+import cc.aaro.keykin.core.unhex
+import org.json.JSONObject
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * Interop with Marble Web's core, on the local vaults-test-server (7447 relay and Blossom, 7448 Blossom). Skipped unless
+ * VAULTS_INTEROP is set:
+ *   open:<nsec hex>[:<note id>=<text>,...][:done=<id>]   open Web's vault, print the notes, edit and tick
+ *   create                                                make a notes vault with a fresh test key, print its nsec
+ * The device's store is kept in build/interop-<npub>, so a second run is the same device.
+ */
+class InteropTest {
+    private val relays = listOf("ws://127.0.0.1:7447")
+    private val servers = listOf("http://127.0.0.1:7447", "http://127.0.0.1:7448")
+
+    private class FileStore(val dir: File) : Store {
+        init { dir.mkdirs() }
+        private fun f(k: String) = File(dir, k.replace('/', '_'))
+        override fun get(k: String) = f(k).takeIf { it.exists() }?.readText()
+        override fun put(k: String, v: String?) { if (v == null) f(k).delete() else f(k).writeText(v) }
+    }
+    private fun vaults(sk: ByteArray): Vaults {
+        val net = OkNet(); val acc = NsecAccount(sk)
+        return Vaults(acc, net, net, FileStore(File("build/interop-" + acc.npub.take(12))), WallClock, { relays }, "Android engine (JVM)")
+    }
+    private fun show(v: Vault) {
+        for (e in v.state().entries.values.sortedBy { it.shown.meta.optString("id") }) {
+            val p = e.shown
+            val text = p.data?.takeIf { it.has("text") }?.optString("text") ?: p.data?.optJSONObject("blob")?.let { BlobRef.of(it) }?.let { v.fetch(it)?.let(::String) }
+            println("NOTE ${p.meta.optString("id")} deleted=${e.deleted} done=${p.meta.optBoolean("done")} versions=${e.current.size} text=${text?.take(60)?.replace("\n", "\\n")} (${text?.length})")
+        }
+        println("DEVICES " + v.devices().joinToString { "${it.name} trusted=${it.trusted}" })
+        println("DEBUG " + v.debug())
+    }
+    private fun note(v: Vault, id: String): Put? = v.state().entries[entryOf(id)]?.shown
+
+    @Test fun interop() {
+        val mode = System.getenv("VAULTS_INTEROP") ?: System.getProperty("vaults.interop")
+        assumeTrue(mode != null)
+        val parts = mode!!.split(":")
+        when (parts[0]) {
+            "open" -> {
+                val vs = vaults(unhex(parts[1]))
+                val p = vs.findOwned("notes", vs.keyrings()!!) ?: error("no notes vault")
+                val v = vs.join(p)
+                check(v.catchUp())
+                show(v)
+                val edits = parts.drop(2).flatMap { it.split(",") }.filter { '=' in it }.map { it.substringBefore('=') to it.substringAfter('=') }
+                val now = WallClock.now()
+                for ((k, value) in edits) {
+                    val ids = if (k == "done") listOf(value) else listOf(k)
+                    val base = note(v, ids[0]) ?: error("no note ${ids[0]}")
+                    val meta = base.meta.copy().put("updated", now)
+                    var data = base.data
+                    if (k == "done") meta.put("done", true).put("done_at", now) else data = JSONObject().put("text", value)
+                    v.enqueue(listOf(Put.make(base.entry, listOf(base.ver), meta, data, false).json))
+                }
+                if (edits.isNotEmpty()) { check(v.sync()); println("EDITED"); show(v) }
+            }
+            "create" -> {
+                val sk = Keys.newSecret()
+                val vs = vaults(sk)
+                val v = vs.create("notes", "Notes", relays, servers)
+                val t = WallClock.now()
+                fun mk(id: String, text: String, done: Boolean = false): JSONObject {
+                    val m = JSONObject().put("kind", "note").put("created", t).put("title", "").put("tags", org.json.JSONArray()).put("done", done).put("pinned", false).put("id", id).put("updated", t)
+                    if (done) m.put("done_at", t)
+                    val data = if (text.toByteArray().size > 4096) JSONObject().put("blob", v.upload(text.toByteArray(), need = 2)!!.json) else JSONObject().put("text", text)
+                    return Put.make(entryOf(id), emptyList(), m, data, false).json
+                }
+                // An import's batch: 300 notes and two removals, as the v3 import writes them.
+                val batch = (1..300).map { mk("a%015x".format(it), "Imported note $it") } +
+                    listOf("b000000000000001", "b000000000000002").map { Put.make(entryOf(it), emptyList(), JSONObject().put("kind", "note"), null, true).json }
+                v.enqueue(batch); check(v.sync())
+                v.enqueue(listOf(mk("c000000000000001", "Buy milk"), mk("c000000000000002", "Done one", done = true), mk("c000000000000003", "Long note: " + "lorem ipsum ".repeat(500))))
+                check(v.sync())
+                check(v.writeCheckpoint())
+                v.enqueue(listOf(mk("c000000000000004", "After the checkpoint")))
+                check(v.sync())
+                show(v)
+                println("CREATED nsec=${hex(sk)} npub=${vs.account.npub} vault=${v.id}")
+            }
+        }
+    }
+}

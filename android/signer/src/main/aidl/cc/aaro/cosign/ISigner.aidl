@@ -27,6 +27,15 @@ interface ISigner {
      */
     String nip44Own(String slot, String text, boolean encrypt);
 
+    /**
+     * Vaults: open a keyring entry's `self` seal (NIP-44 between this account and the one-time key [eph]). Only a vault
+     * keyring payload comes back, so this reads no one's messages. Null if it doesn't open or isn't one.
+     */
+    String vaultSeal(String slot, String eph, String ct);
+
+    /** Vaults: Keykin's view of the account as JSON (member key, epoch, members, revoked grants), or null without a box. */
+    String vaultKeykin(String slot);
+
     /** The newest signed version of one of your lists ("3": follows), as JSON, or null. */
     String latest(String slot, String key);
 
