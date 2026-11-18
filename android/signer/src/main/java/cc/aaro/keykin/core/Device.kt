@@ -25,16 +25,16 @@ class Held(var piece: Piece, val npub: String, val boxKey: String, val addr: Str
     }
 }
 data class Member(val key: String, val i: Int, val name: String, val kind: String, val chip: Boolean, val blocked: Boolean, val added: Long, val addr: String? = null)
-data class Qr(val addr: String, val key: String, val code: String)
+data class Qr(val addr: String, val key: String, val code: String, val login: String? = null)
 data class Invite(val key: String, val name: String, val chip: String?)
-data class JoinText(val addr: String, val boxKey: String, val npub: String)
+data class JoinText(val addr: String, val boxKey: String, val npub: String, val login: String? = null)
 
 object Texts {
     private val KEY = Regex("^[0-9a-f]{64}$")
     fun qr(text: String): Qr = try {
         val q = JSONObject(text)
         if (q.optInt("keykin") != 2 || !KEY.matches(q.getString("key"))) refuse("bad_qr")
-        Qr(q.getString("addr"), q.getString("key"), q.getString("code"))
+        Qr(q.getString("addr"), q.getString("key"), q.getString("code"), q.optString("loginPage").ifEmpty { null })
     } catch (e: KeykinException) { throw e } catch (_: Exception) { refuse("bad_qr") }
     fun invite(me: Me): String = JSONObject().put("keykin", 2).put("invite", JSONObject().put("key", me.key).put("name", me.name).apply { if (me.chip != null) put("chip", me.chip) }).toString()
     fun readInvite(text: String): Invite = try {
@@ -42,11 +42,11 @@ object Texts {
         if (!KEY.matches(i.getString("key"))) refuse("bad_invite")
         Invite(i.getString("key"), i.getString("name"), if (i.has("chip")) i.getString("chip") else null)
     } catch (e: KeykinException) { throw e } catch (_: Exception) { refuse("bad_invite") }
-    fun join(h: Held): String = JSONObject().put("keykin", 2).put("join", JSONObject().put("addr", h.addr).put("boxKey", h.boxKey).put("npub", h.npub)).toString()
+    fun join(h: Held, login: String? = null): String = JSONObject().put("keykin", 2).put("join", JSONObject().put("addr", h.addr).put("boxKey", h.boxKey).put("npub", h.npub).apply { if (login != null) put("loginPage", login) }).toString()
     fun readJoin(text: String): JoinText = try {
         val j = JSONObject(text).getJSONObject("join")
         if (!KEY.matches(j.getString("boxKey")) || !KEY.matches(j.getString("npub"))) refuse("bad_join")
-        JoinText(j.getString("addr"), j.getString("boxKey"), j.getString("npub"))
+        JoinText(j.getString("addr"), j.getString("boxKey"), j.getString("npub"), j.optString("loginPage").ifEmpty { null })
     } catch (e: KeykinException) { throw e } catch (_: Exception) { refuse("bad_join") }
 }
 

@@ -1,16 +1,17 @@
-// Notes and tabs, as the Marble app keeps them (android Later.kt; the Mac writes the same). Notes: what you typed
-// and pressed Enter on, or kept; on your account as kind 30078 d=marble/later, NIP-44 to yourself, merged item by
-// item (the newer `updated` wins; removed ones stay a month as markers so other devices learn it). Here they live
-// in this browser, and sync only when you signed in with the Marble extension: signed in by your phone's code,
-// they stay here (your servers don't encrypt for sites, on purpose). Tabs: pages opened from Marble, in this browser.
-// Notes, Searches and Tabs belong to the account signed in (and those from while nobody was, to nobody): another
-// account never sees them or gets them merged in, and signing out leaves none of them on the page
-// (~/igloo/signin-signout-audit.md, fix 3).
+// Notes and tabs, as the Marble app keeps them. Notes: what you typed and pressed Enter on, or kept. Once your account
+// has a notes vault (your phone makes it: vaults.md, notes-vault.js), they're read from and written to it, from any
+// sign-in that can (the extension, or your phone's signer). Before that, as before vaults: on your account as kind 30078
+// d=marble/later, NIP-44 to yourself, merged item by item (the newer `updated` wins; removed ones stay a month as
+// markers so other devices learn it), synced only when you signed in with the extension; otherwise in this browser.
+// Tabs: pages opened from Marble, in this browser. Notes, Searches and Tabs belong to the account signed in (and those
+// from while nobody was, to nobody): another account never sees them or gets them merged in, and signing out leaves
+// none of them on the page (~/igloo/signin-signout-audit.md, fix 3).
 import { req, relays, publish, FAST, testRelay } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
-// Android's notes v3 packs, read only (a stopgap until vaults): notes only there show here, but can't be changed here
-import * as packs from "./notes-v3.js";
+// Notes on vaults (notes-vault.js): once your account has a notes vault (your phone makes it), Notes are read from and
+// written to it, from any sign-in that can (the extension, or your phone's signer), and marble/later isn't written here
+import * as vault from "./notes-vault.js";
 import { decide, completeRead, fullRead, written, retryAfter, missesAgainst } from "./sync-guard.js";
 import { accountRelays, heard } from "./account-relays.js";
 
@@ -50,19 +51,10 @@ export const same = (a, b) => words(a) === words(b);
 const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, "0")).join("");
 const next = (item) => Math.max(now(), (item.updated || 0) + 1);
 
-/**
- * The notes you see (not removed), newest first: this browser's, and the ones only in Android's packs (readOnly). A
- * note the packs have newer shows as the packs have it; one removed there doesn't show.
- */
+/** The notes you see (not removed), newest first: the vault's when your account has one, else this browser's. */
 export function items() {
-  const fromPacks = new Map(packs.packNotes().map((n) => [n.id, n]));
-  const mine = doc.items.filter((i) => !packs.removedInPacks(i.id)).map((i) => {
-    const p = fromPacks.get(i.id);
-    fromPacks.delete(i.id);
-    return p && (p.updated > (i.updated || 0) || i.long) ? { ...i, text: p.text, done: p.updated > (i.updated || 0) ? p.done ?? null : i.done, url: p.url ?? i.url, quote: p.quote ?? i.quote } : i;
-  });
-  const only = [...fromPacks.values()].map((n) => ({ id: n.id, text: n.text, created: n.created, updated: n.updated, done: n.done ?? null, deleted: null, url: n.url, quote: n.quote, from: n.from, readOnly: true }));
-  return [...mine, ...only].filter((i) => !i.deleted && String(i.text || "").trim()).sort((a, b) => b.created - a.created);
+  const list = vault.active() ? vault.notes().map((i) => (i.long ? { ...i, text: vault.textOf(i) } : i)) : doc.items;
+  return list.filter((i) => !i.deleted && String(i.text || "").trim()).sort((a, b) => b.created - a.created);
 }
 export const open = () => items().filter((i) => !i.done);
 export const doneItems = () => items().filter((i) => i.done);
@@ -72,6 +64,7 @@ export const saved = (text) => items().find((i) => !i.url && !i.done && same(wor
 export const wordsOf = (text) => String(text || "").split("\n→ ")[0];
 
 function put(item) {
+  if (vault.active() && vault.write(item)) { listeners.forEach((fn) => fn()); return; }
   doc.items = doc.items.filter((i) => i.id !== item.id).concat(item);
   doc.at = Math.max(...doc.items.map((i) => i.updated || 0), now());
   write(KEY(who), doc);
@@ -83,7 +76,7 @@ function put(item) {
 export function jot(text) {
   const t = String(text || "").trim().slice(0, 500);
   if (!t) return null;
-  const have = doc.items.find((i) => !i.url && !i.deleted && same(wordsOf(i.text), t));
+  const have = all().find((i) => !i.url && !i.deleted && same(wordsOf(i.text), t));
   const item = have ? { ...have, done: null, updated: next(have) } : { id: newId(), text: t, created: now(), updated: now(), done: null, deleted: null };
   put(item);
   return { item, fresh: !have };
@@ -94,7 +87,7 @@ export function jot(text) {
 export const NOTE_MAX = 500;
 export function keepPage(url, title, note = "") {
   const n = String(note || "").trim();
-  const have = doc.items.find((i) => i.url === url && !i.deleted);
+  const have = all().find((i) => i.url === url && !i.deleted);
   // (your words are never cut: a note that won't fit isn't kept, null; a Note already there keeps its text as it is)
   // (the item's own title, not yours, is shortened to leave room for your note)
   const t = have ? have.text + (n ? `\n${n}` : "") : n ? `${String(title || url).trim().slice(0, Math.max(0, NOTE_MAX - n.length - 1))}\n${n}` : String(title || url).trim().slice(0, NOTE_MAX);
@@ -158,12 +151,14 @@ export const offered = () => read(OFFERED(who), null);
 export const offer = (id) => { const o = offered(); if (o?.id !== id || Math.floor(o.at / 86400) !== Math.floor(now() / 86400)) write(OFFERED(who), { id, at: now() }); };
 /** Next step: one step written into the note, on a new line ("→ step"). */
 export function nextStep(item, step) {
-  const i = doc.items.find((x) => x.id === item.id), t = String(step || "").trim();
+  const i = all().find((x) => x.id === item.id), t = String(step || "").trim();
   if (i && t) put({ ...i, text: `${i.text}\n→ ${t}`.slice(0, 500), updated: next(i) });
 }
 
-// Changes go to this browser's own copy of the note only (never one only in Android's packs, or the packs' text).
-const own = (item) => doc.items.find((i) => i.id === item.id);
+// Changes start from the note as Notes shows it: the vault's, or this browser's copy.
+const own = (item) => all().find((i) => i.id === item.id);
+// the notes changes start from: the vault's when it's open, else this browser's copy
+const all = () => (vault.active() ? vault.notes() : doc.items);
 export const tick = (item, on) => { const i = own(item); if (i) put({ ...i, done: on ? now() : null, updated: next(i) }); };
 /** Removed: only a marker stays (no text), for a month, so other devices learn it. */
 export const remove = (item) => { const i = own(item); if (i) put({ ...i, text: "", deleted: now(), updated: next(i) }); };
@@ -190,10 +185,12 @@ function merge(theirs) {
 
 // An extension that can't encrypt for this site (paired to the phone: your servers don't, on purpose) doesn't sync.
 let noEncrypt = false;
-export const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt;
+export const syncs = () => vault.active() || (!!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt);
+/** marble/later is synced only while there's no vault (it stays as the phone left it once there is). */
+const laterSyncs = () => !vault.active() && !!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt;
 // The last try at syncing failed (not because it can't sync at all): Notes says so, quietly.
 let failing = false;
-export const syncFailing = () => syncs() && failing;
+export const syncFailing = () => (vault.active() ? ["offline", "error"].includes(vault.state()) : syncs() && failing);
 const failed = (err) => {
   if (/unsupported/i.test(String(err?.message || err))) noEncrypt = true;
   else failing = true;
@@ -204,7 +201,7 @@ function changed() {
   dirty = true;
   version++; // (a change made while a send is under way is sent next, never marked sent by it)
   write(DIRTY(who), true);
-  if (!syncs()) return;
+  if (!laterSyncs()) return;
   failures = 0;
   stopped = false; // (your change: worth one more try at a copy that wouldn't decrypt)
   clearTimeout(sendTimer);
@@ -226,7 +223,7 @@ async function where() {
 let pulling = null, pullingFor = null, pullRetry = null, pullFails = 0;
 export function pull({ force = false } = {}) {
   // (a copy that won't decrypt isn't asked about again, not even on coming back to the tab, until you change something)
-  if (!syncs() || stopped || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(stopped ? null : false);
+  if (!laterSyncs() || stopped || (!force && Date.now() - lastPull < 60000)) return Promise.resolve(stopped ? null : false);
   // (one read at a time: two asks at once would be two decrypt prompts)
   if (pulling && pullingFor === current()) return pulling;
   pullingFor = current();
@@ -244,7 +241,6 @@ async function pullNow() {
   if (me !== who) return null; // (signed out or in as someone else meanwhile)
   if (!answer.answered) { failing = true; listeners.forEach((fn) => fn()); retryPull(); return null; } // (couldn't ask: not "nothing there")
   pullFails = 0;
-  readPacks(me); // (Android's packs, read only: whatever the old list says, even "moved")
   found = got?.created_at || 0;
   let theirs = null;
   if (got) {
@@ -269,29 +265,10 @@ async function pullNow() {
   return !!theirs;
 }
 
-// Android's packs, read (never written): one NIP-44 decrypt per pack not taken yet
-function readPacks(me) {
-  where().then((w) => w && packs.readPacks(me, {
-    req: (urls, filter) => req(urls, filter, { timeout: 6000, settle: 1200 }),
-    relays: w.both,
-    decrypt: (text) => nip44Self(text, false),
-    fetchBlob,
-  })).catch(() => {});
-}
-async function fetchBlob(sha256, servers) {
-  for (const s of [...servers, "https://blossom.syb.lol"]) {
-    try {
-      const r = await fetch(`${s.replace(/\/+$/, "")}/${sha256}`, { signal: AbortSignal.timeout(15000) });
-      if (r.ok) return new Uint8Array(await r.arrayBuffer());
-    } catch {}
-  }
-  return null;
-}
-
 let sending = false;
 /** Sends your notes to your account: read and merged first, so another device's changes are never lost. */
 export async function send() {
-  if (!syncs() || sending) return;
+  if (!laterSyncs() || sending) return;
   sending = true;
   const me = who;
   try {
@@ -334,8 +311,6 @@ function switchTo(pk) {
   if (pk === who) return;
   const was = who;
   if (was && !pk && read(SYNCED(was), false) && !dirty) for (const k of [KEY(was), DIRTY(was)]) try { localStorage.removeItem(k); } catch {}
-  if (was) packs.forget(was); // (what was read from the packs is only ever a copy: it goes on any switch)
-  if (pk) packs.show(pk);
   who = pk;
   doc = load(pk);
   dirty = read(DIRTY(pk), false);
@@ -343,6 +318,19 @@ function switchTo(pk) {
   lastPull = 0;
   clearTimeout(sendTimer);
   listeners.forEach((fn) => fn());
+}
+
+/**
+ * Once the vault is open: this browser's notes the vault has never had (made here and not yet on your phone) go into
+ * it, under the same entry your phone would give them (notes-vault.js). A note the vault has, in any version, deleted
+ * included, is left to the vault.
+ */
+let adopted = "";
+function adoptIntoVault() {
+  // (only once everything the vault names has loaded: a batch still missing may hold these very notes, §7.4)
+  if (adopted === who || vault.syncing()) return;
+  adopted = who;
+  for (const i of doc.items) if (!i.deleted && String(i.text || "").trim() && !vault.has(i.id)) vault.write(i);
 }
 
 /** Notes made while nobody was signed in, offered to the account now signed in (never merged in by themselves). */
@@ -359,16 +347,15 @@ export function dropStrays() {
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && dirty && syncs() && !stopped) { clearTimeout(sendTimer); send(); }
+    if (document.visibilityState === "hidden" && dirty && laterSyncs() && !stopped) { clearTimeout(sendTimer); send(); }
     if (document.visibilityState === "visible") pull();
   });
   onMe((pk) => { switchTo(pk); pull(); });
-  packs.onPacks(() => listeners.forEach((fn) => fn()));
-  if (who) packs.show(who);
+  vault.onVault(() => { if (vault.state() === "open") adoptIntoVault(); listeners.forEach((fn) => fn()); });
   // when the page starts (the extension may arrive a moment later): your account's copy in, and yours out if unsent
   setTimeout(async () => {
     for (let i = 0; i < 10 && current() && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150));
-    if (!syncs()) return;
+    if (!laterSyncs()) return;
     if (dirty) send(); else pull({ force: true }).catch(() => {}); // (send reads and merges first)
   }, 500);
 }

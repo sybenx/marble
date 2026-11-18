@@ -153,6 +153,7 @@ class SignerService : Service() {
             "askAccount" -> s.askAccount(text?.substringBefore('\n') ?: return, text.substringAfter('\n', ""))
             "cancelAsk" -> s.cancelAsk(); "startAsk" -> s.startAsk(); "closeAsk" -> s.closeAsk()
             "testRelays" -> s.testRelays(text ?: return)
+            "pointerNow" -> s.pointerNow()
             "setPassword" -> s.setPassword(text ?: return)
             "clearPassword" -> s.clearPassword()
             "setLoginPage" -> s.setLoginPage(text ?: "")

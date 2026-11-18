@@ -176,6 +176,8 @@ class MainActivity : ComponentActivity() {
             "show" -> CosignApp.instance.accounts.all.getOrNull(intent.getIntExtra("n", 0))?.let { CosignApp.instance.accounts.show(it.slot) }
             "deny" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, false) }
             "testRelays" -> p.testRelays(intent.getStringExtra("arg") ?: "")
+            // Run the login-page pointer step for this account again, as after joining a box (logged under Keykin).
+            "pointer" -> p.pointerNow()
             "closeAll" -> { p.closeConnect(); p.closeJoinText(); p.closeBunker(); p.closeTakeOut(); p.clearError() }
             "approve" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, true) }
             "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.outside) " (elsewhere)" else "") + (if (it.held) " (amber)" else "") + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} tap=${u.tap?.title} bringing=${u.bringing} keptKey=${u.keptKey} box=${u.member?.box} move=${u.move} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })

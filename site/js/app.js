@@ -12,6 +12,7 @@ import { current as currentMe, onMe, signOut, myFollows } from "./me.js";
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import { openAccountPage } from "./account-page.js";
 import * as notes from "./later.js";
+import * as vault from "./notes-vault.js";
 import { showReader } from "./reader.js";
 import { follow, following } from "./follow.js";
 import { focusList, goTo } from "./home-rules.js";
@@ -1278,7 +1279,7 @@ function boxState() {
         if (!it) continue;
         rows.push({ own: it, shelf: r.kind });
         // the older note's choices, as options of their own (so the arrow keys and a screen reader reach them)
-        if (r.kind === "older" && choicesFor === it.id) for (const act of it.readOnly ? ["view"] : ["step", "view", "go"]) rows.push({ act, own: it });
+        if (r.kind === "older" && choicesFor === it.id) for (const act of ["step", "view", "go"]) rows.push({ act, own: it });
       }
     }
     const older = list.find((r) => r.kind === "older");
@@ -1560,15 +1561,26 @@ function showNotes(signal, tab) {
   };
   const host = (u) => notes.hostOf(u);
   const noteRow = (i, f) => `<div class="note-row${i.done ? " is-done" : ""}" data-id="${i.id}">
-      ${i.readOnly ? `<span class="tick read-only" aria-hidden="true">${i.done ? TICK : "<span></span>"}</span>`
-        : `<button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>`}
+      <button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>
       <a class="note-main" href="${i.url ? esc(i.url) : "#"}" data-open ${i.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
         <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(notes.wordsOf(i.text), f)}</span>${i.text.includes("\n→ ") ? `<span class="nstep">${esc(i.text.slice(notes.wordsOf(i.text).length + 1))}</span>` : ""}
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
-          <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.readOnly && "change it in Marble on your phone"].filter(Boolean).join(" · "))}</span></span>
+          <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.deletedOn && `deleted on ${i.deletedOn}`].filter(Boolean).join(" · "))}</span></span>
       </a>
-      ${i.readOnly ? "" : `<button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}
+      ${i.conflict ? `<button type="button" class="link versions" data-versions aria-expanded="${openConflict === i.id}">${i.versions.length} versions</button>` : ""}
+      <button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>${i.conflict && openConflict === i.id ? conflictPanel(i) : ""}`;
+  // A conflict (vaults §5.4, §11.1): both texts side by side; keep one, keep both, or write the one you want
+  let openConflict = null, editing = null;
+  const conflictPanel = (i) => `<div class="conflict" data-conflict="${esc(i.id)}">
+      <p class="conflict-why">Changed on two devices at once. Pick the one to keep.</p>
+      <div class="conflict-sides">${i.versions.map((v) => `<div class="conflict-side">
+        <span class="nm">${esc(v.device)}</span><p class="conflict-text">${esc(v.text)}</p>
+        <button type="button" class="si-button small" data-keepver="${esc(v.ver)}">Keep this</button></div>`).join("")}</div>
+      ${editing === i.id ? `<textarea class="conflict-edit" rows="4" aria-label="Your version">${esc(i.versions[0].text)}</textarea>
+        <div class="conflict-acts"><button type="button" class="si-button small" data-combine>Save this version</button> <button type="button" class="link" data-editcancel>Cancel</button></div>`
+        : `<div class="conflict-acts"><button type="button" class="link" data-keepboth>Keep both</button> <button type="button" class="link" data-edit>Edit</button></div>`}
     </div>`;
   const tabRow = (p) => {
     const kept = notes.items().some((i) => i.url === p.url);
@@ -1603,7 +1615,9 @@ function showNotes(signal, tab) {
       : show === "tabs"
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : shelfHtml + (these.length ? these.map((i) => noteRow(i, f)).join("") : shelf.length ? "" : empty);
-    $(".only-you", root).innerHTML = `${LOCK}Only you${notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
+    const vs = vault.state();
+    $(".only-you", root).innerHTML = `${LOCK}Only you${vault.active() ? vs === "removed" ? " · this browser was removed from your account, so changes here aren't saved" : vs === "opening" ? " · opening…" : vault.syncing() ? " · syncing…" : notes.syncFailing() ? " · can't reach your relays right now, changes wait here" : ""
+      : notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
     const strays = notes.strays(), bar = $(".strays", root);
     bar.hidden = !strays.length;
@@ -1626,7 +1640,18 @@ function showNotes(signal, tab) {
     }
     const sr = ev.target.closest("[data-search]");
     if (sr) { ev.preventDefault(); input.value = sr.dataset.search; return showResults(sr.dataset.search); }
+    const cf = ev.target.closest("[data-conflict]"), citem = cf && notes.items().find((i) => i.id === cf.dataset.conflict);
+    if (citem) {
+      const kv = ev.target.closest("[data-keepver]");
+      if (kv) { openConflict = null; return vault.keepVersion(citem, kv.dataset.keepver); }
+      if (ev.target.closest("[data-keepboth]")) { openConflict = null; return vault.keepBoth(citem, () => [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, "0")).join("")); }
+      if (ev.target.closest("[data-edit]")) { editing = citem.id; return draw(); }
+      if (ev.target.closest("[data-editcancel]")) { editing = null; return draw(); }
+      if (ev.target.closest("[data-combine]")) { const t = $(".conflict-edit", cf).value.trim(); if (!t) return; editing = openConflict = null; return vault.combine(citem, t); }
+      return;
+    }
     const row = ev.target.closest(".note-row"), item = row && notes.items().find((i) => i.id === row.dataset.id);
+    if (item && ev.target.closest("[data-versions]")) { openConflict = openConflict === item.id ? null : item.id; editing = null; return draw(); }
     if (item && ev.target.closest("[data-tick]")) return notes.tick(item, !item.done);
     if (item && ev.target.closest("[data-remove]")) return notes.remove(item);
     if (item && ev.target.closest("[data-open]")) {
