@@ -1,17 +1,22 @@
-// Who's signed in, and how: the Marble browser extension (NIP-07), or your phone (NIP-46: the code Marble
-// scans; see connect.js). Remembered in this browser only. On localhost, ?as=<hex> acts as that account,
+// Who's signed in, and how: your phone or another signer app (NIP-46: the code Marble scans, the login page your
+// account names, or a bunker link; see connect.js). The browser extension is gone: a sign-in from it is signed out once. Remembered in this browser only. On localhost, ?as=<hex> acts as that account,
 // read-only (testing).
 import { req, relays, verify, FAST, INDEXERS } from "./pool.js";
 import { outbox, keep } from "./data.js";
 import { isHex64 } from "./ids.js";
 
 const KEY = "marble.me";
-let state = null; // {pubkey, method: "extension" | "phone" | null, phone?: {sk, signer, relays}}
+let state = null; // {pubkey, method: "phone" | null, phone?: {sk, signer, relays}}
+let wasExtension = false;
 try {
   const raw = localStorage.getItem(KEY);
-  if (isHex64(raw)) state = { pubkey: raw, method: "extension" }; // as the first version saved it
+  if (isHex64(raw)) wasExtension = true; // the extension, as the first version saved it
   else if (raw) state = JSON.parse(raw);
+  if (state?.method === "extension") { wasExtension = true; state = null; }
+  if (wasExtension) localStorage.removeItem(KEY);
 } catch {}
+/** Whether this page had a sign-in from the browser extension, now signed out (said once: act.js). */
+export const extensionSignedOut = () => wasExtension;
 const as = new URLSearchParams(location.search).get("as");
 if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && isHex64(as)) state = { pubkey: as.toLowerCase(), method: null };
 if (!isHex64(state?.pubkey)) state = null;
@@ -24,11 +29,9 @@ const asks = new Set();
 export const onAsk = (fn) => asks.add(fn);
 export const current = () => state?.pubkey || null;
 export const method = () => state?.method || null;
-/** Whether a browser extension is here to sign in with. Extensions may arrive a moment after the page. */
-export const hasExtension = () => !!window.nostr?.getPublicKey;
 
 // ── Signed out somewhere else ──
-// Taking this site away in the extension, on the phone, or removing the device: the site finds out at its next
+// Taking this site away on the phone, or removing the device: the site finds out at its next
 // contact (a refusal that says so, or another account answering) and shows itself signed out, rather than keeping a
 // sign-in that no longer works (~/igloo/signin-signout-audit.md, fix 2). onSignedOut(fn) tells the page, once.
 const outs = new Set();
@@ -40,27 +43,11 @@ function signedOutElsewhere() {
   release();
   outs.forEach((fn) => fn());
 }
-/** A refusal from the extension or the phone: signed out, if it says we are. Returns the error, to throw on. */
+/** A refusal from the signer: signed out, if it says we are. Returns the error, to throw on. */
 function checked(err) {
   if (state && GONE.test(String(err?.message || err))) signedOutElsewhere();
   return err;
 }
-// The extension says so itself (the Marble extension, when it removes this site or signs out): at once.
-if (typeof window !== "undefined") window.addEventListener("marble:signedout", () => { if (state?.method === "extension") signedOutElsewhere(); });
-// On load, signed in by extension: one quiet check of which account it is, but only with an extension that promises
-// never to open a window without a click (the Marble extension's __marble); any other might ask every load. __marble
-// shows only on sites connected in this browser, a moment after window.nostr (its background may be asleep): waited
-// for up to 2 s, and with none, no check.
-if (typeof window !== "undefined" && state?.method === "extension") setTimeout(async () => {
-  for (let i = 0; i < 10 && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150)); // (extensions arrive late)
-  for (let i = 0; window.nostr && !window.nostr.__marble && i < 14; i++) await new Promise((r) => setTimeout(r, 150));
-  if (!window.nostr?.__marble || state?.method !== "extension") return;
-  try {
-    const pk = String(await window.nostr.getPublicKey()).toLowerCase();
-    if (state?.method === "extension" && pk !== state.pubkey) signedOutElsewhere();
-  } catch (err) { checked(err); }
-}, 0);
-
 function set(next) {
   remote?.stop?.();
   remote = null;
@@ -70,14 +57,6 @@ function set(next) {
   follows = null;
   try { next ? localStorage.setItem(KEY, JSON.stringify(next)) : localStorage.removeItem(KEY); } catch {}
   listeners.forEach((fn) => fn(current()));
-}
-
-/** Asks the extension which account this is. It may wait for you to approve in the extension's window. */
-export async function signInWithExtension() {
-  const pk = await window.nostr.getPublicKey();
-  if (!isHex64(pk)) throw new Error("no account");
-  set({ pubkey: pk.toLowerCase(), method: "extension" });
-  return current();
 }
 
 /** Your phone connected (connect.js phoneSignIn): keep its connection for signing. */
@@ -168,7 +147,7 @@ async function phoneRemote() {
 }
 
 /**
- * Signs an event as you: through the extension, or your phone. Resolves with the signed event, checked
+ * Signs an event as you, through your phone (or signer app). Resolves with the signed event, checked
  * (right account, good signature); rejects if you refused, it timed out, or you're signed in read-only.
  */
 export async function sign(template) {
@@ -177,41 +156,33 @@ export async function sign(template) {
   const t = { created_at: Math.floor(Date.now() / 1000), tags: [], content: "", ...template, pubkey: state.pubkey };
   let signed;
   try {
-    signed = state.method === "extension" ? await window.nostr.signEvent(t) : await (await phoneRemote()).signEvent(t);
+    signed = await (await phoneRemote()).signEvent(t);
   } catch (err) { throw checked(err); }
-  // another account answered: the extension (or phone) has moved on from the one this site knows
+  // another account answered: the signer has moved on from the one this site knows
   if (signed && isHex64(signed.pubkey) && signed.pubkey !== t.pubkey) { signedOutElsewhere(); throw new Error("not signed in: another account"); }
   if (!signed || signed.pubkey !== t.pubkey || !verify(signed)) throw new Error("bad signature");
   return signed;
 }
 
 /**
- * NIP-44 to yourself (a note only you can read, like discover.syb.lol's interest profile): through the
- * extension. Signed in with your phone it throws "unsupported": your servers don't encrypt for sites, on
- * purpose (every site that signs in by code shares one signer key; cosign server/core/group.ts).
+ * NIP-44 to yourself: no sign-in here can, now the extension is gone (your servers don't encrypt for sites, on purpose:
+ * cosign server/core/group.ts). Kept so marble/later and marble/reader callers fail as "unsupported" and stay local.
  */
-export async function nip44Self(text, encrypt = true) {
-  if (hold) await hold.promise;
-  if (state?.method !== "extension" || !window.nostr?.nip44) throw new Error("unsupported");
-  try {
-    return await (encrypt ? window.nostr.nip44.encrypt(state.pubkey, text) : window.nostr.nip44.decrypt(state.pubkey, text));
-  } catch (err) { throw checked(err); }
-}
+export async function nip44Self() { throw new Error("unsupported"); }
 
 /**
- * NIP-44 decrypt as you, of a message from `pubkey` (vaults: a keyring entry's one-time key, vaults.md §3.6): through the
- * extension, or your phone's signer (NIP-46 nip44_decrypt). Throws "unsupported" when neither can.
+ * NIP-44 decrypt as you, of a message from `pubkey` (vaults: a keyring entry's one-time key, vaults.md §3.6): through
+ * your phone's signer (NIP-46 nip44_decrypt). Throws "unsupported" signed in read-only.
  */
 export async function nip44DecryptFrom(pubkey, ct) {
   if (hold) await hold.promise;
   try {
-    if (state?.method === "extension" && window.nostr?.nip44) return await window.nostr.nip44.decrypt(pubkey, ct);
     if (state?.method === "phone") return await (await phoneRemote()).request("nip44_decrypt", [pubkey, ct], 60000);
   } catch (err) { throw checked(err); }
   throw new Error("unsupported");
 }
 /** Whether this sign-in may open vaults (it signs and decrypts as you). */
-export const canVault = () => (state?.method === "extension" && !!window.nostr?.nip44) || state?.method === "phone";
+export const canVault = () => state?.method === "phone";
 
 /** Where your posts go: your own write relays (NIP-65), or the fast ones if you have none listed. */
 export async function myWriteRelays() {

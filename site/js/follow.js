@@ -1,7 +1,7 @@
 // Follow and unfollow (kind 3), by the shared list-write rule (lists.js; marble-content-fixtures/list-writes.md): from
 // your newest follow list anywhere (this browser's copy, your write relays, the profile indexes), one person in or
 // out, everything else kept; refused when no list is found but one is expected (this browser has seen one, or you have
-// a profile), so an extension that checks nothing can't be handed a near-empty list.
+// a profile), so a signer that checks nothing can't be handed a near-empty list.
 import { req, relays, publish, FAST, INDEXERS } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, sign, seenContacts, contactsSeen, followsNow, myFollows } from "./me.js";
