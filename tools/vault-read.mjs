@@ -8,7 +8,9 @@ import { localSigner, memoryStore } from "./vault-fixtures.mjs";
 import { realNet } from "./vault-net.mjs";
 const [sec, flag, id, text] = process.argv.slice(2);
 const signer = localSigner(C.unhex(sec)), me = signer.pubkey, relays = ["ws://127.0.0.1:7447"];
-const s = await new Session({ me, entries: notesVault(await readKeyrings({ me, relays, net: realNet, signer })), net: realNet, signer, store: memoryStore(), deviceName: "Node phone" }).open();
+const found = notesVault(await readKeyrings({ me, relays, net: realNet, signer }));
+if (!found.length) { console.log(JSON.stringify({ error: "no notes vault for this account on " + relays.join(", ") })); process.exit(1); }
+const s = await new Session({ me, entries: found, net: realNet, signer, store: memoryStore(), deviceName: "Node phone" }).open();
 const texts = new Map();
 for (const n of N.notesOf(s.vault.state(), s.vault.roster())) for (const v of n.versions) if (v.text === null && v.blob) texts.set(v.ver, C.unutf8(await s.blob(v.blob)));
 const textOf = (v) => v.text ?? texts.get(v.ver) ?? null;
