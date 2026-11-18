@@ -3,7 +3,7 @@
 // (Marble's stories and the sites you add), Writers, Relays; All items and Starred above them. No counts anywhere: an
 // unread item is bold, and a folder or source is bold when something arrived since you last opened it (no dot); read
 // items age out (Keep unread doesn't keep them longer). A person's short posts come as one row a day.
-// On your account (signed in with the extension, as Notes): your sources and folders (kind 30078 d=marble/reader) and
+// On your account (only the old browser extension could, as Notes; now in this browser): your sources and folders (kind 30078 d=marble/reader) and
 // what you've read (the seen list, d=discover/seen, with its upto and unread), each NIP-44 to yourself, merged with
 // what's there before every write; as Marble Android keeps them (reader.md, agreed 2026-11-04).
 import { req, relays, publish, FAST, INDEXERS, normalize, foundOn, testRelay } from "./pool.js";
@@ -108,7 +108,7 @@ function ensureFolder(id, label) {
 
 const D = { list: "marble/reader", seen: "discover/seen" }, OLD_FEEDS = "marble/news-sources";
 const EXPIRES = { list: 0, seen: 14 * DAY };
-const syncs = () => !!current() && method() === "extension" && !!window.nostr?.nip44;
+const syncs = () => false; // (NIP-44 to yourself: no sign-in here can, me.js nip44Self)
 let broken = new Set(), timer = null, failures = 0, unreached = 0, pullTimer = null, pullFails = 0;
 /** Why your account's copy isn't being written, said quietly in Reader (or ""): your relays can't be reached or read. */
 export const syncTrouble = () => unreached >= 3 ? "Your relays aren't answering, so what you read here is kept in this browser for now." : broken.size ? "Your Reader copy on the account is in a format this page can't change, so changes stay here." : "";

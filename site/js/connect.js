@@ -161,22 +161,28 @@ function signWith(sk, t, { schnorr, sha256 }) {
 }
 
 /**
- * Starts a phone sign-in: onCode(uri) gets the code to show; resolves with {pubkey, remote, saved} once your
- * phone has connected and said which account it is. Rejects on signal abort. perms: what the site will ask
- * to sign (NIP-46), shown for what it is; Marble and your servers don't refuse other kinds because of it. name:
- * the site's name the sign-in app shows.
+ * Starts a phone sign-in: onCode(uri, svg) gets the code to show; resolves with {pubkey, remote, saved} once your
+ * phone (or the login page your account names, handing the code to a device) has connected and said which account it
+ * is. Rejects on signal abort. perms: what the site will ask to sign (NIP-46), shown for what it is; Marble and your
+ * servers don't refuse other kinds because of it. name: the site's name the sign-in app shows. The code is marked
+ * kk=account (Keykin SPEC §11.6): Marble Web signs in as the account itself, never a child key (§8k).
+ * pending: a code made earlier ({sk, secret, relays, made}, see onPending), listened for again from when it was made,
+ * as after coming back from the login page in this tab. onPending(p) gets that, to keep until the sign-in ends.
+ * extra: more parameters for the code, as "&k=v" (kk_login=missing: Marble found no login-page pointer, so the phone
+ * that answers can publish it again; agreed with Marble Android).
  */
-export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
+export async function phoneSignIn({ onCode, onPending, pending = null, signal, extra = "", perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
   const { schnorr, encodeQR } = await load();
-  const sk = schnorr.utils.randomSecretKey();
+  const sk = pending ? fromHex(pending.sk) : schnorr.utils.randomSecretKey();
   const pk = toHex(schnorr.getPublicKey(sk));
-  const secret = toHex(crypto.getRandomValues(new Uint8Array(8)));
-  const relays = connectRelays();
+  const secret = pending?.secret || toHex(crypto.getRandomValues(new Uint8Array(8)));
+  const relays = pending?.relays || connectRelays();
+  const made = pending?.made || now(), asked = made - 30;
   const uri = `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}`;
+    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}&kk=account${extra}`;
+  onPending?.({ sk: toHex(sk), secret, relays, made });
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
-  const made = now(), asked = made - 30;
   let close;
   const signer = await new Promise((resolve, reject) => {
     close = listen(relays, pk, () => asked, async (e) => {
@@ -194,6 +200,31 @@ export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_e
   const pubkey = await remote.request("get_public_key", [], 30000);
   if (!isHex64(pubkey)) throw new Error("no account");
   return { pubkey: pubkey.toLowerCase(), remote, saved: remote.saved() };
+}
+
+/** A bunker:// link (NIP-46, from a signer app) as {signer, relays, secret}, or null. */
+export function parseBunker(link) {
+  let u;
+  try { u = new URL(String(link || "").trim().replace(/^bunker:\/\//i, "http://")); } catch { return null; }
+  if (!/^bunker:\/\//i.test(String(link).trim()) || !isHex64(u.hostname)) return null;
+  const relays = u.searchParams.getAll("relay").filter((r) => /^wss?:\/\//i.test(r));
+  if (!relays.length) return null;
+  return { signer: u.hostname.toLowerCase(), relays, secret: u.searchParams.get("secret") || "" };
+}
+
+/** Signs in with a bunker link: connects to that signer, then asks which account it is. Resolves as phoneSignIn does. */
+export async function bunkerSignIn(link, { perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key" } = {}) {
+  const b = parseBunker(link);
+  if (!b) throw new Error("That isn't a bunker link.");
+  const { schnorr } = await load();
+  const remote = new Remote({ sk: schnorr.utils.randomSecretKey(), signer: b.signer, relays: b.relays });
+  try {
+    const ok = await remote.request("connect", [b.signer, b.secret, perms], 90000);
+    if (ok !== "ack" && ok !== b.secret) throw new Error("The signer didn't connect.");
+    const pubkey = await remote.request("get_public_key", [], 30000);
+    if (!isHex64(pubkey)) throw new Error("no account");
+    return { pubkey: pubkey.toLowerCase(), remote, saved: remote.saved() };
+  } catch (err) { remote.stop(); throw err; }
 }
 
 function qrSvg(encodeQR, data) {

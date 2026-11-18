@@ -1,6 +1,6 @@
 // Notes on vaults (~/nostr-sync-nip/vaults.md 7.14, notes profile §11.1): this page as one of your owner devices
-// (§12.3). Your phone (Marble Android) makes the vault; here it's opened however you signed in (the extension, or your
-// phone's signer), one decrypt per keyring entry each visit. The owner secrets live in this page's memory only; this
+// (§12.3). Your phone (Marble Android) makes the vault; here it's opened through your
+// phone's signer, one decrypt per keyring entry each visit. The owner secrets live in this page's memory only; this
 // browser keeps its device root and certs (localStorage) and a copy of your notes for speed (IndexedDB), and the copy
 // goes on sign-out. Until your account has a notes vault, Notes stay as they were (later.js).
 //
@@ -275,4 +275,6 @@ if (typeof document !== "undefined") {
   });
   addEventListener("pagehide", () => flush());
   onMe((pk) => { if (who && who !== pk) stop(who); if (pk) start(pk); });
+  // already signed in when the page loads: opened now too (onMe only fires on a change)
+  if (current()) setTimeout(() => { if (!who && current()) start(); }, 0);
 }

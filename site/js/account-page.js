@@ -14,7 +14,9 @@ export function originOnly(url) {
   if (typeof url !== "string" || url.length > 200) return null;
   let u;
   try { u = new URL(url); } catch { return null; }
-  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) return null;
+  // testing on localhost: a login page on this machine (http://localhost:port) counts too, and only then
+  const local = typeof location !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && u.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/.test(u.hostname);
+  if ((u.protocol !== "https:" && !local) || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) return null;
   // what was written must be the origin itself, not something a parser tidied into one
   return url.replace(/\/$/, "") === u.origin ? u.origin : null;
 }
@@ -59,7 +61,7 @@ export async function loginPage(pubkey, { timeout = 4500 } = {}) {
     .sort((a, b) => b.created_at - a.created_at)[0];
   if (!mine) return { none: true };
   const url = pageFrom(mine, pubkey);
-  return url ? { url, event: mine } : { none: true };
+  return url ? { url, event: mine } : { none: true, removed: true }; // (taken away: the newest names nothing)
 }
 
 /** Who was typed: an npub or nprofile, a 64-character key, or a name@domain. The account's key, or null. */
@@ -123,7 +125,7 @@ async function look(pubkey, typed) {
     return view(`<h2 id="acct-title">Your account page</h2>
       <p>${pubkey ? "Your account" : "That account"} names this page as the place to manage it:</p>
       <p class="acct-addr">${esc(host)}</p>
-      <p>It isn't part of Marble. You sign in there, with a device of yours or your password.</p>
+      <p>It isn't part of Marble. You sign in there with a passkey, a password or your phone.</p>
       <a class="si-button si-open" href="${esc(r.url)}" rel="noopener noreferrer">Go to ${esc(host)}</a>
       <div class="si-actions">${other}<button type="button" class="link" data-acct="close">Cancel</button></div>`);
   }

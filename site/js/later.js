@@ -1,8 +1,8 @@
 // Notes and tabs, as the Marble app keeps them. Notes: what you typed and pressed Enter on, or kept. Once your account
 // has a notes vault (your phone makes it: vaults.md, notes-vault.js), they're read from and written to it, from any
-// sign-in that can (the extension, or your phone's signer). Before that, as before vaults: on your account as kind 30078
+// sign-in that can (your phone's signer). Before that, as before vaults: on your account as kind 30078
 // d=marble/later, NIP-44 to yourself, merged item by item (the newer `updated` wins; removed ones stay a month as
-// markers so other devices learn it), synced only when you signed in with the extension; otherwise in this browser.
+// markers so other devices learn it), which only the old browser extension could sync; now kept in this browser.
 // Tabs: pages opened from Marble, in this browser. Notes, Searches and Tabs belong to the account signed in (and those
 // from while nobody was, to nobody): another account never sees them or gets them merged in, and signing out leaves
 // none of them on the page (~/igloo/signin-signout-audit.md, fix 3).
@@ -10,7 +10,7 @@ import { req, relays, publish, FAST, testRelay } from "./pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Notes on vaults (notes-vault.js): once your account has a notes vault (your phone makes it), Notes are read from and
-// written to it, from any sign-in that can (the extension, or your phone's signer), and marble/later isn't written here
+// written to it, from any sign-in that can (your phone's signer), and marble/later isn't written here
 import * as vault from "./notes-vault.js";
 import { decide, completeRead, fullRead, written, retryAfter, missesAgainst } from "./sync-guard.js";
 import { accountRelays, heard } from "./account-relays.js";
@@ -181,13 +181,13 @@ function merge(theirs) {
   return JSON.stringify(merged.map((i) => [i.id, i.updated]).sort()) !== before;
 }
 
-// ── Syncing (signed in with the extension only) ──────────────────────────────────────────────────────
+// ── Syncing ──────────────────────────────────────────────────────
 
-// An extension that can't encrypt for this site (paired to the phone: your servers don't, on purpose) doesn't sync.
+// Without a vault nothing syncs: marble/later is NIP-44 to yourself, and no sign-in here can do that (me.js nip44Self).
 let noEncrypt = false;
-export const syncs = () => vault.active() || (!!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt);
+export const syncs = () => vault.active();
 /** marble/later is synced only while there's no vault (it stays as the phone left it once there is). */
-const laterSyncs = () => !vault.active() && !!current() && method() === "extension" && !!window.nostr?.nip44 && !noEncrypt;
+const laterSyncs = () => false;
 // The last try at syncing failed (not because it can't sync at all): Notes says so, quietly.
 let failing = false;
 export const syncFailing = () => (vault.active() ? ["offline", "error"].includes(vault.state()) : syncs() && failing);
@@ -352,9 +352,8 @@ if (typeof document !== "undefined") {
   });
   onMe((pk) => { switchTo(pk); pull(); });
   vault.onVault(() => { if (vault.state() === "open") adoptIntoVault(); listeners.forEach((fn) => fn()); });
-  // when the page starts (the extension may arrive a moment later): your account's copy in, and yours out if unsent
+  // when the page starts: your account's copy in, and yours out if unsent
   setTimeout(async () => {
-    for (let i = 0; i < 10 && current() && !window.nostr; i++) await new Promise((r) => setTimeout(r, 150));
     if (!laterSyncs()) return;
     if (dirty) send(); else pull({ force: true }).catch(() => {}); // (send reads and merges first)
   }, 500);

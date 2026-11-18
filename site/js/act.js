@@ -1,4 +1,4 @@
-// Doing things as you: signing in (the extension, or your phone's code), liking and reacting, replying.
+// Doing things as you: signing in (your name first, then your login page or your phone), liking and reacting, replying.
 // What you do shows at once and is taken back if it can't be sent.
 import { publish, req, relays, foundOn, FAST } from "./pool.js";
 import { openTray, closePicker, trayOpenFor, trayOnly, pointerInPicker, slideTo, slideEnd, drawEmoji, loadMine, recentsOf, setRecents, used } from "./emoji-picker.js";
@@ -6,7 +6,7 @@ import { emojiOf, same, summary, changeOf, recentsFrom, RECENT_FROM } from "./re
 import { outbox, keep, profile, profiles, onProfile, profilesOf } from "./data.js";
 import { esc, avatar, name, personPath } from "./render.js";
 import { npub } from "./ids.js";
-import { current, method, hasExtension, signInWithExtension, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
+import { current, method, extensionSignedOut, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const ALSO = ["wss://relay.ditto.pub", "wss://syb.lol"]; // where Discover and search read reactions
@@ -26,7 +26,7 @@ export function toast(text, { stay = false } = {}) {
 /** While something waits on you approving it elsewhere, say where, after a moment. */
 async function approving(promise) {
   let asked = false;
-  const t = setTimeout(() => { asked = true; toast(method() === "phone" ? "Approve it on your phone…" : "Approve it in your extension…", { stay: true }); }, 700);
+  const t = setTimeout(() => { asked = true; toast("Approve it on your phone…", { stay: true }); }, 700);
   // (only its own message goes: one said meanwhile, like "Signed out", stays)
   try { return await promise; } finally { clearTimeout(t); if (asked && current()) toast(""); }
 }
@@ -43,11 +43,14 @@ const onPhone = () => matchMedia("(pointer: coarse)").matches && /Android|iPhone
 
 export function openSignIn() {
   if (!dialog.open) dialog.showModal();
-  hasExtension() ? withExtension() : withPhone();
+  const p = pendingCode();
+  p ? atLoginPage(p.url, { pending: p }) : askName();
 }
 
-// Signed out somewhere else (the extension, the phone): said once, quietly.
+// Signed out somewhere else (the phone, the login page): said once, quietly.
 onSignedOut(() => toast("Signed out"));
+// Signed in with the browser extension, which Marble no longer uses: signed out (me.js), and told so once.
+if (extensionSignedOut()) setTimeout(() => { toast("Marble doesn't use the browser extension any more, so you're signed out. Sign in again with your name.", { stay: true }); setTimeout(() => toast(""), 9000); }, 300);
 
 // More than one account answered the code you signed in with (me.js): which one is you? Until you say, nothing is
 // signed, and this doesn't close. Each account shows its picture, name and the ends of its npub, as sign-in apps show
@@ -114,7 +117,8 @@ function backWithNoApp(loaded = false) {
   if ((!loaded && location.hash !== NO_APP) || current()) return;
   if (location.hash === NO_APP) history.replaceState(history.state, "", location.href.split("#")[0]);
   noAppSoon = true;
-  if (dialog.open) noApp(); else openSignIn();
+  if (!dialog.open) dialog.showModal();
+  withMarble();
 }
 addEventListener("hashchange", () => backWithNoApp());
 // (looked at now: the page may tidy its address before then)
@@ -129,90 +133,183 @@ function close() {
   stopWatching();
   phoneAbort?.abort();
   phoneAbort = null;
+  clearPending();
   if (dialog.open) dialog.close();
 }
-function view(html) { box.innerHTML = html; }
+function view(html) { box.innerHTML = html; box.querySelector("input, a.si-open")?.focus(); }
 
-async function withExtension() {
-  const mine = ++attempt;
-  phoneAbort?.abort();
-  view(`<h2 id="si-title">Waiting for your extension…</h2>
-    <p class="si-wait">${spinner}Approve in the extension window.</p>
-    <p class="si-help" hidden>Open your extension to approve.</p>
-    <div class="si-actions"><button type="button" class="link" data-si="phone">Sign in with your phone instead</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
-  const help = setTimeout(() => { const h = $(".si-help", box); if (h && mine === attempt) h.hidden = false; }, 3000);
-  const gaveUp = setTimeout(() => {
-    if (mine !== attempt) return;
-    attempt++;
-    view(`<h2 id="si-title">No answer from the extension</h2><p>Open your extension and try again, or sign in with your phone.</p>
-      <div class="si-actions"><button type="button" class="link" data-si="phone">Sign in with your phone</button><button type="button" class="si-button" data-si="extension">Try again</button></div>`);
-  }, 60000);
+// ── A code waiting on the login page ──
+// "Sign in at <host>" opens it in a new tab, with the code in the link, and this tab keeps listening: the answer
+// (kind 24133) is ephemeral, so relays don't keep it for a page that wasn't there. Coming back to this tab, it listens
+// again from when the code was made (connect.js listen). The code's key is also kept for this tab (sessionStorage), so
+// a reload, or the login page sending you back here in its own tab's place, still picks it up for an answer after that.
+const PENDING = "marble.signin", PENDING_LIFE = 15 * 60; // seconds
+function pendingCode() {
   try {
-    await signInWithExtension();
-    if (mine !== attempt) return;
-    close();
-    toast("Signed in");
-  } catch {
-    if (mine !== attempt) return;
-    view(`<h2 id="si-title">Sign-in cancelled</h2><p>The extension didn't let this site in. You can try again.</p>
-      <div class="si-actions"><button type="button" class="link" data-si="phone">Sign in with your phone</button><button type="button" class="si-button" data-si="extension">Try again</button></div>`);
-  } finally { clearTimeout(help); clearTimeout(gaveUp); }
+    const p = JSON.parse(sessionStorage.getItem(PENDING) || "null");
+    if (p?.sk && p.made && Date.now() / 1000 - p.made < PENDING_LIFE && p.url) return p;
+  } catch {}
+  clearPending();
+  return null;
+}
+function clearPending() { try { sessionStorage.removeItem(PENDING); } catch {} }
+// The login page's link: the code in the fragment, so it never goes to a server (agreed name: "connect").
+export const loginLink = (url, uri) => `${url}/#connect=${encodeURIComponent(uri)}`;
+
+// ── Your name first ──
+function askName(note = "", typed = "") {
+  attempt++;
+  stopWatching();
+  phoneAbort?.abort();
+  phoneAbort = null;
+  view(`<h2 id="si-title">Sign in</h2>
+    ${note ? `<p class="si-note">${note}</p>` : ""}
+    <form data-form="name"><label for="si-who">Your name or npub</label>
+      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="you@example.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <div class="si-actions"><button type="button" class="link" data-si="code">Sign in with a code</button><button type="submit" class="si-button">Continue</button></div></form>
+    <p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>`);
 }
 
-async function withPhone() {
+async function lookUp(typed) {
+  const mine = ++attempt;
+  view(`<h2 id="si-title">Sign in</h2><p class="si-wait">${spinner}Looking for ${esc(typed)}…</p>
+    <div class="si-actions"><button type="button" class="si-button" data-si="name">Cancel</button></div>`);
+  const { whose, loginPage } = await import("./account-page.js");
+  const pk = await whose(typed);
+  if (mine !== attempt) return;
+  if (!pk) return askName(`Marble couldn't find ${esc(typed)}. Check the name, or <button type="button" class="link" data-si="code">sign in with a code</button>.`, typed);
+  const r = await loginPage(pk);
+  if (mine !== attempt) return;
+  if (r.url) return atLoginPage(r.url, { who: pk });
+  if (r.removed) forgetPage(pk);
+  const kept = rememberedPage(pk); // a pointer seen after an earlier sign-in, should the relays miss it now
+  kept ? atLoginPage(kept, { who: pk }) : withMarble({ missing: pk });
+}
+
+// ── Your account names a login page ──
+function atLoginPage(url, { who = null, pending = null } = {}) {
+  const host = new URL(url).host;
+  who ??= pending?.who || null;
+  run((uri) => view(`<h2 id="si-title">Sign in</h2>
+      ${who ? `<div class="si-who">${avatar(who, 40)}<span class="si-acct"><span class="si-name">${esc(name(who))}</span><span class="si-fp">${npub(who).slice(0, 12)}…<b>${npub(who).slice(-6)}</b></span></span></div>` : ""}
+      <p>Your account names this page to sign in at:</p>
+      <p class="acct-addr">${esc(host)}</p>
+      <p>It isn't part of Marble. You sign in there with a passkey, a password or your phone, and come back here signed in.</p>
+      <a class="si-button si-open" href="${esc(loginLink(url, uri))}" target="_blank" rel="noopener noreferrer" data-si="away">Sign in at ${esc(host)}</a>
+      <p class="si-wait"${pending ? "" : " hidden"}>${spinner}Waiting for ${esc(host)}…</p>
+      <div class="si-actions"><button type="button" class="link" data-si="name">Not you?</button><button type="button" class="link" data-si="code">Use your phone instead</button></div>`),
+    { pending, keep: { url, who } });
+}
+
+// ── No login page: Marble on your phone ──
+let missingFor = null; // the account a name lookup found no pointer for (its codes carry kk_login=missing)
+const missingCode = () => ({ extra: missingFor ? "&kk_login=missing" : "", missing: missingFor });
+function withMarble({ missing = null } = {}) {
+  missingFor = missing;
+  run((uri, svg) => {
+    if (onPhone()) return view(`<h2 id="si-title">Sign in with Marble</h2>
+      <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Open Marble</a>
+      <p class="si-wait" hidden>${spinner}Waiting for Marble…</p>
+      <p class="si-note" data-none hidden>Marble didn't open.</p>
+      ${onIphone() ? `<p data-none hidden>Marble isn't on iPhone yet. nsec.app works in Safari: copy the code and paste it there.</p>` : ""}
+      <p class="si-get">No Marble yet? <a class="link" href="${onIphone() ? NSEC_APP : GET_MARBLE}" target="_blank" rel="noopener">${onIphone() ? "Open nsec.app" : "Get Marble for Android"}</a></p>
+      <div class="si-actions"><button type="button" class="link" data-si="signer">Use a signer app</button><button type="button" class="link" data-si="name">Back</button></div>`);
+    view(`<h2 id="si-title">Sign in with Marble on your phone</h2>
+      <div class="qr">${svg}</div>
+      <p>Scan this with your phone. With Marble on it, Marble opens and asks you to sign in.</p>
+      <p class="si-wait">${spinner}Waiting for your phone…</p>
+      <p class="si-get">No Marble yet? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble for Android</a></p>
+      <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button><button type="button" class="link" data-si="name">Back</button></div>`);
+    if (noAppSoon) noApp();
+  }, missingCode());
+}
+
+// ── Another signer app (for nostr nerds): the plain code, or a bunker link ──
+function withSigner() {
+  run((uri, svg) => view(`<h2 id="si-title">Use a signer app</h2>
+      <div class="qr">${svg}</div>
+      <p>Scan this nostrconnect code with your signer app, or paste its bunker link.</p>
+      <form data-form="bunker"><label class="visually-hidden" for="si-bunker">Bunker link</label>
+        <input id="si-bunker" name="bunker" class="acct-who" type="text" placeholder="bunker://…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <p class="si-note" data-bunker-note hidden></p>
+        <div class="si-actions"><button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="code">Back</button><button type="submit" class="si-button">Connect</button></div></form>`), missingCode());
+}
+
+// ── A pointer the phone put back ──
+// Signed in from a name with no pointer: the phone may publish it as it answers (kk_login=missing). Looked up once more a
+// little after, and kept for next time in this browser. Nothing changes mid-sign-in.
+const PAGE = (pk) => `marble.loginpage.${pk}`;
+function rememberedPage(pk) { try { return localStorage.getItem(PAGE(pk)); } catch { return null; } }
+function forgetPage(pk) { try { localStorage.removeItem(PAGE(pk)); } catch {} }
+export async function lookAgain(pk, wait = 8000) { // (the phone's pointer reaches your write relays within a few seconds)
+  await new Promise((r) => setTimeout(r, wait));
+  const { loginPage } = await import("./account-page.js");
+  const r = await loginPage(pk).catch(() => null);
+  try { if (r?.url) localStorage.setItem(PAGE(pk), r.url); } catch {}
+  return r?.url || null;
+}
+
+let again = null;
+function finish(done) {
+  clearPending();
+  signedInWithPhone(done);
+  close();
+  toast("Signed in");
+}
+/** Makes a code (or picks up a pending one), draws it with render(uri, svg), and signs in once it's answered. */
+async function run(render, { pending = null, keep = null, extra = "", missing = null } = {}) {
   const mine = ++attempt;
   stopWatching();
   phoneAbort?.abort();
   const ctrl = (phoneAbort = new AbortController());
-  view(`<h2 id="si-title">Sign in with your phone</h2><p class="si-wait">${spinner}Making a code…</p>`);
+  again = () => run(render, { keep, extra, missing });
+  view(`<h2 id="si-title">Sign in</h2><p class="si-wait">${spinner}Making a code…</p>`);
+  const life = keep ? PENDING_LIFE * 1000 - (pending ? Date.now() - pending.made * 1000 : 0) : 180000;
   const expire = setTimeout(() => {
     if (mine !== attempt) return;
     ctrl.abort();
-    view(`<h2 id="si-title">This code has expired</h2><p>Make a new one and scan it with your phone.</p>
-      <div class="si-actions"><button type="button" class="si-button" data-si="phone">New code</button></div>`);
-  }, 180000);
+    clearPending();
+    view(`<h2 id="si-title">This code has expired</h2><p>Make a new one to sign in.</p>
+      <div class="si-actions"><button type="button" class="link" data-si="name">Back</button><button type="button" class="si-button" data-si="again">New code</button></div>`);
+  }, Math.max(0, life));
   try {
     const { phoneSignIn } = await import("./connect.js");
     const done = await phoneSignIn({
       signal: ctrl.signal,
+      pending,
+      extra,
+      onPending: keep ? (p) => { try { sessionStorage.setItem(PENDING, JSON.stringify({ ...p, ...keep, who: keep.who || pending?.who || null })); } catch {} } : null,
       // the site's name the sign-in app shows: the page's own <meta name="application-name">
       name: document.querySelector('meta[name="application-name"]')?.content || location.hostname,
-      onCode: (uri, svg) => {
-        if (mine !== attempt) return;
-        // On the phone itself a code to scan can't be scanned: the code is a link that opens its sign-in app instead,
-        // and the picture is there for signing in with another phone.
-        if (onPhone()) {
-          view(`<h2 id="si-title">Sign in</h2>
-            <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Sign in</a>
-            <p class="si-wait" hidden>${spinner}Waiting for your sign-in app…</p>
-            <p class="si-note" data-none hidden>No sign-in app opened.</p>
-            ${onIphone() ? `<p data-none hidden>Marble isn't on iPhone yet. nsec.app works in Safari: copy the code and paste it there.</p>` : ""}
-            <div class="qr" hidden>${svg}</div>
-            <div class="si-actions">${onIphone() ? `<a class="link" href="${NSEC_APP}" target="_blank" rel="noopener" data-none hidden>Open nsec.app</a>`
-              : `<a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener" data-none hidden>Get Marble</a>`}<button type="button" class="link" data-si="qr">Show code</button>
-              <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="close">Cancel</button></div>`);
-          if (noAppSoon) noApp();
-          return;
-        }
-        view(`<h2 id="si-title">Sign in with your phone</h2>
-          <div class="qr">${svg}</div>
-          <p>Scan this code with the sign-in app on your phone.</p>
-          <p class="si-wait">${spinner}Waiting for your phone…</p>
-          <p class="si-get">No sign-in app on your phone? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble</a></p>
-          <p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>
-          <div class="si-actions">${hasExtension() ? `<button type="button" class="link" data-si="extension">Use the extension</button>` : ""}
-            <button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="si-button" data-si="close">Cancel</button></div>`);
-      },
+      onCode: (uri, svg) => { if (mine === attempt) render(uri, svg); },
     });
     if (mine !== attempt) return done.remote.stop();
-    signedInWithPhone(done);
-    close();
-    toast("Signed in");
+    finish(done);
+    if (missing && done.pubkey === missing) lookAgain(missing);
   } catch (err) {
     if (mine !== attempt || ctrl.signal.aborted) return;
-    view(`<h2 id="si-title">Your phone didn't finish signing in</h2><p>${esc(String(err?.message || "").replace(/^[a-z-]+: /, "") || "Try again with a new code.")}</p>
-      <div class="si-actions"><button type="button" class="si-button" data-si="phone">Try again</button></div>`);
+    clearPending();
+    view(`<h2 id="si-title">Sign-in didn't finish</h2><p>${esc(String(err?.message || "").replace(/^[a-z-]+: /, "") || "Try again with a new code.")}</p>
+      <div class="si-actions"><button type="button" class="link" data-si="name">Back</button><button type="button" class="si-button" data-si="again">Try again</button></div>`);
   } finally { clearTimeout(expire); }
+}
+
+async function withBunker(link, form) {
+  const mine = attempt;
+  const note = $("[data-bunker-note]", form), button = $("button[type=submit]", form);
+  note.hidden = false;
+  note.innerHTML = `${spinner}Connecting… approve it in your signer app.`;
+  button.disabled = true;
+  try {
+    const { bunkerSignIn } = await import("./connect.js");
+    const done = await bunkerSignIn(link);
+    if (mine !== attempt) return done.remote.stop();
+    finish(done);
+  } catch (err) {
+    if (mine !== attempt) return;
+    note.textContent = String(err?.message || "That didn't connect.").replace(/^timeout$/, "Your signer app didn't answer.");
+    button.disabled = false;
+  }
 }
 
 dialog.addEventListener("click", (ev) => {
@@ -230,12 +327,22 @@ dialog.addEventListener("click", (ev) => {
   }
   if (what === "chosen") { const c = picking?.[+b.dataset.i]; if (!c) return; picking = null; choose(c); close(); return; }
   if (what === "neither") { picking = null; neither(); close(); return; }
-  if (what === "qr") { $(".qr", box).hidden = false; b.remove(); return; }
+  if (what === "away") { const w = $(".si-wait", box); if (w) w.hidden = false; return; }
   if (what === "close") close();
-  else if (what === "phone") withPhone();
-  else if (what === "extension") withExtension();
+  else if (what === "name") { clearPending(); askName(); }
+  else if (what === "code") { clearPending(); withMarble(); }
+  else if (what === "signer") withSigner();
+  else if (what === "again") again?.();
   else if (what === "copy") navigator.clipboard?.writeText(b.dataset.code).then(() => { b.textContent = "Copied"; });
 });
+dialog.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const f = ev.target, data = new FormData(f);
+  if (f.dataset.form === "name") { const t = String(data.get("who") || "").trim(); if (t) lookUp(t); }
+  else if (f.dataset.form === "bunker") { const l = String(data.get("bunker") || "").trim(); if (l) withBunker(l, f); }
+});
+// Back in this tab from the login page with a code still waiting: the sign-in picks up where it was.
+if (!current() && pendingCode()) setTimeout(() => openSignIn(), 0);
 dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!picking) close(); });
 
 /** Something only a signed-in account can do: true if it can go ahead, else the sign-in opens. */
