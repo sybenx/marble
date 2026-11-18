@@ -70,7 +70,7 @@ export async function whose(typed) {
   if (!t) return null;
   if (isHex64(t)) return t.toLowerCase();
   if (/^n(pub|profile)1/.test(t)) { const d = decode(t); return d?.type === "profile" ? d.pubkey : null; }
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) return (await resolveNip05(t.toLowerCase()).catch(() => null)) || null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) { const r = await resolveNip05(t.toLowerCase()).catch(() => null); return isHex64(r?.pubkey) ? r.pubkey.toLowerCase() : null; }
   return null;
 }
 
