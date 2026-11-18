@@ -5,6 +5,7 @@ import cc.aaro.keykin.core.unhex
 import org.json.JSONObject
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import okhttp3.MediaType.Companion.toMediaType
 import java.io.File
 
 /**
@@ -67,6 +68,15 @@ class InteropTest {
                     v.enqueue(listOf(Put.make(base.entry, listOf(base.ver), meta, data, false).json))
                 }
                 if (edits.isNotEmpty()) { check(v.sync()); println("EDITED"); show(v) }
+            }
+            "probe" -> for (server in parts.drop(1).joinToString(":").split(",")) {
+                // §6.4's probe against a real server: 64 random bytes, deleted afterwards.
+                val st = Storage(OkNet(), WallClock); val net = OkNet()
+                val a = Keys.newSecret(); val b = Keys.newSecret(); val bytes = cc.aaro.keykin.core.random(64); val sha = hex(cc.aaro.keykin.core.sha256(bytes))
+                fun up(k: ByteArray) = try { net.http.newCall(okhttp3.Request.Builder().url("$server/upload").put(okhttp3.RequestBody.create("application/octet-stream".toMediaType(), bytes)).header("Authorization", st.auth(k, "upload", listOf(sha), server)).build()).execute().use { "${it.code} ${it.body?.string()?.take(120)}" } } catch (e: Exception) { e.toString() }
+                fun del(k: ByteArray) = try { net.http.newCall(okhttp3.Request.Builder().url("$server/$sha").delete().header("Authorization", st.auth(k, "delete", listOf(sha), server)).build()).execute().use { "${it.code} ${it.body?.string()?.take(120)}" } } catch (e: Exception) { e.toString() }
+                fun get() = try { net.http.newCall(okhttp3.Request.Builder().url("$server/$sha").build()).execute().use { "${it.code}" } } catch (e: Exception) { e.toString() }
+                println("PROBE $server upA=${up(a)} | upB=${up(b)} | get=${get()} | delB=${del(b)} | get=${get()} | delA=${del(a)} | get=${get()}")
             }
             "create" -> {
                 val sk = Keys.newSecret()
