@@ -23,7 +23,7 @@ const tell = () => listeners.forEach((fn) => fn());
 export const state = () => status;
 export const reason = () => why;
 /** Something the vault names hasn't loaded yet (§7.4): Notes says "syncing…" and shows what it has. */
-export const syncing = () => !!session && (session.gaps.size > 0 || [...blobFailed].length > 0);
+export const syncing = () => !!session && (session.gaps.size > 0 || blobFailed.size > 0);
 /** Whether Notes come from the vault (open, or shown from this browser's copy while it opens). */
 export const active = () => status === "open" || status === "offline" || status === "removed" || (status === "opening" && !!cached);
 
@@ -83,7 +83,8 @@ const deviceName = () => {
 export function start(pk = current()) {
   if (!pk || !canVault()) return Promise.resolve(null);
   if (opening && who === pk) return opening;
-  who = pk;
+  if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); }
+  who = pk; status = "opening"; tell();
   const p = (async () => {
     cached = (await idb("get", pk)) || null;
     status = "opening"; why = ""; tell();
@@ -129,7 +130,7 @@ function fail(pk, err) {
 export async function stop(pk) {
   clearTimeout(timer);
   if (pk) await idb("delete", pk);
-  session = null; cached = null; queue = new Map(); early = []; status = "none"; why = "";
+  session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); status = "none"; why = "";
   if (who === pk || !pk) who = "";
   tell();
 }
