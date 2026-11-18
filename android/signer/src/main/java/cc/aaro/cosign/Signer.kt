@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import cc.aaro.cosign.core.Clock
 import cc.aaro.cosign.core.Policy
+import cc.aaro.cosign.core.SiteScopes
 import cc.aaro.keykin.core.Child
 import cc.aaro.keykin.core.Children
 import cc.aaro.keykin.core.Device
@@ -747,7 +748,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun testRelays(urls: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("signer-relays", urls).apply() }
 
     private fun showSites() {
-        val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null) } } catch (_: Exception) { emptyList() }
+        val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null, scoped = true, lists = it.lists, dms = it.dms) } } catch (_: Exception) { emptyList() }
         val fromApps = apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Site(it.pk, it.label, appTimes.getLong(it.pkg + ":added", 0), appTimes.getLong(it.pkg + ":used", 0), null, "App on this phone") }
         ui.update { u -> u.copy(sites = fromSites + fromApps, member = u.member?.let { m -> m.copy(group = m.group.copy(relays = try { sites.sites().flatMap { it.relays }.distinct() } catch (_: Exception) { emptyList() })) }) }
     }
@@ -756,10 +757,24 @@ class Signer(private val context: Context, val slot: String = "0") {
      * Yes to a site's sign-in. [pick] answers the choice for a site new to this account: "new" signs it in
      * with an account of its own, anything else (or nothing: the web pane, older callers) with the main account.
      */
+    /** The two switches from the sign-in card ("lists", "dms"), for the sign-in [confirmConnect] makes next. */
+    @Volatile private var connectScopes = false to false
+    fun setConnectScopes(lists: Boolean, dms: Boolean) { connectScopes = lists to dms }
+
+    /** A signed-in site's switches, from its sheet. Turning DMs off forgets what it could read them with. */
+    fun setSiteScopes(pk: String, lists: Boolean, dms: Boolean) {
+        val was = sites.sites().firstOrNull { it.key == pk } ?: return
+        sites.setScopes(pk, lists, dms)
+        if ((was.dms && !dms) || (was.lists && !lists)) sharedXs.forget(was.grant)
+        showSites()
+        note("${was.origin ?: "A site"}: private lists ${if (lists) "on" else "off"}, DMs ${if (dms) "on" else "off"}", "approved")
+    }
+
     fun confirmConnect(pick: String? = null) {
         if (pendingLogin != null) return confirmLogin()
         val place = placeFor(choice, pick); choice = SiteChoice.Decision.Main
-        if (nostrConnect != null) return confirmNostrConnect(place)
+        val (lists, dms) = connectScopes; connectScopes = false to false
+        if (nostrConnect != null) return confirmNostrConnect(place, lists, dms)
         val params = connecting ?: return
         val origin = params.origin ?: "a site"
         useCode(params.token)
@@ -779,7 +794,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 // The ticket is made only now, at the moment it is released.
                 // A site's own account is made (or found) first: with a box this asks it, once per place.
                 place?.let { childFor(it) }
-                fun ticket() = sites.mint(params.origin, params.relays.ifEmpty { signerRelays() }, place = place).let { j ->
+                fun ticket() = sites.mint(params.origin, params.relays.ifEmpty { signerRelays() }, place = place, lists = lists, dms = dms).let { j ->
                     SignerTicket(j.getString("pubkey"), j.getString("signer"), params.relays.ifEmpty { signerRelays() }, j.getString("t"), j.getLong("expires"))
                 }
                 when (v.session.check) {
@@ -871,17 +886,20 @@ class Signer(private val context: Context, val slot: String = "0") {
                     ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "This app"
                 nostrConnect = Triple(client, relayList, secret); connecting = null; pendingLogin = null
                 choice = siteChoice(uri.getQueryParameter("url"), accountPage || SiteChoice.marked(text))
-                ui.update { it.copy(error = null, connect = confirmCard(site, choice)) }
+                // "Read your private lists" starts on when the site asks for decrypting (NIP-46 perms); DMs never do.
+                val perms = uri.getQueryParameter("perms")?.split(',')?.map { it.trim().substringBefore(':') }.orEmpty()
+                val wants = perms.any { it == "nip44_decrypt" || it == "nip04_decrypt" }
+                ui.update { it.copy(error = null, connect = confirmCard(site, choice).copy(wantsLists = wants)) }
             }
         }
     }
-    private fun confirmNostrConnect(place: String? = null) {
+    private fun confirmNostrConnect(place: String? = null, lists: Boolean = false, dms: Boolean = false) {
         val (client, relays, secret) = nostrConnect ?: return
         val origin = ui.value.connect?.origin ?: "a site"
         useCode(client)
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.WORKING, "Telling $origin…")) }
         work.execute {
-            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null) }
+            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place, lists, dms); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null) }
             catch (e: Exception) { nostrConnect = null; failConnect(origin, why(e)) }
         }
     }
@@ -926,11 +944,22 @@ class Signer(private val context: Context, val slot: String = "0") {
         note("Removed ${site.origin}", "denied")
     }
 
+    private val refusedNoted = ConcurrentHashMap<String, Long>()
+
     /** One request from a site that is signed in. Anything destructive waits for you here first. */
     private fun siteAct(site: SiteSigner.Site, method: String, params: List<String>): String {
         val by = site.origin ?: "A site"
         // A site with an account of its own signs and reads as that account only.
         val own = site.place?.let { childFor(it) }
+        // Its switches (SiteScopes): DMs and private lists only when they're on; refused outright, never asked.
+        val me = own?.npub ?: accountHex() ?: error("$appName isn't set up yet")
+        val kind = if (method == "sign_event") try { ((Json.parse(params[0]) as? Map<*, *>)?.get("kind") as? Long)?.toInt() } catch (_: Exception) { null } else null
+        SiteScopes.lacks(method, params, me, site.lists, site.dms, kind)?.let { lacking ->
+            // Said once an hour per site and switch: a page retrying its decrypts mustn't push everything else out of the log.
+            val at = refusedNoted["${site.key}:$lacking"]
+            if (at == null || env.now() - at > 3600) { refusedNoted["${site.key}:$lacking"] = env.now(); note("Refused ${if (lacking == "dms") "a DM" else "a private list"} for $by: off for this site", "denied") }
+            throw KeykinException(SiteScopes.refusal(lacking))
+        }
         return when (method) {
             "sign_event" -> signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
             "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant, own)
@@ -1058,6 +1087,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         val size get() = by.size
         operator fun get(peer: String): ByteArray? = by[peer]
         operator fun set(peer: String, x: ByteArray) { by.put(peer, x)?.let { java.util.Arrays.fill(it, 0) } }
+        /** Forget the ones made for [grant] (a site's), for real. */
+        fun forget(grant: String) { for (k in by.keys.filter { it.startsWith("$grant:") }) by.remove(k)?.let { java.util.Arrays.fill(it, 0) } }
         /** Forget them all, for real. Returns how many there were. */
         fun forgetAll(): Int {
             val n = by.size

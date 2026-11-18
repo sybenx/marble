@@ -44,7 +44,9 @@ class SiteSigner(
      * `grant` is this site's id at the box (SPEC 11.5): the box refuses it everywhere once it is revoked.
      * `place`: the site was signed in with an account of its own, the child for this place; null is the account itself.
      */
-    data class Site(val key: String, val origin: String?, val relays: List<String>, val added: Long, val used: Long, val via: String, val grant: String, val place: String? = null)
+    data class Site(val key: String, val origin: String?, val relays: List<String>, val added: Long, val used: Long, val via: String, val grant: String, val place: String? = null,
+                    /** "Read your private lists" and "Read and send DMs" (SiteScopes). Off for sites signed in before 0.15.1. */
+                    val lists: Boolean = false, val dms: Boolean = false)
 
     private val sk = unhex(state.getString("sk"))
     val pubkey: String = Secp.pub(sk)
@@ -59,18 +61,19 @@ class SiteSigner(
 
     fun sites(): List<Site> = synchronized(state) { list("clients") {
         Site(it.getString("key"), if (it.has("origin")) it.getString("origin") else null, strings(it.optJSONArray("relays")), it.optLong("added"), it.optLong("used"), it.optString("via", "A scanned code"),
-            it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } }, it.optString("as").ifEmpty { null })
+            it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } }, it.optString("as").ifEmpty { null },
+            it.optBoolean("lists"), it.optBoolean("dms"))
     } }
     /** How many relays this signer is connected to, of how many it wants. */
     fun relaysUp(): Pair<Int, Int> = opened.size to sockets.size
 
     /** A ticket for `origin`, good once and for 15 minutes, to be handed to the site that showed the code. */
-    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code", place: String? = null): JSONObject {
+    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code", place: String? = null, lists: Boolean = false, dms: Boolean = false): JSONObject {
         // With a place, the site gets that place's own account (made before this is called), not this one.
         val npub = (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         val t = JSONObject().put("v", 1).put("pubkey", npub).put("signer", pubkey).put("relays", JSONArray(relays)).put("t", hex(random(16))).put("expires", now() + TICKET_SECONDS)
         synchronized(state) {
-            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
+            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
             changed(state)
         }
         start()
@@ -87,10 +90,10 @@ class SiteSigner(
      * A site's nostrconnect:// code, after the person said yes: the site is put on the list and told so
      * with the code's own secret, on the relays the code names.
      */
-    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?, place: String? = null) {
+    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?, place: String? = null, lists: Boolean = false, dms: Boolean = false) {
         (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         synchronized(state) {
-            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
+            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
             changed(state)
         }
         start()
@@ -105,6 +108,13 @@ class SiteSigner(
             if (told.size < relays.size) Thread.sleep(150)
         }
         if (sent == 0) { signOut(client); refuse("no_relay") }
+    }
+
+    /** A site's two switches, from its sheet. False: no such site. */
+    fun setScopes(key: String, lists: Boolean, dms: Boolean): Boolean = synchronized(state) {
+        val a = state.getJSONArray("clients")
+        for (i in 0 until a.length()) a.getJSONObject(i).let { if (it.getString("key") == key) { it.put("lists", lists).put("dms", dms); changed(state); return@synchronized true } }
+        false
     }
 
     fun signOut(key: String) {
@@ -186,7 +196,7 @@ class SiteSigner(
                 val t = ticket ?: refuse("bad_secret")          // a ticket works once
                 state.put("tickets", keep)
                 state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", t.optJSONArray("relays") ?: JSONArray()).put("added", now()).put("used", now()).put("grant", hex(random(16)))
-                    .put("via", t.optString("via", "A scanned code")).apply { if (t.has("origin")) put("origin", t.getString("origin")); if (t.has("as")) put("as", t.getString("as")) })
+                    .put("via", t.optString("via", "A scanned code")).put("lists", t.optBoolean("lists")).put("dms", t.optBoolean("dms")).apply { if (t.has("origin")) put("origin", t.getString("origin")); if (t.has("as")) put("as", t.getString("as")) })
                 changed(state)
             }
             return params.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: "ack"

@@ -67,4 +67,14 @@ class KeptTest {
         // And nothing writes them down: they live in memory only.
         assert(!src.contains("saveSharedX") && !Regex("""sharedXs[^\n]*(save|putString|edit\(\))""").containsMatchIn(src)) { "a conversation key is being written down" }
     }
+
+    @Test fun turningASitesDmsOffForgetsOnlyItsKeys() {
+        val k = Kept()
+        val a = secret(1); val b = secret(2)
+        k["grantA:alice"] = a; k["grantB:alice"] = b
+        k.forget("grantA")
+        assertNull(k["grantA:alice"])
+        assertArrayEquals("wiped, not dropped", ByteArray(32), a)
+        assertSame(b, k["grantB:alice"])
+    }
 }

@@ -122,8 +122,10 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
     }
 
     /** Keep: the visit stays, as a chip of its own on this phone. */
+    /** Keep a visit as a chip. Keeping it is your choice of it, so it can ask to sign in too (each sign-in still asks). */
     fun keep(s: WebSite) {
-        val k = (WebSites.byOrigin(s.origin) ?: s).copy(kind = WebSite.Kind.KEPT)
+        val k = (WebSites.byOrigin(s.origin) ?: s).copy(kind = WebSite.Kind.KEPT, asks = true)
+        if (signInOff?.origin == k.origin) signInOff = null
         WebSites.update(k)
         if (site.origin == k.origin) { site = k; prefs.edit().putString("webSite", k.id).apply() }
     }
@@ -355,7 +357,7 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         }
     }
 
-    private val debug = cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private val debug by lazy { cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
     companion object { const val MAX_ALIVE = 3 }
 }
@@ -454,6 +456,12 @@ fun SiteSheet(state: WebPaneState, phone: Phone) {
                     colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Vault.Accent, checkedThumbColor = Vault.Ground,
                         uncheckedTrackColor = Vault.Ground, uncheckedThumbColor = Vault.Muted, uncheckedBorderColor = Vault.Edge))
             }
+            // What it may do, for each sign-in this pane made for it on this account.
+            val mine = PaneGrants.of(context).of(phone.slot, s.label)
+            for (g in ui.sites.filter { it.scoped && it.pk.lowercase() in mine }) {
+                Box(Modifier.height(6.dp))
+                cc.aaro.cosign.ui.SiteScopeSwitches(g.lists, g.dms, { phone.setSiteScopes(g, it, g.dms) }, { phone.setSiteScopes(g, g.lists, it) })
+            }
             row("Sign out", enabled = signedIn) { state.signOut(s, phone); close() }
             if (s.kind != WebSite.Kind.BUILT_IN) row("Remove") { state.removeAsk = s; close() }
         }
@@ -528,16 +536,20 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
         val replacing = PaneGrants.of(LocalContext.current).toReplace(phone.slot, label, ui.sites, WebRules.clientOf(ask.code))
         val note = listOfNotNull(siteNote(ask.site),
             if (replacing.isNotEmpty()) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Your account any time.").joinToString(" ")
-        val done = { pick: String? -> state.signIn = null; account.connectSite(ask.site.origin, ask.code, pick) }
+        // Its switches: private lists start on for a site that reads them right after sign-in (Jumble); DMs start off.
+        var lists by remember(ask) { mutableStateOf(ask.site.asksLists) }
+        var dms by remember(ask) { mutableStateOf(false) }
+        val switches: @Composable () -> Unit = { cc.aaro.cosign.ui.SiteScopeSwitches(lists, dms, { lists = it }, { dms = it }) }
+        val done = { pick: String? -> state.signIn = null; account.connectSite(ask.site.origin, ask.code, pick, lists, dms) }
         when (PaneChoice.decide(ask.site.origin, ui.sites, replacing)) {
             // A site new to this account: an account of its own is the main choice, the main account the small one.
             PaneChoice.ASK -> SitePrompt("Sign in to $label?", "A new account is made just for this site, empty to start. Nothing from your main account goes with it. Anything destructive comes to this phone first.",
                 yes = "Sign in with a new account", no = "Not now", note = note, onYes = { done("new") }, onNo = { state.signIn = null },
-                alt = "Use my main account", onAlt = { done("main") })
+                alt = "Use my main account", onAlt = { done("main") }, extra = switches)
             PaneChoice.OWN -> SitePrompt("Sign in to $label?", "It signs in with its own account, as before. Anything destructive comes to this phone first.",
-                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null })
+                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null }, extra = switches)
             PaneChoice.MAIN -> SitePrompt("Sign in to $label?", "$label can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
-                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null })
+                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null }, extra = switches)
         }
     }
 
@@ -547,13 +559,6 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
             yes = "Remove", no = "Keep it", onYes = { state.removeAsk = null; state.remove(s, phone) }, onNo = { state.removeAsk = null })
     }
 
-    val followUp by WebSignIn.followUp.collectAsState()
-    followUp?.let { s ->
-        if (account.sharesLists) SitePrompt("Also let ${s.label} read your private mute list?", "${s.label} reads it right after you sign in, to hide what you muted privately.",
-            yes = "Allow", no = "Not now", onYes = { WebSignIn.followUp.value = null; account.shareLists(s.origin) }, onNo = { WebSignIn.followUp.value = null })
-        else SitePrompt("Your private mutes stay private", "${s.label} can't read your private mute list: Cosign doesn't share private lists with sites yet. Your public mutes still work there.",
-            yes = "", no = "OK", onYes = {}, onNo = { WebSignIn.followUp.value = null })
-    }
 
     state.camera?.let { ask ->
         SitePrompt("Let ${ask.site.label} use the camera?", "Only while this page is open.", yes = "Allow", no = "Don't allow",

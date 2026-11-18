@@ -26,7 +26,9 @@ data class Ask(val id: String, val app: String, val event: Event, val hold: Stri
 /** A site or an app that can sign as you. [via] says how it got in. */
 data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
                 /** The site signed in with an account of its own (made for it), not the main account. */
-                val own: Boolean = false) : java.io.Serializable
+                val own: Boolean = false,
+                /** A site (not an app on this phone), with its switches: "Read your private lists" and "Read and send DMs". */
+                val scoped: Boolean = false, val lists: Boolean = false, val dms: Boolean = false) : java.io.Serializable
 data class Change(val id: String, val text: String, val by: String, val at: Long, val held: Boolean, val undone: Boolean,
                   /** Made somewhere else (another app with your key, another device with your box), found on your relays. */
                   val outside: Boolean = false,
@@ -48,7 +50,9 @@ data class Connect(val origin: String, val stage: Stage, val message: String? = 
                    /** The site already has an account of its own here, and signs in with it again. */
                    val own: Boolean = false,
                    /** A Keykin account page: it gets the main account only (no choice), and the card says so. */
-                   val accountPage: Boolean = false) : java.io.Serializable { enum class Stage { CONFIRM, COMPARE, WORKING, DONE, FAILED } }
+                   val accountPage: Boolean = false,
+                   /** The site asked to decrypt at sign-in (NIP-46 perms): "Read your private lists" starts on. */
+                   val wantsLists: Boolean = false) : java.io.Serializable { enum class Stage { CONFIRM, COMPARE, WORKING, DONE, FAILED } }
 data class Line(val ts: Long, val text: String, val kind: String = "info") : java.io.Serializable
 /** The whole key, formed after a fingerprint. [nsec] never leaves the signer process. */
 data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = null, val nsec: String? = null, val npub: String? = null, val twinUnknown: Boolean = false) : java.io.Serializable {

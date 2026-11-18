@@ -152,7 +152,11 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun decideBatch(batch: String, approve: Boolean) = act("decideBatch", batch, approve)
     fun cancelDeletion(batch: String) = act("cancelDeletion", batch)
     /** Yes to a site's sign-in. [pick] "new": a site new to this account gets an account of its own; otherwise the main account. */
+    /** The sign-in card's two switches, for the [confirmConnect] that follows. */
+    fun setConnectScopes(lists: Boolean, dms: Boolean) = act("connectScopes", listOfNotNull("lists".takeIf { lists }, "dms".takeIf { dms }).joinToString(","))
     fun confirmConnect(pick: String? = null) = act("confirmConnect", pick)
+    /** A signed-in site's "Read your private lists" and "Read and send DMs", from its sheet. */
+    fun setSiteScopes(site: Site, lists: Boolean, dms: Boolean) = act("siteScopes", site.pk + "|" + listOfNotNull("lists".takeIf { lists }, "dms".takeIf { dms }).joinToString(","))
     fun closeConnect() = act("closeConnect")
     /** The five digits this phone shows were compared with the site's. */
     fun digits(same: Boolean) = act("digits", flag = same)

@@ -37,7 +37,8 @@ const val PROMPT_GUARD_MS = 500L
  */
 @Composable
 fun SitePrompt(title: String, body: String, yes: String, no: String, onYes: () -> Unit, onNo: () -> Unit, note: String? = null,
-               /** A second, smaller yes under the main one. */ alt: String? = null, onAlt: () -> Unit = {}) {
+               /** A second, smaller yes under the main one. */ alt: String? = null, onAlt: () -> Unit = {},
+               /** Shown above the buttons (a sign-in's switches). */ extra: (@Composable () -> Unit)? = null) {
     val shownAt = remember { android.os.SystemClock.uptimeMillis() }
     fun guarded(f: () -> Unit): () -> Unit = { if (android.os.SystemClock.uptimeMillis() - shownAt >= PROMPT_GUARD_MS) f() }
     BackHandler { onNo() }
@@ -49,6 +50,7 @@ fun SitePrompt(title: String, body: String, yes: String, no: String, onYes: () -
             Spacer(Modifier.height(10.dp))
             Text(body, style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
             note?.let { Spacer(Modifier.height(6.dp)); Text(it, style = MaterialTheme.typography.bodySmall, color = Vault.Muted) }
+            extra?.let { Spacer(Modifier.height(12.dp)); it() }
             Spacer(Modifier.height(20.dp))
             // Declining is never the weaker control.
             OutlinedButton(guarded(onNo), Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text(no, color = Vault.Text) }

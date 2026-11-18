@@ -114,7 +114,7 @@ fun App(phone: Phone, ui: Ui) {
         }
         // With several keys, every question says which one it's about.
         val which = if (CosignApp.instance.accounts.all.count { it.isMember } > 1) phone.label else null
-        ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, { pick -> phone.confirmConnect(pick) }, phone::digits, phone::closeConnect) }
+        ui.connect?.takeUnless(cc.aaro.cosign.web.WebSignIn::hides)?.let { ConnectSheet(it, which, { pick, lists, dms -> phone.setConnectScopes(lists, dms); phone.confirmConnect(pick) }, phone::digits, phone::closeConnect) }
         ui.joinText?.let { JoinTextSheet(it, phone::closeJoinText) }
         ui.loginAsk?.let { LoginSheet(it, { phone.confirmConnect() }, phone::closeConnect) }
         ui.move?.let { KeyMoveScreen(it, phone) }
@@ -337,8 +337,11 @@ private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: () -> Unit, on
 
 /** Connecting a site: the one-tap consent of QRST at its lowest check, then progress. */
 @Composable
-private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?) -> Unit, onDigits: (Boolean) -> Unit, onClose: () -> Unit) {
+private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolean, Boolean) -> Unit, onDigits: (Boolean) -> Unit, onClose: () -> Unit) {
     BackHandler { onClose() }
+    // The site's switches: private lists start on only when it asked to decrypt; DMs start off.
+    var lists by remember(c.origin, c.wantsLists) { mutableStateOf(c.wantsLists) }
+    var dms by remember(c.origin) { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
@@ -355,13 +358,15 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?) -> Uni
                     Spacer(Modifier.height(6.dp))
                     Text("Anything destructive comes to this phone first. Remove it under Your account any time.",
                         style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(12.dp))
+                    SiteScopeSwitches(lists, dms, { lists = it }, { dms = it })
+                    Spacer(Modifier.height(16.dp))
                     OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't connect", color = Vault.Text) }
                     Spacer(Modifier.height(10.dp))
-                    Button({ onConnect("new") }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    Button({ onConnect("new", lists, dms) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                         Text("Sign in with a new account", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton({ onConnect("main") }, Modifier.align(Alignment.CenterHorizontally)) {
+                    TextButton({ onConnect("main", lists, dms) }, Modifier.align(Alignment.CenterHorizontally)) {
                         Text("Use my main account", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 } else {
@@ -377,11 +382,13 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?) -> Uni
                     Spacer(Modifier.height(6.dp))
                     Text("Remove it under Your account any time. That stops it from then on; it doesn't undo what it already did.",
                         style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(12.dp))
+                    SiteScopeSwitches(lists, dms, { lists = it }, { dms = it })
+                    Spacer(Modifier.height(16.dp))
                     // Declining is never the weaker control; the affirmative one names the site.
                     OutlinedButton(onClose, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't connect", color = Vault.Text) }
                     Spacer(Modifier.height(10.dp))
-                    Button({ onConnect(null) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    Button({ onConnect(null, lists, dms) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                         Text("Use it on ${c.origin}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -548,7 +555,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
-            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite)
+            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes)
         }
 
         // Following: your Special Follow list and where the news comes from.
@@ -905,7 +912,7 @@ internal fun question(what: String): String {
 }
 
 @Composable
-private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit) = Column(
+private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> }) = Column(
     Modifier.fillMaxWidth().background(Vault.Surface, RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp)).padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -919,15 +926,19 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
         Spacer(Modifier.weight(1f))
         if (grants.size > 1) TextButton({ grants.forEach(onRemove) }) { Text("Remove all", color = Vault.AmberText) }
     }
-    for (g in grants.sortedByDescending { it.lastUsed }) Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            // Which account it signed in with, for sites (an app on this phone always has the main one).
-            (if (g.via == "App on this phone") "" else if (g.own) "Own account · " else "Main account · ") +
-                "${g.via ?: if (g.parent == null) "Connected by code" else "Connected"} · used ${ago(g.lastUsed)}",
-            color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
-        )
-        TextButton({ onUndo(g) }) { Text("Undo all", color = Vault.Accent) }
-        TextButton({ onRemove(g) }) { Text("Remove", color = Vault.AmberText) }
+    for (g in grants.sortedByDescending { it.lastUsed }) Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                // Which account it signed in with, for sites (an app on this phone always has the main one).
+                (if (g.via == "App on this phone") "" else if (g.own) "Own account · " else "Main account · ") +
+                    "${g.via ?: if (g.parent == null) "Connected by code" else "Connected"} · used ${ago(g.lastUsed)}",
+                color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
+            )
+            TextButton({ onUndo(g) }) { Text("Undo all", color = Vault.Accent) }
+            TextButton({ onRemove(g) }) { Text("Remove", color = Vault.AmberText) }
+        }
+        // A site's switches (an app on this phone has none of these).
+        if (g.scoped) SiteScopeSwitches(g.lists, g.dms, { onScopes(g, it, g.dms) }, { onScopes(g, g.lists, it) }, Modifier.padding(end = 8.dp))
     }
 }
 

@@ -18,19 +18,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 interface SiteAccount {
     /** Sign [origin] (the WebView's verified origin) in with the nostrconnect [code] its page showed. [pick] "new":
      *  a site new to this account gets an account of its own; otherwise the main account (SiteChoice). */
-    fun connectSite(origin: String, code: String, pick: String? = null)
-    /** Whether a site can be given your private lists (Keykin's `lists` scope). */
-    val sharesLists: Boolean
-    /** Give [origin] your private lists. Only where [sharesLists]. */
-    fun shareLists(origin: String) {}
+    fun connectSite(origin: String, code: String, pick: String? = null, lists: Boolean = false, dms: Boolean = false)
 }
 
 /** Where a sign-in from the pane stands, for the screens: the site whose Cosign confirm is skipped, and the follow-up. */
 object WebSignIn {
     /** A site being signed in from the pane: Cosign's own "Use your account on …?" is skipped for it (you just said yes). */
     val confirming = MutableStateFlow<String?>(null)
-    /** The site just signed in that reads your private mute list: the second prompt asks about it. */
-    val followUp = MutableStateFlow<WebSite?>(null)
 
     /** Cosign's connect sheet stays hidden while it only asks again what SitePrompt asked. */
     fun hides(c: Connect) = c.stage == Connect.Stage.CONFIRM && c.origin == confirming.value
@@ -44,15 +38,11 @@ object WebSignIn {
  * Marble to the back, MainActivity's LaunchedEffect on ui.connect).
  */
 class CosignSiteAccount(private val phone: Phone) : SiteAccount {
-    // Cosign's servers refuse every nip04/nip44 call from a site that came by nostrconnect (server/core/group.ts:
-    // "every such site shares one signer key"), so there is nothing to grant.
-    override val sharesLists = false
-
-    override fun connectSite(origin: String, code: String, pick: String?) {
+    /** [lists], [dms]: the prompt's switches ("Read your private lists", "Read and send DMs"), kept with the sign-in. */
+    override fun connectSite(origin: String, code: String, pick: String?, lists: Boolean, dms: Boolean) {
         if (!phone.isMember) return phone.showError("Set up your account before signing in to a site.")
         val label = WebRules.label(origin)
         val client = WebRules.clientOf(code)
-        val site = WebSites.byOrigin(origin)
         // One live pane sign-in per origin: only a sign-in this pane made on this phone, for this account, ends now (the
         // page asked again, so it lost it). Nothing else is touched: not a sign-in by code made anywhere else, not the
         // extension's, not an app's (PaneGrants keeps the record).
@@ -68,19 +58,13 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
                     phone.ui.first { u -> (u.connect?.stage == Connect.Stage.CONFIRM && u.connect?.origin == label) || (u.error != null && u.error != errorBefore) }
                 }
                 if (asked?.connect?.stage != Connect.Stage.CONFIRM) return@launch
+                phone.setConnectScopes(lists, dms)
                 phone.confirmConnect(pick)
                 // From here the servers may take the site on, whatever this phone hears back: it's the pane's.
                 grants.record(phone.slot, label, client)
                 // Hidden until the signer has moved on from asking (to "Telling your servers…"), so it never flashes.
                 withTimeoutOrNull(5_000) { phone.ui.first { u -> u.connect?.stage != Connect.Stage.CONFIRM || u.connect?.origin != label } }
                 WebSignIn.confirming.value = null
-                // Then the follow-up, once your servers have it (Connect DONE), for a site that reads your private mute list.
-                val done = withTimeoutOrNull(40_000) {
-                    phone.ui.first { u -> u.connect?.origin == label && (u.connect?.stage == Connect.Stage.DONE || u.connect?.stage == Connect.Stage.FAILED) }
-                }
-                // Only for the main account: an account of its own has no private mute list yet.
-                val own = pick == "new" || phone.ui.value.sites.any { it.origin == label && it.own }
-                if (done?.connect?.stage == Connect.Stage.DONE && site?.asksLists == true && !own) WebSignIn.followUp.value = site
             } finally {
                 if (WebSignIn.confirming.value == label) WebSignIn.confirming.value = null
             }

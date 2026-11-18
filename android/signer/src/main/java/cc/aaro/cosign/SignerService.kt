@@ -168,6 +168,8 @@ class SignerService : Service() {
             "decide" -> s.decide(text ?: return, flag)
             "decideBatch" -> s.decideBatch(text ?: return, flag)
             "cancelDeletion" -> s.cancelDeletion(text ?: return)
+            "connectScopes" -> (text ?: "").split(',').let { s.setConnectScopes("lists" in it, "dms" in it) }
+            "siteScopes" -> (text ?: "").split('|', limit = 2).let { p -> val f = p.getOrNull(1).orEmpty().split(','); s.setSiteScopes(p[0], "lists" in f, "dms" in f) }
             "confirmConnect" -> s.confirmConnect(text)
             "closeConnect" -> s.closeConnect()
             "connectInBackground" -> s.connectInBackground = flag
