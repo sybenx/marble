@@ -13,7 +13,7 @@ import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply,
 import { openAccountPage } from "./account-page.js";
 import * as notes from "./later.js";
 import * as vault from "./notes-vault.js";
-import { showReader } from "./reader.js";
+import { showReader, keepUrlOf, plainText } from "./reader.js";
 import { follow, following } from "./follow.js";
 import { focusList, goTo } from "./home-rules.js";
 import { silenceLine } from "./account-relays.js";
@@ -143,7 +143,45 @@ const replyTo = (e) => {
 const rootOf = (e) => (e.tags || []).find((t) => t[0] === "e" && t[3] === "root") || null;
 const warning = (e) => (e.tags || []).find((t) => t[0] === "content-warning");
 
-function who(pk, e, { big = false } = {}) {
+// Keep: any post or article, kept in Notes by its address (as the Reader's star keeps it, so the two agree), top right
+// of the post. Kept again it's taken out, unless the note has your own words under it: those are taken out in Notes.
+const KEEP_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V20l-6-3.8L6 20V4.5a1 1 0 0 1 1-1z"/></svg>';
+const keptNote = (url) => notes.items().find((n) => n.url === url) || null;
+const keepTitle = (e) => e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] || "Untitled" : `${name(e.pubkey)}: ${plainText(e) || "A post"}`;
+const keepable = new Map(); // id → the post a Keep button was drawn for
+function keepButton(e) {
+  keepable.set(e.id, e);
+  const url = keepUrlOf(e), on = !!keptNote(url);
+  return `<button type="button" class="keep" data-keep-post="${esc(url)}" data-keep-id="${e.id}" aria-pressed="${on}" aria-label="${on ? "Kept in Notes" : "Keep in Notes"}" title="${on ? "Kept in Notes" : "Keep in Notes"}">${KEEP_ICON}</button>`;
+}
+function markKept(root = document) {
+  for (const b of root.querySelectorAll("[data-keep-post]")) {
+    const on = !!keptNote(b.dataset.keepPost);
+    b.setAttribute("aria-pressed", String(on));
+    b.setAttribute("aria-label", on ? "Kept in Notes" : "Keep in Notes");
+    b.title = on ? "Kept in Notes" : "Keep in Notes";
+  }
+}
+notes.onNotes(() => markKept());
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest?.("[data-keep-post]");
+  if (!b) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const url = b.dataset.keepPost, have = keptNote(url), e = keepable.get(b.dataset.keepId) || events.get(b.dataset.keepId);
+  if (!have) {
+    if (!e) return;
+    notes.keepPage(url, keepTitle(e));
+    toast(notes.syncs() ? "Kept in Notes" : "Kept in Notes, in this browser (sign in to have it everywhere)");
+  } else if (have.text.includes("\n")) {
+    toast("This note has your own words: take it out in Notes");
+  } else {
+    notes.remove(have);
+    toast("Taken out of Notes");
+  }
+  markKept();
+}, true);
+
+function who(pk, e, { big = false, keep = null } = {}) {
   wantProfile(pk);
   const p = profiles.get(pk);
   return `<div class="who">
@@ -152,6 +190,7 @@ function who(pk, e, { big = false } = {}) {
       <a href="${personPath(pk)}" class="who-name" data-name="${pk}">${esc(name(pk))}</a>
       <span class="who-sub"><span data-nip05="${pk}">${nip05Label(pk, p)}</span>${e ? `<a href="${postPath(e, foundOn(e.id).slice(0, 2))}" class="when" title="${esc(fullDate(e.created_at))}">${ago(e.created_at)}</a>` : ""}</span>
     </div>
+    ${keep ? keepButton(keep) : ""}
   </div>`;
 }
 
@@ -178,7 +217,7 @@ function card(e, { compact = false, context = true, why = "", clamp = false } = 
   const body = `<div class="text${clamp ? " clamp" : ""}">${content(e)}</div>`;
   return `<article class="card${compact ? " compact" : ""}" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
     ${why ? `<p class="why">${esc(why)}</p>` : ""}
-    ${who(e.pubkey, e)}
+    ${who(e.pubkey, e, { keep: compact ? null : e })}
     ${parent ? `<p class="context">Replying to <span class="reply-name" data-parent="${parent[1]}">a post</span></p>` : ""}
     ${spamSlot(e)}
     ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
@@ -645,7 +684,7 @@ function mainPost(e) {
   const cw = warning(e);
   const body = `<div class="text big">${content(e)}</div>`;
   return `<article class="card main" data-id="${e.id}">
-    ${who(e.pubkey, null, { big: true })}
+    ${who(e.pubkey, null, { big: true, keep: e })}
     ${spamSlot(e)}
     ${cw ? `<details class="cw" data-warning="${esc(cw[1] || "")}"><summary>${esc(cw[1] || "Sensitive")}: show</summary>${body}</details>` : body}
     ${reactionsRow(e)}
@@ -695,7 +734,7 @@ function showArticle(e, signal) {
   pageEl.innerHTML = `<article class="article">
     ${/^https:\/\//.test(img) ? `<img class="cover" src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : ""}
     <h1>${esc(tag("title") || "Untitled")}</h1>
-    ${who(e.pubkey, null, { big: true })}
+    ${who(e.pubkey, null, { big: true, keep: e })}
     <p class="muted dated">${esc(fullDate(at))} · ${readTime(e)}</p>
     <div class="prose">${markdown(e.content, { title: tag("title") })}</div>
     <div class="meta"><button type="button" class="link" data-copy="${esc(location.href)}">Copy link</button></div>
@@ -1100,7 +1139,7 @@ function postResult(x) {
   const title = e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] : "";
   return `<article class="res" data-href="${postPath(e, foundOn(e.id).slice(0, 2))}">
     <p class="res-why"><b>Post</b>${x.why ? ` · ${esc(x.why)}` : ""}</p>
-    <div class="res-who">${avatar(e.pubkey, 28)}<a href="${personPath(e.pubkey)}" data-name="${e.pubkey}">${esc(name(e.pubkey))}</a><span>${agoLong(e.created_at)}</span></div>
+    <div class="res-who">${avatar(e.pubkey, 28)}<a href="${personPath(e.pubkey)}" data-name="${e.pubkey}">${esc(name(e.pubkey))}</a><span>${agoLong(e.created_at)}</span>${keepButton(e)}</div>
     ${spamSlot(e)}
     ${title ? `<p class="res-title">${esc(title)}</p>` : ""}
     <div class="text clamp4">${e.kind === 30023 ? esc((e.tags.find((t) => t[0] === "summary") || [])[1] || "") : content(e, { quotes: false })}</div>

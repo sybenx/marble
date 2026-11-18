@@ -483,6 +483,8 @@ const today = (t) => new Date(t * 1000).toDateString() === new Date().toDateStri
 const shortDate = (t) => today(t) ? clock(new Date(t * 1000)) : day(t);
 const longDate = (t) => `${day(t)}, ${clock(new Date(t * 1000))}`;
 // where an item opens: a Nostr thing in Marble (its post view), a site's story on the site (a viewer link here)
+/** A post's or article's address as a note keeps it (the Reader's star, Keep on any post). */
+export const keepUrlOf = (e) => SITE + pathOf(e);
 const pathOf = (e) => e.kind >= 30000 && e.kind < 40000 ? `/${naddr({ kind: e.kind, pubkey: e.pubkey, identifier: e.tags.find((t) => t[0] === "d")?.[1] || "", relays: [] })}` : postPath(e);
 // a Nostr item's own address (nevent, or naddr for an article), for Open in… and sharing
 const entityOf = (i) => {
