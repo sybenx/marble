@@ -50,14 +50,28 @@ object Policy {
     /** Replaceable events are keyed by kind; parameterised ones by kind and d tag. */
     fun keyOf(e: Event): String = if (e.kind in 30000 until 40000) "${e.kind}:${e.firstTag("d") ?: ""}" else "${e.kind}"
 
-    private fun items(e: Event): List<String> = when (e.kind) {
-        3 -> e.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
-        in RELAYISH -> e.tags.filter { it.size > 1 && (it[0] == "r" || it[0] == "relay") }.map { it[1].trimEnd('/') }
-        else -> e.tags.filter { it.isNotEmpty() && it[0] != "d" && it[0] != "title" && it[0] != "description" }.map { Json.stringify(it.take(2)) }
+    private fun items(e: Event): List<String> = tagged(e).map { it.first }
+    /** Each entry of a list (who, which relay, which note) with its whole tag. */
+    private fun tagged(e: Event): List<Pair<String, List<String>>> = when (e.kind) {
+        3 -> e.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] to it }
+        in RELAYISH -> e.tags.filter { it.size > 1 && (it[0] == "r" || it[0] == "relay") }.map { it[1].trimEnd('/') to it }
+        else -> e.tags.filter { it.isNotEmpty() && it[0] != "d" && it[0] != "title" && it[0] != "description" }.map { Json.stringify(it.take(2)) to it }
     }
 
     private fun profile(e: Event?): Map<*, *> = try { Json.parse(e?.content ?: "{}") as? Map<*, *> ?: emptyMap<String, Any>() } catch (_: Exception) { emptyMap<String, Any>() }
     private fun filled(v: Any?) = if (v is String) v.isNotBlank() else v != null
+
+    /** The profile fields [now] empties (empty: all of it), when that is a wipe: two or more, or everything; else null. */
+    private fun wiped(prev: Event, now: Event): List<String>? {
+        val was = profile(prev); val after = profile(now)
+        val gone = PROFILE_FIELDS.filter { filled(was[it]) && !filled(after[it]) }
+        return if (gone.size >= 2 || (after.isEmpty() && was.isNotEmpty())) gone else null
+    }
+    /**
+     * The private part (encrypted, in the content) was there and is gone. Old follow lists kept your relays in the
+     * content as plain JSON: that is no private part, and apps drop it all the time.
+     */
+    private fun emptied(prev: Event, now: Event) = now.kind != 0 && prev.content.isNotBlank() && !prev.content.trimStart().startsWith("{") && now.content.isBlank()
 
     /** Set when you have to approve: what would be destroyed, in plain words. */
     fun hold(e: Event, prev: Event?, now: Long = Clock.now()): String? {
@@ -71,11 +85,9 @@ object Policy {
             return null
         }
         if (e.kind !in ARCHIVED || prev == null) return null
-        if (e.kind == 0) {
-            val was = profile(prev); val now = profile(e)
-            val wiped = PROFILE_FIELDS.filter { filled(was[it]) && !filled(now[it]) }
-            return if (wiped.size >= 2 || (now.isEmpty() && was.isNotEmpty())) "Wipe your profile: ${wiped.joinToString(", ").ifEmpty { "everything" }}" else null
-        }
+        if (e.kind == 0) return wiped(prev, e)?.let { "Wipe your profile: ${it.joinToString(", ").ifEmpty { "everything" }}" }
+        // The encrypted private part (private bookmarks, private mutes): an app that can't read it may write the list back without it.
+        if (emptied(prev, e)) return "Empty your private ${kindName(e.kind)}"
         val before = items(prev); val after = items(e)
         val kept = after.toSet(); val had = before.toSet()
         val removed = before.count { it !in kept }
@@ -83,5 +95,73 @@ object Policy {
         if (after.isEmpty() && before.size >= 3) return "Empty your ${kindName(e.kind)} (it has ${plural(before.size, e.kind)})"
         val big = if (e.kind in RELAYISH) removed >= 2 && removed >= before.size * 0.5 else removed >= 10 && removed >= before.size * 0.2
         return if (big) "Remove $removed of your ${before.size} ${itemName(e.kind)}s" + (if (added > 0) " (and add $added)" else "") else null
+    }
+
+    // --- Changes made somewhere else ---------------------------------------------------------------
+
+    /**
+     * A change to one of your lists that this phone did not sign, said for Recent changes: [text] for its row,
+     * [alarm] (whole sentences) when something was lost, which also gets a notification titled [title].
+     */
+    data class Outside(val text: String, val alarm: String?, val title: String)
+
+    /** What a version found elsewhere means against the last one this phone saw. */
+    enum class Found {
+        /** Not yours, not one of your lists, not signed, dated ahead, or not newer: nothing to do. */
+        IGNORE,
+        /** The first version of this list this phone sees: kept to compare with, nothing said. */
+        BASELINE,
+        /** Newer than the one this phone saw: kept, and a row in Recent changes. */
+        CHANGED,
+    }
+
+    /** Judge [e], found on a relay, for [account] (the account's own key, never a site's), against [have], the latest seen. */
+    fun found(e: Event, account: String?, have: Event?, now: Long = Clock.now()): Found = when {
+        account == null || e.pubkey != account || e.kind !in ARCHIVED -> Found.IGNORE
+        e.createdAt > now + AHEAD || (have != null && (have.id == e.id || e.createdAt <= have.createdAt)) -> Found.IGNORE
+        !e.verify() -> Found.IGNORE
+        have == null -> Found.BASELINE
+        else -> Found.CHANGED
+    }
+
+    /** Entries as [hold] counts them, with their whole tags, less what an app adds about itself (its name, a description for other apps). */
+    private fun entries(e: Event) = tagged(e.copy(tags = e.tags.filter { it.isEmpty() || (it[0] != "client" && it[0] != "alt") }))
+    private fun verb(name: String) = if (name.endsWith("s")) "were" else "was"
+
+    /**
+     * What happened between [prev] (the version this phone saw last) and [now] (made in another app, or on another device
+     * with your box), however many edits that took. Null when nothing at all differs. Entries rewritten in their details
+     * (a relay hint dropped) are not counted as added or removed, but most of them rewritten is said, as is a private part
+     * emptied, most of a list removed or a profile wiped (the same lines [hold] draws).
+     */
+    fun outside(prev: Event, now: Event): Outside? {
+        if (prev.tags == now.tags && prev.content == now.content) return null
+        val name = kindName(now.kind)
+        val title = "Your $name ${verb(name)} changed in another app or device"
+        if (now.kind == 0) {
+            val gone = wiped(prev, now) ?: return Outside("Profile changed", null, title)
+            val what = "your profile was wiped (${gone.joinToString(", ").ifEmpty { "everything" }})"
+            return Outside("Profile: $what", upper(what) + ".", title)
+        }
+        val alarms = mutableListOf<String>()
+        if (emptied(prev, now)) alarms += "your private $name ${verb(name)} emptied"
+        val old = entries(prev); val new = entries(now)
+        val before = old.map { it.first }; val after = new.map { it.first }
+        val had = before.toSet(); val kept = after.toSet()
+        val removed = before.count { it !in kept }; val added = after.count { it !in had }
+        val big = (after.isEmpty() && before.size >= 3) ||
+            (if (now.kind in RELAYISH) removed >= 2 && removed >= before.size * 0.5 else removed >= 10 && removed >= before.size * 0.2)
+        if (big) alarms += if (after.isEmpty()) "all ${plural(before.size, now.kind)} removed"
+            else "$removed of ${before.size} ${itemName(now.kind)}s removed" + (if (added > 0) ", $added added" else "")
+        // Still there, but not as it was: a client that drops what it doesn't know (hints, petnames) can do this to every entry.
+        val a = old.reversed().toMap(); val b = new.reversed().toMap()
+        val rewritten = a.count { (k, t) -> b[k]?.let { it != t } ?: false }
+        val stayed = a.keys.count { it in b }
+        if (rewritten >= 3 && rewritten * 2 > stayed) alarms += "$rewritten of ${before.size} entries rewritten"
+        val counts = if (big) emptyList() else listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 })
+        val private = { c: String -> c.isNotBlank() && !c.trimStart().startsWith("{") }
+        val parts = alarms + counts + listOfNotNull("your private $name changed".takeIf { alarms.isEmpty() && counts.isEmpty() && private(prev.content) && private(now.content) && prev.content != now.content })
+        val text = if (parts.isEmpty()) "${upper(name)} changed" else "${upper(name)}: ${parts.joinToString(", ")}"
+        return Outside(text, alarms.takeIf { it.isNotEmpty() }?.joinToString(" ") { upper(it) + "." }, title)
     }
 }

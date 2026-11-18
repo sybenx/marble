@@ -7,7 +7,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** The phone's policy against cases judged by the servers' (server/test/policy-vectors.ts). */
+/** The phone's policy against its cases (first judged by the old servers' server/test/policy-vectors.ts; the servers are gone, so these are the spec now). */
 class PolicyVectorsTest {
     private fun event(o: JSONObject): Event {
         val tags = o.getJSONArray("tags").let { a -> (0 until a.length()).map { i -> a.getJSONArray(i).let { t -> (0 until t.length()).map(t::getString) } } }

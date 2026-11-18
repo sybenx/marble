@@ -71,8 +71,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         fun onAsk(ask: Ask); fun onAskGone(id: String); fun onStatus()
         fun onDeleting(d: Deleting) {}; fun onDeletingGone(batch: String) {}
         fun onBatch(b: BatchAsk) {}; fun onBatchGone(batch: String) {}
-        /** Something to say while the app isn't on screen (a sign-in that didn't go through). */
-        fun onNotice(title: String, text: String) {}
+        /** Something to say while the app isn't on screen (a sign-in that didn't go through). A tap opens [open] ("changes": Recent changes), or the app. */
+        fun onNotice(title: String, text: String, open: String? = null) {}
         /** Something hard to undo waits for Yes or No: shown with both as buttons. */
         fun onTap(t: Tap) {}; fun onTapGone(id: String) {}
     }
@@ -95,6 +95,8 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val work = Executors.newCachedThreadPool()
     private val timer = Executors.newSingleThreadScheduledExecutor()
     private var pinger: ScheduledFuture<*>? = null
+    /** Every 30 minutes: your lists on your relays, for changes made somewhere else ([checkLists]). */
+    private var lookout: ScheduledFuture<*>? = null
     /** One request to the box at a time: a piece that is being caught up after a cycle must not be used meanwhile. */
     private val boxLock = Any()
 
@@ -174,13 +176,14 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
+        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
             context.registerReceiver(r, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
             screenOff = r
         }
     }
-    fun stop() { pinger?.cancel(false); pinger = null; sites.stop(); sharedXs.forgetAll() }
+    fun stop() { pinger?.cancel(false); pinger = null; lookout?.cancel(false); lookout = null; sites.stop(); sharedXs.forgetAll() }
 
     /** Ask the box who is in the account. Also how this phone learns it was blocked. */
     fun refresh() {
@@ -1257,7 +1260,9 @@ class Signer(private val context: Context, val slot: String = "0") {
     //
     // The old servers kept these. Now this phone keeps them, for what was signed through this phone:
     // the version of a list that a change replaced, and a copy of each thing it signed, so a deletion
-    // can be put back. What another of your devices signs with the box does not show up here.
+    // can be put back. Changes to your lists made somewhere else (another app with your key, another
+    // device with your box) are found on your relays and shown here too, one row for all of them
+    // since this phone last saw that list ([seen]).
 
     private val history = File(context.filesDir, named("changes") + ".json")
     private val kept = File(context.filesDir, named("signed") + ".json")
@@ -1293,11 +1298,92 @@ class Signer(private val context: Context, val slot: String = "0") {
         return "$name: " + listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 }).joinToString(", ").ifEmpty { "changed" }
     }
     private fun showHistory() {
-        val changes = objects(readArray(history)).map { Change(it.getString("id"), it.getString("text"), it.getString("by"), it.getLong("at"), it.optBoolean("held"), it.optBoolean("undone")) }
+        val changes = objects(readArray(history)).map { Change(it.getString("id"), it.getString("text"), it.getString("by"), it.getLong("at"), it.optBoolean("held"), it.optBoolean("undone"), it.optBoolean("outside"), it.optLong("since")) }
         val deleted = objects(readArray(kept)).filter { it.has("deleted") }.mapNotNull { o ->
             Event.fromMap(Json.parse(o.getString("event")))?.let { e -> Deleted(e.id, Describe.kind(e.kind), o.getLong("deleted"), e.content.take(140)) }
         }
         ui.update { it.copy(changes = changes, deleted = deleted) }
+    }
+
+    /**
+     * A version of one of your lists found on a relay, by the app's reader or by [checkLists]. Only the account's own key
+     * counts (a site's own account is never watched). The first version of a list this phone sees is kept to compare with;
+     * a newer one than the last seen is a row in Recent changes covering everything since, and a notification when
+     * something was lost (Policy.outside). What this phone signed itself comes back with the same id, and is passed over.
+     */
+    fun seen(e: Event) {
+        val pub = accountHex() ?: return
+        val key = Policy.keyOf(e)
+        val row = synchronized(this) {
+            val prev = lists.latest(key)
+            when (Policy.found(e, pub, prev)) {
+                Policy.Found.IGNORE -> return
+                Policy.Found.BASELINE -> { lists.record(e, pub); return }
+                Policy.Found.CHANGED -> {
+                    if (!lists.record(e, pub)) return
+                    val o = Policy.outside(prev!!, e) ?: return
+                    // Its time is when the change was made, not when this phone found it.
+                    val r = JSONObject().put("id", e.id).put("text", o.text).put("by", ELSEWHERE).put("at", e.createdAt * 1000).put("held", o.alarm != null).put("undone", false)
+                        .put("key", key).put("prev", prev.toJson()).put("outside", true).put("since", prev.createdAt)
+                    history.writeText(JSONArray((listOf(r) + objects(readArray(history))).sortedByDescending { it.getLong("at") }.take(40)).toString())
+                    o
+                }
+            }
+        }
+        showHistory()
+        note("Changed in another app or device: ${row.text}")
+        row.alarm?.let { listener?.onNotice(row.title, "$it Tap to see or undo.", "changes") }
+    }
+    /** The same, from the app's process: one list, as JSON. Off this process's main thread (it checks a signature and writes). */
+    fun seen(json: String) = work.execute { try { Event.fromMap(Json.parse(json))?.let(::seen) } catch (_: Exception) { } }
+
+    private val checking = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var checkedAt = 0L
+    /**
+     * Ask your relays (and two profile indexes) for the newest of each of your lists, and pass each through [seen]. Every
+     * 30 minutes while the signer runs, and when the app opens. This process's own small client, as [publish] is: the
+     * app's reader stays out of the signer. Blocks for a few seconds at most; nothing found offline is nothing said.
+     */
+    fun checkLists() {
+        val pub = accountHex() ?: return
+        if (System.currentTimeMillis() - checkedAt < 60_000 || !checking.compareAndSet(false, true)) return
+        try {
+            checkedAt = System.currentTimeMillis()
+            val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
+            val relays = (writeRelays().map { it.trimEnd('/') } + if (testing) emptyList() else INDEX_RELAYS).distinct()
+            val filter = Json.stringify(mapOf("kinds" to Policy.ARCHIVED.sorted(), "authors" to listOf(pub), "limit" to 200))
+            val found = query(relays, filter).filter { it.pubkey == pub && it.kind in Policy.ARCHIVED && it.verify() }
+            for (newest in found.groupBy { Policy.keyOf(it) }.values.map { l -> l.maxBy { it.createdAt } }) seen(newest)
+            if (debuggable) android.util.Log.i("MarbleState", "checkLists: ${found.size} versions from ${relays.size} relays")
+        } catch (_: Exception) { } finally { checking.set(false) }
+    }
+    /** Debug builds and the app opening: check now (at most once a minute). */
+    fun checkListsSoon() = work.execute { checkLists() }
+
+    /** One REQ to each of [relays], until each says it has sent all (or a few seconds pass): every event that came. */
+    private fun query(relays: List<String>, filter: String, seconds: Long = 6): List<Event> {
+        val http = okhttp3.OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
+        val got = ConcurrentHashMap<String, Event>()
+        val done = java.util.concurrent.CountDownLatch(relays.size)
+        for (url in relays) try {
+            val over = java.util.concurrent.atomic.AtomicBoolean(false)
+            fun finish(ws: okhttp3.WebSocket?) { if (over.compareAndSet(false, true)) { done.countDown(); ws?.close(1000, null) } }
+            http.newWebSocket(okhttp3.Request.Builder().url(url).build(), object : okhttp3.WebSocketListener() {
+                override fun onOpen(ws: okhttp3.WebSocket, response: okhttp3.Response) { ws.send("[\"REQ\",\"lists\",$filter]") }
+                override fun onMessage(ws: okhttp3.WebSocket, text: String) {
+                    val m = try { Json.parse(text) as? List<*> } catch (_: Exception) { null } ?: return
+                    when (m.getOrNull(0)) {
+                        "EVENT" -> Event.fromMap(m.getOrNull(2))?.let { got.putIfAbsent(it.id, it) }
+                        "EOSE", "CLOSED" -> finish(ws)
+                    }
+                }
+                override fun onFailure(ws: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) = finish(null)
+                override fun onClosed(ws: okhttp3.WebSocket, code: Int, reason: String) = finish(null)
+            })
+        } catch (_: Exception) { done.countDown() }
+        done.await(seconds, TimeUnit.SECONDS)
+        http.dispatcher.cancelAll(); http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll()
+        return got.values.toList()
     }
 
     /** Where this account's own events go: its write relays if this phone has seen its relay list, else a few well-known ones. */
@@ -1412,5 +1498,9 @@ class Signer(private val context: Context, val slot: String = "0") {
         /** How long something destructive waits for your answer before the app or site is told no. */
         const val ASK_LIFE = 120_000L
         val DEFAULT_RELAYS = listOf("wss://syb.lol", "wss://nos.lol", "wss://relay.primal.net")
+        /** Where apps look up anyone's lists, asked too when [checkLists] looks for yours. */
+        val INDEX_RELAYS = listOf("wss://purplepag.es", "wss://user.kindpag.es")
+        /** Who made a change found on your relays, for its row: any app with your key, or another device with your box. */
+        const val ELSEWHERE = "another app or device"
     }
 }

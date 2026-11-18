@@ -3,6 +3,7 @@ package cc.aaro.cosign
 import android.content.Context
 import cc.aaro.qrst.core.Bech32
 import cc.aaro.cosign.core.Clock
+import cc.aaro.cosign.core.Policy
 import cc.aaro.qrst.core.Event
 import cc.aaro.qrst.core.Json
 import cc.aaro.qrst.core.Nip19
@@ -559,7 +560,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         // Who you follow (from the relays that answer fastest), then what they've posted: the first thing to trust.
         val followsAsk = async {
             follows.value ?: kotlinx.coroutines.withTimeoutOrNull(3000) {
-                followsIn(Fetch.query(listOf("wss://purplepag.es", "wss://relay.primal.net", "wss://relay.damus.io"), listOf(mapOf("kinds" to listOf(3), "authors" to listOf(me), "limit" to 1)), 3000, graceMs = 200).maxByOrNull { it.createdAt })
+                followsIn(mine(Fetch.query(listOf("wss://purplepag.es", "wss://relay.primal.net", "wss://relay.damus.io"), listOf(mapOf("kinds" to listOf(3), "authors" to listOf(me), "limit" to 1)), 3000, graceMs = 200)).maxByOrNull { it.createdAt })
             } ?: emptySet()
         }
         val filters = listOf(mapOf<String, Any>("kinds" to Calm.POOL_KINDS, "search" to "sort:hot", "since" to since, "limit" to 100)) +
@@ -1303,8 +1304,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
      */
     fun knowMe() = scope.launch {
         val me = me ?: return@launch
-        People.add(Fetch.query((writeRelays() + readRelays() + listOf("wss://syb.lol", "wss://relay.ditto.pub") + Sources.PROFILES).distinct().take(10),
-            mapOf("kinds" to listOf(0), "authors" to listOf(me), "limit" to 3), 6000))
+        People.add(mine(Fetch.query((writeRelays() + readRelays() + listOf("wss://syb.lol", "wss://relay.ditto.pub") + Sources.PROFILES).distinct().take(10),
+            mapOf("kinds" to listOf(0), "authors" to listOf(me), "limit" to 3), 6000)))
     }
 
     /**
@@ -1317,7 +1318,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return@launch
         val indexes = listOf("wss://purplepag.es", "wss://user.kindpag.es")
         val lookIn = (indexes + Sources.PROFILES + writeRelays() + readRelays()).distinct()
-        val list = (Fetch.query(lookIn.take(10), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 3), 6000) + listOfNotNull(phone.latest("10002")))
+        val list = (mine(Fetch.query(lookIn.take(10), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 3), 6000)) + listOfNotNull(phone.latest("10002")))
             .filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt } ?: return@launch
         val listed = list.tags.filter { it.size > 1 && it[0] == "r" && it[1].startsWith("wss://") }
         val writes = listed.filter { it.getOrNull(2) != "read" }.map { it[1].trimEnd('/') }.distinct()
@@ -1325,7 +1326,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val key = list.id
         if (prefs.getString("identitySpreadFor", null) == key) return@launch
         val known = (listed.map { it[1].trimEnd('/') } + lookIn + POST_RELAYS).distinct()
-        val got = Fetch.query(known.take(14), mapOf("kinds" to listOf(0, 3), "authors" to listOf(me), "limit" to 10), 8000)
+        val got = mine(Fetch.query(known.take(14), mapOf("kinds" to listOf(0, 3), "authors" to listOf(me), "limit" to 10), 8000))
         val newest = listOf(0, 3).mapNotNull { k -> got.filter { it.kind == k && it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } }
         if (newest.isEmpty()) return@launch
         val to = (writes + indexes).distinct()
@@ -2683,7 +2684,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         if (myEmoji.value.isNotEmpty()) return
         val relays = (writeRelays() + Sources.PROFILES).distinct().take(8)
-        val list = Fetch.query(relays, mapOf("kinds" to listOf(10030), "authors" to listOf(me), "limit" to 2), 5000).filter { it.pubkey == me }.maxByOrNull { it.createdAt } ?: return
+        val list = mine(Fetch.query(relays, mapOf("kinds" to listOf(10030), "authors" to listOf(me), "limit" to 2), 5000)).filter { it.pubkey == me }.maxByOrNull { it.createdAt } ?: return
         fun emojis(e: Event) = e.tags.filter { it.size > 2 && it[0] == "emoji" && it[2].startsWith("https://") && Regex("^[A-Za-z0-9_+-]{1,60}$").matches(it[1]) }
             .map { ReactionRules.Shown(":${it[1]}:", it[2]) }
         val sets = list.tags.filter { it.size > 1 && it[0] == "a" && it[1].startsWith("30030:") }.mapNotNull { t ->
@@ -2925,7 +2926,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         phone.latest("10002")?.let { l -> accountRelays = writesOf(l).ifEmpty { Sources.GENERAL.map(::normRelay) }; return }
         val (found, answered) = Fetch.queryAnswered((listOf("wss://purplepag.es", "wss://user.kindpag.es") + Sources.PROFILES).distinct(), mapOf("kinds" to listOf(10002), "authors" to listOf(me), "limit" to 2), 6000)
-        val list = found.filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt }
+        val list = mine(found).filter { it.pubkey == me && it.kind == 10002 && it.verify() }.maxByOrNull { it.createdAt }
         accountRelays = when {
             list != null -> writesOf(list).ifEmpty { Sources.GENERAL.map(::normRelay) }
             // (Asked again each session: a list made later is found.)
@@ -3127,7 +3128,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return
         favList = newest(10012, favList, fetch = true)
         favRelays.value = RelayFeeds.relaysIn(favList)
-        val sets = Fetch.query((writeRelays() + Sources.PROFILES).distinct().take(8), mapOf("kinds" to listOf(30002), "authors" to listOf(me), "limit" to 50), 6000)
+        val sets = mine(Fetch.query((writeRelays() + Sources.PROFILES).distinct().take(8), mapOf("kinds" to listOf(30002), "authors" to listOf(me), "limit" to 50), 6000))
         relaySets.value = RelayFeeds.sets(sets, me)
     }
 
@@ -3301,8 +3302,21 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = reader ?: return emptyList()
         val f = mutableMapOf<String, Any>("kinds" to listOf(kind), "authors" to listOf(me), "limit" to 5)
         d?.let { f["#d"] = listOf(it) }
-        val remote = Fetch.query((writeRelays() + Sources.PROFILES).distinct(), f, 6000)
+        val remote = mine(Fetch.query((writeRelays() + Sources.PROFILES).distinct(), f, 6000))
         return listOfNotNull(if (d == null) phone.latest(kind.toString()) else null, have) + remote
+    }
+
+    /** Which version of each of your lists went to the signer last, so each goes once. */
+    private val handed = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /**
+     * Your own lists as relays had them: the newest of each goes to the signer (one call per list), which puts a change
+     * made in another app or device into Recent changes, and keeps it to judge your next change by. [found] comes back as is.
+     */
+    private fun mine(found: List<Event>): List<Event> {
+        val me = me ?: return found
+        for (e in found.filter { it.pubkey == me && it.kind in Policy.ARCHIVED }.groupBy { Policy.keyOf(it) }.values.map { l -> l.maxBy { it.createdAt } })
+            if (handed.put(Policy.keyOf(e), e.id) != e.id) phone.seen(e)
+        return found
     }
 
     /** What changing one list did: sent (the new version), nothing to do (the newest found), or refused (why). */

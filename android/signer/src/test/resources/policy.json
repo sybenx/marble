@@ -2544,5 +2544,197 @@
     "prev": null,
     "hold": "Deletion dated in the future (2099-01-01)",
     "refuse": null
+  },
+  {
+    "label": "private bookmarks emptied",
+    "now": 1800000000,
+    "event": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ],
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a2"
+        ]
+      ],
+      "content": "",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ],
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a2"
+        ],
+        [
+          "client",
+          "x"
+        ]
+      ],
+      "content": "c2VhbGVk?iv=AAAA",
+      "created_at": 1799990000
+    },
+    "hold": "Empty your private bookmarks",
+    "refuse": null
+  },
+  {
+    "label": "private mutes emptied",
+    "now": 1800000000,
+    "event": {
+      "kind": 10000,
+      "tags": [
+        [
+          "p",
+          "00000000000000000000000000000000000000000000000000000000000000b1"
+        ]
+      ],
+      "content": "   ",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 10000,
+      "tags": [
+        [
+          "p",
+          "00000000000000000000000000000000000000000000000000000000000000b1"
+        ]
+      ],
+      "content": "c2VhbGVk",
+      "created_at": 1799990000
+    },
+    "hold": "Empty your private mute list",
+    "refuse": null
+  },
+  {
+    "label": "private bookmarks changed, not emptied",
+    "now": 1800000000,
+    "event": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ]
+      ],
+      "content": "bmV3",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ]
+      ],
+      "content": "b2xk",
+      "created_at": 1799990000
+    },
+    "hold": null,
+    "refuse": null
+  },
+  {
+    "label": "no private bookmarks before or after",
+    "now": 1800000000,
+    "event": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ],
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a2"
+        ]
+      ],
+      "content": "",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 10003,
+      "tags": [
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ]
+      ],
+      "content": "",
+      "created_at": 1799990000
+    },
+    "hold": null,
+    "refuse": null
+  },
+  {
+    "label": "private part of a bookmark set emptied",
+    "now": 1800000000,
+    "event": {
+      "kind": 30003,
+      "tags": [
+        [
+          "d",
+          "reading"
+        ],
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ]
+      ],
+      "content": "",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 30003,
+      "tags": [
+        [
+          "d",
+          "reading"
+        ],
+        [
+          "e",
+          "00000000000000000000000000000000000000000000000000000000000000a1"
+        ]
+      ],
+      "content": "c2VhbGVk",
+      "created_at": 1799990000
+    },
+    "hold": "Empty your private bookmark set",
+    "refuse": null
+  },
+  {
+    "label": "follow list drops its old relays (plain JSON, not private)",
+    "now": 1800000000,
+    "event": {
+      "kind": 3,
+      "tags": [
+        [
+          "p",
+          "00000000000000000000000000000000000000000000000000000000000000c1"
+        ]
+      ],
+      "content": "",
+      "created_at": 1800000000
+    },
+    "prev": {
+      "kind": 3,
+      "tags": [
+        [
+          "p",
+          "00000000000000000000000000000000000000000000000000000000000000c1"
+        ]
+      ],
+      "content": "{\"wss://nos.lol\":{\"read\":true,\"write\":true}}",
+      "created_at": 1799990000
+    },
+    "hold": null,
+    "refuse": null
   }
 ]

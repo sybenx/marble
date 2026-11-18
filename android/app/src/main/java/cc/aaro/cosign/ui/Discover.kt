@@ -331,6 +331,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             "stories" -> stack.add(Route.Stories)
             "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
             "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
+            "changes" -> { if (stack.lastOrNull() != Route.Account) stack.add(Route.Account); DebugOpen.changes.value = true }
             "later" -> stack.add(Route.Later)
             else -> askedScreen?.let { android.net.Uri.decode(it) }?.let { v ->
                 when {
@@ -3076,6 +3077,8 @@ object DebugOpen {
     /** A screen to open (--es open marble|stories|account|rename|compose|later|search:…|results:…|save:a|b), for tests that can't tap reliably; rename: your account, renaming this device. */
     val screen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     @Volatile var renameThis = false
+    /** Recent changes asked for (a notification's tap, or --es open changes): the account screen, scrolled to it. */
+    val changes = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /** Debug builds: how long after opening a profile its name is on screen. */

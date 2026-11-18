@@ -187,6 +187,13 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun confirmUndoSite() = act("confirmUndoSite")
     fun closeSummary() = act("closeSummary")
     fun undo(change: Change) = act("undo", change.id)
+    /**
+     * The newest version of one of your lists that the reader found on a relay: the signer compares it with the one it saw
+     * last, and a change made in another app or device goes into Recent changes. One call per list.
+     */
+    fun seen(e: Event) = act("seen", e.toJson())
+    /** Ask your relays now for changes to your lists made elsewhere (the signer also does every 30 minutes). */
+    fun checkLists() = act("checkLists")
     fun repost(d: Deleted) = act("repost", d.id)
     fun removeFuture(f: Future) = act("removeFuture", f.id)
 

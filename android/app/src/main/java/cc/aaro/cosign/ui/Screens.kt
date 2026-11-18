@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -442,8 +443,23 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     val names by social.deviceNames.collectAsState()
     var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
     LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
+    // Opened for Recent changes (a notification's tap): its place depends on what is above it, so scroll until its heading is drawn.
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Collected, not a key: clearing the request must not restart (and so cancel) the scroll it asked for.
+    LaunchedEffect(Unit) {
+        DebugOpen.changes.collect { asked ->
+            if (!asked) return@collect
+            DebugOpen.changes.value = false
+            for (i in 0 until 40) {
+                val at = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "recent" }
+                if (at != null) { list.animateScrollToItem(at.index); break }
+                if (!list.canScrollForward) break
+                list.scrollBy(1200f)
+            }
+        }
+    }
 
-    LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onBack, Modifier.padding(end = 8.dp).size(32.dp)) {
@@ -653,8 +669,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 else "Your account is on $devices devices and your box. Any one device with the box can sign, so losing one loses nothing: block it from another.")
         }
 
-        item { Heading("Recent changes") }
-        if (ui.changes.isEmpty()) item { Muted("Follows, profile, bookmarks… every change made through this phone shows up here, with Undo.") }
+        item(key = "recent") { Heading("Recent changes") }
+        if (ui.changes.isEmpty()) item { Muted("Follows, profile, bookmarks… every change made through this phone shows up here, with Undo, and changes made in other apps or devices once $appName finds them.") }
         items(ui.changes.take(12), key = { "change:" + it.id }) { ChangeRow(it) { phone.undo(it) } }
 
         if (ui.deleted.isNotEmpty()) {
@@ -979,15 +995,38 @@ fun UndoSiteSheet(sum: SiteSummary, onUndo: () -> Unit, onClose: () -> Unit) {
     }
 }
 
+/**
+ * One change to one of your lists. Undo puts back the version this phone saw before it; for a change made in another app
+ * or device that also loses anything else done there since, so it asks once first.
+ */
 @Composable
-private fun ChangeRow(c: Change, onUndo: () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
-    Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Accent, CircleShape))
-    Spacer(Modifier.width(10.dp))
-    Column(Modifier.weight(1f)) {
-        Text(c.text, style = MaterialTheme.typography.bodyMedium, color = if (c.undone) Vault.Muted else Vault.Text)
-        Text("${c.by.removePrefix("https://")} · ${ago(c.at)}${if (c.undone) " · undone" else ""}", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+private fun ChangeRow(c: Change, onUndo: () -> Unit) {
+    var asking by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Accent, CircleShape))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(c.text, style = MaterialTheme.typography.bodyMedium, color = if (c.undone) Vault.Muted else Vault.Text)
+            Text("${c.by.removePrefix("https://")} · ${ago(c.at)}${if (c.undone) " · undone" else ""}", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+        }
+        if (!c.undone) TextButton({ if (c.outside) asking = true else onUndo() }) { Text("Undo", color = Vault.Accent) }
     }
-    if (!c.undone) TextButton(onUndo) { Text("Undo", color = Vault.Accent) }
+    if (asking) AlertDialog(
+        onDismissRequest = { asking = false },
+        title = { val name = listName(c.text); Text("Put your $name back as ${if (name.endsWith("s")) "they were" else "it was"} on ${onDay(c.since)}?") },
+        text = { Text("Anything changed after that in other apps is lost too.") },
+        confirmButton = { TextButton({ asking = false; onUndo() }) { Text("Put back", color = Vault.Accent) } },
+        dismissButton = { TextButton({ asking = false }) { Text("Keep as is") } },
+        containerColor = Vault.Surface,
+    )
+}
+
+/** The list a change's text is about ("Bookmarks: 2 added", "Follow list changed"): "bookmarks", "follow list". */
+private fun listName(text: String) = text.substringBefore(':').removeSuffix(" changed").replaceFirstChar { it.lowercase() }
+/** "Oct 27", with the year when it isn't this one. */
+private fun onDay(seconds: Long): String {
+    val d = java.time.Instant.ofEpochSecond(seconds).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    return d.format(java.time.format.DateTimeFormatter.ofPattern(if (d.year == java.time.LocalDate.now().year) "MMM d" else "MMM d, yyyy", java.util.Locale.getDefault()))
 }
 
 @Composable

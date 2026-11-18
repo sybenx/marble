@@ -63,6 +63,8 @@ class MainActivity : ComponentActivity() {
                         kotlinx.coroutines.delay(1500)
                         if (Build.VERSION.SDK_INT >= 33) notify.launch(Manifest.permission.POST_NOTIFICATIONS)
                         CosignService.start(this@MainActivity)
+                        // Changes to your lists made in another app or device since last time (the signer also looks every 30 minutes).
+                        phone.checkLists()
                         // ntfy, if it's installed. Without it, approvals reach you while Cosign is running.
                         UnifiedPush.tryUseCurrentOrDefaultDistributor(this@MainActivity) { ok -> if (ok) UnifiedPush.register(this@MainActivity) }
                     }
@@ -106,6 +108,12 @@ class MainActivity : ComponentActivity() {
         // hours old: that's not something you just scanned.
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         if (!CosignApp.instance.accounts.ready.value) { waiting = intent to fresh; return }
+        // A notification's tap (a change made in another app or device): that key, at Recent changes.
+        intent.getStringExtra("show")?.let { what ->
+            intent.getStringExtra("slot")?.let { CosignApp.instance.accounts.show(it) }
+            if (what == "changes") cc.aaro.cosign.ui.DebugOpen.screen.value = "changes"
+            return
+        }
         // A search from the launcher (marble://search?q=…, or Android's own): every time, as asked; it isn't a code.
         val searched = when {
             intent.action == Intent.ACTION_SEARCH -> intent.getStringExtra(android.app.SearchManager.QUERY)
@@ -152,6 +160,10 @@ class MainActivity : ComponentActivity() {
             "loginPage" -> p.setLoginPage(intent.getStringExtra("arg") ?: "")
             "removeSite" -> p.ui.value.sites.firstOrNull { it.origin == intent.getStringExtra("arg") }?.let(p::removeSite)
             "undo" -> p.ui.value.changes.firstOrNull()?.let(p::undo)
+            // Look on your relays now for changes to your lists made in another app or device (logged under MarbleState).
+            "checkLists" -> p.checkLists()
+            // Hand the signer a version of one of your lists as if the reader had found it (--es arg '<signed event JSON>').
+            "seen" -> intent.getStringExtra("arg")?.let { j -> cc.aaro.qrst.core.Event.fromMap(cc.aaro.qrst.core.Json.parse(j))?.let(p::seen) }
             "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
             "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
             "tapYes" -> p.tap(true); "tapNo" -> p.tap(false)
@@ -166,7 +178,7 @@ class MainActivity : ComponentActivity() {
             "testRelays" -> p.testRelays(intent.getStringExtra("arg") ?: "")
             "closeAll" -> { p.closeConnect(); p.closeJoinText(); p.closeBunker(); p.closeTakeOut(); p.clearError() }
             "approve" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, true) }
-            "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} tap=${u.tap?.title} bringing=${u.bringing} keptKey=${u.keptKey} box=${u.member?.box} move=${u.move} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })
+            "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.outside) " (elsewhere)" else "") + (if (it.held) " (amber)" else "") + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} tap=${u.tap?.title} bringing=${u.bringing} keptKey=${u.keptKey} box=${u.member?.box} move=${u.move} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })
             else -> {}
         } } }
         // A relay of the test's own (a local one, say) for the home screen to read from too.

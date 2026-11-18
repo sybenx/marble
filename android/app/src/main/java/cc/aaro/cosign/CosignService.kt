@@ -31,7 +31,7 @@ class CosignService : Service() {
         override fun onDeletingGone(batch: String) = NotificationManagerCompat.from(this@CosignService).cancel(("del" + batch).hashCode())
         override fun onBatch(b: BatchAsk) = batch(p, b)
         override fun onBatchGone(batch: String) = NotificationManagerCompat.from(this@CosignService).cancel(("batch" + batch).hashCode())
-        override fun onNotice(title: String, text: String) = notice(p, title, text)
+        override fun onNotice(title: String, text: String, open: String?) = notice(p, title, text, open)
         override fun onTap(t: Tap) = tap(p, t)
         override fun onTapGone(id: String) = NotificationManagerCompat.from(this@CosignService).cancel(("tap" + id).hashCode())
     }
@@ -179,12 +179,17 @@ class CosignService : Service() {
         NotificationManagerCompat.from(this).notify(("tap" + t.id).hashCode(), n)
     }
 
-    private fun notice(p: Signer, title: String, text: String) {
+    private fun notice(p: Signer, title: String, text: String, open: String? = null) {
         if (!canNotify()) return
         NotificationManagerCompat.from(this).notify((title + text).hashCode(), NotificationCompat.Builder(this, ASKS)
             .setSmallIcon(R.drawable.ic_stat).setContentTitle(title + forKey(p)).setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(openApp()).build())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setAutoCancel(true).setContentIntent(open?.let { opening(p, it) } ?: openApp()).build())
     }
+
+    /** The app at one place ([what]: "changes", Recent changes), on this key. */
+    private fun opening(p: Signer, what: String) = PendingIntent.getActivity(this, ("open" + what + p.slot).hashCode(),
+        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("show", what).putExtra("slot", p.slot),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
     private fun canNotify() = Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
