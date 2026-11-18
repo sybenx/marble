@@ -508,6 +508,17 @@
   .remove svg, .keep svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .remove { opacity: 0; }
   .note-row:hover .remove, .remove:focus-visible { opacity: 1; }
+  /* a note changed on two devices at once (vaults §11.1): both texts side by side, or one above the other on a phone */
+  .note-row .versions { flex: none; align-self: center; font-size: 13px; padding: 4px 6px; }
+  .conflict { border-bottom: 1px solid var(--line); padding: 10px 0 14px 40px; }
+  .conflict-why { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+  .conflict-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .conflict-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; border: 1px solid var(--line); border-radius: 14px; background: var(--card); padding: 10px 12px; min-width: 0; }
+  .conflict-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+  .conflict-acts { margin-top: 10px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .conflict-edit { display: block; width: 100%; box-sizing: border-box; margin-top: 10px; border: 1px solid var(--field-line); border-radius: 12px; background: var(--field); color: var(--ink); font: inherit; padding: 8px 10px; }
+  .si-button.small { padding: 6px 14px; font-size: 14px; }
+  @media (max-width: 520px) { .conflict { padding-left: 0; } }
   @media (hover: none) { .remove { opacity: .55; } }
   .remove:hover { background: var(--accent-soft); color: var(--ink); }
   .keep { color: var(--accent); }

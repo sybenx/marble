@@ -166,7 +166,7 @@ function signWith(sk, t, { schnorr, sha256 }) {
  * to sign (NIP-46), shown for what it is; Marble and your servers don't refuse other kinds because of it. name:
  * the site's name the sign-in app shows.
  */
-export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_event:7,get_public_key", name = "Marble" }) {
+export async function phoneSignIn({ onCode, signal, perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,nip44_decrypt,get_public_key", name = "Marble" }) {
   const { schnorr, encodeQR } = await load();
   const sk = schnorr.utils.randomSecretKey();
   const pk = toHex(schnorr.getPublicKey(sk));
