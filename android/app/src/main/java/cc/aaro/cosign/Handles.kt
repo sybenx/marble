@@ -38,8 +38,8 @@ object Handles {
         return null
     }
 
-    /** A row: a Nostr person ([pubkey]: their profile in Marble), or a page elsewhere ([url]) with its title, line and picture. */
-    data class Row(val pubkey: String? = null, val title: String = "", val sub: String = "", val picture: String? = null, val url: String? = null)
+    /** A row: a Nostr person ([pubkey]: their profile in Marble), or a page elsewhere ([url]): where ([on]), their name, handle and picture. */
+    data class Row(val pubkey: String? = null, val on: String = "", val name: String? = null, val handle: String = "", val picture: String? = null, val url: String? = null)
 
     // No cookies, no referrer (OkHttp sends none), short waits. NIP-05 never follows a redirect; WebFinger may (instances delegate).
     private val strict by lazy { Fetch.http.newBuilder().cookieJar(okhttp3.CookieJar.NO_COOKIES).callTimeout(2500, TimeUnit.MILLISECONDS).followRedirects(false).followSslRedirects(false).build() }
@@ -93,7 +93,7 @@ object Handles {
         val shown = ((a?.get("name") ?: api?.get("display_name")) as? String)?.trim()?.takeIf { it.isNotEmpty() }
         val icon = ((a?.get("icon") as? Map<*, *>)?.get("url") as? String ?: api?.get("avatar") as? String)?.takeIf { it.startsWith("https://") }
         val url = page ?: (a?.get("url") as? String) ?: (api?.get("url") as? String) ?: self
-        Row(title = "Open on ${software.await() ?: domain}", sub = listOfNotNull(shown, "@$acct").joinToString(" · "), picture = icon, url = url)
+        Row(on = software.await() ?: domain, name = shown, handle = "@$acct", picture = icon, url = url)
     }
 
     private val SOFTWARE = listOf("Mastodon", "Pleroma", "Akkoma", "Misskey", "Sharkey", "GoToSocial", "Pixelfed", "Friendica", "Lemmy", "Firefish", "Iceshrimp", "PeerTube", "Hubzilla", "Mitra", "Takahe")
@@ -108,7 +108,7 @@ object Handles {
         val p = get("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=$handle", "application/json") ?: return null
         val h = (p["handle"] as? String) ?: return null
         val shown = (p["displayName"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
-        return Row(title = "Open on Bluesky", sub = listOfNotNull(shown, "@$h").joinToString(" · "), picture = (p["avatar"] as? String)?.takeIf { it.startsWith("https://") },
+        return Row(on = "Bluesky", name = shown, handle = "@$h", picture = (p["avatar"] as? String)?.takeIf { it.startsWith("https://") },
             url = "https://bsky.app/profile/$h")
     }
 

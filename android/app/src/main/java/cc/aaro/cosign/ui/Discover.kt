@@ -3240,7 +3240,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
     }
     // Your own and the links first, then people, posts and articles as they come; no web search.
     Box(Modifier.fillMaxSize()) {
-        // What goes above the results: a typed address's "Go to", what a handle confirms, and two of your own.
+        // What goes above the results: a typed address's "Go to", apps, two of your own, and what a handle confirms. Each
+        // kind under a small heading (only when it has rows); a handle's rows start People, which Marble's own continue.
         val top: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
             // Go to a place by its name (home-rules.md), never above your own note that's exactly what's typed.
             place?.let { (name, below) ->
@@ -3249,7 +3250,8 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 }
                 item(key = "place") { GoToPlace(name) { goToPlace(name, nav, context) } }
             }
-            site?.takeUnless { siteIsApp }?.let { s -> item(key = "site") { GoToSite(s) { goTo(s) } } }
+            site?.takeUnless { siteIsApp }?.let { s -> item(key = "wh") { Heading("Web") }; item(key = "site") { GoToSite(s) { goTo(s) } } }
+            if (apps.isNotEmpty()) item(key = "apph") { Heading("Apps") }
             items(apps, key = { "app:" + it.address + it.url }) { a ->
                 AppRow(a, followSet) {
                     social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, a.url, a.name) }
@@ -3257,10 +3259,7 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                     openApp(context, a, nav)
                 }
             }
-            items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
-                if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav)
-                else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
-            }
+            if (own.isNotEmpty()) item(key = "oh") { Heading("Notes and searches") }
             items(own, key = { "o:" + it.first }) { (text, note) ->
                 note?.let { n -> LaunchedEffect(n.id) { cc.aaro.cosign.NotesTrial.shown(n.id, "search") } }
                 OwnRow(text, note, t, onLong = note?.takeIf { cc.aaro.cosign.NotesTrial.on && it.done == null && System.currentTimeMillis() / 1000 - it.created > 30 * 86_400L }
@@ -3269,10 +3268,16 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                     if (note?.url != null) openInBrowser(context, note.url, "l:" + note.id) else searchFor(text)
                 }
             }
+            if (handleRows.isNotEmpty()) item(key = "hh") { Heading("People") }
+            items(handleRows, key = { "h:" + (it.pubkey ?: it.url) }) { r ->
+                if (r.pubkey != null) PersonRow(r.pubkey, people[r.pubkey], null, nav, labelled = true)
+                else r.url?.let { u -> HandleRow(r) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, u, android.net.Uri.parse(u).host ?: u) }; SearchText.search.value = null; openInBrowser(context, u) } }
+            }
         }
         when {
             pasted != null -> LinkResults(pasted, social, nav)
-            t.length >= 2 -> MarbleResults(found?.takeIf { it.query == t }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName, top = top)
+            t.length >= 2 -> MarbleResults(found?.takeIf { it.query == t }, people, liked, social, nav, peopleOnly = false, showPeople = !bareName, top = top,
+                labelled = true, peopleHeading = handleRows.isEmpty())
             t.isEmpty() -> FocusList(social, nav, laterItems, searchList, onSearch = { text -> q = text; searchFor(text) }, onDecide = { deciding = it })
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) { top() }
         }
@@ -3798,64 +3803,90 @@ private fun FocusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, what
  * opens in the browser, and so does everything while the pane is off (Panes).
  */
 private fun openApp(context: android.content.Context, a: cc.aaro.cosign.AppEntry, nav: Nav) {
-    val known = cc.aaro.cosign.web.WebSites.byOrigin(cc.aaro.cosign.web.WebRules.originOf(a.url))
-    val site = known ?: cc.aaro.cosign.web.WebSites.visiting(a.name, a.url)?.takeIf { a.kind == "web" || a.kind == "nsite" }
-        ?: return openInBrowser(context, a.url)
+    // The same test the row's "Marble" or "Browser" comes from (SearchRows.paneSite).
+    val site = cc.aaro.cosign.SearchRows.paneSite(a) ?: return openInBrowser(context, a.url)
     nav.home(); WebWanted.value = site to a.url
 }
 
-/** An app or nsite from the index: its icon (or initial), its name (a tick when its own domain names its key), one line. */
+/** An app or nsite from the index: its icon (or initial), its name (a tick when its own domain names its key), what it is, where it opens. */
 @Composable
-private fun AppRow(a: cc.aaro.cosign.AppEntry, follows: Set<String>, onOpen: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClickLabel = "Open ${a.name}", onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    val shape = RoundedCornerShape(10.dp)
-    NetImage(a.icon, Modifier.size(40.dp).clip(shape), 120) {
-        Box(Modifier.size(40.dp).background(Vault.Surface, shape).border(1.dp, Vault.Edge, shape), contentAlignment = Alignment.Center) {
-            Text(a.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?", color = Vault.Accent, fontWeight = FontWeight.SemiBold)
+private fun AppRow(a: cc.aaro.cosign.AppEntry, follows: Set<String>, onOpen: () -> Unit) {
+    val r = remember(a, follows) { cc.aaro.cosign.SearchRows.app(a, follows) }
+    Row(
+        Modifier.fillMaxWidth().clickable(onClickLabel = r.say, onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val shape = RoundedCornerShape(10.dp)
+        NetImage(a.icon, Modifier.size(40.dp).clip(shape), 120) {
+            Box(Modifier.size(40.dp).background(Vault.Surface, shape).border(1.dp, Vault.Edge, shape), contentAlignment = Alignment.Center) {
+                Text(a.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?", color = Vault.Accent, fontWeight = FontWeight.SemiBold)
+            }
         }
-    }
-    Spacer(Modifier.width(14.dp))
-    Column(Modifier.weight(1f)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(a.name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            if (a.official) Text(" ✓", color = Vault.Accent, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(a.name, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (a.official) Text(" ✓", color = Vault.Accent, style = MaterialTheme.typography.bodySmall)
+            }
+            KindLine(r)
         }
-        val line = cc.aaro.cosign.AppIndex.line(a, follows)
-        Text(if (a.about.isNotEmpty()) (if (line.isNotEmpty()) "$line · " else "") + a.about else line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        GoesTo(r.goes)
     }
 }
 
-/** "Go to google.com": the top row of search, for an address or a well-known site's name. Opens the browser. */
+/** "google.com, Website": the top row of search, for an address or a well-known site's name. Opens the browser. */
 @Composable
-private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClickLabel = "Open in your browser", onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    Box(Modifier.size(40.dp).background(Vault.Surface, CircleShape).border(1.dp, Vault.Edge, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
-    }
-    Spacer(Modifier.width(14.dp))
-    Column(Modifier.weight(1f)) {
-        Text("Go to ${s.address}", color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Opens in your browser", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) {
+    val r = cc.aaro.cosign.SearchRows.site(s.address)
+    Row(
+        Modifier.fillMaxWidth().clickable(onClickLabel = r.say, onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(40.dp).background(Vault.Surface, CircleShape).border(1.dp, Vault.Edge, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(r.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            KindLine(r)
+        }
+        GoesTo(r.goes)
     }
 }
 
-/** A handle's page elsewhere ("Open on Mastodon", "Open on Bluesky"): their picture, then who. */
+/** A handle's page elsewhere: their picture, who, "Profile on Mastodon" (or Bluesky) and their handle, in the browser. */
 @Composable
-private fun HandleRow(r: cc.aaro.cosign.Handles.Row, onOpen: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-) {
-    NetImage(r.picture, Modifier.size(40.dp).clip(CircleShape), 120) {
-        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp)) }
+private fun HandleRow(h: cc.aaro.cosign.Handles.Row, onOpen: () -> Unit) {
+    val r = cc.aaro.cosign.SearchRows.handle(h.on, h.name, h.handle)
+    Row(
+        Modifier.fillMaxWidth().clickable(onClickLabel = r.say, onClick = onOpen).padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NetImage(h.picture, Modifier.size(40.dp).clip(CircleShape), 120) {
+            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { Icon(Glyphs.site, null, tint = Vault.Accent, modifier = Modifier.size(22.dp)) }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(r.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            KindLine(r)
+        }
+        GoesTo(r.goes)
     }
-    Spacer(Modifier.width(12.dp))
-    Column(Modifier.weight(1f)) {
-        Text(r.title, color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (r.sub.isNotEmpty()) Text(r.sub, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
+}
+
+/** A search row's second line: what it is, in the text colour, then the detail. */
+@Composable
+private fun KindLine(r: cc.aaro.cosign.SearchRows.Row) = Text(androidx.compose.ui.text.buildAnnotatedString {
+    withStyle(androidx.compose.ui.text.SpanStyle(color = Vault.Text)) { append(r.kind) }
+    if (r.detail.isNotEmpty()) append(" · " + r.detail)
+}, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+/** The right edge of a search row: where a tap goes (Marble, Browser, Zapstore), small and quiet. */
+@Composable
+private fun GoesTo(g: cc.aaro.cosign.Goes, profile: Boolean = false) = Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Icon(when (g) { cc.aaro.cosign.Goes.Marble -> if (profile) Glyphs.person else Glyphs.pane; cc.aaro.cosign.Goes.Browser -> Glyphs.openIn; cc.aaro.cosign.Goes.Zapstore -> Glyphs.download },
+        null, tint = Vault.Muted, modifier = Modifier.size(14.dp))
+    Spacer(Modifier.width(4.dp))
+    Text(g.word, color = Vault.Muted, style = MaterialTheme.typography.labelSmall)
 }
 
 /** One of your own in the box's list: a past search (the clock) or a note (the bookmark). */
@@ -3907,7 +3938,9 @@ private fun LaterLink(n: Int, onClick: () -> Unit) = Row(
 /** People (and posts) found by Marble's own search: after @name, or "Search posts". */
 @Composable
 private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>, liked: Set<String>, social: Social, nav: Nav, peopleOnly: Boolean,
-                          showPeople: Boolean = true, top: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null) {
+                          showPeople: Boolean = true, top: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null,
+                          /** The box's list as you type: people say "Profile" and where they open; [peopleHeading] off when [top] began People. */
+                          labelled: Boolean = false, peopleHeading: Boolean = true) {
     if (f == null && top == null) return Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
     var showSpam by remember(f?.query) { mutableStateOf(false) }
     var showFurther by remember(f?.query) { mutableStateOf(false) }
@@ -3949,16 +3982,16 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
         val loose = f.split?.loose == true && !peopleOnly && f.notes.isNotEmpty()
         if (!loose) authorSection()
         if (showPeople && f.people.isNotEmpty()) {
-            item(key = "ph") { Heading("People") }
+            if (peopleHeading) item(key = "ph") { Heading("People") }
             // Identical look-alikes (a bridge's copies, say) fold into one quiet row under the best of them.
             val rows = LookAlikes.fold(f.people, people, f.hits).take(10)
             items(rows, key = { "p" + it.pubkey }) { r ->
                 var open by remember(r.pubkey) { mutableStateOf(false) }
-                PersonRow(r.pubkey, people[r.pubkey], f.hits[r.pubkey], nav)
+                PersonRow(r.pubkey, people[r.pubkey], f.hits[r.pubkey], nav, labelled)
                 if (r.alike.isNotEmpty()) {
                     Text(if (open) "Hide the ${r.alike.size} like this" else "${r.alike.size} more like this", color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(start = 72.dp).clip(RoundedCornerShape(10.dp)).clickable { open = !open }.padding(horizontal = 8.dp, vertical = 6.dp))
-                    if (open) r.alike.forEach { pk -> PersonRow(pk, people[pk], f.hits[pk], nav) }
+                    if (open) r.alike.forEach { pk -> PersonRow(pk, people[pk], f.hits[pk], nav, labelled) }
                 }
             }
         }
@@ -4020,26 +4053,34 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
     }
 }
 
-/** Someone in search results: picture, name, a check when their address checks out, "Following", then their address and followers. */
+/**
+ * Someone in search results: picture, name, a check when their address checks out, "Following", then their address and
+ * followers. [labelled] (the box's list as you type): the line starts with "Profile", and the right edge says Marble.
+ */
 @Composable
-private fun PersonRow(pk: String, p: Person?, h: Hit?, nav: Nav) =
-    Row(Modifier.fillMaxWidth().clickable { nav.profile(pk) }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun PersonRow(pk: String, p: Person?, h: Hit?, nav: Nav, labelled: Boolean = false) {
+    val name = p?.shown ?: h?.name ?: shortNpub(pk)
+    // Their address (unless it named someone else), and how many follow them.
+    val line = listOfNotNull(p?.nip05?.removePrefix("_@")?.takeIf { h?.nip05 != Nip05.Check.WRONG && !it.startsWith("npub1") }, h?.followers?.takeIf { it > 0 }?.let { followers(it) })
+        .joinToString(" · ").ifEmpty { p?.about?.lineSequence()?.firstOrNull() ?: "" }
+    val r = if (labelled) cc.aaro.cosign.SearchRows.person(name, line) else null
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = r?.say) { nav.profile(pk) }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Avatar(p, pk, 40)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(p?.shown ?: h?.name ?: shortNpub(pk), color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                Text(name, color = Vault.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false))
                 if (h?.nip05 == Nip05.Check.OK) Icon(Icons.Filled.CheckCircle, "Checked", tint = Vault.Accent, modifier = Modifier.padding(start = 5.dp).size(15.dp))
                 if (h?.follow == true) Text("Following", color = Vault.Accent, style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(start = 6.dp).border(1.dp, Vault.AccentEdge, RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
             }
-            // Their address (unless it named someone else), and how many follow them.
-            val line = listOfNotNull(p?.nip05?.removePrefix("_@")?.takeIf { h?.nip05 != Nip05.Check.WRONG && !it.startsWith("npub1") }, h?.followers?.takeIf { it > 0 }?.let { followers(it) })
-                .joinToString(" · ").ifEmpty { p?.about?.lineSequence()?.firstOrNull() ?: "" }
-            if (line.isNotEmpty()) Text(line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (r != null) KindLine(r)
+            else if (line.isNotEmpty()) Text(line, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        if (r != null) GoesTo(r.goes, profile = true)
     }
+}
 
 private fun followers(n: Long) = when {
     n >= 1_000_000 -> "%.1fM followers".format(n / 1e6).replace(".0M", "M")

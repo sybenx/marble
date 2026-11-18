@@ -134,7 +134,11 @@ object AppIndex {
         return out
     }
 
-    /** The one line under an app's name. (The index's follower count is its builder's network, not yours: not shown.) */
+    /**
+     * The one line under an app's name, as Marble Web shows it (vectors.json keeps the two in step). The phone's search
+     * row has its own, with the kind first and where a tap goes: SearchRows.app. (The index's follower count is its
+     * builder's network, not yours: not shown.)
+     */
     fun line(a: AppEntry, follows: Set<String>): String = listOfNotNull(
         when (a.kind) { "nsite" -> a.by?.let { "nsite by $it" } ?: "nsite"; "android" -> "Android app on Zapstore"; else -> a.domain },
         "You follow them".takeIf { a.pubkey in follows },

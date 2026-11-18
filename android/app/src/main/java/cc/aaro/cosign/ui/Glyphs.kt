@@ -54,5 +54,9 @@ object Glyphs {
     val download = line("download", "M12 4v11M7 10l5 5 5-5M5 20h14")
     /** Full screen. */
     val fullscreen = line("fullscreen", "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5")
+    /** Someone's profile: a head and shoulders. */
+    val person = line("person", "M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8zM4.5 20a7.5 7.5 0 0 1 15 0")
+    /** Marble's web pane: a window with a pane at its left. */
+    val pane = line("pane", "M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM10 4v16")
     val warn = line("warn", "M12 3 2 20h20L12 3zM12 10v4M12 17h.01")
 }
