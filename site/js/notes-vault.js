@@ -16,7 +16,7 @@ const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./va
 let early = []; // changes made while the vault was opening
 let libNow = null; // the vault code, once loaded
 let who = "", session = null, status = "none", why = "", cached = null, queue = new Map(), timer = null, writing = null, opening = null;
-// status: "none" (no vault: Notes as before), "weak" (this sign-in can only post: needs a passkey or your phone), "opening", "open", "offline" (opened, can't reach relays now), "error", "removed"
+// status: "none" (no vault: Notes as before), "opening", "open", "offline" (opened, can't reach relays now), "error", "removed"
 const listeners = new Set();
 export const onVault = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const tell = () => listeners.forEach((fn) => fn());
@@ -74,10 +74,7 @@ const net = {
     } catch (err) { return { ok: false, why: String(err?.message || err) }; }
   },
 };
-// (the vault core takes a keyring it can't decrypt as not there: a refusal that says this sign-in can only post is noted
-// here, so "no keyring opened" can say why)
-let weakSeen = false;
-const signer = (pk) => ({ pubkey: pk, sign: (t) => sign(t), decrypt: (eph, ct) => nip44DecryptFrom(eph, ct).catch((err) => { if (WEAK.test(String(err?.message || err))) weakSeen = true; throw err; }) });
+const signer = (pk) => ({ pubkey: pk, sign: (t) => sign(t), decrypt: (eph, ct) => nip44DecryptFrom(eph, ct) });
 const deviceName = () => {
   const ua = navigator.userAgent;
   const b = /Firefox\//.test(ua) ? "Firefox" : /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "a browser";
@@ -100,12 +97,10 @@ export function start(pk = current()) {
     if (who !== pk) return null;
     const mine = join(a?.write || [], a?.read || [], FAST.slice(0, 3));
     let entries;
-    weakSeen = false;
     try {
       entries = sync.notesVault(await sync.readKeyrings({ me: pk, relays: mine, net, signer: signer(pk) }));
     } catch (err) { return fail(pk, err); }
     if (who !== pk) return null;
-    if (!entries.length && weakSeen) return fail(pk, new Error("posting-only"));
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
     try {
       // your Blossom servers (kind 10063): where this page's blobs go, in your order (the vault's own when you have none)
@@ -127,15 +122,11 @@ export function start(pk = current()) {
   p.finally(() => { if (opening === p) opening = null; });
   return p;
 }
-/** A refusal that says this sign-in can only post (needs a passkey or a phone scan for full access). */
-export const WEAK = /posting[ _-]?only|full[ _-]access|stronger[ _-]sign[ _-]?in|needs?[ _-]a?[ _-]?passkey/i;
 function fail(pk, err) {
   if (who !== pk) return null;
   const m = String(err?.message || err);
-  // signed in with a password alone at the login page: a posting-only grant, no decrypt (Keykin login page, 2026-11-18).
-  // Not a sign-out: Notes says it needs a stronger sign-in (a passkey or your phone), and stays in this browser meanwhile.
-  // Otherwise, a signer that won't decrypt for this site: Notes as before.
-  status = WEAK.test(m) ? "weak" : /unsupported|not allowed|denied|rejected/i.test(m) ? "none" : "error";
+  // a signer that won't decrypt for this site: Notes as before
+  status = /unsupported|not allowed|denied|rejected/i.test(m) ? "none" : "error";
   why = m;
   tell();
   return null;

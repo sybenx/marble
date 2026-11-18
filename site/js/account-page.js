@@ -123,7 +123,7 @@ async function look(pubkey, typed) {
     return view(`<h2 id="acct-title">Your account page</h2>
       <p>${pubkey ? "Your account" : "That account"} names this page as the place to manage it:</p>
       <p class="acct-addr">${esc(host)}</p>
-      <p>It isn't part of Marble. You sign in there with a passkey or your phone.</p>
+      <p>It isn't part of Marble. You sign in there with a passkey, a password or your phone.</p>
       <a class="si-button si-open" href="${esc(r.url)}" rel="noopener noreferrer">Go to ${esc(host)}</a>
       <div class="si-actions">${other}<button type="button" class="link" data-acct="close">Cancel</button></div>`);
   }
