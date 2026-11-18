@@ -1279,7 +1279,7 @@ function boxState() {
         if (!it) continue;
         rows.push({ own: it, shelf: r.kind });
         // the older note's choices, as options of their own (so the arrow keys and a screen reader reach them)
-        if (r.kind === "older" && choicesFor === it.id) for (const act of it.readOnly ? ["view"] : ["step", "view", "go"]) rows.push({ act, own: it });
+        if (r.kind === "older" && choicesFor === it.id) for (const act of ["step", "view", "go"]) rows.push({ act, own: it });
       }
     }
     const older = list.find((r) => r.kind === "older");
@@ -1561,16 +1561,15 @@ function showNotes(signal, tab) {
   };
   const host = (u) => notes.hostOf(u);
   const noteRow = (i, f) => `<div class="note-row${i.done ? " is-done" : ""}" data-id="${i.id}">
-      ${i.readOnly ? `<span class="tick read-only" aria-hidden="true">${i.done ? TICK : "<span></span>"}</span>`
-        : `<button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>`}
+      <button type="button" class="tick" data-tick aria-label="${i.done ? "Not done" : "Done"}" aria-pressed="${!!i.done}">${i.done ? TICK : "<span></span>"}</button>
       <a class="note-main" href="${i.url ? esc(i.url) : "#"}" data-open ${i.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
         <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(notes.wordsOf(i.text), f)}</span>${i.text.includes("\n→ ") ? `<span class="nstep">${esc(i.text.slice(notes.wordsOf(i.text).length + 1))}</span>` : ""}
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
-          <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.readOnly && "change it in Marble on your phone", i.deletedOn && `deleted on ${i.deletedOn}`].filter(Boolean).join(" · "))}</span></span>
+          <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.deletedOn && `deleted on ${i.deletedOn}`].filter(Boolean).join(" · "))}</span></span>
       </a>
       ${i.conflict ? `<button type="button" class="link versions" data-versions aria-expanded="${openConflict === i.id}">${i.versions.length} versions</button>` : ""}
-      ${i.readOnly ? "" : `<button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`}
+      <button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>${i.conflict && openConflict === i.id ? conflictPanel(i) : ""}`;
   // A conflict (vaults §5.4, §11.1): both texts side by side; keep one, keep both, or write the one you want
   let openConflict = null, editing = null;
