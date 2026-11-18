@@ -22,6 +22,8 @@ export const onVault = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const tell = () => listeners.forEach((fn) => fn());
 export const state = () => status;
 export const reason = () => why;
+/** Something the vault names hasn't loaded yet (§7.4): Notes says "syncing…" and shows what it has. */
+export const syncing = () => !!session && (session.gaps.size > 0 || [...blobFailed].length > 0);
 /** Whether Notes come from the vault (open, or shown from this browser's copy while it opens). */
 export const active = () => status === "open" || status === "offline" || status === "removed" || (status === "opening" && !!cached);
 
@@ -155,7 +157,7 @@ const libSync = () => libNow;
 function asItem(n) {
   const x = n.note;
   return { id: x.id, text: x.text ?? "", created: x.created, updated: x.updated, done: x.done, deleted: null, url: x.url, quote: x.quote, from: x.app,
-    entry: n.entry, ver: x.ver, meta: x.meta, base: n.current, conflict: n.conflict, versions: n.conflict ? n.versions.map((v) => ({ ver: v.ver, text: v.text ?? "", device: v.device, done: v.done, meta: v.meta })) : null,
+    entry: n.entry, ver: x.ver, meta: x.meta, base: n.current, conflict: n.conflict, versions: n.conflict ? n.versions.map((v) => ({ ver: v.ver, text: v.text ?? blobTexts.get(v.ver) ?? "", device: v.device, done: v.done, meta: v.meta })) : null,
     deletedOn: n.deletedOn, long: !!x.blob };
 }
 /** Whether an entry for this note id exists in the vault at all (any version, deleted included). */
@@ -228,13 +230,15 @@ async function remember() {
   cached = { notes: notes() };
   await idb("put", who, cached);
   // a note whose text is in a blob: fetched, then shown
-  for (const n of libNow.notes.notesOf(session.vault.state(), session.vault.roster())) {
-    if (n.note.text !== null || !n.note.blob) continue;
-    session.blob(n.note.blob).then((b) => { blobTexts.set(n.note.ver, new TextDecoder().decode(b)); tell(); }).catch(() => {});
+  for (const n of libNow.notes.notesOf(session.vault.state(), session.vault.roster())) for (const x of n.versions) {
+    if (x.text !== null || !x.blob || blobTexts.has(x.ver)) continue;
+    session.blob(x.blob).then((b) => { blobTexts.set(x.ver, new TextDecoder().decode(b)); blobFailed.delete(x.ver); tell(); })
+      .catch(() => { blobFailed.add(x.ver); tell(); });
   }
 }
-const blobTexts = new Map();
-export const textOf = (item) => (item.long && !item.text ? blobTexts.get(item.ver) || "" : item.text);
+const blobTexts = new Map(), blobFailed = new Set();
+/** A note's text; one kept in a blob shows a line saying so until it has loaded. */
+export const textOf = (item) => (item.long && !item.text ? blobTexts.get(item.ver) || (blobFailed.has(item.ver) ? "(This note hasn't loaded yet.)" : "(Loading this note…)") : item.text);
 
 // ── conflicts (§5.4, §11.1): keep this, keep both, or edit ──
 

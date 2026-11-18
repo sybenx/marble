@@ -52,6 +52,7 @@ export class Session {
     this.loadedBlobs = new Set();
     this.rekeys = []; // [{dvk, commit, op}]
     this.missingGen = new Set();
+    this.gaps = new Set(); // blobs a live commit or checkpoint names that won't load yet (§7.4): "syncing…", never deletion
     this.ignoredGens = new Set(); // named by a rekey, missing from every keyring entry after a complete re-read
     this.suspect = new Set(); // dvks whose rekey named such a generation
     this.vault = null;
@@ -183,7 +184,10 @@ export class Session {
       if (Array.isArray(ops)) this.vault.addBatch(op.ref, ops);
     }
   }
-  async blobJSON(ref) { try { return parse(unutf8(await this.blob(ref))); } catch { return null; } }
+  async blobJSON(ref) {
+    try { const v = parse(unutf8(await this.blob(ref))); this.gaps.delete(ref.parts[0]); return v; }
+    catch { if (V.refOK(ref)) this.gaps.add(ref.parts[0]); return null; }
+  }
   /** A blob's plaintext: each part from any vault server, checked (§6.2). */
   async blob(ref) {
     if (!V.refOK(ref)) throw new Error("bad ref");

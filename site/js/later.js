@@ -361,7 +361,8 @@ function switchTo(pk) {
  */
 let adopted = "";
 function adoptIntoVault() {
-  if (adopted === who) return;
+  // (only once everything the vault names has loaded: a batch still missing may hold these very notes, §7.4)
+  if (adopted === who || vault.syncing()) return;
   adopted = who;
   for (const i of doc.items) if (!i.deleted && String(i.text || "").trim() && !vault.has(i.id)) vault.write(i);
 }
