@@ -11,8 +11,6 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 /**
  * Translation on the phone (ML Kit): which language a post is in, and the translation, both on the device. A
@@ -41,9 +39,8 @@ object OnDevice {
     /** "Spanish", in the phone's language. */
     fun name(code: String): String = java.util.Locale(code).getDisplayLanguage(java.util.Locale.getDefault()).ifEmpty { code }
 
-    private suspend fun <T> Task<T>.await(): T? = suspendCancellableCoroutine { c ->
-        addOnSuccessListener { c.resume(it) }; addOnFailureListener { c.resume(null) }; addOnCanceledListener { c.resume(null) }
-    }
+    /** The value, or null when it failed. Never for a Task<Void>, whose value is always null: finish() for that. */
+    private suspend fun <T> Task<T>.await(): T? = finish()?.value
 
     private val identifier by lazy { LanguageIdentification.getClient(LanguageIdentificationOptions.Builder().setConfidenceThreshold(0.05f).build()) }
 
@@ -69,7 +66,7 @@ object OnDevice {
         if (src == dst) return null
         val t = Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(src).setTargetLanguage(dst).build())
         try {
-            if (download) t.downloadModelIfNeeded(DownloadConditions.Builder().build()).await() ?: return null
+            if (download) { if (t.downloadModelIfNeeded(DownloadConditions.Builder().build()).finish() == null) return null }
             else if (needsDownload(from)) return null
             val (protectedText, kept) = PostLanguage.protect(text)
             // Paragraph by paragraph, so line breaks stay where they were.
