@@ -57,6 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -381,20 +384,34 @@ fun rememberWebPaneState(): WebPaneState {
 @Composable
 fun WebChips(state: WebPaneState, modifier: Modifier = Modifier) {
     val sites by WebSites.list.collectAsState()
-    Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    // The chip showing is always in view: a visit lands at the end of the row, often past its edge.
+    val scroll = rememberScrollState()
+    val spans = remember { androidx.compose.runtime.mutableStateMapOf<String, IntRange>() }
+    var width by remember { mutableIntStateOf(0) }
+    val span = spans[state.site.origin]
+    LaunchedEffect(span, width) {
+        val r = span ?: return@LaunchedEffect
+        if (width == 0) return@LaunchedEffect
+        val to = when { r.first < scroll.value -> r.first; r.last > scroll.value + width -> r.last - width; else -> return@LaunchedEffect }
+        scroll.animateScrollTo(to.coerceIn(0, scroll.maxValue))
+    }
+    Row(modifier.onSizeChanged { width = it.width }.horizontalScroll(scroll), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         for (s in sites) {
             val on = s.origin == state.site.origin
             val visit = s.kind == WebSite.Kind.VISITING
-            Row(Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface)
+            Row(Modifier.onGloballyPositioned { c -> val x = c.positionInParent().x.toInt(); spans[s.origin] = x..(x + c.size.width) }
+                .clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface)
                 .border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
                 .combinedClickable(onClickLabel = "Open ${s.name}", onLongClickLabel = "${s.name}'s settings", onLongClick = { state.sheetFor = s }) { state.show(s) }
-                .padding(start = 14.dp, end = if (visit) 6.dp else 14.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (visit) "Visiting: ${s.name}" else s.name, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                .padding(start = 14.dp, end = if (visit) 0.dp else 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (visit) "Visiting: ${s.name}" else s.name, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                    modifier = Modifier.padding(vertical = 7.dp))
                 if (visit) {
+                    // Keep and ✕ each take the chip's full height and some width, apart, so one is never hit for the other.
                     Text("Keep", color = if (on) Vault.Ground else Vault.Accent, style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "Keep ${s.name} as a chip") { state.keep(s) }.padding(horizontal = 4.dp))
+                        modifier = Modifier.padding(start = 4.dp).clickable(onClickLabel = "Keep ${s.name} as a chip") { state.keep(s) }.padding(horizontal = 10.dp, vertical = 7.dp))
                     Text("✕", color = if (on) Vault.Ground else Vault.Muted, style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClickLabel = "Close ${s.name}") { state.close(s) }.padding(horizontal = 6.dp))
+                        modifier = Modifier.padding(start = 2.dp).clickable(onClickLabel = "Close ${s.name}") { state.close(s) }.padding(start = 10.dp, end = 14.dp, top = 7.dp, bottom = 7.dp))
                 }
             }
         }
@@ -430,7 +447,7 @@ fun SiteSheet(state: WebPaneState, phone: Phone) {
             if (s.kind != WebSite.Kind.BUILT_IN) Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Can ask to sign in", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
-                    Text(if (s.asks) "Each sign-in still asks you first. Turning this off signs it out." else "Off: its sign-in button does nothing here.",
+                    Text(if (s.asks) "Each sign-in still asks you first. Turning this off signs it out." else "Off: it can't sign in here.",
                         color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 androidx.compose.material3.Switch(s.asks, { on -> state.allowAsks(s, on, phone) },
