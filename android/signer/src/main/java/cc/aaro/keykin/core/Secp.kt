@@ -20,4 +20,8 @@ object Secp {
     /** k · P, compressed hex. */
     fun mul(k: BigInteger, p: String) = comp(Secp256k1.pubKeyTweakMul(parse(p), unhex(scalarHex(k))))
     fun mulG(k: BigInteger) = comp(Secp256k1.pubkeyCreate(unhex(scalarHex(k))))
+    /** −P, compressed hex. */
+    fun neg(p: String) = comp(Secp256k1.pubKeyNegate(parse(p)))
+    /** Whether `x` (64 hex) is the x of a point on the curve. */
+    fun isX(x: String): Boolean = try { Secp256k1.pubkeyParse(unhex("02$x")); true } catch (_: Exception) { false }
 }

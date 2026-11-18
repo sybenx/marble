@@ -1,0 +1,643 @@
+{
+ "points": [
+  {
+   "label": "home",
+   "labelUtf8": "686f6d65",
+   "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+   "n": 0
+  },
+  {
+   "label": "work",
+   "labelUtf8": "776f726b",
+   "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+   "n": 2
+  },
+  {
+   "label": "a",
+   "labelUtf8": "61",
+   "point": "fcd8d8f3dba0a6d03a7bd0e7d1e8fc9ee6883f658e4bbe0055fcbc083d489e29",
+   "n": 2
+  },
+  {
+   "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "labelUtf8": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
+   "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+   "n": 0
+  },
+  {
+   "label": "house 3 🏠",
+   "labelUtf8": "686f757365203320f09f8fa0",
+   "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+   "n": 2
+  },
+  {
+   "label": "naïve",
+   "labelUtf8": "6e61c3af7665",
+   "point": "f2a1a2d09620e786be64cfbcdfc57e90925557de87fccb500ad6d027f93fab54",
+   "n": 0
+  },
+  {
+   "label": "two words",
+   "labelUtf8": "74776f20776f726473",
+   "point": "72f351175d4dd3afce76a6468f6ee93fa085ba7c661e0c2ef6018abc546fbcf3",
+   "n": 0
+  },
+  {
+   "label": "\ud800x",
+   "labelUtf8": "efbfbd78",
+   "point": "88c155e282905eced632bf6c7a206f701343b4b1e713ea411b1c308bd2309da1",
+   "n": 1
+  },
+  {
+   "label": "Home",
+   "labelUtf8": "486f6d65",
+   "point": "095daeb067f2aa38d454100c3ff3ca7f8cf6c3c70aa71844ed529acbbfdfb037",
+   "n": 0
+  },
+  {
+   "label": " home",
+   "labelUtf8": "20686f6d65",
+   "point": "9d5157d4f605bc62850e871613df843929277b74aed7942ab27e050d085f0654",
+   "n": 0
+  }
+ ],
+ "tweaks": [
+  {
+   "sharedX": "0000000000000000000000000000000000000000000000000000000000000000",
+   "label": "home",
+   "t": "5bcba90de1471aceeb173de29636986826ce6c84397e7033116aa08fdc6b415c"
+  },
+  {
+   "sharedX": "abababababababababababababababababababababababababababababababab",
+   "label": "work",
+   "t": "a756552a4e010251b624d572adf9ae21abdf21814f182dafe5401b0a44fd90e1"
+  },
+  {
+   "sharedX": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+   "label": "house 3 🏠",
+   "t": "854f66501035c5af0e1c69c4d773c16079c26b327e14c64703a631dc715219d6"
+  }
+ ],
+ "accounts": [
+  {
+   "nsec": "96b1e6ce6635d5f7db3ee743689a77fd5cbb990aa526245219d16b0e6460abdc",
+   "oddY": false,
+   "a0": "96b1e6ce6635d5f7db3ee743689a77fd5cbb990aa526245219d16b0e6460abdc",
+   "a1": "377c98149fc0cdf79ee3b8373b6aaa425ae723e8f95f71a11fd48c4a050dc00e",
+   "npub": "1e13382b91226ce8add56cc250d3670e22ced4abd8b393501383c5d030fe2319",
+   "commitment": [
+    "021e13382b91226ce8add56cc250d3670e22ced4abd8b393501383c5d030fe2319",
+    "02f88e6892dfbd6fbfad81f4b12f3c7dc46ec01222fcb77361fdf56d41c3ae82b7"
+   ],
+   "share1": "ce2e7ee305f6a3ef7a229f7aa405223fb7a2bcf39e8595f339a5f758696e6bea",
+   "share2": "05ab16f7a5b771e7190657b1df6fcc8357db03f5e89c675899a825159e45eab7",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "1e8e684b5457391b07d07b07cc7619cd2bdc2839c267d861b2b9a4e3333ea00e",
+     "t": "5a4d1b823dc2b13cbdffba6ae643f01ef3164caf21a3d4372da311ae812cb89a",
+     "npub": "ebff314cae85a0d3388cbc5309c3f4aa85b87cc6a040cc48c108b055f472c9b7",
+     "flip": false,
+     "commitment": [
+      "02ebff314cae85a0d3388cbc5309c3f4aa85b87cc6a040cc48c108b055f472c9b7",
+      "02f88e6892dfbd6fbfad81f4b12f3c7dc46ec01222fcb77361fdf56d41c3ae82b7"
+     ],
+     "share1": "287b9a6543b9552c382259e58a49125ff00a2cbc10e0c9eea776aa7a1a64e343",
+     "share2": "5ff83279e37a2323d706121cc5b3bca24af150a50a403b8fc74b36c41f72a351",
+     "secret": "f0ff0250a3f88734993ea1ae4ede681c4fd1e5b9c6c9f88947747cbce58d6476",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "d496f7253451dd634129c6728a6f77aa9b92f447eb03a4074cb8f9ad67b7d777"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "66260311b4ad549191a02fb2c4692644d68f00d923266898bb43127879c2b0f9",
+     "t": "9f24af2d5288beb09eb694380b2cb4b9dfba240dc9b264c4378e561472a2bb1c",
+     "npub": "4c764ae137d3434c367dfb9aa5709cc4e90bf25f62efd95582fbea174b9609c7",
+     "flip": true,
+     "commitment": [
+      "024c764ae137d3434c367dfb9aa5709cc4e90bf25f62efd95582fbea174b9609c7",
+      "03f88e6892dfbd6fbfad81f4b12f3c7dc46ec01222fcb77361fdf56d41c3ae82b7"
+     ],
+     "share1": "92acd1efa7809d5fe726cc4d50ce2903de00d8cbf65945c00e706facc45b5b7c",
+     "share2": "5b3039db07bfcf684843141615637ec18319b4e2fcf9d41eee9be362bf4d9b6e",
+     "secret": "ca296a0447416b57860a84848c38d34638e7fcb4efb8b7612e44fbf6c9691b8a",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "862488f5245565e07f0ea6351b299b29f78d66b8615e21fde3cb5a8076055677"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "dfc2796ec229d94e94f176528ce122278d0dd4376433f1f279197434459f7396",
+     "t": "f5aeffa9c4bb878631cc4c472a55e12eaeeed5df44d9f6f13042552f5dff466f",
+     "npub": "1cf54fa55aba10992c350ea1510762e427d6aeb2a30592b44ea0ca49df1f6f13",
+     "flip": true,
+     "commitment": [
+      "021cf54fa55aba10992c350ea1510762e427d6aeb2a30592b44ea0ca49df1f6f13",
+      "03f88e6892dfbd6fbfad81f4b12f3c7dc46ec01222fcb77361fdf56d41c3ae82b7"
+     ],
+     "share1": "3c228173354dd48a5411143e31a4fc8f0ecc26fa7b31b39315bc7091d8fed029",
+     "share2": "04a5e95e958d0692b52d5c06f63a524cb3e5031181d241f1f5e7e447d3f1101b",
+     "secret": "739f1987d50ea281f2f4cc756d0fa6d169b34ae3749125343590fcdbde0c9037",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "ec8d35cf099193a9bc64c6c6d7979cb73204920621c75f50a0af50ef64dbf92b"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "dda1b5ec30e6ac9d8acc2c3a28dc072b90be2402e5b5dc51a6ee90468002742f",
+     "t": "be2ca70a311b0e610ec3fc5c7a034888e41067a9f0595ef943c53a665ae92716",
+     "npub": "79c7077e1f0d009ed639292a39338bcedfa6e5e9ea6cbeb7a288b4ed7898910b",
+     "flip": false,
+     "commitment": [
+      "0279c7077e1f0d009ed639292a39338bcedfa6e5e9ea6cbeb7a288b4ed7898910b",
+      "02f88e6892dfbd6fbfad81f4b12f3c7dc46ec01222fcb77361fdf56d41c3ae82b7"
+     ],
+     "share1": "8c5b25ed3711b25088e69bd71e086ac9e10447b6df9654b0bd98d331f42151bf",
+     "share2": "c3d7be01d6d2804827ca540e5973150c3beb6b9fd8f5c651dd6d5f7bf92f11cd",
+     "secret": "54de8dd89750e458ea02e39fe29dc087861d23cde636e30f9dc446e7ef1391b1",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "70d25af6ce44991c165669c76c37667a48aaac2a1111fa2d73efd84b6dd80ad7"
+    }
+   ]
+  },
+  {
+   "nsec": "b346f653b0556f5e947fe9814a63b255c812629fa2c57988bf3601b415745c4a",
+   "oddY": false,
+   "a0": "b346f653b0556f5e947fe9814a63b255c812629fa2c57988bf3601b415745c4a",
+   "a1": "50b4a64e4565963e94fd78b064be5b56966baf2ecec2d84826cec9c4b7847cbd",
+   "npub": "af5e4bde1bcc8435d273ebfbe6b2e7b64ce8073fd468de4eee546847628c8e74",
+   "commitment": [
+    "02af5e4bde1bcc8435d273ebfbe6b2e7b64ce8073fd468de4eee546847628c8e74",
+    "02af1241c6efae0fa8eb7de406cd8d943f8a7b24796ac046779df4c3b2ff63db2d"
+   ],
+   "share1": "03fb9ca1f5bb059d297d6231af220dada3cf34e7c23fb19526326cebfcc297c6",
+   "share2": "54b042f03b209bdbbe7adae213e069043a3ae416910289dd4d0136b0b4471483",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "bdc519d9e82f6096c0ed2b3d52aebdb4f1ec7a875e80ada9e9de1d9f9499f4ae",
+     "t": "43254971b0122ed640bfcb705373d7f8ca70cd536840d1eb3b7b775473d884f7",
+     "npub": "9bb08e2f180a9cfff492d1dd7287379aaccbd5bcf71fe52f747698dd4de16961",
+     "flip": true,
+     "commitment": [
+      "029bb08e2f180a9cfff492d1dd7287379aaccbd5bcf71fe52f747698dd4de16961",
+      "03af1241c6efae0fa8eb7de406cd8d943f8a7b24796ac046779df4c3b2ff63db2d"
+     ],
+     "share1": "b8df19ec5a32cb8c95c2d25dfd6a1a584c6edaab84c81cbb5e247a4c5f9b2484",
+     "share2": "682a739e14cd354e00c559ad98abbf01b6032b7cb60544733755b087a816a7c7",
+     "secret": "0993c03a9f9861cb2ac04b0e622875b0282bacf3a44254c7c520e58446e96000",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "6e510f073e9d8f94740c7887044d298e698716dbcf11852cf26ae0e4cb1343e3"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "08af08f39dca9932c43bdf834fa111144338422e824eeddb404cc91f48c85339",
+     "t": "be2859f981f3838aab27f3bfa0d5057f09862096c600722b44c6878727d66aa7",
+     "npub": "759b9f32defd013cf8176578c1a786a65fbc4273ff409a4f3b1f79c88f908ed1",
+     "flip": true,
+     "commitment": [
+      "02759b9f32defd013cf8176578c1a786a65fbc4273ff409a4f3b1f79c88f908ed1",
+      "03af1241c6efae0fa8eb7de406cd8d943f8a7b24796ac046779df4c3b2ff63db2d"
+     ],
+     "share1": "3ddc0964885176d82b5aaa0eb008ecd20d59876827087c7b54d96a19ab9d3ed4",
+     "share2": "ed27631642ebe099965d315e4b4a917a319cb520078e446eeddcfee1c44f0358",
+     "secret": "8e90afb2cdb70d16c05822bf14c74828a3c53696f5cb54c37ba833de6321bb91",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "418a8062cde01a6d493e414e6c80bb4b47d86ba7864a150fea07899057df328b"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "faaeeed5b621c751d2ca6fdae372ee7deb5ec62d90dc6b54314f7f8094ef005d",
+     "t": "d3a24851c5f2e95091e7ef26096b03b112647250e1806832242db686393cf1cd",
+     "npub": "7889df5d6b19f9134b77ae1bf674e80bd210d3102b47e85f46359ba23fd7acb6",
+     "flip": false,
+     "commitment": [
+      "027889df5d6b19f9134b77ae1bf674e80bd210d3102b47e85f46359ba23fd7acb6",
+      "02af1241c6efae0fa8eb7de406cd8d943f8a7b24796ac046779df4c3b2ff63db2d"
+     ],
+     "share1": "d79de4f3bbadeeedbb655157b88d115eb633a738a3c019c74a60237235ff8993",
+     "share2": "28528b420113852c5062ca081d4b6cb691f07980c33a51d3b15c8eaa1d4dc50f",
+     "secret": "86e93ea5764858af2667d8a753ceb6081fc7f809d4fd417f239159ad7e7b0cd6",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "dd1f9ccd71d032cd96676c14b86ccd1d9e6ea1b1f0c28b8ddd4d1a188e442faa"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "7684ef1042d3d94772e4e79f4e8ac9a3a5ff885e418d5ced8578caacbba108ed",
+     "t": "105944b510453cc33cfa3cc1a236734ecc99e9cba23331c0bb7b0dc971c4d7df",
+     "npub": "02765952f73f2f88c54b39d7ff67236129f77b1af77d118c0b160864affc1c34",
+     "flip": true,
+     "commitment": [
+      "0202765952f73f2f88c54b39d7ff67236129f77b1af77d118c0b160864affc1c34",
+      "03af1241c6efae0fa8eb7de406cd8d943f8a7b24796ac046779df4c3b2ff63db2d"
+     ],
+     "share1": "ebab1ea8f9ffbd9f9988610caea77f024a45be334ad5bce5de24e3d761aed19c",
+     "share2": "9af6785ab49a2761048ae85c49e923abb3da0f047c12e49db7561a12aa2a54df",
+     "secret": "3c5fc4f73f6553de2e85d9bd1365da5a2602907b6a4ff4f245214f0f48fd0d18",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "caa05fd581eeccf741569ab2ca8b1a4072250ff47140b7d734ca3dbd93ca2632"
+    }
+   ]
+  },
+  {
+   "nsec": "90c8c6cdffcf4f48fbe1c1ea9ccc231f7587547dc13da2f6eb831308587801a9",
+   "oddY": false,
+   "a0": "90c8c6cdffcf4f48fbe1c1ea9ccc231f7587547dc13da2f6eb831308587801a9",
+   "a1": "64c789d4b1864bd2fb32e4ef6700d181d8cd51b355369043cc17e274da11688d",
+   "npub": "6b1e8e2f13b9abc6d8af0083e90f70a0ca9c5e0f5bb5a1a36759a22c9ad226a8",
+   "commitment": [
+    "026b1e8e2f13b9abc6d8af0083e90f70a0ca9c5e0f5bb5a1a36759a22c9ad226a8",
+    "03048caa14121dbdbbf4b5903e22dd0075f177c27a88db0656221b594ff1b31b4c"
+   ],
+   "share1": "f59050a2b1559b1bf714a6da03ccf4a14e54a6311674333ab79af57d32896a36",
+   "share2": "5a57da7762dbe6eef2478bc96acdc6246c731afdbc622342c3e079653c649182",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "9273231e51de03b3f2f351cb0038881fa996b5ae385bf815c1865edd8f033065",
+     "t": "13605253e2befff4e91979b72825d8b469da1340da452fcb569945b7f7d74918",
+     "npub": "f4c938a31ac9e2dfd198d713c386b6e70c6cab126ffd0dda80183cb9a55d12a9",
+     "flip": false,
+     "commitment": [
+      "02f4c938a31ac9e2dfd198d713c386b6e70c6cab126ffd0dda80183cb9a55d12a9",
+      "03048caa14121dbdbbf4b5903e22dd0075f177c27a88db0656221b594ff1b31b4c"
+     ],
+     "share1": "08f0a2f694149b10e02e20912bf2cd56fd7fdc8b4170c2ca4e61dca85a2a720d",
+     "share2": "6db82ccb459ae6e3db61058092f39ed8d64d2e3e96a7530e1a79bf1d343bda9a",
+     "secret": "a4291921e28e4f3de4fb3ba1c4f1fbd3df6167be9b82d2c2421c58c0504f4ac1",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "63da73401ffffef4e3ebb8f6b86f97e79332d2657adcf8981856cd635c470c33"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "f386a71319e4f8f45804fa8ae5ca270b619e3082ea699de1c4f1e76bfed992e9",
+     "t": "c26e035bda78f96c8bc0c305dd4075fa244f6f46b50ef507add8ef5ec03a2c43",
+     "npub": "88c66fa0083c06a69f270d3820e7410167d4b2117007951c6aeaf6df1210fafe",
+     "flip": true,
+     "commitment": [
+      "0288c66fa0083c06a69f270d3820e7410167d4b2117007951c6aeaf6df1210fafe",
+      "02048caa14121dbdbbf4b5903e22dd0075f177c27a88db0656221b594ff1b31b4c"
+     ],
+     "share1": "4801ac0174316b777d2a96201ef2956202b9a455930e18351a30d83dada8ec09",
+     "share2": "e33a222cc2ab1fa481f7b130b7f1c3dee49b2f88ed20282d0deb5455a3cdc4bd",
+     "secret": "acc935d625b7b74a785d7b0f85f366e3db86f608e844a878e648bab287ba5496",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "a86161f4db235cbeafbf792316b5cc00842911e9a1b52c6b695ed271e6ec9f58"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "153197c710c8f66b561cd7a4b58e3f631e36eb81ce74c2fa32355f6a377bc47f",
+     "t": "087eea7f2238b088c56f39b32919157aac0f50703324ad9da64cfb55db22fd33",
+     "npub": "601e9bc0d5b7e9e6ba0928e68bcb0010250f4db01c976f7b9957fb0203ee740d",
+     "flip": true,
+     "commitment": [
+      "02601e9bc0d5b7e9e6ba0928e68bcb0010250f4db01c976f7b9957fb0203ee740d",
+      "02048caa14121dbdbbf4b5903e22dd0075f177c27a88db0656221b594ff1b31b4c"
+     ],
+     "share1": "01f0c4de2c71b45b437c1f72d319f5e2c04ae64565afbf6361ea6db9c289d9d8",
+     "share2": "9d293b097aeb688848493a836c19245fa22c7178bfc1cf5b55a4e9d1b8aeb28c",
+     "secret": "66b84eb2ddf8002e3eaf04623a1ac764991837f8bae64fa72e02502e9c9b4265",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "6aafcfc7dc06f31be36930711a4e92bd9aa6356e5ba725206c83712341e75af0"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "4a70051e434010c5b595f81b4324c4db3094c8a71e2985bccf3f5489350bcc39",
+     "t": "2110a8c01b63b7e8b5759746fe1b0f9fd5438a0f4deac459a168ffef4a4136fd",
+     "npub": "aec78e8ad3f0e46d7286631c58e7ee8247e1a7044abace1809b06bcad6bedc7c",
+     "flip": true,
+     "commitment": [
+      "02aec78e8ad3f0e46d7286631c58e7ee8247e1a7044abace1809b06bcad6bedc7c",
+      "02048caa14121dbdbbf4b5903e22dd0075f177c27a88db0656221b594ff1b31b4c"
+     ],
+     "share1": "e95f069d3346acfb5375c1defe17fbbc51c5898cfa3248e326a0c7ad23a1e14f",
+     "share2": "84977cc881c061285842dcef97172a3a78f837d9a4fbb89f5a88e538499078c2",
+     "secret": "4e269071e4ccf8ce4ea8a6ce6518cd3f6fe3fe59a02038eb32e64b952d7d089b",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "885a8a24c9a1dd095b3d32b116d915584b7cae37d5a4c7787011c19a0a72cf6a"
+    }
+   ]
+  },
+  {
+   "nsec": "af10e5947be7a290b65c73de49457af742c80e2c7f77fec6988d5d714f33db3e",
+   "oddY": true,
+   "a0": "50ef1a6b84185d6f49a38c21b6ba850777e6ceba2fd0a1752745011b81026603",
+   "a1": "2c57f45fc83c1019d945077e53e65236b44ee323100c2e12ce3534976e52cb7d",
+   "npub": "5da7f3dd6eb0b118565259b5ac06117a9c049d8b4239239e85b53eafd1d9cbfe",
+   "commitment": [
+    "025da7f3dd6eb0b118565259b5ac06117a9c049d8b4239239e85b53eafd1d9cbfe",
+    "03623537540b07ee0feac69caee538286b4dbb30140615111291faebe6fa9e4134"
+   ],
+   "share1": "7d470ecb4c546d8922e893a00aa0d73e2c35b1dd3fdccf87f57a35b2ef553180",
+   "share2": "a99f032b14907da2fc2d9b1e5e872974e08495004fe8fd9ac3af6a4a5da7fcfd",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "f126a44ad0f4528b97538f8530f3ba122ad6fdaca1b9f4012b3e03681b324bae",
+     "t": "68dfb21f1585c36af723ce18109e937c2e5ffe01decd1690e47ec4a887900e43",
+     "npub": "75f2d1a48caf8735aa20d115821be19968d6a79ea9acdb68611bce3f46b17651",
+     "flip": true,
+     "commitment": [
+      "0275f2d1a48caf8735aa20d115821be19968d6a79ea9acdb68611bce3f46b17651",
+      "02623537540b07ee0feac69caee538286b4dbb30140615111291faebe6fa9e4134"
+     ],
+     "share1": "19d93f159e25cf0be5f39e47e4c0954460192d07909eba22e5d964315951017e",
+     "share2": "ed814ab5d5e9bef20cae96c990da430c667926cb2fdb2c4bd7768e26bb347742",
+     "secret": "463133756661df25bf38a5c638a6e77b1468102aa0aae835b40e98c8c7a3ccfb",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "efb8ef98e3c7f42b165d14982242dc76b04dc0d5d15b77830a41dabcf1021e87"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "22ef5461758ee60d612f159fb623bca0b0c9062f0bcfa043595e0af3ec40872e",
+     "t": "1767921bd122c294705e7ef401e53bb375b1dace89ed4e9ef37e54ca6be2cdaa",
+     "npub": "f955a80f0e720448923260470f3105c58cea57632a31b29ce2672e0af014b6b7",
+     "flip": false,
+     "commitment": [
+      "02f955a80f0e720448923260470f3105c58cea57632a31b29ce2672e0af014b6b7",
+      "03623537540b07ee0feac69caee538286b4dbb30140615111291faebe6fa9e4134"
+     ],
+     "share1": "94aea0e71d77301d934712940c8612f1a1e78cabc9ca1e26e8f88a7d5b37ff2a",
+     "share2": "c1069546e5b340376c8c1a12606c652856366fced9d64c39b72dbf14c98acaa7",
+     "secret": "6856ac87553b2003ba020b15b89fc0baed98a988b9bdf0141ac355e5ece533ad",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "80762323b1b1d20a72ea571247c32ecca00e64675225c6ec4f1c54904bc90e61"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "bb0e1c6fff120558edf6984e4037c534f5135945d3635d8524a11116ea9e7f1a",
+     "t": "bfc02ad9d14032bf17ae69e746da76c4d8cefa9f69957c5342c3cfba53a5d38a",
+     "npub": "5c40c63f9920935cb946ecb3ff44eef5b184393fa9d77935b3a9d2486be63a3d",
+     "flip": false,
+     "commitment": [
+      "025c40c63f9920935cb946ecb3ff44eef5b184393fa9d77935b3a9d2486be63a3d",
+      "03623537540b07ee0feac69caee538286b4dbb30140615111291faebe6fa9e4134"
+     ],
+     "share1": "3d0739a51d94a0483a96fd87517b4e044a55cf95fa29ab9f786ba6e072c4c3c9",
+     "share2": "695f2e04e5d0b06213dc0505a561a03afea4b2b90a35d9b246a0db77e1178f46",
+     "secret": "10af45455558902e6151f608fd94fbcd9606ec72ea1d7d8caa3672490471f84c",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "d777674fd9a46dd5068b02dfd9d269f3e5858d90fcfb076e0646c2459f8fdd14"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "feb668ca229164a14ee484f7fe69139ad3ac20a9edea3a2034e5e4163214b5f2",
+     "t": "b27b652704b42622be99c8ef71b6af5f9125d0a127e1b1e8a84645f1c9e17887",
+     "npub": "0123f36dc6972ec35a591cf321e3fcc67d425ba05505d01d9fd17e8bb236fe31",
+     "flip": true,
+     "commitment": [
+      "020123f36dc6972ec35a591cf321e3fcc67d425ba05505d01d9fd17e8bb236fe31",
+      "02623537540b07ee0feac69caee538286b4dbb30140615111291faebe6fa9e4134"
+     ],
+     "share1": "d03d8c0daef76c541e7da37083a8795fb802374ef6d2bf06e1e44174e735d87b",
+     "share2": "a3e597ade6bb5c3a45389bf22fc2272903b3542be6c690f413af0cdd78e30cfe",
+     "secret": "fc95806d77337c6df7c2aaeed78ecb966c511a7206deed19b019760c5588a3f8",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "99b647a65a4fd14f4e8dd81ff5a13eea04572a637347cf6e3bec71727d77e8d0"
+    }
+   ]
+  },
+  {
+   "nsec": "742effb0dfbb7cb3155635ab0179e341d1feee03e028c64101d8ebb85080615e",
+   "oddY": false,
+   "a0": "742effb0dfbb7cb3155635ab0179e341d1feee03e028c64101d8ebb85080615e",
+   "a1": "a2c515306d4e148fd668102e7462148b0ef046dc759eb3d4ab26b783721892f7",
+   "npub": "24c19824fa4033624c6adfa9fec83f638a4d4fea48f65fdf75fe8bdbca904c6a",
+   "commitment": [
+    "0224c19824fa4033624c6adfa9fec83f638a4d4fea48f65fdf75fe8bdbca904c6a",
+    "02fe253987a26306f265f47e813d3815f6d6b3f440736f2d7cedfab567df11c13d"
+   ],
+   "share1": "16f414e14d099142ebbe45d975dbf7ce264057f9a67ed9d9ed2d44aef262b314",
+   "share2": "b9b92a11ba57a5d2c2265607ea3e0c5935309ed61c1d8dae9853fc32647b460b",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "f72cc15552fc9f2f0625b0611943b8eca973f1909f17413e0824de684f215b98",
+     "t": "9b368ebdf4c7063880c588e70627488992b7c7daa7f34dc18d7ebd0e6569a40b",
+     "npub": "a439419c685d354967f3dc5e7f0221a42eb4b7b709b2f7a4678f22765b6ac732",
+     "flip": false,
+     "commitment": [
+      "02a439419c685d354967f3dc5e7f0221a42eb4b7b709b2f7a4678f22765b6ac732",
+      "02fe253987a26306f265f47e813d3815f6d6b3f440736f2d7cedfab567df11c13d"
+     ],
+     "share1": "b22aa39f41d0977b6c83cec07c034057b8f81fd44e72279b7aac01bd57cc571f",
+     "share2": "54efb8cfaf1eac0b42ebdeeef06554e40d3989ca14c83b3466005ab3f9aea8d5",
+     "secret": "0f658e6ed48282eb961bbe9207a12bccaa07d8f7d8d373c6cf854a39e5b3c428",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "4a4e5be9cd4b2b6acdade8bc5f309517c2746f20507ccac2e83bdfc3cfbaed40"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "6b6f0bfc80eb62c39115f4896e6910b64481e2c556dfce20f6afb154864bc830",
+     "t": "465cb565f58b656da382af9b6e11837ca6f4a6220f23e4605b2cf7caef4924a6",
+     "npub": "01755187a8fb28945ffe2a310241aebe676ac9ba75ecc9f4b2923accedfb390b",
+     "flip": false,
+     "commitment": [
+      "0201755187a8fb28945ffe2a310241aebe676ac9ba75ecc9f4b2923accedfb390b",
+      "02fe253987a26306f265f47e813d3815f6d6b3f440736f2d7cedfab567df11c13d"
+     ],
+     "share1": "5d50ca474294f6b08f40f574e3ed7b4acd34fe1bb5a2be3a485a3c79e1abd7ba",
+     "share2": "0015df77afe30b4065a905a3584f8fd7217668117bf8d1d333ae9570838e2970",
+     "secret": "ba8bb516d546e220b8d8e5466f8b66be78f39425ef4caaa15d05e3833fc98604",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "8275f01579e0f710dd9e57a2496e5e018d463e904b0d89d1c846d39428da7843"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "3967e2e1dad062b6c718ef83d06c252908a03095b9b9d3e6ef18577dfbb9d685",
+     "t": "8bd9b53fabc0a304c5afa0bbc3798cb01412163174455ae8a95c9e6fe9c2a87f",
+     "npub": "2bbd3b10c1678f726b99edcd319c2ffa34a71f4a75146fe0dc4ab9790b1f49f6",
+     "flip": false,
+     "commitment": [
+      "022bbd3b10c1678f726b99edcd319c2ffa34a71f4a75146fe0dc4ab9790b1f49f6",
+      "02fe253987a26306f265f47e813d3815f6d6b3f440736f2d7cedfab567df11c13d"
+     ],
+     "share1": "a2cdca20f8ca3447b16de6953955847e3a526e2b1ac434c29689e31edc255b93",
+     "share2": "4592df51661848d787d5f6c3adb7990a8e93d820e11a485b81de3c157e07ad49",
+     "secret": "0008b4f08b7c1fb7db05d666c4f36ff32b62274ea52580edeb632b9b6a0cc89c",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "cd9d37a213cd6afcd3e4636bc93a5e0f4308239cccc99bb57d6c7cc7da2004b6"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "e3fac3cf5b312589330a02f1d4188ae2a98aeaa8e796a7c49408e8b59f419abe",
+     "t": "4027ef373ee22dc50a4946058a87c77025a315b196cee85cfdb08142cf99b3d7",
+     "npub": "405d828cfcade05062830418bd8e07c442a0c28bb55fe40ccbf1164983e491a6",
+     "flip": true,
+     "commitment": [
+      "02405d828cfcade05062830418bd8e07c442a0c28bb55fe40ccbf1164983e491a6",
+      "03fe253987a26306f265f47e813d3815f6d6b3f440736f2d7cedfab567df11c13d"
+     ],
+     "share1": "a8e3fbe7741440f809f87420ff9c40c06ecb6f3b71fade04d4f4989b0e39da56",
+     "share2": "061ee6b706c62c68339063f28b3a2c355fdb285efc5c2a3029cde1179c21475f",
+     "secret": "4ba91117e1625587e060844f73fe554cc30cd9313850f19dc048f191b01c2c0c",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "f5d5f13868dc70bb371687c19bd0db93ad50a214331befe7034dee30a4af9596"
+    }
+   ]
+  },
+  {
+   "nsec": "683f33daa207ad9146bc9863e166a7c5016540dcf30308d6774edf4dbbb91ea1",
+   "oddY": false,
+   "a0": "683f33daa207ad9146bc9863e166a7c5016540dcf30308d6774edf4dbbb91ea1",
+   "a1": "0181d03d72c5138125144180ded721e2670e5912a340f36e9ce765d34811557b",
+   "npub": "6e65d406cfc83cf4d69a401e77f75a791c83340e8a9846f4b37db4acb0a94087",
+   "commitment": [
+    "026e65d406cfc83cf4d69a401e77f75a791c83340e8a9846f4b37db4acb0a94087",
+    "02d6e4284cdda7d76cc0d290173ce97e323f1d52550f1b9835362cb7216c618bcf"
+   ],
+   "share1": "69c1041814ccc1126bd0d9e4c03dc9a7687399ef9643fc451436452103ca741c",
+   "share2": "6b42d4558791d49390e51b659f14eb89cf81f3023984efb3b11daaf44bdbc997",
+   "children": [
+    {
+     "label": "home",
+     "point": "1222c45141d9e8db561d0976686726bb1e3bc7f8ab39d4826db11abac7b4f045",
+     "sharedX": "84f97d818b9a7f93422a6e87b70ec2ba015469e3d162caab8c929afd1dee888b",
+     "t": "86b560d90e51bee169cc4fb82184492788ea2c79a84053fccc28597460f1a083",
+     "npub": "af20489ba0630a9161e1ec08c52e9f1bb96baf963224a74c5e44f399b4a811b1",
+     "flip": true,
+     "commitment": [
+      "02af20489ba0630a9161e1ec08c52e9f1bb96baf963224a74c5e44f399b4a811b1",
+      "03d6e4284cdda7d76cc0d290173ce97e323f1d52550f1b9835362cb7216c618bcf"
+     ],
+     "share1": "0f899b0edce1800c2a62d6631e3ded2fc951167d70c44ff9df73bff76b7a2ca2",
+     "share2": "0e07cad16a1c6c8b054e94e23f66cb4d6242bd6acd835c8b428c5a242368d727",
+     "secret": "110b6b4c4fa6938d4f7717e3fd150f12305f6f90140543687c5b25cab38b821d",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "7de6e0084bf75ee0d7b7ae7476e711cf902a86ada758bd4b92e571109b93cd09"
+    },
+    {
+     "label": "work",
+     "point": "aa5cb39cfd0a1dad17c653bd476aa318c13502afe7d368cf2fc53c7e2e0cb2d5",
+     "sharedX": "b0c271802af7d4e7fc9556094ae947cdf9c9c6092abbac4b137d19369a4c1e46",
+     "t": "d159faffa11c556f8bb1cc350a0ba69aaf486ce75454754b1f8f42605d33a091",
+     "npub": "e11e022f798ebcff2cfd8a6ab0be461cba74995fe19f8e420b45b0bf294e34d6",
+     "flip": false,
+     "commitment": [
+      "02e11e022f798ebcff2cfd8a6ab0be461cba74995fe19f8e420b45b0bf294e34d6",
+      "02d6e4284cdda7d76cc0d290173ce97e323f1d52550f1b9835362cb7216c618bcf"
+     ],
+     "share1": "3b1aff17b5e91681f782a619ca4970435d0d29f03b4fd15473f328f490c7d36c",
+     "share2": "3c9ccf5528ae2a031c96e79aa9209225c41b8302de90c4c310da8ec7d8d928e7",
+     "secret": "39992eda43240300d26e6498eb724e60f5fed0dd980edde5d70bc32148b67df1",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "3c5e8863edaf5a384d93914f66218e0ca6f00732c614a9c731ec8e4ee5ddd962"
+    },
+    {
+     "label": "house 3 🏠",
+     "point": "cb5f3587c72ab4e1bf0068b407582760b4a500b30a8572e283d3dd789672317a",
+     "sharedX": "2458e12fb78fe37babe4e46710de24790f50e49e9ed1d449ddaafa68289385ff",
+     "t": "e9ac36a3ad7627679b2d2109f43d93ed2a500c2f9e13dfe1bb4618b20476443a",
+     "npub": "9da79605b09060be686c569c3acc6ed3e4fc5a82ad88b55ef49cb4d8ad7c54fb",
+     "flip": true,
+     "commitment": [
+      "029da79605b09060be686c569c3acc6ed3e4fc5a82ad88b55ef49cb4d8ad7c54fb",
+      "03d6e4284cdda7d76cc0d290173ce97e323f1d52550f1b9835362cb7216c618bcf"
+     ],
+     "share1": "ac92c5443dbd1785f90205114b84a268e29a13ae2a396450b0285f46982bca2c",
+     "share2": "ab10f506caf80404d3edc3906cad80867b8bba9b86f870e21340f973501a74b1",
+     "secret": "ae149581b0822b071e1646922a5bc44b49a86cc0cd7a57bf4d0fc519e03d1fa7",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "38c8a777461938e02a354f59a1476d375111d2de448258ccea95c0993833cb32"
+    },
+    {
+     "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "point": "faaea830f05ebd148e6b275943ab68dea599b069ad65503d78ee4a0cafd12bc0",
+     "sharedX": "090b956b124935594b7af06c989a249df7bc5c46987691f3c3d2290fa49685bc",
+     "t": "c5ea9917749498ea882b4f79d5dc47121941c1ed45fa5bea8fe74838296ac152",
+     "npub": "6460911632b5b05b284490bbbe329f9248ed02061ef20477768761855b54179b",
+     "flip": true,
+     "commitment": [
+      "026460911632b5b05b284490bbbe329f9248ed02061ef20477768761855b54179b",
+      "03d6e4284cdda7d76cc0d290173ce97e323f1d52550f1b9835362cb7216c618bcf"
+     ],
+     "share1": "d05462d0769ea6030c03d6a169e5ef43f3a85df08252e847db872fc073374d14",
+     "share2": "ced2929303d99281e6ef95208b0ecd618c9a04dddf11f4d93e9fc9ed2b25f799",
+     "secret": "d1d6330de963b9843118182248bd11265ab6b7032593dbb6786e9593bb48a28f",
+     "peer": "38df133f23d008e03ad450514d86ea9fe10ab05aa769bc0314ae050cb38b8331",
+     "conversationKey": "3e647a0d8bdda9c69a5057dee16230bcf4a42bb21661bdc40d64441a1a8e5917"
+    }
+   ]
+  }
+ ],
+ "tweakOf": [
+  {
+   "t": "0000000000000000000000000000000000000000000000000000000000000000",
+   "code": "bad_child"
+  },
+  {
+   "t": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "code": "bad_child"
+  },
+  {
+   "t": "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140",
+   "code": "ok"
+  },
+  {
+   "t": "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+   "code": "bad_child"
+  },
+  {
+   "t": "xyz",
+   "code": "bad_child"
+  },
+  {
+   "t": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+   "code": "bad_child"
+  },
+  {
+   "t": "ababababababababababababababababababababababababababababababab",
+   "code": "bad_child"
+  },
+  {
+   "t": "ababababababababababababababababababababababababababababababababab",
+   "code": "bad_child"
+  },
+  {
+   "t": 7,
+   "code": "bad_child"
+  },
+  {
+   "t": null,
+   "code": "bad_child"
+  }
+ ],
+ "labels": [
+  {
+   "label": "",
+   "code": "bad_label"
+  },
+  {
+   "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "code": "bad_label"
+  },
+  {
+   "label": "🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠",
+   "code": "ok"
+  },
+  {
+   "label": "🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠🏠",
+   "code": "bad_label"
+  }
+ ],
+ "peer": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+ "peerSk": "773baef290c3653f5f3f018854a1c583b84620e8b758db007e6c572e429b794f"
+}

@@ -150,14 +150,28 @@ object Device {
      * `grant` names the site or app this signature is for (SPEC 11.5); leave it out for the person's own use.
      * `tapped`: the person said Yes on this device to a hard-to-undo event ([destructive]). Without it the box answers `needs_tap`.
      */
-    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false): JSONObject {
-        val id = eventId(h.npub, createdAt, kind, tags, content)
-        val ev = JSONObject().put("pubkey", h.npub).put("created_at", createdAt).put("kind", kind).put("tags", JSONArray(tags.map { JSONArray(it) })).put("content", content)
+    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false, child: Child? = null): JSONObject {
+        // As a child (SPEC 8k): the event is the child's, and both pieces move by its tweak. Read after any catch-up.
+        val pubkey = child?.npub ?: h.npub
+        val id = eventId(pubkey, createdAt, kind, tags, content)
+        val ev = JSONObject().put("pubkey", pubkey).put("created_at", createdAt).put("kind", kind).put("tags", JSONArray(tags.map { JSONArray(it) })).put("content", content)
         lateinit var mine: Frost.Asked
-        val r = current(me, h, send) { mine = Frost.ask(h.piece, id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant); if (tapped) put("tapped", true) } }
+        val r = current(me, h, send) { mine = Frost.ask(pieceFor(h, child), id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant); if (tapped) put("tapped", true); if (child != null) put("child", child.t) } }
         if (r.getString("id") != id) refuse("wrong_id")
         val c = r.getJSONObject("commit")
-        return ev.put("id", id).put("sig", Frost.finish(h.piece, id, mine, Commit(c.getInt("i"), c.getString("D"), c.getString("E")), r.getString("z")))
+        return ev.put("id", id).put("sig", Frost.finish(pieceFor(h, child), id, mine, Commit(c.getInt("i"), c.getString("D"), c.getString("E")), r.getString("z")))
+    }
+
+    /** The piece to use: the account's own, or this holder's piece of a child (SPEC 8k). */
+    private fun pieceFor(h: Held, child: Child?): Piece = if (child == null) h.piece else Children.piece(h.piece, Children.tweakOf(child.t))
+
+    /**
+     * Makes (or makes again) the child key for a label (SPEC 8k). This device and the box work out the tweak
+     * together; neither could alone, and any two pieces give the same child. Nothing is stored at the box.
+     */
+    fun makeChild(me: Me, h: Held, label: String, send: Send = http(h.addr)): Child {
+        val x = sharedX(me, h, Children.labelPoint(label), send)
+        try { return Children.of(x, label, h.piece.c) } finally { x.fill(0) }
     }
 
     fun membersAndNext(me: Me, h: Held, send: Send) = listing(me, h, send)
@@ -233,13 +247,15 @@ object Device {
     /** The NIP-44 conversation key with `peer` (x-only hex), made with the box. The key is never whole. */
     fun conversationKey(me: Me, h: Held, peer: String, send: Send = http(h.addr)): ByteArray = Nip44.conversationKey(sharedX(me, h, peer, send))
     /** The x of `nsec · peer`, made from this piece's part and the box's. NIP-44 and NIP-04 both start from it. */
-    fun sharedX(me: Me, h: Held, peer: String, send: Send = http(h.addr), grant: String? = null): ByteArray {
+    fun sharedX(me: Me, h: Held, peer: String, send: Send = http(h.addr), grant: String? = null, child: Child? = null): ByteArray {
         if (!Regex("^[0-9a-f]{64}$").matches(peer)) refuse("bad_peer")
-        val r = current(me, h, send) { JSONObject().put("op", "ecdh").put("peer", peer).apply { if (grant != null) put("grant", grant) } }
-        // This piece's part: λ·share·Q, with λ = other / (other − i) for the pair of pieces taking part.
-        val (i, o) = BigInteger.valueOf(h.piece.i.toLong()) to BigInteger.valueOf(r.getInt("i").toLong())
+        if (child != null) Children.tweakOf(child.t)
+        val r = current(me, h, send) { JSONObject().put("op", "ecdh").put("peer", peer).apply { if (grant != null) put("grant", grant); if (child != null) put("child", child.t) } }
+        // This piece's part: λ·share·Q, with λ = other / (other − i) for the pair of pieces taking part. As a child, of the child's piece.
+        val p = pieceFor(h, child)
+        val (i, o) = BigInteger.valueOf(p.i.toLong()) to BigInteger.valueOf(r.getInt("i").toLong())
         val lambda = o.multiply(o.subtract(i).modInverse(N)).mod(N)
-        val mine = Secp.mul(lambda.multiply(h.piece.share).mod(N), "02$peer")
+        val mine = Secp.mul(lambda.multiply(p.share).mod(N), "02$peer")
         return unhex(Secp.add(mine, r.getString("part")).substring(2))
     }
     fun nip44Encrypt(me: Me, h: Held, peer: String, text: String, send: Send = http(h.addr)) = Nip44.encrypt(text, conversationKey(me, h, peer, send))
