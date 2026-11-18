@@ -39,8 +39,38 @@ class LoginPointerTest {
         // A relay holding only an older one gets the newest too.
         val old = pointer(page, 50)
         assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to listOf(old)), listOf(a, b)))
-        // A relay that didn't answer is left for next time; with the login page unknown, it is still sent around.
-        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(null, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b, "wss://silent.example")))
+        // A relay that didn't answer is left for next time.
+        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b, "wss://silent.example")))
+    }
+
+    @Test fun withNoLoginPageKnownNothingIsSignedOrSentAround() {
+        // Not a new one, and not the one already out there: it can't be checked against a page this phone was told of.
+        val p = pointer("https://box.lookalike.example")
+        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to emptyList(), b to emptyList()), listOf(a, b)))
+        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b)))
+        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, emptyMap(), listOf(a)))
+    }
+
+    @Test fun theLoginPageComesOnlyFromTheCodeNeverTheBoxAddress() {
+        val k = "ab".repeat(32)
+        // A code naming no login page gives none, even when its box address is a perfectly good https origin
+        // (a lookalike domain proxying the real box would answer anything asked of it there).
+        val bare = Texts.qr("""{"keykin":2,"addr":"https://box.lookalike.example","key":"$k","code":"c"}""")
+        assertNull(LoginPointer.fromCode(bare.login))
+        val named = Texts.qr("""{"keykin":2,"addr":"https://box.example","key":"$k","code":"c","loginPage":"https://Account.syb.lol/"}""")
+        assertEquals(page, LoginPointer.fromCode(named.login))
+        assertNull(LoginPointer.fromCode("https://account.syb.lol/login"))
+        // A pointer naming the page the code named is still sent to a relay lacking it.
+        val p = pointer(page)
+        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(LoginPointer.fromCode(named.login), pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b)))
+    }
+
+    @Test fun theSignerNeverProbesTheBoxForALoginPage() {
+        // The guess (POST <box address>/api answering 403) is gone; the origin is only ever read from what a code named.
+        val src = java.io.File("src/main/java/cc/aaro/cosign/Signer.kt").readText()
+        org.junit.Assert.assertFalse(src.contains("isKeykinLogin"))
+        org.junit.Assert.assertFalse(src.contains("LoginPointer.origin(h.addr"))
+        org.junit.Assert.assertFalse(src.contains("/api\""))
     }
 
     @Test fun onEveryRelayAlreadyIsLeft() =
@@ -57,7 +87,6 @@ class LoginPointerTest {
 
     @Test fun noRelayAnsweredWaits() {
         assertEquals(Plan.Wait, LoginPointer.plan(page, pk, emptyMap(), listOf(a)))
-        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to emptyList()), listOf(a)))
     }
 
     @Test fun forgedAndOtherAccountsPointersDontCount() {

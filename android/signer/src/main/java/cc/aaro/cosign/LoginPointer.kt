@@ -10,6 +10,11 @@ import cc.aaro.qrst.core.Event
 object LoginPointer {
     const val KIND = 30078
     const val D = "keykin/login"
+    /** Where the login page a box code or join text named is kept (its origin, from [fromCode]). */
+    const val PREF = "login-origin-code"
+
+    /** The login page a box code or join text named ([loginPage]), as an origin. Nothing named, nothing: never the box's address. */
+    fun fromCode(loginPage: String?, allowHttp: Boolean = false): String? = loginPage?.let { origin(it, allowHttp) }
 
     /** [addr] as a login page origin: https, a host, maybe a port, nothing after. Null if it isn't one. */
     fun origin(addr: String, allowHttp: Boolean = false): String? {
@@ -45,14 +50,15 @@ object LoginPointer {
      * What to do about the pointer, given what each relay that answered had ([byRelay]; one that didn't
      * answer isn't there), this box's login page [origin] (null if unknown), and the account's write
      * relays [writes]. The person's choices stand: a pointer removed on purpose (no url), or one naming
-     * another page, is never replaced or sent around again.
+     * another page, is never replaced or sent around again. With no login page known (no box code named
+     * one), nothing is signed or sent around: not even a pointer already out there.
      */
     fun plan(origin: String?, pubkey: String, byRelay: Map<String, List<Event>>, writes: List<String>): Plan {
+        if (origin == null) return Plan.Leave("no login page")
         if (byRelay.isEmpty()) return Plan.Wait
-        val newest = newest(byRelay.values.flatten(), pubkey)
-            ?: return if (origin != null) Plan.Sign(origin) else Plan.Leave("no login page")
+        val newest = newest(byRelay.values.flatten(), pubkey) ?: return Plan.Sign(origin)
         val url = urlOf(newest) ?: return Plan.Leave("removed on purpose")
-        if (origin != null && !url.equals(origin, ignoreCase = true)) return Plan.Leave("names $url")
+        if (!url.equals(origin, ignoreCase = true)) return Plan.Leave("names $url")
         val missing = writes.filter { r -> byRelay[r]?.none { it.id == newest.id } == true }
         return if (missing.isEmpty()) Plan.Leave("on every write relay that answered") else Plan.Resend(newest, missing)
     }
