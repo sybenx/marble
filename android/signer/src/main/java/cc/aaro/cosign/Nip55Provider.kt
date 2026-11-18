@@ -11,6 +11,9 @@ import android.net.Uri
  * ask here and get an answer without Cosign opening. Everyday signing answers at once.
  * Anything that needs you (an app not connected yet, something destructive, the first
  * time an app wants your messages) answers null, and the app opens its NIP-55 activity ([Nip55Request]) instead.
+ * A message that doesn't open with this account's key answers "rejected": there is nothing
+ * for you to say about it, and an app that reads a stack of them must not open Cosign once
+ * for each.
  */
 class Nip55Provider : ContentProvider() {
     override fun onCreate() = true
@@ -36,7 +39,11 @@ class Nip55Provider : ContentProvider() {
                 "NIP44_ENCRYPT", "NIP44_DECRYPT", "NIP04_ENCRYPT", "NIP04_DECRYPT" -> {
                     if (!grant.dm) return null
                     val encrypt = type.endsWith("ENCRYPT")
-                    row("result" to if (type.startsWith("NIP44")) phone.nip44(grant, peer, payload, encrypt) else phone.nip04(grant, peer, payload, encrypt))
+                    try {
+                        row("result" to if (type.startsWith("NIP44")) phone.nip44(grant, peer, payload, encrypt) else phone.nip04(grant, peer, payload, encrypt))
+                    } catch (e: Exception) {
+                        if (!encrypt && unreadable(e)) row("rejected" to "true") else throw e
+                    }
                 }
                 else -> null
             }
@@ -52,3 +59,12 @@ class Nip55Provider : ContentProvider() {
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?) = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?) = 0
 }
+
+/**
+ * The message itself is the trouble: it isn't to this account, or it's damaged (NIP-44's MAC or
+ * padding, NIP-04's padding or base64). Asking again, or asking you, can't change that. Your
+ * servers being away or an app losing its access are not this; those still go to the sheet.
+ */
+internal fun unreadable(e: Throwable): Boolean =
+    (e is cc.aaro.keykin.core.KeykinException && e.code == "bad_message") ||
+        e is java.security.GeneralSecurityException || e is IllegalArgumentException

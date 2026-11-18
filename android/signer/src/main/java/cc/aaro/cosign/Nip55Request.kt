@@ -140,7 +140,8 @@ class Nip55Request(private val activity: Activity) {
                 val out = if (how.startsWith("nip44")) phone.nip44(g, who, what, encrypt) else phone.nip04(g, who, what, encrypt)
                 activity.runOnUiThread { answer("result" to out) }
             } catch (e: Exception) {
-                activity.runOnUiThread { fail(e.message ?: "Couldn't do that.") }
+                // A message that doesn't open: the app hears no, and you aren't shown it (see [unreadable]).
+                activity.runOnUiThread { if (!how.endsWith("encrypt") && unreadable(e)) reject() else fail(e.message ?: "Couldn't do that.") }
             }
         }
     }
