@@ -36,7 +36,8 @@ const val PROMPT_GUARD_MS = 500L
  * calls itself). Taps in its first [PROMPT_GUARD_MS] are ignored, so a page can't time a button under your finger.
  */
 @Composable
-fun SitePrompt(title: String, body: String, yes: String, no: String, onYes: () -> Unit, onNo: () -> Unit, note: String? = null) {
+fun SitePrompt(title: String, body: String, yes: String, no: String, onYes: () -> Unit, onNo: () -> Unit, note: String? = null,
+               /** A second, smaller yes under the main one. */ alt: String? = null, onAlt: () -> Unit = {}) {
     val shownAt = remember { android.os.SystemClock.uptimeMillis() }
     fun guarded(f: () -> Unit): () -> Unit = { if (android.os.SystemClock.uptimeMillis() - shownAt >= PROMPT_GUARD_MS) f() }
     BackHandler { onNo() }
@@ -55,6 +56,11 @@ fun SitePrompt(title: String, body: String, yes: String, no: String, onYes: () -
                 Spacer(Modifier.height(10.dp))
                 Button(guarded(onYes), Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                     Text(yes, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            alt?.let { a ->
+                androidx.compose.material3.TextButton(guarded(onAlt), Modifier.align(Alignment.CenterHorizontally)) {
+                    Text(a, color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

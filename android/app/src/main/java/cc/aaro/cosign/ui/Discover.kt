@@ -644,7 +644,14 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
         LaunchedEffect(webWanted) {
             webWanted?.let { (site, url) ->
                 WebWanted.value = null
-                if (webMode) { web.show(site, url); pager.animateScrollToPage(PANE_WEB) } else openInBrowser(ctx, url)
+                if (!webMode) openInBrowser(ctx, url)
+                else {
+                    // Already a chip: that chip. Otherwise a visit, which can't sign in until you let it.
+                    if (site.kind == cc.aaro.cosign.web.WebSite.Kind.VISITING && cc.aaro.cosign.web.WebSites.byOrigin(site.origin) == null) web.visit(site) else web.show(site, url)
+                    // In the panes' scope: clearing WebWanted above restarts this effect, which would cancel the move. And
+                    // after home's own move to Search (nav.home() just before), or that one wins.
+                    scope.launch { kotlinx.coroutines.yield(); while (pager.isScrollInProgress) kotlinx.coroutines.delay(16); pager.animateScrollToPage(PANE_WEB) }
+                }
             }
         }
         // Settled on the web pane, the pager takes no swipes: they're the page's.
@@ -3783,13 +3790,14 @@ private fun FocusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, what
 
 /**
  * Open an app found by search. It's a visit: nothing found by search gets signing by being found or opened
- * (marble-app-search-research.md section 4). Until the web pane lands this is a Custom Tab; with the pane, a visiting
- * chip there with no window.nostr.
+ * (marble-app-search-research.md section 4). A site already on the pane opens its chip; any other web app or nsite
+ * a visiting chip there, which can't sign in until you turn that on in its sheet. An Android app (a Zapstore page)
+ * opens in the browser, and so does everything while the pane is off (Panes).
  */
-/** An app from the index: a site the web pane holds (Marble Web, Jumble) opens on its chip there; anything else in the browser, until the pane can hold a visiting site (M3). */
 private fun openApp(context: android.content.Context, a: cc.aaro.cosign.AppEntry, nav: Nav) {
-    val site = cc.aaro.cosign.web.WebSites.byOrigin(cc.aaro.cosign.web.WebRules.originOf(a.url))
-    if (site == null) return openInBrowser(context, a.url)
+    val known = cc.aaro.cosign.web.WebSites.byOrigin(cc.aaro.cosign.web.WebRules.originOf(a.url))
+    val site = known ?: cc.aaro.cosign.web.WebSites.visiting(a.name, a.url)?.takeIf { a.kind == "web" || a.kind == "nsite" }
+        ?: return openInBrowser(context, a.url)
     nav.home(); WebWanted.value = site to a.url
 }
 

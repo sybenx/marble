@@ -24,6 +24,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -102,8 +108,94 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
     private val views = LinkedHashMap<String, WebView>(4, 0.75f, true)
 
     fun show(s: WebSite, url: String? = null) {
-        if (s != site) { site = s; prefs.edit().putString("webSite", s.id).apply(); blocked = null }
-        url?.let { u -> views[s.id]?.loadUrl(u) ?: run { pendingUrl[s.id] = u } }
+        if (WebSites.byOrigin(s.origin) == null) WebSites.put(s)
+        val now = WebSites.byOrigin(s.origin) ?: s
+        if (now.origin != site.origin) { if (now.kind != WebSite.Kind.VISITING) prefs.edit().putString("webSite", now.id).apply(); blocked = null; signInOff = null }
+        site = now
+        url?.let { u -> views[now.id]?.loadUrl(u) ?: run { pendingUrl[now.id] = u } }
+    }
+
+    /** An app from search: a visiting chip (in place of any other visit), loaded at its start. It can't sign in yet. */
+    fun visit(s: WebSite) {
+        WebSites.all.firstOrNull { it.kind == WebSite.Kind.VISITING && it.origin != s.origin }?.let { old -> drop(old.id); WebSites.drop(old) }
+        show(s, s.start)
+    }
+
+    /** Keep: the visit stays, as a chip of its own on this phone. */
+    fun keep(s: WebSite) {
+        val k = (WebSites.byOrigin(s.origin) ?: s).copy(kind = WebSite.Kind.KEPT)
+        WebSites.update(k)
+        if (site.origin == k.origin) { site = k; prefs.edit().putString("webSite", k.id).apply() }
+    }
+
+    /** ✕ on a visit (and the end of Remove): its WebView goes, and the pane goes back to the site before it. */
+    fun close(s: WebSite) {
+        if (s.kind == WebSite.Kind.BUILT_IN) return
+        drop(s.id); WebSites.drop(s)
+        if (signInOff?.origin == s.origin) signInOff = null
+        if (site.origin == s.origin) site = WebSites.byId(prefs.getString("webSite", null))?.takeIf { it.origin != s.origin } ?: WebSites.marble
+    }
+
+    /** "Can ask to sign in", from its sheet. Off also signs it out of what the pane signed it in to. */
+    fun allowAsks(s: WebSite, on: Boolean, phone: Phone) {
+        val n = (WebSites.byOrigin(s.origin) ?: s).copy(asks = on)
+        WebSites.update(n)
+        if (site.origin == n.origin) site = n
+        if (on) { if (signInOff?.origin == n.origin) signInOff = null } else signOut(n, phone)
+    }
+
+    /** Sign [s] out: the sign-ins this pane made for it, for this account, end. Any made elsewhere stay. */
+    fun signOut(s: WebSite, phone: Phone) {
+        val grants = PaneGrants.of(cc.aaro.cosign.CosignApp.instance)
+        for (pk in grants.of(phone.slot, s.label)) {
+            phone.ui.value.sites.firstOrNull { it.pk.lowercase() == pk && it.origin == s.label }?.let { phone.removeSite(it) }
+            grants.forget(phone.slot, s.label, pk)
+        }
+    }
+
+    /** Whether the pane has [s] signed in, for this account. */
+    fun signedIn(s: WebSite, phone: Phone, sites: List<cc.aaro.cosign.Site>): Boolean {
+        val mine = PaneGrants.of(cc.aaro.cosign.CosignApp.instance).of(phone.slot, s.label)
+        return sites.any { it.pk.lowercase() in mine && it.origin == s.label }
+    }
+
+    /** Remove [s]: signed out, what it stored on this phone wiped (storage, caches, service workers, cookies), its chip gone. */
+    fun remove(s: WebSite, phone: Phone) {
+        if (s.kind == WebSite.Kind.BUILT_IN) return
+        signOut(s, phone)
+        val wipe = "(async()=>{try{for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister()}catch(e){}" +
+            "try{for(const k of await caches.keys())await caches.delete(k)}catch(e){}" +
+            "try{for(const d of (await indexedDB.databases()))indexedDB.deleteDatabase(d.name)}catch(e){}" +
+            "try{localStorage.clear();sessionStorage.clear()}catch(e){}})()"
+        val v = views[s.id]?.takeIf { WebRules.originOf(it.url ?: "") == s.origin }
+        val done = {
+            android.webkit.WebStorage.getInstance().deleteOrigin(s.origin)
+            CookieManager.getInstance().let { cm ->
+                cm.getCookie(s.origin)?.split(';')?.map { it.substringBefore('=').trim() }?.filter { it.isNotEmpty() }?.forEach { n ->
+                    cm.setCookie(s.origin, "$n=; Max-Age=0; Path=/")
+                    cm.setCookie(s.origin, "$n=; Max-Age=0; Path=/; Domain=${s.label.substringBefore(':')}")
+                }
+                cm.flush()
+            }
+            close(s)
+        }
+        if (v != null) { v.evaluateJavascript(wipe, null); android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(done, 600) } else done()
+    }
+
+    fun refresh(s: WebSite) { views[s.id]?.reload() }
+
+    /** The site sheet (long-press on a chip): the site it's open for. */
+    var sheetFor by mutableStateOf<WebSite?>(null)
+    /** Remove, waiting for its confirm. */
+    var removeAsk by mutableStateOf<WebSite?>(null)
+    /** A site whose page offered a sign-in while "Can ask to sign in" is off: the bar says so. */
+    var signInOff by mutableStateOf<WebSite?>(null)
+
+    /** A sign-in code from a tap in [s]'s page: the prompt, or, while it can't ask, the bar. */
+    private fun askSignIn(s: WebSite, code: String) {
+        val now = WebSites.byOrigin(s.origin) ?: return
+        if (!now.asks) { signInOff = now; return }
+        if (signIn == null) signIn = SignInAsk(now, code)
     }
     private val pendingUrl = HashMap<String, String>()
 
@@ -168,12 +260,12 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
                 is Nav.OtherSite -> { show(n.site, n.url); true }
                 is Nav.Outside -> { openOutside(view.context, n.url); true }
                 is Nav.Blocked -> { blocked = n.url; true }
-                is Nav.SignIn -> { if (onSite && signIn == null) signIn = SignInAsk(s, n.uri); true }
+                is Nav.SignIn -> { if (onSite) askSignIn(s, n.uri); true }
                 Nav.Drop -> true
             }
         }
-        override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { if (s == site) loading = true }
-        override fun onPageFinished(view: WebView, url: String?) { if (s == site) loading = false }
+        override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { if (s.origin == site.origin) loading = true }
+        override fun onPageFinished(view: WebView, url: String?) { if (s.origin == site.origin) loading = false }
         // A crashed (or killed) renderer: this site's WebView goes, and a new one is made where it was.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             if (views[s.id] === view) { pendingUrl[s.id] = view.url ?: s.start; drop(s.id) }
@@ -195,7 +287,10 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
                     Nav.Stay -> view.loadUrl(url)
                     is Nav.OtherSite -> show(n.site, n.url)
                     is Nav.Outside -> openOutside(view.context, n.url)
-                    else -> {} // a sign-in code or another scheme by window.open: nothing
+                    // A sign-in link that opens a new window (noStrudel's Nostr Connect button), from a tap, while the
+                    // page is still on its own site: the same prompt as a link in the page.
+                    is Nav.SignIn -> if (WebRules.originOf(view.url ?: "") == s.origin) askSignIn(s, n.uri)
+                    else -> {} // another scheme by window.open: nothing
                 }
                 catcher.post { catcher.destroy() }
             }
@@ -214,7 +309,7 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
             val onlyCamera = request.resources.isNotEmpty() && request.resources.all { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }
             val fromSite = WebRules.originOf(request.origin.toString()) == s.origin
             val canCamera = androidx.core.content.ContextCompat.checkSelfPermission(cc.aaro.cosign.CosignApp.instance, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-            if (onlyCamera && fromSite && canCamera && camera == null && s == site) camera = CameraAsk(s, request) else request.deny()
+            if (onlyCamera && fromSite && canCamera && camera == null && s.origin == site.origin) camera = CameraAsk(s, request) else request.deny()
         }
 
         override fun onShowFileChooser(webView: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
@@ -231,7 +326,7 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
             fullscreen = view to callback
         }
         override fun onHideCustomView() { fullscreen = null }
-        override fun onProgressChanged(view: WebView, newProgress: Int) { if (s == site) loading = newProgress < 100 }
+        override fun onProgressChanged(view: WebView, newProgress: Int) { if (s.origin == site.origin) loading = newProgress < 100 }
     }
 
     /** A link off the pane's sites, after a tap: a Custom Tab (your browser's sign-ins, its back button, nothing of the pane's). */
@@ -268,7 +363,11 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
 @Composable
 fun rememberWebPaneState(): WebPaneState {
     val context = LocalContext.current
-    val state = remember { WebPaneState(context.getSharedPreferences("marble", Context.MODE_PRIVATE)) }
+    val state = remember {
+        // The kept chips first: the pane may have been left on one.
+        WebSites.load(context.getSharedPreferences("web-sites", Context.MODE_PRIVATE))
+        WebPaneState(context.getSharedPreferences("marble", Context.MODE_PRIVATE))
+    }
     DisposableEffect(state) {
         // Inspectable from Chrome's DevTools in debug builds only.
         WebView.setWebContentsDebuggingEnabled(context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
@@ -277,16 +376,86 @@ fun rememberWebPaneState(): WebPaneState {
     return state
 }
 
-/** The site strip's middle: one chip per site. Tap to switch. */
+/**
+ * The site strip's middle: one chip per site (built in, kept, then a visit). Tap to switch; long-press for its sheet. A
+ * visit says so, with Keep and ✕.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun WebChips(state: WebPaneState, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        for (s in WebSites.all) {
-            val on = s == state.site
-            Text(s.name, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge, maxLines = 1,
-                modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface)
-                    .border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
-                    .clickable(onClickLabel = "Open ${s.name}") { state.show(s) }.padding(horizontal = 14.dp, vertical = 7.dp))
+    val sites by WebSites.list.collectAsState()
+    // The chip showing is always in view: a visit lands at the end of the row, often past its edge.
+    val scroll = rememberScrollState()
+    val spans = remember { androidx.compose.runtime.mutableStateMapOf<String, IntRange>() }
+    var width by remember { mutableIntStateOf(0) }
+    val span = spans[state.site.origin]
+    LaunchedEffect(span, width) {
+        val r = span ?: return@LaunchedEffect
+        if (width == 0) return@LaunchedEffect
+        val to = when { r.first < scroll.value -> r.first; r.last > scroll.value + width -> r.last - width; else -> return@LaunchedEffect }
+        scroll.animateScrollTo(to.coerceIn(0, scroll.maxValue))
+    }
+    Row(modifier.onSizeChanged { width = it.width }.horizontalScroll(scroll), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (s in sites) {
+            val on = s.origin == state.site.origin
+            val visit = s.kind == WebSite.Kind.VISITING
+            Row(Modifier.onGloballyPositioned { c -> val x = c.positionInParent().x.toInt(); spans[s.origin] = x..(x + c.size.width) }
+                .clip(RoundedCornerShape(16.dp)).background(if (on) Vault.Accent else Vault.Surface)
+                .border(1.dp, if (on) Vault.Accent else Vault.Edge, RoundedCornerShape(16.dp))
+                .combinedClickable(onClickLabel = "Open ${s.name}", onLongClickLabel = "${s.name}'s settings", onLongClick = { state.sheetFor = s }) { state.show(s) }
+                .padding(start = 14.dp, end = if (visit) 0.dp else 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (visit) "Visiting: ${s.name}" else s.name, color = if (on) Vault.Ground else Vault.Text, style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                    modifier = Modifier.padding(vertical = 7.dp))
+                if (visit) {
+                    // Keep and ✕ each take the chip's full height and some width, apart, so one is never hit for the other.
+                    Text("Keep", color = if (on) Vault.Ground else Vault.Accent, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(start = 4.dp).clickable(onClickLabel = "Keep ${s.name} as a chip") { state.keep(s) }.padding(horizontal = 10.dp, vertical = 7.dp))
+                    Text("✕", color = if (on) Vault.Ground else Vault.Muted, style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(start = 2.dp).clickable(onClickLabel = "Close ${s.name}") { state.close(s) }.padding(start = 10.dp, end = 14.dp, top = 7.dp, bottom = 7.dp))
+                }
+            }
+        }
+    }
+}
+
+/** The site sheet (long-press on a chip): where it is, and what it may do. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun SiteSheet(state: WebPaneState, phone: Phone) {
+    val s0 = state.sheetFor ?: return
+    val sites by WebSites.list.collectAsState()
+    val ui by phone.ui.collectAsState()
+    val s = sites.firstOrNull { it.origin == s0.origin } ?: run { state.sheetFor = null; return }
+    val context = LocalContext.current
+    val close = { state.sheetFor = null }
+    val signedIn = state.signedIn(s, phone, ui.sites)
+    val here = { (if (state.site.origin == s.origin) state.current()?.url?.takeIf { WebRules.originOf(it) == s.origin } else null) ?: s.start }
+    androidx.compose.material3.ModalBottomSheet(close, containerColor = Vault.Surface) {
+        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+            Text(s.name, style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+            Text(s.label, style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+            if (signedIn) Text("Signed in here", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+            Box(Modifier.height(12.dp))
+            @Composable fun row(text: String, enabled: Boolean = true, onClick: () -> Unit) = Text(text, color = if (enabled) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 12.dp))
+            row("Copy the address") {
+                context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText(s.name, here())); close()
+            }
+            row("Refresh") { state.refresh(s); close() }
+            row("Open in your browser") { state.openOutside(context, here()); close() }
+            if (s.kind == WebSite.Kind.VISITING) row("Keep as a chip") { state.keep(s); close() }
+            if (s.kind != WebSite.Kind.BUILT_IN) Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Can ask to sign in", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+                    Text(if (s.asks) "Each sign-in still asks you first. Turning this off signs it out." else "Off: it can't sign in here.",
+                        color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                androidx.compose.material3.Switch(s.asks, { on -> state.allowAsks(s, on, phone) },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Vault.Accent, checkedThumbColor = Vault.Ground,
+                        uncheckedTrackColor = Vault.Ground, uncheckedThumbColor = Vault.Muted, uncheckedBorderColor = Vault.Edge))
+            }
+            row("Sign out", enabled = signedIn) { state.signOut(s, phone); close() }
+            if (s.kind != WebSite.Kind.BUILT_IN) row("Remove") { state.removeAsk = s; close() }
         }
     }
 }
@@ -356,11 +525,26 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
     val account = remember(phone) { CosignSiteAccount.of(phone) }
     state.signIn?.let { ask ->
         val label = ask.site.label
-        val had = PaneGrants.of(LocalContext.current).toReplace(phone.slot, label, ui.sites, WebRules.clientOf(ask.code)).isNotEmpty()
-        SitePrompt("Sign in to $label?", "$label can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
-            yes = "Sign in to $label", no = "Not now",
-            note = if (had) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Your account any time.",
-            onYes = { state.signIn = null; account.connectSite(ask.site.origin, ask.code) }, onNo = { state.signIn = null })
+        val replacing = PaneGrants.of(LocalContext.current).toReplace(phone.slot, label, ui.sites, WebRules.clientOf(ask.code))
+        val note = listOfNotNull(siteNote(ask.site),
+            if (replacing.isNotEmpty()) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Your account any time.").joinToString(" ")
+        val done = { pick: String? -> state.signIn = null; account.connectSite(ask.site.origin, ask.code, pick) }
+        when (PaneChoice.decide(ask.site.origin, ui.sites, replacing)) {
+            // A site new to this account: an account of its own is the main choice, the main account the small one.
+            PaneChoice.ASK -> SitePrompt("Sign in to $label?", "A new account is made just for this site, empty to start. Nothing from your main account goes with it. Anything destructive comes to this phone first.",
+                yes = "Sign in with a new account", no = "Not now", note = note, onYes = { done("new") }, onNo = { state.signIn = null },
+                alt = "Use my main account", onAlt = { done("main") })
+            PaneChoice.OWN -> SitePrompt("Sign in to $label?", "It signs in with its own account, as before. Anything destructive comes to this phone first.",
+                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null })
+            PaneChoice.MAIN -> SitePrompt("Sign in to $label?", "$label can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
+                yes = "Sign in to $label", no = "Not now", note = note, onYes = { done(null) }, onNo = { state.signIn = null })
+        }
+    }
+
+    SiteSheet(state, phone)
+    state.removeAsk?.let { s ->
+        SitePrompt("Remove ${s.name}?", "This signs ${s.label} out here and wipes what it saved on this phone. You can open it again from search.",
+            yes = "Remove", no = "Keep it", onYes = { state.removeAsk = null; state.remove(s, phone) }, onNo = { state.removeAsk = null })
     }
 
     val followUp by WebSignIn.followUp.collectAsState()
@@ -387,6 +571,7 @@ private fun WebBar(state: WebPaneState, ui: cc.aaro.cosign.Ui, context: Context,
     val (text, action, onAction) = when {
         heldHere != null -> Triple("Held at ${heldHere.app}: " + heldHere.hold.ifBlank { "waiting for you" }, "Review", onReview)
         state.health == WebHealth.State.SIGNER_STUCK -> Triple("Cosign isn't answering", "Restart signer", { WebHealth.restartSigner(context); state.health = WebHealth.State.OK })
+        state.signInOff != null -> state.signInOff!!.let { s -> Triple("Signing in is off for ${s.label}", "Settings", { state.signInOff = null; state.sheetFor = s }) }
         state.blocked != null -> state.blocked!!.let { u -> Triple("Wants to open ${Uri.parse(u).host ?: u}", "Open", { state.openOutside(context, u) }) }
         state.health == WebHealth.State.SERVERS_DOWN -> Triple("Your servers aren't answering. Sign-ins and posts wait for them.", "", {})
         else -> return
@@ -395,7 +580,28 @@ private fun WebBar(state: WebPaneState, ui: cc.aaro.cosign.Ui, context: Context,
         verticalAlignment = Alignment.CenterVertically) {
         Text(text, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (action.isNotEmpty()) Text(" · $action", color = Vault.Accent, style = MaterialTheme.typography.labelLarge)
-        if (state.blocked != null && heldHere == null && state.health != WebHealth.State.SIGNER_STUCK)
-            Text("✕", color = Vault.Muted, modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClickLabel = "Dismiss") { state.blocked = null }.padding(start = 12.dp, end = 4.dp))
+        if ((state.blocked != null || state.signInOff != null) && heldHere == null && state.health != WebHealth.State.SIGNER_STUCK)
+            Text("✕", color = Vault.Muted, modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClickLabel = "Dismiss") { if (state.signInOff != null) state.signInOff = null else state.blocked = null }.padding(start = 12.dp, end = 4.dp))
+    }
+}
+
+/** What a sign-in prompt adds for a site that isn't built in. */
+fun siteNote(s: WebSite): String? = if (s.kind != WebSite.Kind.BUILT_IN) "Opened from search. Only allow sites you trust." else null
+
+/**
+ * Which account a sign-in from the pane gets, as the signer will decide it (SiteChoice): a site new to this account
+ * gets the choice; one signed in before gets what it had; Marble's own site always the main account. [replacing]: the
+ * pane's own earlier sign-ins for it, which end first, so they don't count.
+ */
+enum class PaneChoice { ASK, OWN, MAIN;
+    companion object {
+        private fun host(o: String) = o.trim().lowercase().removePrefix("https://").removePrefix("http://").trimEnd('/')
+        fun decide(origin: String, sites: List<cc.aaro.cosign.Site>, replacing: List<cc.aaro.cosign.Site> = emptyList()): PaneChoice {
+            if (host(origin) in cc.aaro.cosign.SiteChoice.ALWAYS_MAIN.map(::host)) return MAIN
+            val gone = replacing.map { it.pk.lowercase() }.toSet()
+            val before = sites.filter { it.via != "App on this phone" && host(it.origin) == host(origin) && it.pk.lowercase() !in gone }
+            if (before.isEmpty()) return ASK
+            return if (before.any { it.own }) OWN else MAIN
+        }
     }
 }

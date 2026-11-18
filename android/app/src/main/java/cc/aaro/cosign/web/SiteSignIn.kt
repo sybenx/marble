@@ -16,8 +16,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * implements it with `nostrconnect(slot, uri, "sign-in,post")`.
  */
 interface SiteAccount {
-    /** Sign [origin] (the WebView's verified origin) in with the nostrconnect [code] its page showed. */
-    fun connectSite(origin: String, code: String)
+    /** Sign [origin] (the WebView's verified origin) in with the nostrconnect [code] its page showed. [pick] "new":
+     *  a site new to this account gets an account of its own; otherwise the main account (SiteChoice). */
+    fun connectSite(origin: String, code: String, pick: String? = null)
     /** Whether a site can be given your private lists (Keykin's `lists` scope). */
     val sharesLists: Boolean
     /** Give [origin] your private lists. Only where [sharesLists]. */
@@ -47,7 +48,7 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
     // "every such site shares one signer key"), so there is nothing to grant.
     override val sharesLists = false
 
-    override fun connectSite(origin: String, code: String) {
+    override fun connectSite(origin: String, code: String, pick: String?) {
         if (!phone.isMember) return phone.showError("Set up your account before signing in to a site.")
         val label = WebRules.label(origin)
         val client = WebRules.clientOf(code)
@@ -67,7 +68,7 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
                     phone.ui.first { u -> (u.connect?.stage == Connect.Stage.CONFIRM && u.connect?.origin == label) || (u.error != null && u.error != errorBefore) }
                 }
                 if (asked?.connect?.stage != Connect.Stage.CONFIRM) return@launch
-                phone.confirmConnect()
+                phone.confirmConnect(pick)
                 // From here the servers may take the site on, whatever this phone hears back: it's the pane's.
                 grants.record(phone.slot, label, client)
                 // Hidden until the signer has moved on from asking (to "Telling your servers…"), so it never flashes.
@@ -77,7 +78,9 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
                 val done = withTimeoutOrNull(40_000) {
                     phone.ui.first { u -> u.connect?.origin == label && (u.connect?.stage == Connect.Stage.DONE || u.connect?.stage == Connect.Stage.FAILED) }
                 }
-                if (done?.connect?.stage == Connect.Stage.DONE && site?.asksLists == true) WebSignIn.followUp.value = site
+                // Only for the main account: an account of its own has no private mute list yet.
+                val own = pick == "new" || phone.ui.value.sites.any { it.origin == label && it.own }
+                if (done?.connect?.stage == Connect.Stage.DONE && site?.asksLists == true && !own) WebSignIn.followUp.value = site
             } finally {
                 if (WebSignIn.confirming.value == label) WebSignIn.confirming.value = null
             }
@@ -97,6 +100,8 @@ class CosignSiteAccount(private val phone: Phone) : SiteAccount {
  */
 class PaneGrants(private val get: (String) -> String?, private val put: (String, String?) -> Unit) {
     private fun key(slot: String, label: String) = "$slot|$label"
+    /** The site keys the pane signed [label] in with, for this account (lower case). */
+    fun of(slot: String, label: String) = read(slot, label)
     private fun read(slot: String, label: String) = get(key(slot, label))?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
 
     @Synchronized fun record(slot: String, label: String, pk: String) {

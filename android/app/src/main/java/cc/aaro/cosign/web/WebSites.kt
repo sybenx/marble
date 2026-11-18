@@ -3,13 +3,21 @@ package cc.aaro.cosign.web
 import java.net.URI
 
 /**
- * The web apps on Marble's left pane, one chip each (marble-web-pane-plan M1). Two, hard-coded: Marble Web and Jumble.
- * Adding and removing sites is M3's site sheet.
+ * The web apps on Marble's left pane, one chip each (marble-web-pane-plan M1, M3): Marble Web and Jumble always, the
+ * sites you kept, and at most one you're visiting (an app opened from search: a chip that goes when you close it).
  *
  * Each site is exactly one origin (https, host, port): its WebView stays on it, and anything a page does is named by
  * the WebView's origin, never by what the page says it is.
  */
-data class WebSite(val id: String, val name: String, val start: String, /** It reads your private mute list right after sign-in. */ val asksLists: Boolean = false) {
+data class WebSite(
+    val id: String, val name: String, val start: String,
+    /** It reads your private mute list right after sign-in. */ val asksLists: Boolean = false,
+    val kind: Kind = Kind.BUILT_IN,
+    /** Whether a sign-in code from its page reaches the sign-in prompt. Always for the two built in; for any other
+     *  site only once you turn on "Can ask to sign in" in its sheet: nothing found by search can sign in by being opened. */
+    val asks: Boolean = kind == Kind.BUILT_IN,
+) {
+    enum class Kind { BUILT_IN, KEPT, VISITING }
     val origin: String = WebRules.originOf(start)!!
     /** The origin as people read it: its host (and port, if it has one). */
     val label: String get() = WebRules.label(origin)
@@ -19,10 +27,54 @@ object WebSites {
     val marble = WebSite("marble", "Marble", "https://marble.syb.lol/")
     // jumble.social for M1 (decision 3); self-hosted jumble.syb.lol at the start of M2.
     val jumble = WebSite("jumble", "Jumble", "https://jumble.social/", asksLists = true)
-    val all = listOf(marble, jumble)
+    val builtIn = listOf(marble, jumble)
+
+    /** The chips, in order: built in, kept, then the visit. */
+    val list = kotlinx.coroutines.flow.MutableStateFlow(builtIn)
+    val all get() = list.value
 
     fun byId(id: String?) = all.firstOrNull { it.id == id }
     fun byOrigin(origin: String?) = origin?.let { o -> all.firstOrNull { it.origin == o } }
+
+    /** A visit to an https [url] (an app from search): null for anything else. */
+    fun visiting(name: String, url: String): WebSite? {
+        val o = WebRules.originOf(url)?.takeIf { it.startsWith("https://") } ?: return null
+        return WebSite("o:$o", name.trim().take(40).ifEmpty { WebRules.label(o) }, url, kind = WebSite.Kind.VISITING)
+    }
+
+    /** Adds [s], or puts it in place of the chip on its origin. A visit replaces any other visit. */
+    @Synchronized fun put(s: WebSite) {
+        val rest = all.filter { it.origin != s.origin && !(s.kind == WebSite.Kind.VISITING && it.kind == WebSite.Kind.VISITING) }
+        list.value = (rest + s).sortedBy { it.kind.ordinal }
+        save()
+    }
+    @Synchronized fun drop(s: WebSite) { if (s.kind != WebSite.Kind.BUILT_IN) { list.value = all.filter { it.origin != s.origin }; save() } }
+    @Synchronized fun update(s: WebSite) { list.value = all.map { if (it.origin == s.origin) s else it }.sortedBy { it.kind.ordinal }; save() }
+
+    // Kept sites live on this phone (prefs "web-sites"); a visit isn't kept across restarts.
+    @Volatile private var prefs: android.content.SharedPreferences? = null
+    @Synchronized fun load(p: android.content.SharedPreferences) {
+        if (prefs != null) return
+        prefs = p
+        val kept = WebSiteCodec.decode(p.getString("kept", null))
+        list.value = builtIn + kept.filter { k -> builtIn.none { it.origin == k.origin } }.distinctBy { it.origin }
+    }
+    private fun save() { prefs?.edit()?.putString("kept", WebSiteCodec.encode(all.filter { it.kind == WebSite.Kind.KEPT }))?.apply() }
+}
+
+/** Kept sites as JSON, for prefs. */
+object WebSiteCodec {
+    fun encode(sites: List<WebSite>) = org.json.JSONArray(sites.map { s ->
+        org.json.JSONObject().put("name", s.name).put("start", s.start).put("asks", s.asks)
+    }).toString()
+
+    fun decode(text: String?): List<WebSite> = try {
+        val a = org.json.JSONArray(text ?: "[]")
+        (0 until a.length()).mapNotNull { i ->
+            val o = a.optJSONObject(i) ?: return@mapNotNull null
+            WebSites.visiting(o.optString("name"), o.optString("start"))?.copy(kind = WebSite.Kind.KEPT, asks = o.optBoolean("asks"))
+        }
+    } catch (_: Exception) { emptyList() }
 }
 
 /** What a navigation in a site's WebView does. */
