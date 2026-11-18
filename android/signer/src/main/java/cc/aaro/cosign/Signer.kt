@@ -242,7 +242,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                     "invite" -> {
                         val inv = Texts.readInvite(n.text)
                         synchronized(boxLock) { Device.add(me(), h, inv, null, send(h), n.id) }
-                        Device.noteDone(me(), h, n.id, Texts.join(h, prefs.getString("login-origin", null)?.ifEmpty { null }), send(h))
+                        Device.noteDone(me(), h, n.id, Texts.join(h, loginOrigin()), send(h))
                         note("Added ${inv.name} to your account, from your account page", "approved")
                     }
                     "bunker" -> { Device.noteDone(me(), h, n.id, sites.bunker(signerRelays()), send(h)); note("Made a bunker link for your account page", "approved") }
@@ -342,17 +342,21 @@ class Signer(private val context: Context, val slot: String = "0") {
         }
     }
     private val pointerBusy = java.util.concurrent.atomic.AtomicBoolean(false)
-    /** Where this box's login page is: from the box's code, else the box address if Keykin Login answers there. Remembered. */
-    private fun loginOrigin(h: Held): String? {
-        prefs.getString("login-origin", null)?.let { return it.ifEmpty { null } }
-        val o = LoginPointer.origin(h.addr, allowHttp = debuggable)?.takeIf(::isKeykinLogin)
-        prefs.edit().putString("login-origin", o ?: "").apply()
-        return o
+    /**
+     * Where this box's login page is: only ever the `loginPage` a box code or join text named, remembered when it was
+     * scanned. Never guessed from the box's address: a lookalike domain proxying the real box would pass any check made
+     * there, and the phone would sign a pointer sending people to it. Before 0.15.2 a guess was kept under "login-origin":
+     * dropped, since it can't be told apart from a code's.
+     */
+    private fun loginOrigin(): String? {
+        if (prefs.contains("login-origin")) prefs.edit().remove("login-origin").apply()
+        return prefs.getString(LoginPointer.PREF, null)?.ifEmpty { null }
     }
     /** One check. True when it settled (nothing more to do until the next one), false when no relay answered. */
     private fun pointerStep(h: Held): Boolean {
         val pub = accountHex() ?: return false
-        val origin = loginOrigin(h)
+        // No login page named by the box's code: nothing is published, not even an existing pointer sent around.
+        val origin = loginOrigin() ?: return true
         // A debug build told to use test relays stays on them; otherwise ask the account's own and Marble's.
         val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
         val writes = writeRelays()
@@ -381,14 +385,6 @@ class Signer(private val context: Context, val slot: String = "0") {
             }
         }
     }
-    /** Keykin Login answers a call to its page API without the page's header with 403 forbidden; a bare box has no /api. */
-    private fun isKeykinLogin(origin: String): Boolean = try {
-        val c = java.net.URL("$origin/api").openConnection() as java.net.HttpURLConnection
-        c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 5000; c.doOutput = true
-        c.setRequestProperty("content-type", "application/json"); c.outputStream.use { it.write("{}".toByteArray()) }
-        val code = c.responseCode; val body = (c.errorStream ?: c.inputStream)?.bufferedReader()?.use { it.readText() }.orEmpty(); c.disconnect()
-        code == 403 && body.contains("forbidden")
-    } catch (_: Exception) { false }
 
     // --- Scanning: the box's code, a device's invite, the join text, a site's code -----------------
 
@@ -663,7 +659,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 keep(h)
                 // The box's code (or the device's join text) may say where its login page is (SPEC 11.1).
-                (qr?.login ?: j?.login)?.let { LoginPointer.origin(it, allowHttp = debuggable) }?.let { prefs.edit().putString("login-origin", it).apply() }
+                LoginPointer.fromCode(qr?.login ?: j?.login, allowHttp = debuggable)?.let { prefs.edit().putString(LoginPointer.PREF, it).apply() }
                 // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
                 if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
                 ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
@@ -718,7 +714,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         change("Adding ${inv.name}…") { me, h ->
             Device.add(me, h, inv, fp("Add ${inv.name} to your account"), send(h))
             pendingInvite = null
-            ui.update { it.copy(joinText = Texts.join(h, prefs.getString("login-origin", null)?.ifEmpty { null })) }
+            ui.update { it.copy(joinText = Texts.join(h, loginOrigin())) }
             note("Added ${inv.name} to your account", "approved")
         }
     }
