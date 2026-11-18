@@ -241,7 +241,7 @@ function withSigner() {
 const PAGE = (pk) => `marble.loginpage.${pk}`;
 function rememberedPage(pk) { try { return localStorage.getItem(PAGE(pk)); } catch { return null; } }
 function forgetPage(pk) { try { localStorage.removeItem(PAGE(pk)); } catch {} }
-export async function lookAgain(pk, wait = 5000) {
+export async function lookAgain(pk, wait = 8000) { // (the phone's pointer reaches your write relays within a few seconds)
   await new Promise((r) => setTimeout(r, wait));
   const { loginPage } = await import("./account-page.js");
   const r = await loginPage(pk).catch(() => null);
