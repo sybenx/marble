@@ -1,0 +1,131 @@
+package cc.aaro.cosign
+
+import cc.aaro.cosign.core.Policy
+import cc.aaro.cosign.core.Policy.Found
+import cc.aaro.qrst.core.Event
+import cc.aaro.qrst.core.Json
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Changes to your lists made somewhere else (another app with your key, another device with your box), as Recent
+ * changes says them: one row for everything since this phone last saw the list, amber when something was lost.
+ */
+class OutsideTest {
+    /** Aaron's bookmarks on Oct 27, and the version another web client wrote on 2026-11-18 without the private part. */
+    private val real = (Json.parse(javaClass.classLoader!!.getResource("bookmarks-2026-11-18.json")!!.readText()) as List<*>).map { Event.fromMap(it)!! }
+    private val oct27 = real[0]
+    private val nov18 = real[1]
+    private val me = oct27.pubkey
+
+    private fun list(kind: Int, tags: List<List<String>>, content: String = "", at: Long = 1_800_000_000) = Event("aa".repeat(32), at, kind, tags, content)
+    private fun e(n: Int, vararg more: String) = listOf("e", n.toString(16).padStart(64, '0'), *more)
+    private fun p(n: Int, vararg more: String) = listOf("p", n.toString(16).padStart(64, '0'), *more)
+
+    @Test fun theRealCaseIsAmberAndSaysThePrivateBookmarksWentNotEntries() {
+        assertEquals("9f389a005238", oct27.id.take(12)); assertEquals("698cd1c5c201", nov18.id.take(12))
+        val o = Policy.outside(oct27, nov18)!!
+        assertEquals("Bookmarks: your private bookmarks were emptied", o.text)
+        assertEquals("Your private bookmarks were emptied.", o.alarm)
+        assertEquals("Your bookmarks were changed in another app or device", o.title)
+        // The new version also dropped the app's own "alt" and "client" tags and an empty title: those aren't bookmarks.
+        assertFalse(o.text, o.text.contains("removed") || o.text.contains("added"))
+    }
+
+    @Test fun theRealCaseIsAChangeOnceOct27WasSeen() {
+        assertEquals(Found.BASELINE, Policy.found(oct27, me, null, now = nov18.createdAt))
+        assertEquals(Found.CHANGED, Policy.found(nov18, me, oct27, now = nov18.createdAt))
+    }
+
+    @Test fun whatIsIgnored() {
+        val now = nov18.createdAt
+        assertEquals("the same version", Found.IGNORE, Policy.found(nov18, me, nov18, now))
+        assertEquals("older", Found.IGNORE, Policy.found(oct27, me, nov18, now))
+        assertEquals("as old", Found.IGNORE, Policy.found(nov18, me, oct27.copy(id = "bb".repeat(32), createdAt = nov18.createdAt), now))
+        assertEquals("dated ahead", Found.IGNORE, Policy.found(nov18, me, oct27, now = nov18.createdAt - Policy.AHEAD - 1))
+        assertEquals("someone else's (or a site's own account)", Found.IGNORE, Policy.found(nov18, "cc".repeat(32), oct27, now))
+        assertEquals("no account", Found.IGNORE, Policy.found(nov18, null, oct27, now))
+        assertEquals("not signed", Found.IGNORE, Policy.found(nov18.copy(content = "made up"), me, oct27, now))
+        assertEquals("not signed, first seen", Found.IGNORE, Policy.found(nov18.copy(content = "made up"), me, null, now))
+        assertEquals("not one of your lists", Found.IGNORE, Policy.found(nov18.copy(kind = 1), me, null, now))
+    }
+
+    @Test fun countsAreByEntry() {
+        val prev = list(10003, listOf(e(1), e(2), e(3)))
+        assertEquals("Bookmarks: 1 added", Policy.outside(prev, list(10003, listOf(e(1), e(2), e(3), e(4))))!!.text)
+        val o = Policy.outside(prev, list(10003, listOf(e(1), e(4), e(5))))!!
+        assertEquals("Bookmarks: 2 added, 2 removed", o.text)
+        assertNull(o.alarm)
+        // Five edits elsewhere are one row: only the two ends count.
+        assertEquals("Follow list: 1 added", Policy.outside(list(3, listOf(p(1))), list(3, listOf(p(1), p(2))))!!.text)
+    }
+
+    @Test fun detailsRewrittenAreNotAddedOrRemoved() {
+        val prev = list(3, (1..10).map { p(it, "wss://hint", "pet$it") })
+        // Two of ten lose their hints: just "changed".
+        val few = list(3, (1..10).map { if (it <= 2) p(it) else p(it, "wss://hint", "pet$it") })
+        assertEquals(Policy.Outside("Follow list changed", null, "Your follow list was changed in another app or device"), Policy.outside(prev, few))
+        // Most of them: amber.
+        val most = list(3, (1..10).map { if (it <= 8) p(it) else p(it, "wss://hint", "pet$it") })
+        val o = Policy.outside(prev, most)!!
+        assertEquals("Follow list: 8 of 10 entries rewritten", o.text)
+        assertEquals("8 of 10 entries rewritten.", o.alarm)
+    }
+
+    @Test fun mostOfAListRemovedIsAmberAtHoldsThresholds() {
+        val prev = list(3, (1..40).map { p(it) })
+        val o = Policy.outside(prev, list(3, (1..30).map { p(it) } + listOf(p(99))))!!
+        assertEquals("Follow list: 10 of 40 follows removed, 1 added", o.text)
+        assertNotNull(o.alarm)
+        assertNull("9 is not most", Policy.outside(prev, list(3, (1..31).map { p(it) }))!!.alarm)
+        assertEquals("Follow list: all 40 follows removed", Policy.outside(prev, list(3, emptyList()))!!.text)
+        // Relays: two or more and half.
+        val relays = list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"), listOf("r", "wss://d")))
+        assertEquals("Relay list: 2 of 4 relays removed", Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a/"), listOf("r", "wss://b"))))!!.text)
+        assertNull(Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"))))!!.alarm)
+    }
+
+    @Test fun severalLossesInOneRow() {
+        val prev = list(10003, (1..12).map { e(it) }, "c2VhbGVk")
+        val o = Policy.outside(prev, list(10003, emptyList()))!!
+        assertEquals("Bookmarks: your private bookmarks were emptied, all 12 bookmarks removed", o.text)
+        assertEquals("Your private bookmarks were emptied. All 12 bookmarks removed.", o.alarm)
+    }
+
+    @Test fun privatePartChangedIsSaidPlainly() {
+        assertEquals("Mute list: your private mute list changed", Policy.outside(list(10000, listOf(p(1)), "b2xk"), list(10000, listOf(p(1)), "bmV3"))!!.text)
+        assertTrue(Policy.outside(list(10000, listOf(p(1)), "b2xk"), list(10000, listOf(p(1)), ""))!!.text.contains("your private mute list was emptied"))
+    }
+
+    @Test fun oldRelaysInAFollowListAreNoPrivatePart() {
+        val prev = list(3, listOf(p(1)), """{"wss://nos.lol":{"read":true,"write":true}}""")
+        assertEquals(Policy.Outside("Follow list changed", null, "Your follow list was changed in another app or device"), Policy.outside(prev, list(3, listOf(p(1)))))
+    }
+
+    @Test fun profile() {
+        val prev = list(0, emptyList(), """{"name":"Aaron","picture":"https://x/p.png","about":"hi"}""")
+        assertEquals(Policy.Outside("Profile changed", null, "Your profile was changed in another app or device"),
+            Policy.outside(prev, list(0, emptyList(), """{"name":"Aaron B","picture":"https://x/p.png","about":"hi"}""")))
+        val wiped = Policy.outside(prev, list(0, emptyList(), """{"name":"Aaron"}"""))!!
+        assertEquals("Profile: your profile was wiped (picture, about)", wiped.text)
+        assertEquals("Your profile was wiped (picture, about).", wiped.alarm)
+        assertEquals("Your profile was wiped (name, picture, about).", Policy.outside(prev, list(0, emptyList(), "{}"))!!.alarm)
+    }
+
+    @Test fun nothingDifferentIsNoRow() {
+        val l = list(10003, listOf(e(1)), "c2VhbGVk")
+        assertNull(Policy.outside(l, l.copy(createdAt = l.createdAt + 5)))
+    }
+
+    @Test fun noJargon() {
+        val texts = listOf(Policy.outside(oct27, nov18)!!) + listOf(0, 3, 10000, 10002, 10003, 30001).map { k ->
+            Policy.outside(list(k, (1..12).map { e(it) }, if (k == 0) """{"name":"a","about":"b"}""" else "c2VhbGVk"), list(k, emptyList()))!!
+        }
+        for (o in texts) for (s in listOfNotNull(o.text, o.alarm, o.title))
+            assertFalse(s, Regex("""\b(kind|event|npub|content|tag)\b""", RegexOption.IGNORE_CASE).containsMatchIn(s))
+    }
+}
