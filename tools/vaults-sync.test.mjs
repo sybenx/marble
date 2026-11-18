@@ -110,4 +110,23 @@ await a.catchUp();
 let refused = false; try { await a.commit([N.notePut({ id: "cc00000000000000", text: "no", created: 4, updated: 4 }, [])]); } catch (e) { refused = /removed/.test(e.message); }
 ok(refused && a.removed(), "a removed browser refuses to write");
 
+// a batch import (as Android's import is one batch blob), and a note over 4 KiB in a blob
+{
+  const imp = [];
+  for (let i = 0; i < 30; i++) imp.push(N.notePut({ id: "ee" + String(i).padStart(14, "0"), text: "imported " + i, created: 6, updated: 6 }, []));
+  imp.push(N.deletePut(N.entryOf("ee99999999999999"), []));
+  const s2 = await session();
+  const dev = await s2.device();
+  const ref = await s2.upload(dev, C.utf8(C.canon(imp)), 2);
+  const long = "x".repeat(5000);
+  const bref = await s2.upload(dev, C.utf8(long), 2);
+  await s2.commit([{ op: "batch", ref }, N.notePut({ id: "ff00000000000000", text: long, created: 7, updated: 7 }, [], {}, { blob: bref })]);
+  const s3 = await session();
+  const all = notes(s3);
+  ok(all.filter((x) => x.note.text?.startsWith("imported ")).length === 30, "a batch's puts count");
+  ok(s3.vault.state().entries.has(N.entryOf("ee99999999999999")) && !all.some((x) => x.entry === N.entryOf("ee99999999999999")), "an imported removal: the vault has it, nothing shows");
+  const big = all.find((x) => x.note.id === "ff00000000000000");
+  ok(big && big.note.text === null && big.note.blob && C.unutf8(await s3.blob(big.note.blob)) === long, "a note over 4 KiB reads from its blob");
+}
+
 console.log(`all ${n} sync checks pass`);
