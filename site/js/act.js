@@ -118,7 +118,7 @@ function backWithNoApp(loaded = false) {
   if (location.hash === NO_APP) history.replaceState(history.state, "", location.href.split("#")[0]);
   noAppSoon = true;
   if (!dialog.open) dialog.showModal();
-  askName();
+  withMarble();
 }
 addEventListener("hashchange", () => backWithNoApp());
 // (looked at now: the page may tidy its address before then)
@@ -156,21 +156,30 @@ function clearPending() { try { sessionStorage.removeItem(PENDING); } catch {} }
 // The login page's link: the code in the fragment, so it never goes to a server (agreed name: "connect").
 export const loginLink = (url, uri) => `${url}/#connect=${encodeURIComponent(uri)}`;
 
-// ── Your phone first; your name if you have one ──
-// Most people don't come in with a Nostr address (and one looks like an email), so the way in needs none: the phone code
-// is on screen at once. The name field is behind "Have a Nostr address?", open when you've typed one before.
+// ── Your name first; your phone a button away ──
+// The field takes a Nostr address (name@site.com, or just site.com) or an npub. Most people will try an email: that's
+// caught (EMAIL below) and answered with the phone way in, right there.
 let lastTyped = "";
+const PHONE_BUTTON = `<button type="button" class="si-button si-alt" data-si="code">Sign in with your phone</button>`;
+const ACCOUNT_PAGE = `<p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>`;
 function askName(note = "", typed = "") {
-  withMarble({ entry: { note, typed, open: !!(note || typed) } });
+  attempt++;
+  stopWatching();
+  phoneAbort?.abort();
+  phoneAbort = null;
+  missingFor = null;
+  view(`<h2 id="si-title">Sign in</h2>
+    <form data-form="name"><label for="si-who">Your Nostr address or npub</label>
+      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="herbstmeister.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <div class="si-actions"><button type="submit" class="si-button">Continue</button></div></form>
+    ${note ? `<div class="si-said" role="status">${note}</div>` : `<p class="si-or"><span>or</span></p>${PHONE_BUTTON}`}
+    <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button></div>
+    ${ACCOUNT_PAGE}`);
 }
-function nameForm({ note = "", typed = "", open = false }) {
-  return `<details class="si-more"${open ? " open" : ""}><summary>Have a Nostr address? Type it instead</summary>
-      ${note ? `<p class="si-note">${note}</p>` : ""}
-      <form data-form="name"><label class="visually-hidden" for="si-who">Your Nostr address or npub</label>
-        <p class="si-hint">Not an email: it's your name on Nostr, like name@site.com, or just site.com.</p>
-        <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="site.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-        <div class="si-actions"><button type="submit" class="si-button">Continue</button></div></form></details>`;
-}
+// An email, not a Nostr address: a mail provider's domain. (Any other name@domain is looked up, and one that finds no
+// account is answered the same way.)
+const EMAIL = /@(gmail|googlemail|yahoo|ymail|outlook|hotmail|live|msn|icloud|me|mac|aol|proton|protonmail|pm|gmx|web|yandex|mail|zoho|fastmail|hey|duck|tutanota|tuta|comcast|att|verizon)\.[a-z.]+$/i;
+const notEmail = (typed) => `<p>${esc(typed)} looks like an email address. Marble doesn't use email yet. Try your Nostr address, or sign in with your phone.</p>${PHONE_BUTTON}`;
 
 async function lookUp(typed) {
   const mine = ++attempt;
@@ -178,12 +187,13 @@ async function lookUp(typed) {
   stopWatching();
   phoneAbort?.abort();
   phoneAbort = null;
+  if (EMAIL.test(typed)) return askName(notEmail(typed), typed);
   view(`<h2 id="si-title">Sign in</h2><p class="si-wait">${spinner}Looking for ${esc(typed)}…</p>
     <div class="si-actions"><button type="button" class="si-button" data-si="retype">Cancel</button></div>`);
   const { whose, loginPage } = await import("./account-page.js");
   const pk = await whose(typed);
   if (mine !== attempt) return;
-  if (!pk) return askName(`Marble couldn't find ${esc(typed)}. Check the name, or sign in with your phone above.`, typed);
+  if (!pk) return askName(typed.includes("@") ? notEmail(typed) : `<p>Marble couldn't find ${esc(typed)}. Check the name, or sign in with your phone.</p>${PHONE_BUTTON}`, typed);
   const r = await loginPage(pk);
   if (mine !== attempt) return;
   if (r.url) return atLoginPage(r.url, { who: pk });
@@ -207,33 +217,26 @@ function atLoginPage(url, { who = null, pending = null } = {}) {
     { pending, keep: { url, who } });
 }
 
-// ── Marble on your phone: the way in (entry), or the account a name lookup found has no login page (missing) ──
+// ── Marble on your phone: the button on the first screen (no lookup ran), or a name with no login page (missing) ──
+let signerFrom = "phone"; // where the signer app's Back goes
 let missingFor = null; // the account a name lookup found no pointer for (its codes carry kk_login=missing)
 const missingCode = () => ({ extra: missingFor ? "&kk_login=missing" : "", missing: missingFor });
-const ACCOUNT_PAGE = `<p class="si-get">Here to manage your account? <button type="button" class="link" data-account-visitor>Your account page</button></p>`;
-function withMarble({ missing = null, entry = null } = {}) {
-  missingFor = entry ? null : missing; // no lookup ran for the way in: its code says nothing about a pointer
+function withMarble({ missing = null } = {}) {
+  missingFor = missing;
   run((uri, svg) => {
-    // (a new code drawn while the name field is open keeps what's typed in it)
-    const was = $("#si-who", box), form = entry && (was ? { ...entry, typed: was.value, open: was.closest("details")?.open } : entry);
-    const back = entry ? "" : `<button type="button" class="link" data-si="retype">Back</button>`;
-    if (onPhone()) view(`<h2 id="si-title">${entry ? "Sign in" : "Sign in with Marble"}</h2>
-      <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">${entry ? "Sign in with Marble" : "Open Marble"}</a>
+    if (onPhone()) view(`<h2 id="si-title">Sign in with Marble</h2>
+      <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Open Marble</a>
       <p class="si-wait" hidden>${spinner}Waiting for Marble…</p>
       <p class="si-note" data-none hidden>Marble didn't open.</p>
       ${onIphone() ? `<p data-none hidden>Marble isn't on iPhone yet. nsec.app works in Safari: copy the code and paste it there.</p>` : ""}
       <p class="si-get">No Marble yet? <a class="link" href="${onIphone() ? NSEC_APP : GET_MARBLE}" target="_blank" rel="noopener">${onIphone() ? "Open nsec.app" : "Get Marble for Android"}</a></p>
-      ${form ? nameForm(form) : ""}
-      <div class="si-actions"><button type="button" class="link" data-si="signer">Use a signer app</button>${back}</div>
-      ${entry ? ACCOUNT_PAGE : ""}`);
-    else view(`<h2 id="si-title">${entry ? "Sign in with your phone" : "Sign in with Marble on your phone"}</h2>
+      <div class="si-actions"><button type="button" class="link" data-si="signer">Use a signer app</button><button type="button" class="link" data-si="retype">Back</button></div>`);
+    else view(`<h2 id="si-title">${missing ? "Sign in with Marble on your phone" : "Sign in with your phone"}</h2>
       <div class="qr">${svg}</div>
       <p>Scan this with your phone. With Marble on it, Marble opens and asks you to sign in.</p>
       <p class="si-wait">${spinner}Waiting for your phone…</p>
       <p class="si-get">No Marble yet? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble for Android</a></p>
-      ${form ? nameForm(form) : ""}
-      <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button>${back}</div>
-      ${entry ? ACCOUNT_PAGE : ""}`);
+      <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button><button type="button" class="link" data-si="retype">Back</button></div>`);
     if (noAppSoon) noApp();
   }, missingCode());
 }
@@ -345,9 +348,9 @@ dialog.addEventListener("click", (ev) => {
   if (what === "close") close();
   else if (what === "name") { clearPending(); askName(); }
   else if (what === "retype") { clearPending(); askName("", lastTyped); }
-  else if (what === "code") { clearPending(); askName(); }
-  else if (what === "unsigner") missingFor ? withMarble({ missing: missingFor }) : askName();
-  else if (what === "signer") withSigner();
+  else if (what === "code") { clearPending(); withMarble(); }
+  else if (what === "unsigner") signerFrom === "name" ? askName("", lastTyped) : withMarble({ missing: missingFor });
+  else if (what === "signer") { signerFrom = $("#si-who", box) ? "name" : "phone"; withSigner(); }
   else if (what === "again") again?.();
   else if (what === "copy") navigator.clipboard?.writeText(b.dataset.code).then(() => { b.textContent = "Copied"; });
 });
@@ -359,8 +362,6 @@ dialog.addEventListener("submit", (ev) => {
 });
 // Back in this tab from the login page with a code still waiting: the sign-in picks up where it was.
 if (!current() && pendingCode()) setTimeout(() => openSignIn(), 0);
-// Opening "Have a Nostr address?" puts you in its field.
-dialog.addEventListener("toggle", (ev) => { if (ev.target.matches?.(".si-more") && ev.target.open) $("#si-who", ev.target)?.focus(); }, true);
 dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!picking) close(); });
 
 /** Something only a signed-in account can do: true if it can go ahead, else the sign-in opens. */
