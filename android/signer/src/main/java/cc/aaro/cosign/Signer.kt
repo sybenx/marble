@@ -176,6 +176,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
+        pointerOnce()
         if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
@@ -330,10 +331,10 @@ class Signer(private val context: Context, val slot: String = "0") {
      * is its login page when Keykin Login is in front of it, which is checked by asking. A pointer that
      * names another box, or was removed on purpose, is left alone.
      */
-    private fun pointerAfterJoin(h: Held) {
-        val pub = accountHex() ?: return
+    private fun pointerAfterJoin(h: Held): Boolean {
+        val pub = accountHex() ?: return false
         val origin = LoginPointer.origin(h.addr, allowHttp = debuggable)?.takeIf(::isKeykinLogin)
-        if (origin == null) { if (debuggable) android.util.Log.i("Keykin", "pointer: ${h.addr} is not a login page"); return }
+        if (origin == null) { if (debuggable) android.util.Log.i("Keykin", "pointer: ${h.addr} is not a login page"); return true }
         // A debug build told to use test relays stays on them; otherwise ask the account's own and Marble's.
         val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
         val look = if (testing) writeRelays() else (writeRelays() + DEFAULT_RELAYS).distinct()
@@ -343,13 +344,28 @@ class Signer(private val context: Context, val slot: String = "0") {
             ?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }.orEmpty()
         val d = LoginPointer.decide(origin, LoginPointer.newest(found, pub), answered.get() > 0)
         if (debuggable) android.util.Log.i("Keykin", "pointer: $d (asked ${look.size} relays, ${answered.get()} answered)")
-        if (d !is LoginPointer.Decision.Publish) return
+        if (d !is LoginPointer.Decision.Publish) return d != LoginPointer.Decision.Skip("no relay answered")
         val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", d.origin)), "").withId())
         publish(signed, if (testing) writeRelays() else (writeRelays() + outbox.take(6) + DEFAULT_RELAYS).distinct())
         prefs.edit().putString("login-page", d.origin).apply()
         ui.update { it.copy(loginPage = d.origin) }
         note("Your account's sign-in page is now ${d.origin}", "approved")
+        return true
     }
+    /**
+     * Accounts that joined a box before Marble published pointers: the same step once, when the signer
+     * starts. It is marked done once it has settled (published, or found one, or the box has no login
+     * page); if no relay answered or something failed, it tries again on the next start.
+     */
+    private fun pointerOnce() {
+        val h = held ?: return
+        if (prefs.getBoolean("pointer-done", false) || !pointerBusy.compareAndSet(false, true)) return
+        work.execute {
+            try { if (pointerAfterJoin(h)) prefs.edit().putBoolean("pointer-done", true).apply() } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
+            finally { pointerBusy.set(false) }
+        }
+    }
+    private val pointerBusy = java.util.concurrent.atomic.AtomicBoolean(false)
     /** Keykin Login answers a call to its page API without the page's header with 403 forbidden; a bare box has no /api. */
     private fun isKeykinLogin(origin: String): Boolean = try {
         val c = java.net.URL("$origin/api").openConnection() as java.net.HttpURLConnection
@@ -637,7 +653,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
-                try { pointerAfterJoin(h) } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
+                try { if (pointerAfterJoin(h)) prefs.edit().putBoolean("pointer-done", true).apply() } catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
