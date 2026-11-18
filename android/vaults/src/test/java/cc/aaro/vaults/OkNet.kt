@@ -49,9 +49,9 @@ class OkNet : RelayNet, Blobs {
         return ok.toSet()
     }
 
-    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Boolean =
+    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int =
         http.newCall(Request.Builder().url("$server/upload").put(bytes.toRequestBody("application/octet-stream".toMediaType())).header("Authorization", auth).build()).execute().use { r ->
-            r.isSuccessful && JSONObject(r.body!!.string()).optString("sha256") == sha256
+            if (!r.isSuccessful) r.code else if ((try { JSONObject(r.body!!.string()).optString("sha256") } catch (_: Exception) { "" }) == sha256) 200 else -2
         }
     override fun get(server: String, sha256: String): ByteArray? = http.newCall(Request.Builder().url("$server/$sha256").build()).execute().use { r -> if (r.isSuccessful) r.body!!.bytes() else null }
     override fun delete(server: String, sha256: String, auth: String): Boolean =
@@ -59,7 +59,8 @@ class OkNet : RelayNet, Blobs {
 }
 
 /** An account whose nsec is here (a test key, or a plain-key account). */
-class NsecAccount(private val sk: ByteArray) : Account {
+class NsecAccount(private val sk: ByteArray, private val blossom: List<String> = emptyList()) : Account {
+    override fun servers() = blossom
     override val npub = Keys.pub(sk)
     override fun sign(createdAt: Long, kind: Int, tags: List<List<String>>, content: String) = Ev.sign(sk, createdAt, kind, tags, content)
     override fun openSelf(eph: String, ct: String) = Keys.decrypt(ct, Keys.conv(sk, eph))

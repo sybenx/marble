@@ -39,7 +39,7 @@ class VaultNotesTest {
     }
     private class Blo : Blobs {
         val m = ConcurrentHashMap<String, ByteArray>()
-        override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Boolean { m["$server/$sha256"] = bytes; return true }
+        override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int { m["$server/$sha256"] = bytes; return 200 }
         override fun get(server: String, sha256: String) = m["$server/$sha256"]
         override fun delete(server: String, sha256: String, auth: String) = true
     }

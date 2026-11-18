@@ -14,7 +14,7 @@ class Vaults(
     /** This device's name, for its sub-certs (§3.4). */
     val deviceName: String,
 ) {
-    val storage = Storage(blobs, clock)
+    val storage = Storage(blobs, clock).also { it.signer = { at, kind, tags, content -> account.sign(at, kind, tags, content) } }
     private val vaults = HashMap<String, Vault>()
 
     // --- This device ----------------------------------------------------------------------------------

@@ -1,5 +1,8 @@
-// Blob storage for one vault (§6.3, §6.4): parts uploaded under this device's storage key to every vault server,
-// fetched from any of them and checked.
+// Blob storage for one vault (§6.3, §6.4): parts uploaded to the account's own Blossom servers (kind 10063, in its
+// order) under the account's npub, to the first two that accept; fetched from any of them and checked.
+//
+// (Decided by the person, 2026-11-18: personal servers allowlist the account, so the npub signs the BUD-02/BUD-11
+// auth, through the signer or Keykin, with no prompt. Downloads stay unauthenticated, by hash.)
 package cc.aaro.vaults
 
 import cc.aaro.keykin.core.hex
@@ -8,20 +11,52 @@ import cc.aaro.keykin.core.sha256
 import java.util.Base64
 
 class Storage(private val blobs: Blobs, private val clock: Clock) {
+    /** Signs blob auth: the account's npub (set by [Vaults]); a test key elsewhere. */
+    var signer: ((Long, Int, List<List<String>>, String) -> Ev)? = null
+
+    /** Why each server last refused, by server: an HTTP status ("403"), or "error". For logs and the app. */
+    val refused = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** The last blob put: its first part and the servers that took it. For logs. */
+    @Volatile var lastPut: Pair<String, List<String>>? = null
+
     /** The BUD-11 server tag: the lowercase domain (with a port when it has one). */
     fun domain(server: String): String = try { java.net.URI(server).let { u -> u.host.lowercase() + if (u.port > 0) ":${u.port}" else "" } } catch (_: Exception) { server.lowercase() }
 
-    /** BUD-02/BUD-11 auth: kind 24242 by [key], for [verb] on [shas], on [server] only. */
+    private fun tags(verb: String, shas: List<String>, server: String, now: Long) =
+        listOf(listOf("t", verb)) + shas.map { listOf("x", it) } + listOf(listOf("expiration", (now + 300).toString()), listOf("server", domain(server)))
+    private fun header(e: Ev) = "Nostr " + Base64.getEncoder().encodeToString(e.json().toString().toByteArray())
+
+    /** BUD-02/BUD-11 auth: kind 24242 by the account, for [verb] on [shas], on [server] only. */
+    fun auth(verb: String, shas: List<String>, server: String): String {
+        val now = clock.now()
+        val sign = signer ?: throw IllegalStateException("no signer for blob auth")
+        return header(sign(now, Kinds.BLOSSOM_AUTH, tags(verb, shas, server, now), "nostr-vault"))
+    }
+    /** The same, signed by [key] (the §6.4 probe's keys). */
     fun auth(key: ByteArray, verb: String, shas: List<String>, server: String): String {
         val now = clock.now()
-        val tags = listOf(listOf("t", verb)) + shas.map { listOf("x", it) } + listOf(listOf("expiration", (now + 300).toString()), listOf("server", domain(server)))
-        val e = Ev.sign(key, now, Kinds.BLOSSOM_AUTH, tags, "nostr-vault")
-        return "Nostr " + Base64.getEncoder().encodeToString(e.json().toString().toByteArray())
+        return header(Ev.sign(key, now, Kinds.BLOSSOM_AUTH, tags(verb, shas, server, now), "nostr-vault"))
     }
 
-    /** Every part to every server; the servers that took every part. */
-    fun put(sealed: Nv1.Sealed, servers: List<String>, key: ByteArray): List<String> = servers.filter { s ->
-        sealed.parts.all { p -> val sha = hex(sha256(p)); try { blobs.upload(s, p, sha, auth(key, "upload", listOf(sha), s)) } catch (_: Exception) { false } }
+    /**
+     * Every part to the first [want] of [servers] (already normalized, in the account's order) that take them all; one
+     * auth per server covers every part. A 401, 403 or 415 (or any failure) skips to the next server. The servers that took it.
+     */
+    fun put(sealed: Nv1.Sealed, servers: List<String>, want: Int = 2): List<String> {
+        val took = ArrayList<String>()
+        val shas = sealed.parts.map { hex(sha256(it)) }
+        for (s in servers) {
+            if (took.size >= want) break
+            val a = try { auth("upload", shas, s) } catch (e: Exception) { refused[s] = "sign"; continue }
+            var why: String? = null
+            for ((i, p) in sealed.parts.withIndex()) {
+                val code = try { blobs.upload(s, p, shas[i], a) } catch (_: Exception) { -1 }
+                if (code != 200) { why = when (code) { -1 -> "error"; -2 -> "hash"; else -> code.toString() }; break }
+            }
+            if (why == null) { took += s; refused.remove(s) } else refused[s] = why
+        }
+        lastPut = shas.first() to took.toList()
+        return took
     }
 
     /** The plaintext, each part from the first server whose bytes hash right (§6.2). Null: not found whole anywhere. */
@@ -32,16 +67,17 @@ class Storage(private val blobs: Blobs, private val clock: Clock) {
         return Nv1.open(ref, parts)
     }
 
-    fun delete(sha: String, servers: List<String>, key: ByteArray) { for (s in servers) try { blobs.delete(s, sha, auth(key, "delete", listOf(sha), s)) } catch (_: Exception) {} }
+    fun delete(sha: String, servers: List<String>) { for (s in servers) try { blobs.delete(s, sha, auth("delete", listOf(sha), s)) } catch (_: Exception) {} }
 
     /**
      * §6.4's probe: does [server] keep a blob per owner? Two probe keys A and B upload the same random blob; a DELETE by
      * one must leave it for the other. (Each uploads rather than mirrors: the same test of ownership, without BUD-04.)
+     * Not used to choose servers any more (the account's own list is used as it is); kept for testing servers.
      */
     fun probe(server: String, storageKey: ByteArray): Boolean {
         val a = Keys.scalar(storageKey, "nostr-vault/probe/1".toByteArray()); val b = Keys.scalar(storageKey, "nostr-vault/probe/2".toByteArray())
         val bytes = random(64); val sha = hex(sha256(bytes))
-        fun up(k: ByteArray) = try { blobs.upload(server, bytes, sha, auth(k, "upload", listOf(sha), server)) } catch (_: Exception) { false }
+        fun up(k: ByteArray) = try { blobs.upload(server, bytes, sha, auth(k, "upload", listOf(sha), server)) == 200 } catch (_: Exception) { false }
         fun del(k: ByteArray) = try { blobs.delete(server, sha, auth(k, "delete", listOf(sha), server)) } catch (_: Exception) { false }
         fun there() = try { blobs.get(server, sha)?.contentEquals(bytes) == true } catch (_: Exception) { false }
         try {
@@ -51,5 +87,11 @@ class Storage(private val blobs: Blobs, private val clock: Clock) {
             del(a); if (!there()) return false
             return true
         } finally { del(a); del(b) }
+    }
+
+    companion object {
+        /** A server list as the account published it: trailing slashes off, http(s) only, duplicates dropped, order kept. */
+        fun normalize(servers: List<String>): List<String> =
+            servers.map { it.trim().trimEnd('/') }.filter { it.startsWith("https://") || it.startsWith("http://") }.distinctBy { it.lowercase() }
     }
 }

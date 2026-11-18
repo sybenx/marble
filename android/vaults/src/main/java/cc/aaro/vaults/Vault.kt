@@ -226,15 +226,19 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     fun config(): JSONObject? = Readers.config(auths())
     fun vaultRelays(): List<String> = (config()?.strs("relays") ?: p.strs("relays")).ifEmpty { p.strs("relays") }
     fun servers(): List<String> = (config()?.strs("servers") ?: p.strs("servers")).ifEmpty { p.strs("servers") }
+    /** Where blobs go: the account's own list as published now, else the vault's config (the defaults it was made with). */
+    fun writeServers(): List<String> = Storage.normalize(vs.account.servers()).ifEmpty { Storage.normalize(servers()) }
+    /** Where blobs are looked for: the account's list, then the vault's config. */
+    fun readServers(): List<String> = Storage.normalize(vs.account.servers() + servers())
 
     // --- Blobs ----------------------------------------------------------------------------------------------
 
     private val storageKey: ByteArray get() = Keys.storage(dvk)
-    /** Encrypts and uploads [plain]; the ref once on [need] servers (two for what the vault relies on, §6.3). */
+    /** Encrypts and uploads [plain] to two servers; the ref once on [need] of them (two for what the vault relies on, §6.3). */
     fun upload(plain: ByteArray, need: Int = 1, key: ByteArray? = null): BlobRef? {
         val s = if (key != null) Nv1.seal(plain, key) else Nv1.seal(plain)
-        val servers = servers()
-        val took = vs.storage.put(s, servers, storageKey)
+        val servers = writeServers()
+        val took = vs.storage.put(s, servers, 2)
         if (took.size < minOf(need, servers.size).coerceAtLeast(1)) return null
         store.put("blob/" + refKey(s.ref), hex(plain))
         return s.ref
@@ -243,7 +247,7 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     /** A blob's plaintext: kept here, or fetched from the vault's servers (null: missing for now). */
     fun fetch(ref: BlobRef): ByteArray? {
         store.get("blob/" + refKey(ref))?.let { return unhex(it) }
-        val b = vs.storage.get(ref, servers()) ?: return null
+        val b = vs.storage.get(ref, readServers()) ?: return null
         store.put("blob/" + refKey(ref), hex(b))
         return b
     }
@@ -644,4 +648,6 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     fun debug(): JSONObject = JSONObject().put("commits", commits.size).put("live", liveDvks().size).put("gens", gens.size).put("current", current()?.id)
         .put("epoch", writeEpoch()?.kid).put("entries", state().entries.size).put("gaps", gaps).put("trouble", trouble).put("pending", pending)
         .put("uncovered", JSONArray(uncovered().sorted())).put("trusted", JSONArray(trustedRoots().sorted()))
+        .put("servers", JSONArray(writeServers())).put("refused", JSONObject(vs.storage.refused as Map<*, *>))
+        .put("lastPut", vs.storage.lastPut?.let { (sha, on) -> JSONObject().put("sha", sha).put("on", JSONArray(on)) })
 }

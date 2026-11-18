@@ -14,8 +14,11 @@ interface RelayNet {
 }
 
 interface Blobs {
-    /** BUD-02 upload with [auth] as the Authorization header. True when the server took it with this hash. */
-    fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Boolean
+    /**
+     * BUD-02 upload with [auth] as the Authorization header. 200 when the server took it with this hash; otherwise the
+     * HTTP status, -2 for a wrong hash back, -1 for no answer.
+     */
+    fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int
     /** BUD-01: the bytes, or null. The caller checks the hash. */
     fun get(server: String, sha256: String): ByteArray?
     fun delete(server: String, sha256: String, auth: String): Boolean
@@ -31,6 +34,8 @@ interface Account {
     fun openSelf(eph: String, ct: String): String?
     /** Keykin v2's view of the account, or null if it isn't a Keykin account (a plain key). Null members: couldn't ask now. */
     fun keykin(): KeykinView?
+    /** The account's Blossom servers (kind 10063, BUD-03), normalized and in order. Empty: none published (or not known now). */
+    fun servers(): List<String> = emptyList()
 }
 
 /**

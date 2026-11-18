@@ -49,6 +49,30 @@ class EngineTest {
         assertEquals("Buy oat milk and eggs", text(b, "n1")); assertFalse(b.state().entries[entryOf("n1")]!!.conflict)
     }
 
+    @Test fun blobsGoToTheAccountsOwnServersSignedByTheAccount() {
+        // Decided 2026-11-18: the account's kind 10063 list in its order, the first two that accept, the npub's auth.
+        val w = World(); val (aVs, acc) = w.device("Pixel")
+        acc.blossom = listOf("https://own.example/", "https://own.example", "https://typed.example", "https://ok1.example/", "https://ok2.example", "https://ok3.example")
+        val a = aVs.create("notes", "Notes", relays, servers)
+        w.blobs.refuse["https://own.example"] = 403; w.blobs.refuse["https://typed.example"] = 415
+        val big = "x".repeat(10_000)
+        val ref = a.upload(big.toByteArray(), need = 2)!!
+        val on = w.blobs.held.keys.filter { it.endsWith("/" + ref.parts[0]) }.map { it.substringBeforeLast("/") }.sorted()
+        assertEquals(listOf("https://ok1.example", "https://ok2.example"), on)
+        assertEquals("403", aVs.storage.refused["https://own.example"]); assertEquals("415", aVs.storage.refused["https://typed.example"])
+        // Each copy is held under the npub, not a device key.
+        assertTrue(w.blobs.held.values.all { it.second == setOf(w.box.npub) })
+        // Read from any server on the list or in the vault's config: a second device finds it with the list gone.
+        val (_, b, accB) = join(w); accB.blossom = emptyList()
+        w.blobs.held.keys.filter { it.startsWith("https://ok1.example") }.forEach { w.blobs.held.remove(it) }
+        w.blobs.held.keys.filter { it.startsWith("https://ok2.example") }.toList().forEach { k -> w.blobs.held["https://s1.example/" + k.substringAfterLast("/")] = w.blobs.held[k]!! }
+        assertEquals(big, String(b.fetch(ref)!!))
+        // With no list, the vault's own servers (the defaults it was made with).
+        accB.blossom = emptyList(); assertEquals(servers, b.writeServers())
+        // Every server refusing: no ref, and the note waits.
+        acc.blossom = listOf("https://own.example", "https://typed.example"); assertNull(a.upload(big.toByteArray(), need = 2))
+    }
+
     @Test fun undoAndToggles() {
         // Test 2: done twice, rename A→B→A, Undo to an earlier version: one current version.
         val w = World(); val (_, a) = create(w)

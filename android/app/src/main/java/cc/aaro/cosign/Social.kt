@@ -1371,7 +1371,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return null
         return synchronized(vaultNotesBy) {
             vaultNotesBy.getOrPut(me) {
-                val vs = cc.aaro.vaults.Vaults(cc.aaro.cosign.notes.PhoneAccount(phone, me), cc.aaro.cosign.notes.VaultNet, cc.aaro.cosign.notes.VaultNet,
+                val vs = cc.aaro.vaults.Vaults(cc.aaro.cosign.notes.PhoneAccount(phone, me) { vaultBlossom(me) }, cc.aaro.cosign.notes.VaultNet, cc.aaro.cosign.notes.VaultNet,
                     cc.aaro.cosign.notes.VaultStore(CosignApp.instance, me), { Clock.now() }, { listTargets().ifEmpty { writeRelays() } },
                     (android.os.Build.MODEL ?: "").ifBlank { "Phone" }.take(40))
                 cc.aaro.cosign.notes.VaultNotes(vs, Clock::now) { kotlinx.coroutines.runBlocking { newVaultPlaces(vs) } }
@@ -1380,18 +1380,26 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /**
-     * Where a new notes vault lives (§8.2): your write relays and your Blossom servers (kind 10063), each server only if it
-     * keeps a blob per owner (the §6.4 probe); with fewer than two of either, Marble's defaults that pass too.
+     * Your Blossom servers for vault blobs: your list (kind 10063), in your order. Empty: none published, and the vault
+     * keeps using the servers it was made with. (Debug builds: the local test servers, when set.)
+     */
+    private fun vaultBlossom(me: String): List<String> {
+        if (debuggable && Sources.vaultServers.isNotEmpty()) return Sources.vaultServers
+        return cc.aaro.vaults.Storage.normalize(kotlinx.coroutines.runBlocking { Blossom.serversOf(me) })
+    }
+
+    /**
+     * Where a new notes vault lives (§8.2): your write relays and your Blossom servers (kind 10063, used as they are; blobs
+     * go to the first two that take them). With fewer than two relays, Marble's defaults; with no server list, Marble's
+     * default servers (nothing is published for you).
      */
     private suspend fun newVaultPlaces(vs: cc.aaro.vaults.Vaults): Pair<List<String>, List<String>>? {
         val me = me ?: return null
         if (Sources.localOnly && debuggable) return Sources.extra.value to Sources.vaultServers.ifEmpty { return null }
         val relays = (listTargets().filter { it.startsWith("wss://") }.take(4).let { if (it.size >= 2) it else (it + VAULT_RELAYS).distinct().take(4) })
-        val probeKey = cc.aaro.vaults.Keys.storage(vs.root)
-        val mine = Blossom.serversOf(me).map { it.trimEnd('/') }.filter { it.startsWith("https://") }.take(3)
-        val servers = mine.filter { vs.storage.probe(it, probeKey) }.let { ok -> if (ok.size >= 2) ok else (ok + VAULT_SERVERS.filter { it !in ok && vs.storage.probe(it, probeKey) }).take(3) }
-        if (debuggable) android.util.Log.i("MarbleVault", "new vault places: relays $relays, servers $servers (yours: $mine)")
-        return if (servers.isEmpty()) null else relays to servers
+        val servers = vaultBlossom(me).ifEmpty { VAULT_SERVERS }
+        if (debuggable) android.util.Log.i("MarbleVault", "new vault places: relays $relays, servers $servers")
+        return relays to servers
     }
 
     /** [sending]: just before a write, which follows anyway (so no second one is scheduled). */
@@ -2194,9 +2202,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
     }
 
     /** The relays a post's replies and reactions are looked for on, first: the big ones (with search). */
-    /** A new notes vault's relays and servers when you have published fewer than two (vaults §8.2). */
+    /** A new notes vault's relays when you have published fewer than two, and servers when you have no list (vaults §8.2). */
     private val VAULT_RELAYS = listOf("wss://syb.lol", "wss://nos.lol", "wss://relay.damus.io", "wss://relay.primal.net")
-    private val VAULT_SERVERS = listOf("https://blossom.syb.lol", "https://blossom.primal.net")
+    private val VAULT_SERVERS = listOf("https://nostr.download", "https://blossom.yakihonne.com")
     private val POST_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
 
     /** What can be shown of thread [id] right now, with no network: as opened before, or the note itself (under its first note, if that's here). Null if neither is. */

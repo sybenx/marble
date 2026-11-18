@@ -33,9 +33,9 @@ object VaultNet : RelayNet, Blobs {
     override fun publish(relays: List<String>, ev: Ev): Set<String> = runBlocking { Fetch.publishOk(relays, event(ev), 8000) }
 
     private val http by lazy { Fetch.http.newBuilder().callTimeout(60, TimeUnit.SECONDS).build() }
-    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Boolean =
+    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int =
         http.newCall(Request.Builder().url("${server.trimEnd('/')}/upload").put(bytes.toRequestBody("application/octet-stream".toMediaType())).header("Authorization", auth).build()).execute().use { r ->
-            r.isSuccessful && (try { JSONObject(r.body?.string() ?: "").optString("sha256") } catch (_: Exception) { "" }) == sha256
+            if (!r.isSuccessful) r.code else if ((try { JSONObject(r.body?.string() ?: "").optString("sha256") } catch (_: Exception) { "" }) == sha256) 200 else -2
         }
     override fun get(server: String, sha256: String): ByteArray? =
         http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
@@ -43,8 +43,9 @@ object VaultNet : RelayNet, Blobs {
         http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").delete().header("Authorization", auth).build()).execute().use { it.isSuccessful }
 }
 
-/** The account, through Marble's signer: signatures and the seal's `ecdh` go to the signer process (and the box). */
-class PhoneAccount(private val phone: Phone, override val npub: String) : Account {
+/** The account, through Marble's signer: signatures (blob auth included) and the seal's `ecdh` go to the signer process (and the box). */
+class PhoneAccount(private val phone: Phone, override val npub: String, private val blossom: () -> List<String> = { emptyList() }) : Account {
+    override fun servers(): List<String> = blossom()
     override fun sign(createdAt: Long, kind: Int, tags: List<List<String>>, content: String): Ev =
         VaultNet.ev(phone.signOwn(Event(npub, createdAt, kind, tags, content).withId(), approved = true)) ?: throw IllegalStateException("bad event from the signer")
     override fun openSelf(eph: String, ct: String): String? = phone.vaultSeal(eph, ct)

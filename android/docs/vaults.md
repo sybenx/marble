@@ -9,7 +9,12 @@ key, not backed up).
 
 - **First run after the update**: finds the account's notes vault from its keyring entries (the lowest genesis id
   among owner entries with profile `notes`), or makes one. Relays: your write relays, or Marble's defaults if fewer
-  than two. Blossom: your kind 10063 servers that pass the §6.4 probe, or defaults that pass.
+  than two. Blossom: your kind 10063 servers as you list them, or Marble's defaults (nostr.download,
+  blossom.yakihonne.com) if you have no list; nothing is published for you.
+- **Blobs** (decided 2026-11-18): each goes to the first two servers on your kind 10063 list, as published now, that
+  take it, with the Blossom auth signed by your npub (through the signer or Keykin, no prompt). A 401, 403 or 415 skips
+  to the next server; the vault's debug state shows why under `refused`. Reads try your list, then the vault's
+  config servers. Notes are at most 500 characters, so only the import, segments and checkpoints make blobs.
 - **Import, once** (§17): the v3 packs and `marble/later` (removals included, as deleted versions) go in as one batch,
   only for entries the vault never had. Until the import reads back whole, the packs are still read (read only) for
   display. Nothing writes packs or `marble/later` any more; the old events stay.
@@ -25,7 +30,8 @@ The mapping (meta, entry ids, data) is agreed with Marble Web; see the side-sess
 
 Sharing and readers (invitations, wraps, contributions taken in), the pinner, the monthly audit and repair of
 Blossom copies (§6.4), garbage collection (§6.5), forks and re-rooting (§7.4), `sync-request`, the mass-change
-notice (§10), History. Blobs go to every server by upload under this device's key rather than BUD-04 mirror.
+notice (§10), History. Deleting blobs (§6.5) waits for the spec: under npub auth one device's delete removes
+every device's copy.
 
 ## Tests
 

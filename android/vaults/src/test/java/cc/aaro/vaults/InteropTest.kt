@@ -26,7 +26,9 @@ class InteropTest {
         override fun put(k: String, v: String?) { if (v == null) f(k).delete() else f(k).writeText(v) }
     }
     private fun vaults(sk: ByteArray): Vaults {
-        val net = OkNet(); val acc = NsecAccount(sk)
+        // VAULTS_BLOSSOM: the test account's kind 10063 list, comma-separated, as published (unnormalized).
+        val blossom = System.getenv("VAULTS_BLOSSOM")?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+        val net = OkNet(); val acc = NsecAccount(sk, blossom)
         return Vaults(acc, net, net, FileStore(File("build/interop-" + acc.npub.take(12))), WallClock, { relays }, "Android engine (JVM)")
     }
     private fun show(v: Vault) {
@@ -81,7 +83,10 @@ class InteropTest {
             "create" -> {
                 val sk = Keys.newSecret()
                 val vs = vaults(sk)
-                val v = vs.create("notes", "Notes", relays, servers)
+                // The account's list, published on the test relay so Web finds it too; the vault's config names it.
+                val own = vs.account.servers()
+                if (own.isNotEmpty()) check(OkNet().publish(relays, Ev.sign(sk, WallClock.now(), 10063, own.map { listOf("server", it) }, "")).isNotEmpty())
+                val v = vs.create("notes", "Notes", relays, Storage.normalize(own).ifEmpty { servers })
                 val t = WallClock.now()
                 fun mk(id: String, text: String, done: Boolean = false): JSONObject {
                     val m = JSONObject().put("kind", "note").put("created", t).put("title", "").put("tags", org.json.JSONArray()).put("done", done).put("pinned", false).put("id", id).put("updated", t)
@@ -99,6 +104,7 @@ class InteropTest {
                 v.enqueue(listOf(mk("c000000000000004", "After the checkpoint")))
                 check(v.sync())
                 show(v)
+                println("REFUSED " + vs.storage.refused)
                 println("CREATED nsec=${hex(sk)} npub=${vs.account.npub} vault=${v.id}")
             }
         }

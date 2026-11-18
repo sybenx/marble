@@ -32,9 +32,14 @@ class FakeRelays : RelayNet {
 class FakeBlobs : Blobs {
     val held = ConcurrentHashMap<String, Pair<ByteArray, MutableSet<String>>>() // server/sha
     private fun who(auth: String) = Ev.of(obj(String(java.util.Base64.getDecoder().decode(auth.removePrefix("Nostr "))))).pubkey
-    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Boolean {
-        if (hex(sha256(bytes)) != sha256) return false
-        held.getOrPut("$server/$sha256") { bytes to HashSet() }.second += who(auth); return true
+    /** Servers that answer every upload with this status (403: refuses the key, 415: refuses the type). */
+    val refuse = ConcurrentHashMap<String, Int>()
+    val uploads = java.util.concurrent.atomic.AtomicInteger()
+    override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int {
+        refuse[server]?.let { return it }
+        if (hex(sha256(bytes)) != sha256) return -2
+        uploads.incrementAndGet()
+        held.getOrPut("$server/$sha256") { bytes to HashSet() }.second += who(auth); return 200
     }
     override fun get(server: String, sha256: String) = held["$server/$sha256"]?.first
     override fun delete(server: String, sha256: String, auth: String): Boolean {
@@ -57,6 +62,9 @@ class FakeBox(val npubSecret: ByteArray) {
 
 class FakeAccount(val box: FakeBox, val me: String, val keykin: Boolean = true) : Account {
     override val npub get() = box.npub
+    /** The account's kind 10063 list, as the app would hand it over (unnormalized here, on purpose). */
+    var blossom: List<String> = emptyList()
+    override fun servers() = blossom
     var signs = 0; var ecdhs = 0
     override fun sign(createdAt: Long, kind: Int, tags: List<List<String>>, content: String): Ev {
         if (keykin && !box.ok(me)) throw IllegalStateException("blocked")
