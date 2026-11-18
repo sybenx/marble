@@ -198,6 +198,21 @@ export async function nip44Self(text, encrypt = true) {
   } catch (err) { throw checked(err); }
 }
 
+/**
+ * NIP-44 decrypt as you, of a message from `pubkey` (vaults: a keyring entry's one-time key, vaults.md §3.6): through the
+ * extension, or your phone's signer (NIP-46 nip44_decrypt). Throws "unsupported" when neither can.
+ */
+export async function nip44DecryptFrom(pubkey, ct) {
+  if (hold) await hold.promise;
+  try {
+    if (state?.method === "extension" && window.nostr?.nip44) return await window.nostr.nip44.decrypt(pubkey, ct);
+    if (state?.method === "phone") return await (await phoneRemote()).request("nip44_decrypt", [pubkey, ct], 60000);
+  } catch (err) { throw checked(err); }
+  throw new Error("unsupported");
+}
+/** Whether this sign-in may open vaults (it signs and decrypts as you). */
+export const canVault = () => (state?.method === "extension" && !!window.nostr?.nip44) || state?.method === "phone";
+
 /** Where your posts go: your own write relays (NIP-65), or the fast ones if you have none listed. */
 export async function myWriteRelays() {
   const o = await Promise.race([outbox(state.pubkey), new Promise((r) => setTimeout(() => r({ write: [] }), 2000))]);
