@@ -178,7 +178,8 @@ export function req(urls, filters, { timeout = 5000, onEvent = null, signal = nu
       done(url, ok = true) {
         if (waiting.delete(url) && ok) { answered++; answeredBy.add(url); }
         if (!waiting.size) finish();
-        else if (settle && !settleTimer) settleTimer = setTimeout(finish, settle);
+        // (only an answer starts the wait for the rest: a relay that fails at once must not cut short the ones still connecting)
+        else if (settle && ok && !settleTimer) settleTimer = setTimeout(finish, settle);
       },
     };
     const timer = setTimeout(finish, timeout);

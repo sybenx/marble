@@ -14,7 +14,9 @@ export function originOnly(url) {
   if (typeof url !== "string" || url.length > 200) return null;
   let u;
   try { u = new URL(url); } catch { return null; }
-  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) return null;
+  // testing on localhost: a login page on this machine (http://localhost:port) counts too, and only then
+  const local = typeof location !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && u.protocol === "http:" && /^(localhost|127\.0\.0\.1)$/.test(u.hostname);
+  if ((u.protocol !== "https:" && !local) || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) return null;
   // what was written must be the origin itself, not something a parser tidied into one
   return url.replace(/\/$/, "") === u.origin ? u.origin : null;
 }
