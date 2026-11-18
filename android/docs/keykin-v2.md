@@ -41,6 +41,7 @@ repo, and the rules are its `SPEC.md`.
 | The login-page pointer event | Published and read back, signature verifies |
 | Sites and apps reported to the box; revoke from the page; revoke from the phone | Works both ways |
 | The account page asks the phone: bunker link, `nostrconnect://` code, add a device | Works, no fingerprint (Aaron, 2026-11-17) |
+| Keykin Login (password session) leaves a `nostrconnect` note; Marble answers it with the app closed (task removed, service running), the test site signs a kind 1, and the grant shows on the account page (2026-11-18) | Works. Answered in 21 s and 29 s: the service polls the box every 30 s |
 | The account page asks to remove blocked devices: Yes and No on the phone | Works. No signs that browser out |
 | This phone blocked from the page, then unblocked | Works. The phone says it is blocked |
 | Two accounts on one phone and one box | Each signs under its own key |
@@ -147,3 +148,12 @@ repo, and the rules are its `SPEC.md`.
   account's state to logcat under `MarbleState`.
 - A relay on this Mac: `adb reverse tcp:7447 tcp:7447`, since QRST takes a `ws://` relay only on
   loopback.
+
+## Notes from the account page: how fast
+
+The foreground service (`CosignService`, started at boot) runs `Signer.refresh()` every 30 seconds
+for each account. That call reports grants and takes notes (`invite`, `bunker`, `nostrconnect`,
+and `cycle`, which asks Yes or No), so a note is answered within about 30 seconds whether or not
+Marble is open. The box has no push, so the delay can only get shorter by polling more often. Not
+checked: deep Doze on a real phone with the screen off for a long time, where Android may hold
+the timer back.
