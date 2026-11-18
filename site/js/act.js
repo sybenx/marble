@@ -180,7 +180,10 @@ async function lookUp(typed) {
   if (!pk) return askName(`Marble couldn't find ${esc(typed)}. Check the name, or <button type="button" class="link" data-si="code">sign in with a code</button>.`, typed);
   const r = await loginPage(pk);
   if (mine !== attempt) return;
-  r.url ? atLoginPage(r.url, { who: pk }) : withMarble();
+  if (r.url) return atLoginPage(r.url, { who: pk });
+  if (r.removed) forgetPage(pk);
+  const kept = rememberedPage(pk); // a pointer seen after an earlier sign-in, should the relays miss it now
+  kept ? atLoginPage(kept, { who: pk }) : withMarble({ missing: pk });
 }
 
 // ── Your account names a login page ──
@@ -199,7 +202,10 @@ function atLoginPage(url, { who = null, pending = null } = {}) {
 }
 
 // ── No login page: Marble on your phone ──
-function withMarble() {
+let missingFor = null; // the account a name lookup found no pointer for (its codes carry kk_login=missing)
+const missingCode = () => ({ extra: missingFor ? "&kk_login=missing" : "", missing: missingFor });
+function withMarble({ missing = null } = {}) {
+  missingFor = missing;
   run((uri, svg) => {
     if (onPhone()) return view(`<h2 id="si-title">Sign in with Marble</h2>
       <a class="si-button si-open" href="${esc(phoneLink(uri))}" data-si="open">Open Marble</a>
@@ -215,7 +221,7 @@ function withMarble() {
       <p class="si-get">No Marble yet? <a class="link" href="${GET_MARBLE}" target="_blank" rel="noopener">Get Marble for Android</a></p>
       <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button><button type="button" class="link" data-si="name">Back</button></div>`);
     if (noAppSoon) noApp();
-  });
+  }, missingCode());
 }
 
 // ── Another signer app (for nostr nerds): the plain code, or a bunker link ──
@@ -226,7 +232,21 @@ function withSigner() {
       <form data-form="bunker"><label class="visually-hidden" for="si-bunker">Bunker link</label>
         <input id="si-bunker" name="bunker" class="acct-who" type="text" placeholder="bunker://…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         <p class="si-note" data-bunker-note hidden></p>
-        <div class="si-actions"><button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="code">Back</button><button type="submit" class="si-button">Connect</button></div></form>`));
+        <div class="si-actions"><button type="button" class="link" data-si="copy" data-code="${esc(uri)}">Copy the code</button><button type="button" class="link" data-si="code">Back</button><button type="submit" class="si-button">Connect</button></div></form>`), missingCode());
+}
+
+// ── A pointer the phone put back ──
+// Signed in from a name with no pointer: the phone may publish it as it answers (kk_login=missing). Looked up once more a
+// little after, and kept for next time in this browser. Nothing changes mid-sign-in.
+const PAGE = (pk) => `marble.loginpage.${pk}`;
+function rememberedPage(pk) { try { return localStorage.getItem(PAGE(pk)); } catch { return null; } }
+function forgetPage(pk) { try { localStorage.removeItem(PAGE(pk)); } catch {} }
+export async function lookAgain(pk, wait = 5000) {
+  await new Promise((r) => setTimeout(r, wait));
+  const { loginPage } = await import("./account-page.js");
+  const r = await loginPage(pk).catch(() => null);
+  try { if (r?.url) localStorage.setItem(PAGE(pk), r.url); } catch {}
+  return r?.url || null;
 }
 
 let again = null;
@@ -237,12 +257,12 @@ function finish(done) {
   toast("Signed in");
 }
 /** Makes a code (or picks up a pending one), draws it with render(uri, svg), and signs in once it's answered. */
-async function run(render, { pending = null, keep = null } = {}) {
+async function run(render, { pending = null, keep = null, extra = "", missing = null } = {}) {
   const mine = ++attempt;
   stopWatching();
   phoneAbort?.abort();
   const ctrl = (phoneAbort = new AbortController());
-  again = () => run(render, { keep });
+  again = () => run(render, { keep, extra, missing });
   view(`<h2 id="si-title">Sign in</h2><p class="si-wait">${spinner}Making a code…</p>`);
   const life = keep ? PENDING_LIFE * 1000 - (pending ? Date.now() - pending.made * 1000 : 0) : 180000;
   const expire = setTimeout(() => {
@@ -257,6 +277,7 @@ async function run(render, { pending = null, keep = null } = {}) {
     const done = await phoneSignIn({
       signal: ctrl.signal,
       pending,
+      extra,
       onPending: keep ? (p) => { try { sessionStorage.setItem(PENDING, JSON.stringify({ ...p, ...keep, who: keep.who || pending?.who || null })); } catch {} } : null,
       // the site's name the sign-in app shows: the page's own <meta name="application-name">
       name: document.querySelector('meta[name="application-name"]')?.content || location.hostname,
@@ -264,6 +285,7 @@ async function run(render, { pending = null, keep = null } = {}) {
     });
     if (mine !== attempt) return done.remote.stop();
     finish(done);
+    if (missing && done.pubkey === missing) lookAgain(missing);
   } catch (err) {
     if (mine !== attempt || ctrl.signal.aborted) return;
     clearPending();

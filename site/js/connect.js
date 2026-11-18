@@ -168,8 +168,10 @@ function signWith(sk, t, { schnorr, sha256 }) {
  * kk=account (Keykin SPEC §11.6): Marble Web signs in as the account itself, never a child key (§8k).
  * pending: a code made earlier ({sk, secret, relays, made}, see onPending), listened for again from when it was made,
  * as after coming back from the login page in this tab. onPending(p) gets that, to keep until the sign-in ends.
+ * extra: more parameters for the code, as "&k=v" (kk_login=missing: Marble found no login-page pointer, so the phone
+ * that answers can publish it again; agreed with Marble Android).
  */
-export async function phoneSignIn({ onCode, onPending, pending = null, signal, perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
+export async function phoneSignIn({ onCode, onPending, pending = null, signal, extra = "", perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
   const { schnorr, encodeQR } = await load();
   const sk = pending ? fromHex(pending.sk) : schnorr.utils.randomSecretKey();
   const pk = toHex(schnorr.getPublicKey(sk));
@@ -177,7 +179,7 @@ export async function phoneSignIn({ onCode, onPending, pending = null, signal, p
   const relays = pending?.relays || connectRelays();
   const made = pending?.made || now(), asked = made - 30;
   const uri = `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}&kk=account`;
+    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}&kk=account${extra}`;
   onPending?.({ sk: toHex(sk), secret, relays, made });
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.

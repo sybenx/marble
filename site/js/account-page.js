@@ -61,7 +61,7 @@ export async function loginPage(pubkey, { timeout = 4500 } = {}) {
     .sort((a, b) => b.created_at - a.created_at)[0];
   if (!mine) return { none: true };
   const url = pageFrom(mine, pubkey);
-  return url ? { url, event: mine } : { none: true };
+  return url ? { url, event: mine } : { none: true, removed: true }; // (taken away: the newest names nothing)
 }
 
 /** Who was typed: an npub or nprofile, a 64-character key, or a name@domain. The account's key, or null. */
