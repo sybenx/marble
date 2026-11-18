@@ -16,7 +16,8 @@ const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./va
 let early = []; // changes made while the vault was opening
 let libNow = null; // the vault code, once loaded
 let who = "", session = null, status = "none", why = "", cached = null, queue = new Map(), timer = null, writing = null, opening = null;
-// status: "none" (no vault: Notes as before), "opening", "open", "offline" (opened, can't reach relays now), "error", "removed"
+// status: "none" (no vault: Notes as before), "opening", "open", "offline" (opened, can't reach relays now), "error",
+// "refused" (your signer wouldn't decrypt your keyring for this site: Notes show this browser's copy, and say why), "removed"
 const listeners = new Set();
 export const onVault = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const tell = () => listeners.forEach((fn) => fn());
@@ -87,7 +88,7 @@ export function start(pk = current()) {
   if (!pk || !canVault()) return Promise.resolve(null);
   if (opening && who === pk) return opening;
   if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); }
-  who = pk; status = "opening"; tell();
+  who = pk; status = "opening"; lastTry = Date.now(); tell();
   const p = (async () => {
     cached = (await idb("get", pk)) || null;
     status = "opening"; why = ""; tell();
@@ -98,7 +99,10 @@ export function start(pk = current()) {
     const mine = join(a?.write || [], a?.read || [], FAST.slice(0, 3));
     let entries;
     try {
-      entries = sync.notesVault(await sync.readKeyrings({ me: pk, relays: mine, net, signer: signer(pk) }));
+      const all = await sync.readKeyrings({ me: pk, relays: mine, net, signer: signer(pk) });
+      entries = sync.notesVault(all);
+      // keyring entries there, but the signer wouldn't open any of them: not "no vault"
+      if (!entries.length && all.refused.length) return fail(pk, all.refused[0]);
     } catch (err) { return fail(pk, err); }
     if (who !== pk) return null;
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
@@ -125,11 +129,22 @@ export function start(pk = current()) {
 function fail(pk, err) {
   if (who !== pk) return null;
   const m = String(err?.message || err);
-  // a signer that won't decrypt for this site: Notes as before
-  status = /unsupported|not allowed|denied|rejected/i.test(m) ? "none" : "error";
+  // a signer that won't decrypt for this site (Marble's own signer says "not_allowed: …"): Notes show this browser's
+  // copy, and say why; anything else is an error, tried again later
+  status = /unsupported|not[_ ]allowed|denied|rejected|refused/i.test(m) ? "refused" : "error";
   why = m;
   tell();
   return null;
+}
+
+/**
+ * Not open (no vault yet, the signer refused, an error): looked for again when you come back to the page, at most every
+ * 5 minutes, so a vault your phone makes meanwhile, or a site switch you turn on, is picked up without a reload.
+ */
+let lastTry = 0;
+function retry() {
+  if (session || opening || !current() || !["none", "refused", "error"].includes(status) || Date.now() - lastTry < 300000) return;
+  start(current());
 }
 
 /** Signed out, or another account: the session and this browser's copy of the notes go (§12.3). */
@@ -271,7 +286,8 @@ export function combine(item, text) {
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flush();
-    else refresh();
+    else if (session) refresh();
+    else retry();
   });
   addEventListener("pagehide", () => flush());
   onMe((pk) => { if (who && who !== pk) stop(who); if (pk) start(pk); });

@@ -153,4 +153,13 @@ ok(refused && a.removed(), "a removed browser refuses to write");
   net.refuse.clear();
 }
 
+// a signer that won't decrypt for this site (Marble 0.15.1's site scopes: a peer other than you counts as DMs)
+{
+  const refusing = { ...signer, decrypt: async () => { throw new Error("not_allowed: DMs are off for this site"); } };
+  const all = await readKeyrings({ me, relays, net, signer: refusing });
+  ok(all.length === 0 && all.refused.length >= 1 && /not_allowed/.test(all.refused[0].message) && all.found >= 1, "a refused decrypt is reported, not taken for no vault");
+  const again = await readKeyrings({ me, relays, net, signer });
+  ok(notesVault(again).length >= 1, "and the same entries open once the signer answers");
+}
+
 console.log(`all ${n} sync checks pass`);

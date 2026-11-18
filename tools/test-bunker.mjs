@@ -1,6 +1,7 @@
 // A NIP-46 signer for local tests: answers a page's nostrconnect:// code as a phone would (connect with the secret,
 // then get_public_key, sign_event, nip44_encrypt, nip44_decrypt), with a TEST key, on a local relay only.
-//   node tools/test-bunker.mjs <nsec hex> '<nostrconnect://… uri>'
+//   node tools/test-bunker.mjs <nsec hex> '<nostrconnect://… uri>' [--scopes]
+// --scopes acts as Marble Android 0.15.1's site scopes: nip44 with a peer other than you is refused as DMs.
 import * as C from "../site/js/vault/crypto.js";
 const [secH, uri] = process.argv.slice(2);
 const sec = C.unhex(secH), me = C.pubHex(sec);
@@ -23,6 +24,7 @@ ws.onmessage = (m) => {
   try {
     if (req.method === "get_public_key") result = me;
     else if (req.method === "sign_event") { const t = JSON.parse(req.params[0]); result = JSON.stringify(C.signEvent(sec, t)); }
+    else if (req.method.startsWith("nip44") && process.argv.includes("--scopes") && req.params[0] !== me) error = "not_allowed: DMs are off for this site";
     else if (req.method === "nip44_decrypt") result = C.nip44Decrypt(C.nip44Conv(sec, req.params[0]), req.params[1]);
     else if (req.method === "nip44_encrypt") result = C.nip44Encrypt(C.nip44Conv(sec, req.params[0]), req.params[1]);
     else if (req.method === "logout") { result = "ok"; }
