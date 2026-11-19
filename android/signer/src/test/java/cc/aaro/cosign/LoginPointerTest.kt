@@ -16,8 +16,14 @@ class LoginPointerTest {
     private val pk = Secp.publicKey(sk).toHex()
     private val page = "https://account.syb.lol"
     private val a = "wss://a.example"; private val b = "wss://b.example"
+    /** The old kind (30078): d `keykin/login`, a `url` tag. */
     private fun pointer(url: String?, at: Long = 100, by: ByteArray = sk) =
         Event.sign(Secp.publicKey(by).toHex(), at, 30078, listOf(listOf("d", "keykin/login")) + (url?.let { listOf(listOf("url", it)) } ?: emptyList()), "", by, SystemEnv)
+    /** The new kind (10046): a `nostrconnect_url` template, or none when removed. */
+    private fun pointer46(tpl: String?, at: Long = 100, by: ByteArray = sk) =
+        Event.sign(Secp.publicKey(by).toHex(), at, 10046, tpl?.let { listOf(listOf("nostrconnect_url", it)) } ?: emptyList(), "", by, SystemEnv)
+    private val tpl = "$page/#connect=<nostrconnect>"
+    private fun both(at: Long = 100) = listOf(pointer46(tpl, at), pointer(page, at))
 
     @Test fun onlyAnHttpsOriginIsALoginPage() {
         assertEquals(page, LoginPointer.origin("https://Account.syb.lol/"))
@@ -30,17 +36,45 @@ class LoginPointerTest {
         assertEquals("http://10.0.2.2:8790", LoginPointer.origin("http://10.0.2.2:8790", allowHttp = true))
     }
 
-    @Test fun noPointerAnywhereIsSignedAnew() =
-        assertEquals(Plan.Sign(page), LoginPointer.plan(page, pk, mapOf(a to emptyList(), b to emptyList()), listOf(a, b)))
+    @Test fun theTemplateIsTheLoginOriginWithConnectLast() {
+        assertEquals("https://account.syb.lol/#connect=<nostrconnect>", LoginPointer.template(page))
+        assertEquals(listOf(listOf("nostrconnect_url", tpl)), LoginPointer.tags(10046, page))
+        assertEquals(listOf(listOf("d", "keykin/login"), listOf("url", page)), LoginPointer.tags(30078, page))
+        // Removing: no template, no url.
+        assertEquals(emptyList<List<String>>(), LoginPointer.tags(10046, null))
+        assertEquals(listOf(listOf("d", "keykin/login")), LoginPointer.tags(30078, null))
+        assertEquals(page, LoginPointer.templateOrigin(tpl))
+        assertEquals(page, LoginPointer.templateOrigin("https://Account.syb.lol:443/x#connect=<nostrconnect>"))
+        for (bad in listOf("http://account.syb.lol/#connect=<nostrconnect>", "https://account.syb.lol/#connect=", "https://u:p@account.syb.lol/#connect=<nostrconnect>",
+                "https://account.syb.lol/<nostrconnect>#connect=<nostrconnect>", "https://account.syb.lol/#connect=<nostrconnect>&x=1"))
+            assertNull(bad, LoginPointer.templateOrigin(bad))
+    }
 
-    @Test fun aRelayThatLacksTheNewestGetsTheSameEventAgain() {
-        val p = pointer(page)
-        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b)))
+    @Test fun noPointerAnywhereIsSignedAnewAsBothKinds() =
+        assertEquals(Plan.Act(page, sign = listOf(10046, 30078)), LoginPointer.plan(page, pk, mapOf(a to emptyList(), b to emptyList()), listOf(a, b)))
+
+    @Test fun onlyTheOldKindOutThereGetsTheNewOneSignedAndTheOldOneKept() {
+        // An account from before the move: its 30078 names this page, so a 10046 is signed, and the 30078 still goes where it's missing.
+        val old = pointer(page)
+        assertEquals(Plan.Act(page, sign = listOf(10046), resend = listOf(LoginPointer.Copy(old, listOf(b)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(old), b to emptyList()), listOf(a, b)))
+        // And the other way: a 10046 alone gets a 30078 too.
+        val p = pointer46(tpl)
+        assertEquals(Plan.Act(page, sign = listOf(30078)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to listOf(p)), listOf(a, b)))
+    }
+
+    @Test fun aRelayThatLacksACopyOfEitherKindGetsTheSameEventAgain() {
+        val (p46, p78) = both()
+        // b lacks the 10046, a lacks the 30078: each gets the same signed event, no new signature.
+        assertEquals(Plan.Act(page, resend = listOf(LoginPointer.Copy(p46, listOf(b)), LoginPointer.Copy(p78, listOf(a)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(p46), b to listOf(p78)), listOf(a, b)))
         // A relay holding only an older one gets the newest too.
-        val old = pointer(page, 50)
-        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to listOf(old)), listOf(a, b)))
+        val (o46, o78) = both(50)
+        assertEquals(Plan.Act(page, resend = listOf(LoginPointer.Copy(p46, listOf(b)), LoginPointer.Copy(p78, listOf(b)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(p46, p78), b to listOf(o46, o78)), listOf(a, b)))
         // A relay that didn't answer is left for next time.
-        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(page, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b, "wss://silent.example")))
+        assertEquals(Plan.Act(page, resend = listOf(LoginPointer.Copy(p46, listOf(b)), LoginPointer.Copy(p78, listOf(b)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(p46, p78), b to emptyList()), listOf(a, b, "wss://silent.example")))
     }
 
     @Test fun withNoLoginPageKnownNothingIsSignedOrSentAround() {
@@ -48,6 +82,7 @@ class LoginPointerTest {
         val p = pointer("https://box.lookalike.example")
         assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to emptyList(), b to emptyList()), listOf(a, b)))
         assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b)))
+        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to listOf(pointer46(tpl)), b to emptyList()), listOf(a, b)))
         assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, emptyMap(), listOf(a)))
     }
 
@@ -61,8 +96,9 @@ class LoginPointerTest {
         assertEquals(page, LoginPointer.fromCode(named.login))
         assertNull(LoginPointer.fromCode("https://account.syb.lol/login"))
         // A pointer naming the page the code named is still sent to a relay lacking it.
-        val p = pointer(page)
-        assertEquals(Plan.Resend(p, listOf(b)), LoginPointer.plan(LoginPointer.fromCode(named.login), pk, mapOf(a to listOf(p), b to emptyList()), listOf(a, b)))
+        val (p46, p78) = both()
+        assertEquals(Plan.Act(page, resend = listOf(LoginPointer.Copy(p46, listOf(b)), LoginPointer.Copy(p78, listOf(b)))),
+            LoginPointer.plan(LoginPointer.fromCode(named.login), pk, mapOf(a to listOf(p46, p78), b to emptyList()), listOf(a, b)))
     }
 
     @Test fun theSignerNeverProbesTheBoxForALoginPage() {
@@ -73,17 +109,28 @@ class LoginPointerTest {
         org.junit.Assert.assertFalse(src.contains("/api\""))
     }
 
-    @Test fun onEveryRelayAlreadyIsLeft() =
-        assertEquals(Plan.Leave("on every write relay that answered"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer(page)), b to listOf(pointer(page + "/")))
-            .let { m -> mapOf(a to m[a]!!, b to m[a]!!) }, listOf(a, b)))
-
-    @Test fun aPointerRemovedOnPurposeIsNeverRecreated() {
-        val gone = pointer(null, 200)
-        assertEquals(Plan.Leave("removed on purpose"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer(page, 100)), b to listOf(gone)), listOf(a, b)))
+    @Test fun onEveryRelayAlreadyIsLeft() {
+        val all = both()
+        assertEquals(Plan.Leave("on every write relay that answered"), LoginPointer.plan(page, pk, mapOf(a to all, b to all), listOf(a, b)))
     }
 
-    @Test fun aPointerToAnotherPageIsNeverReplacedOrSentAround() =
-        assertEquals(Plan.Leave("names https://other.example"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer("https://other.example")), b to emptyList()), listOf(a, b)))
+    @Test fun aPointerRemovedOnPurposeIsNeverRecreated() {
+        // The newest 10046 has no template: removed, and the old kind (still naming the page) is not resent or a reason to sign.
+        val gone = pointer46(null, 200)
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(tpl, 100), pointer(page)), b to listOf(gone)), listOf(a, b)))
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(gone), b to emptyList()), listOf(a, b)))
+        // The old kind removed on purpose (and no 10046): not recreated as either kind.
+        assertEquals(Plan.Leave("removed on purpose (30078)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer(page, 100)), b to listOf(pointer(null, 200))), listOf(a, b)))
+    }
+
+    @Test fun aPointerToAnotherPageIsNeverReplacedOrSentAround() {
+        assertEquals(Plan.Leave("names https://other.example (10046)"),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46("https://other.example/#connect=<nostrconnect>"), pointer(page)), b to emptyList()), listOf(a, b)))
+        assertEquals(Plan.Leave("names https://other.example (30078)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer("https://other.example")), b to emptyList()), listOf(a, b)))
+        // A template that isn't a usable one is not this page either.
+        val odd = "https://account.syb.lol/#connect="
+        assertEquals(Plan.Leave("names $odd (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(odd))), listOf(a)))
+    }
 
     @Test fun noRelayAnsweredWaits() {
         assertEquals(Plan.Wait, LoginPointer.plan(page, pk, emptyMap(), listOf(a)))
@@ -91,8 +138,10 @@ class LoginPointerTest {
 
     @Test fun forgedAndOtherAccountsPointersDontCount() {
         val forged = pointer(page, 300).copy(sig = "00".repeat(64))
+        val forged46 = pointer46(tpl, 300).copy(sig = "00".repeat(64))
         val someoneElse = pointer("https://other.example", 400, SystemEnv.random(32))
-        assertEquals(Plan.Sign(page), LoginPointer.plan(page, pk, mapOf(a to listOf(forged, someoneElse)), listOf(a)))
+        val someoneElse46 = pointer46("https://other.example/#connect=<nostrconnect>", 400, SystemEnv.random(32))
+        assertEquals(Plan.Act(page, sign = listOf(10046, 30078)), LoginPointer.plan(page, pk, mapOf(a to listOf(forged, forged46, someoneElse, someoneElse46)), listOf(a)))
     }
 
     @Test fun theBoxCodeAndJoinTextCarryTheLoginPage() {

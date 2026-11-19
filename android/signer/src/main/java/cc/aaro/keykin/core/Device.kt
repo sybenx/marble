@@ -298,10 +298,12 @@ object Device {
 
     // --- What this device has let in, and revoking (SPEC 11.5) ---------------------------------------
 
-    data class Grant(val id: String, val kind: String, val name: String, val since: Long)
+    /** [client], [device] and [via] are optional (SPEC 11.5): the site's NIP-46 key, its own label, and how it came in. */
+    data class Grant(val id: String, val kind: String, val name: String, val since: Long, val client: String? = null, val device: String? = null, val via: String? = null)
     /** Tells the box this device's whole list. Returns the ids that were revoked, to drop from the list. */
     fun reportGrants(me: Me, h: Held, grants: List<Grant>, send: Send = http(h.addr)): List<String> {
-        val a = JSONArray(grants.map { JSONObject().put("id", it.id).put("kind", it.kind).put("name", it.name).put("since", it.since) })
+        val a = JSONArray(grants.map { JSONObject().put("id", it.id).put("kind", it.kind).put("name", it.name).put("since", it.since)
+            .apply { it.client?.let { c -> put("client", c) }; it.device?.let { d -> put("device", d) }; it.via?.let { v -> put("via", v) } } })
         val r = call(send, seal(JSONObject().put("op", "grants").put("account", h.npub).put("grants", a), me)).optJSONArray("revoked") ?: JSONArray()
         return List(r.length()) { r.getString(it) }
     }
@@ -309,11 +311,20 @@ object Device {
 
     // --- Things the account page started for a device to finish (SPEC 11.6) --------------------------
 
-    /** `tap` is true when the device must ask the person Yes or No before doing it. */
-    data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean)
+    /**
+     * `tap` is true when the device must ask the person Yes or No before doing it. For a `nostrconnect`
+     * note, [from] is the sender's origin as the login page saw it (null when it could not tell) and
+     * [signAs] is the note's `as`, `"main"` or `"site"`. An older box sends neither: null, the old behaviour.
+     */
+    data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean, val from: String? = null, val signAs: String? = null) {
+        companion object {
+            private fun JSONObject.str(k: String) = if (isNull(k)) null else optString(k).trim().ifEmpty { null }
+            fun of(n: JSONObject) = Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap"), n.str("from"), n.str("as"))
+        }
+    }
     fun notes(me: Me, h: Held, send: Send = http(h.addr)): List<Note> {
         val a = call(send, seal(JSONObject().put("op", "notes").put("account", h.npub), me)).optJSONArray("notes") ?: JSONArray()
-        return List(a.length()) { a.getJSONObject(it).let { n -> Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap")) } }
+        return List(a.length()) { Note.of(a.getJSONObject(it)) }
     }
     fun noteDone(me: Me, h: Held, note: String, result: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "note_done").put("account", h.npub).put("note", note).put("result", result), me)) }
     /** The person tapped No. The note goes, and the browser that asked is signed out of the account page. */

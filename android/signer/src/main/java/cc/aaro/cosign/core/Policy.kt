@@ -41,7 +41,7 @@ object Policy {
 
     private val EVENT_NAMES = mapOf(
         1 to "note", 4 to "DM", 5 to "deletion", 6 to "repost", 7 to "reaction", 13 to "DM", 14 to "DM", 16 to "repost", 62 to "request to vanish",
-        1111 to "comment", 9734 to "zap request", 22242 to "relay login", 24242 to "upload login", 27235 to "web login", 30023 to "article", 30078 to "app data",
+        1111 to "comment", 9734 to "zap request", 22242 to "relay login", 24242 to "upload login", 27235 to "web login", 30023 to "article", 30078 to "app data", 10046 to "login page",
     )
     private fun kindName(k: Int) = NAMES[k]?.first ?: EVENT_NAMES[k] ?: "kind $k event"
     private fun itemName(k: Int) = NAMES[k]?.second ?: "item"

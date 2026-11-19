@@ -213,7 +213,7 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     private fun grantOf(g: AppGrant) = g.pk.take(32)
     private fun reportGrants(h: Held) {
-        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.origin ?: "A site", it.added) } +
+        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.origin ?: "A site", it.added, it.key, it.device, it.how) } +
             apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Device.Grant(grantOf(it), "app", it.label, appTimes.getLong(it.pkg + ":added", 0)) }
         val revoked = try { Device.reportGrants(me(), h, mine, send(h)) } catch (_: Exception) { return }   // an older box: it keeps no list
         if (revoked.isNotEmpty()) dropRevoked(revoked.toSet())
@@ -251,11 +251,14 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val client = uri.host?.lowercase(); val secret = uri.getQueryParameter("secret")
                         val relays = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
                         if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
-                        val origin = uri.getQueryParameter("url")?.let { Uri.parse(it).host } ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "A site"
-                        sites.acceptNostrConnect(client!!, relays, secret, origin)
+                        // Which key, and what to call it (SPEC 11.6): a site signed in before keeps its choice, else the card's.
+                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() })
+                        val origin = pick.name
+                        pick.place?.let { childFor(it) }
+                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place, how = if (n.from != null) "login" else "paste", device = uri.getQueryParameter("device"))
                         pointerCheck(h)
                         Device.noteDone(me(), h, n.id, "ok", send(h))
-                        note("Connected $origin, from your account page", "approved")
+                        note(if (pick.place != null) "Connected $origin with a new account, from your account page" else "Connected $origin, from your account page", "approved")
                     }
                     "cycle" -> if (n.tap) {
                         ui.value.tap?.let { old -> listener?.onTapGone(old.id) }
@@ -315,9 +318,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         ui.update { it.copy(working = "Signing…", error = null) }
         work.execute {
             try {
-                val tags = listOf(listOf("d", "keykin/login")) + if (origin.isEmpty()) emptyList() else listOf(listOf("url", origin))
-                val signed = signNow(Event(pub, Clock.now(), 30078, tags, "").withId())
-                publish(signed)
+                // Both kinds during the move (SPEC 11.1): naming the page, or taking it away, on each.
+                for (kind in LoginPointer.KINDS) publish(signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, origin.ifEmpty { null }), "").withId()))
                 prefs.edit().putString("login-page", origin).apply()
                 ui.update { it.copy(loginPage = origin.ifEmpty { null }) }
                 note(if (origin.isEmpty()) "Removed your login page's address" else "Your login page is $origin", "approved")
@@ -361,7 +363,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
         val writes = writeRelays()
         val look = if (testing) writes else (writes + DEFAULT_RELAYS).distinct()
-        val filter = "{\"kinds\":[10002,30078],\"authors\":[\"$pub\"]}"
+        val filter = "{\"kinds\":[10002,${LoginPointer.KIND},${LoginPointer.LEGACY}],\"authors\":[\"$pub\"]}"
         var byRelay = queryEach(look, filter)
         // The account's own write list, if a relay had it and this phone hadn't seen it.
         val outbox = byRelay.values.flatten().filter { it.kind == 10002 && it.pubkey == pub && it.verify() }.maxByOrNull { it.createdAt }
@@ -374,13 +376,18 @@ class Signer(private val context: Context, val slot: String = "0") {
         when (plan) {
             is LoginPointer.Plan.Wait -> return false
             is LoginPointer.Plan.Leave -> return true
-            is LoginPointer.Plan.Resend -> { publish(plan.event, plan.to); return true }
-            is LoginPointer.Plan.Sign -> {
-                val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", plan.origin)), "").withId())
-                publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
-                prefs.edit().putString("login-page", plan.origin).apply()
-                ui.update { it.copy(loginPage = plan.origin) }
-                note("Your account's sign-in page is now ${plan.origin}", "approved")
+            is LoginPointer.Plan.Act -> {
+                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has is signed anew.
+                for (c in plan.resend) publish(c.event, c.to)
+                for (kind in plan.sign) {
+                    val signed = signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, plan.origin), "").withId())
+                    publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
+                }
+                if (plan.sign.size == LoginPointer.KINDS.size) {
+                    prefs.edit().putString("login-page", plan.origin).apply()
+                    ui.update { it.copy(loginPage = plan.origin) }
+                    note("Your account's sign-in page is now ${plan.origin}", "approved")
+                }
                 return true
             }
         }
@@ -441,7 +448,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             } catch (e: Exception) { err(why(e)) }
             return
         }
-        if (t.startsWith("nostrconnect:")) return scannedNostrConnect(t)
+        if (t.startsWith("nostrconnect:")) { connectPasted = pasted; return scannedNostrConnect(t) }
         // The whole key, by QRST: another device's code to send it to, or one that sends it here.
         try { PairingUri.parse(t) } catch (_: Exception) { null }?.takeIf { it.profile == cc.aaro.qrst.core.NsecProfile.id }?.let { p ->
             return if (cc.aaro.qrst.core.scannerRole(p.mode) == cc.aaro.qrst.core.Role.SENDER) { if (isMember) scannedKeyCode(p, pasted) else err("That device is asking for a key. Set up your account here first.") }
@@ -455,7 +462,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val rest = if ('#' in t) t.substringAfter('#') else t.substringAfter('?', "")
         val nc = rest.split('&').firstOrNull { it.startsWith("nc=") }?.let { Uri.decode(it.removePrefix("nc=")) }
         if (nc != null && nc.startsWith("nostrconnect:") && (params == null || params.profile != SignerTicketProfile.id || params.mode != Mode.OFFER))
-            return scannedNostrConnect(nc, SiteChoice.marked(t))
+            return run { connectPasted = pasted; scannedNostrConnect(nc, SiteChoice.marked(t)) }
         when {
             params == null -> err("That isn't a code $appName understands.")
             !isMember -> err("Set up your account on this phone first.")
@@ -803,6 +810,8 @@ class Signer(private val context: Context, val slot: String = "0") {
     private var digitsAnswer: CompletableFuture<Boolean>? = null
     /** A nostrconnect:// code waiting for a yes: the site's key, its relays, its secret. */
     private var nostrConnect: Triple<String, List<String>, String>? = null
+    /** That code's `device=` label (Keykin SPEC 11.5), and whether it was pasted. */
+    private var nostrConnectDevice: String? = null
     /** The sign-in is finishing while you're back in the app that asked. */
     @Volatile var connectInBackground = false
 
@@ -950,7 +959,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 // What the site says it is: its web address if it gave one, else its name.
                 val site = uri.getQueryParameter("url")?.let { Uri.parse(it).let { u -> u.host?.let { h -> if (u.port > 0) "$h:${u.port}" else h } } }
                     ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "This app"
-                nostrConnect = Triple(client, relayList, secret); connecting = null; pendingLogin = null
+                nostrConnect = Triple(client, relayList, secret); nostrConnectDevice = uri.getQueryParameter("device"); connecting = null; pendingLogin = null
                 choice = siteChoice(uri.getQueryParameter("url"), accountPage || SiteChoice.marked(text))
                 // "Read your private lists" starts on when the site asks for decrypting (NIP-46 perms); DMs never do.
                 val perms = uri.getQueryParameter("perms")?.split(',')?.map { it.trim().substringBefore(':') }.orEmpty()
@@ -965,7 +974,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         useCode(client)
         ui.update { it.copy(connect = Connect(origin, Connect.Stage.WORKING, "Telling $origin…")) }
         work.execute {
-            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place, lists, dms); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null); held?.let { pointerCheck(it) } }
+            try { place?.let { childFor(it) }; sites.acceptNostrConnect(client, relays, secret, origin, place, lists, dms, if (connectPasted) "paste" else "scan", nostrConnectDevice); nostrConnect = null; finishConnect(origin, Outcome.DELIVERED, place != null); held?.let { pointerCheck(it) } }
             catch (e: Exception) { nostrConnect = null; failConnect(origin, why(e)) }
         }
     }
