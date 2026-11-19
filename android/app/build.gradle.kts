@@ -20,8 +20,8 @@ android {
         applicationId = "cc.aaro.cosign"
         minSdk = 30
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.15.3"
+        versionCode = 59
+        versionName = "0.15.4"
         // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
