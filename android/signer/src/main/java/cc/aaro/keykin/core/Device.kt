@@ -298,10 +298,12 @@ object Device {
 
     // --- What this device has let in, and revoking (SPEC 11.5) ---------------------------------------
 
-    data class Grant(val id: String, val kind: String, val name: String, val since: Long)
+    /** [client], [device] and [via] are optional (SPEC 11.5): the site's NIP-46 key, its own label, and how it came in. */
+    data class Grant(val id: String, val kind: String, val name: String, val since: Long, val client: String? = null, val device: String? = null, val via: String? = null)
     /** Tells the box this device's whole list. Returns the ids that were revoked, to drop from the list. */
     fun reportGrants(me: Me, h: Held, grants: List<Grant>, send: Send = http(h.addr)): List<String> {
-        val a = JSONArray(grants.map { JSONObject().put("id", it.id).put("kind", it.kind).put("name", it.name).put("since", it.since) })
+        val a = JSONArray(grants.map { JSONObject().put("id", it.id).put("kind", it.kind).put("name", it.name).put("since", it.since)
+            .apply { it.client?.let { c -> put("client", c) }; it.device?.let { d -> put("device", d) }; it.via?.let { v -> put("via", v) } } })
         val r = call(send, seal(JSONObject().put("op", "grants").put("account", h.npub).put("grants", a), me)).optJSONArray("revoked") ?: JSONArray()
         return List(r.length()) { r.getString(it) }
     }

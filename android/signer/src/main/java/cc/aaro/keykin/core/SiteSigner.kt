@@ -38,6 +38,8 @@ class SiteSigner(
 ) {
     companion object {
         const val TICKET_SECONDS = 900L
+        /** A code's `device=` label, cleaned: no control characters, trimmed, at most 60 characters; null when empty. */
+        fun deviceLabel(s: String?): String? = s?.replace(Regex("[\\u0000-\\u001f\\u007f]"), "")?.trim()?.take(60)?.ifEmpty { null }
         fun fresh(): JSONObject = JSONObject().put("sk", hex(random(32))).put("clients", JSONArray()).put("tickets", JSONArray())
     }
     /**
@@ -46,7 +48,11 @@ class SiteSigner(
      */
     data class Site(val key: String, val origin: String?, val relays: List<String>, val added: Long, val used: Long, val via: String, val grant: String, val place: String? = null,
                     /** "Read your private lists" and "Read and send DMs" (SiteScopes). Off for sites signed in before 0.15.1. */
-                    val lists: Boolean = false, val dms: Boolean = false)
+                    val lists: Boolean = false, val dms: Boolean = false,
+                    /** The site's own label for where it runs, from the code's `device=` (Keykin SPEC 11.5), at most 60 characters. */
+                    val device: String? = null,
+                    /** How it came in, for the box: login, scan, paste or bunker (Keykin SPEC 11.5). */
+                    val how: String? = null)
 
     private val sk = unhex(state.getString("sk"))
     val pubkey: String = Secp.pub(sk)
@@ -62,8 +68,10 @@ class SiteSigner(
     fun sites(): List<Site> = synchronized(state) { list("clients") {
         Site(it.getString("key"), if (it.has("origin")) it.getString("origin") else null, strings(it.optJSONArray("relays")), it.optLong("added"), it.optLong("used"), it.optString("via", "A scanned code"),
             it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } }, it.optString("as").ifEmpty { null },
-            it.optBoolean("lists"), it.optBoolean("dms"))
+            it.optBoolean("lists"), it.optBoolean("dms"), it.optString("device").ifEmpty { null },
+            it.optString("how").ifEmpty { null } ?: howOf(it.optString("via", "A scanned code")))
     } }
+    private fun howOf(via: String) = when (via) { "A pasted bunker link" -> "bunker"; "A scanned code" -> "scan"; else -> null }
     /** How many relays this signer is connected to, of how many it wants. */
     fun relaysUp(): Pair<Int, Int> = opened.size to sockets.size
 
@@ -90,10 +98,11 @@ class SiteSigner(
      * A site's nostrconnect:// code, after the person said yes: the site is put on the list and told so
      * with the code's own secret, on the relays the code names.
      */
-    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?, place: String? = null, lists: Boolean = false, dms: Boolean = false) {
+    fun acceptNostrConnect(client: String, relays: List<String>, secret: String, origin: String?, place: String? = null, lists: Boolean = false, dms: Boolean = false,
+                           how: String? = null, device: String? = null) {
         (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         synchronized(state) {
-            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
+            if (!known(client)) state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", JSONArray(relays)).put("added", now()).put("used", now()).put("grant", hex(random(16))).put("via", "A nostrconnect code").put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place); if (how != null) put("how", how); deviceLabel(device)?.let { put("device", it) } })
             changed(state)
         }
         start()
