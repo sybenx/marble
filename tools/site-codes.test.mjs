@@ -16,7 +16,7 @@ ok(!q.has("kk") && !/kk=account/.test(code), "no kk=account on a site's code");
 const missing = siteCode({ ...base, extra: "&kk_login=missing" });
 ok(new URLSearchParams(missing.split("?")[1]).get("kk_login") === "missing" && !/kk=account/.test(missing), "kk_login=missing alone");
 
-const link = loginLink("https://account.syb.lol", code);
+const link = loginLink("https://account.syb.lol/#connect=<nostrconnect>", code);
 ok(link.startsWith("https://account.syb.lol/#connect=nostrconnect%3A%2F%2F"), "connect= in the fragment, encoded once");
 const frag = link.slice(link.indexOf("#") + 1);
 ok(frag.indexOf("connect=") === 0 && !frag.slice(8).includes("&") && !frag.slice(8).includes("#"), "connect= last, nothing after it");
