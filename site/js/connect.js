@@ -161,9 +161,35 @@ function signWith(sk, t, { schnorr, sha256 }) {
 }
 
 /** A site's own nostrconnect:// code (NIP-46): its key, relays, secret, name, url (its origin) and perms, then extra. */
-export function siteCode({ pk, relays, secret, name, url, perms, extra = "" }) {
+export function siteCode({ pk, relays, secret, name, url, perms, device = "", extra = "" }) {
   return `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}&perms=${encodeURIComponent(perms)}${extra}`;
+    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}&perms=${encodeURIComponent(perms)}`
+    + (device ? `&device=${encodeURIComponent(device.slice(0, 60))}` : "") + extra;
+}
+
+/**
+ * This browser as a short label, like "Chrome on Windows" (Keykin SPEC 11.5: `device=` on the code, so the account
+ * page can tell this sign-in from another). From navigator.userAgentData when there is one, else the userAgent.
+ */
+export function deviceLabel(nav = globalThis.navigator) {
+  const a = nav?.userAgent || "", d = nav?.userAgentData;
+  const brands = (d?.brands || []).map((b) => b.brand);
+  const fromBrands = brands.includes("Microsoft Edge") ? "Edge" : brands.includes("Opera") ? "Opera" : brands.includes("Brave") ? "Brave"
+    : brands.includes("Google Chrome") ? "Chrome" : brands.includes("Chromium") ? "Chromium" : null;
+  const b = fromBrands || (/Edg(e|A|iOS)?\//.test(a) ? "Edge" : /OPR\/|Opera/.test(a) ? "Opera" : /SamsungBrowser/.test(a) ? "Samsung Internet"
+    : /Firefox\/|FxiOS/.test(a) ? "Firefox" : /Chrome\/|CriOS|Chromium/.test(a) ? "Chrome" : /Safari\//.test(a) ? "Safari" : null);
+  const p = d?.platform || "";
+  const os = /Windows/.test(p) ? "Windows" : /Android/.test(p) ? "Android" : /macOS/.test(p) ? "macOS" : /Chrome OS|ChromeOS/.test(p) ? "ChromeOS" : /Linux/.test(p) ? "Linux"
+    : /Windows/.test(a) ? "Windows" : /Android/.test(a) ? "Android" : /iPhone/.test(a) ? "iPhone" : /iPad/.test(a) ? "iPad" : /CrOS/.test(a) ? "ChromeOS"
+    : /Macintosh|Mac OS X/.test(a) ? "macOS" : /Linux/.test(a) ? "Linux" : null;
+  return b && os ? `${b} on ${os}` : b || (os ? `A browser on ${os}` : "");
+}
+
+/** The first 4 hex of this browser's own sign-in key (its NIP-46 client key), as the account page shows it, or null. */
+export async function shortKey(skHex) {
+  if (!/^[0-9a-f]{64}$/i.test(skHex || "")) return null;
+  const { schnorr } = await load();
+  return toHex(schnorr.getPublicKey(fromHex(skHex))).slice(0, 4);
 }
 
 /**
@@ -192,7 +218,7 @@ export async function phoneSignIn({ onCode, onPending, pending = null, signal, e
   const secret = pending?.secret || toHex(crypto.getRandomValues(new Uint8Array(8)));
   const relays = pending?.relays || connectRelays();
   const made = pending?.made || now(), asked = made - 30;
-  const uri = siteCode({ pk, relays, secret, name, url: location.origin, perms, extra });
+  const uri = siteCode({ pk, relays, secret, name, url: location.origin, perms, device: deviceLabel(), extra });
   onPending?.({ sk: toHex(sk), secret, relays, made });
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
