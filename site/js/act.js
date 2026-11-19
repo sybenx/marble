@@ -6,6 +6,7 @@ import { emojiOf, same, summary, changeOf, recentsFrom, RECENT_FROM } from "./re
 import { outbox, keep, profile, profiles, onProfile, profilesOf } from "./data.js";
 import { esc, avatar, name, personPath } from "./render.js";
 import { npub } from "./ids.js";
+import { loginLink, loginTemplate, legacyTemplate } from "./connect.js";
 import { current, method, extensionSignedOut, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -44,7 +45,7 @@ const onPhone = () => matchMedia("(pointer: coarse)").matches && /Android|iPhone
 export function openSignIn() {
   if (!dialog.open) dialog.showModal();
   const p = pendingCode();
-  p ? atLoginPage(p.url, { pending: p }) : askName();
+  p ? atLoginPage(p.page, { pending: p }) : askName();
 }
 
 // Signed out somewhere else (the phone, the login page): said once, quietly.
@@ -147,14 +148,17 @@ const PENDING = "marble.signin", PENDING_LIFE = 15 * 60; // seconds
 function pendingCode() {
   try {
     const p = JSON.parse(sessionStorage.getItem(PENDING) || "null");
-    if (p?.sk && p.made && Date.now() / 1000 - p.made < PENDING_LIFE && p.url) return p;
+    const page = p && pageOf(p.page || p.url); // (url: an origin, kept before the pointer moved to kind 10046)
+    if (p?.sk && p.made && Date.now() / 1000 - p.made < PENDING_LIFE && page) return { ...p, page };
   } catch {}
   clearPending();
   return null;
 }
 function clearPending() { try { sessionStorage.removeItem(PENDING); } catch {} }
-// The login page's link: the code in the fragment, so it never goes to a server (agreed name: "connect").
-export const loginLink = (url, uri) => `${url}/#connect=${encodeURIComponent(uri)}`;
+// The login page's link (connect.js): the account's template with the code in it.
+export { loginLink };
+// A login page as kept here: its template ({template, origin}), or an origin kept before kind 10046, as the old template.
+const pageOf = (s) => typeof s !== "string" ? null : loginTemplate(s) || (/<nostrconnect>/.test(s) ? null : loginTemplate(legacyTemplate(s)));
 
 // ── Your name first; your phone a button away ──
 // The field takes a Nostr address (name@site.com, or just site.com) or an npub. Most people will try an email: that's
@@ -196,25 +200,25 @@ async function lookUp(typed) {
   if (!pk) return askName(typed.includes("@") ? notEmail(typed) : `<p>Marble couldn't find ${esc(typed)}. Check the name, or sign in with your phone.</p>${PHONE_BUTTON}`, typed);
   const r = await loginPage(pk);
   if (mine !== attempt) return;
-  if (r.url) return atLoginPage(r.url, { who: pk });
+  if (r.template) return atLoginPage(pageOf(r.template), { who: pk });
   if (r.removed) forgetPage(pk);
   const kept = rememberedPage(pk); // a pointer seen after an earlier sign-in, should the relays miss it now
   kept ? atLoginPage(kept, { who: pk }) : withMarble({ missing: pk });
 }
 
 // ── Your account names a login page ──
-function atLoginPage(url, { who = null, pending = null } = {}) {
-  const host = new URL(url).host;
+function atLoginPage(page, { who = null, pending = null } = {}) {
+  const host = new URL(page.origin).host;
   who ??= pending?.who || null;
   run((uri) => view(`<h2 id="si-title">Sign in</h2>
       ${who ? `<div class="si-who">${avatar(who, 40)}<span class="si-acct"><span class="si-name">${esc(name(who))}</span><span class="si-fp">${npub(who).slice(0, 12)}…<b>${npub(who).slice(-6)}</b></span></span></div>` : ""}
       <p>Your account names this page to sign in at:</p>
       <p class="acct-addr">${esc(host)}</p>
       <p>It isn't part of Marble. You sign in there with a passkey, a password or your phone, and come back here signed in.</p>
-      <a class="si-button si-open" href="${esc(loginLink(url, uri))}" target="_blank" rel="noopener noreferrer" data-si="away">Sign in at ${esc(host)}</a>
+      <a class="si-button si-open" href="${esc(loginLink(page.template, uri))}" target="_blank" rel="noopener" data-si="away">Sign in at ${esc(host)}</a>
       <p class="si-wait"${pending ? "" : " hidden"}>${spinner}Waiting for ${esc(host)}…</p>
       <div class="si-actions"><button type="button" class="link" data-si="retype">Not you?</button><button type="button" class="link" data-si="code">Use your phone instead</button></div>`),
-    { pending, keep: { url, who } });
+    { pending, keep: { page: page.template, who } });
 }
 
 // ── Marble on your phone: the button on the first screen (no lookup ran), or a name with no login page (missing) ──
@@ -256,14 +260,14 @@ function withSigner() {
 // Signed in from a name with no pointer: the phone may publish it as it answers (kk_login=missing). Looked up once more a
 // little after, and kept for next time in this browser. Nothing changes mid-sign-in.
 const PAGE = (pk) => `marble.loginpage.${pk}`;
-function rememberedPage(pk) { try { return localStorage.getItem(PAGE(pk)); } catch { return null; } }
+function rememberedPage(pk) { try { return pageOf(localStorage.getItem(PAGE(pk))); } catch { return null; } } // the template
 function forgetPage(pk) { try { localStorage.removeItem(PAGE(pk)); } catch {} }
 export async function lookAgain(pk, wait = 8000) { // (the phone's pointer reaches your write relays within a few seconds)
   await new Promise((r) => setTimeout(r, wait));
   const { loginPage } = await import("./account-page.js");
   const r = await loginPage(pk).catch(() => null);
-  try { if (r?.url) localStorage.setItem(PAGE(pk), r.url); } catch {}
-  return r?.url || null;
+  try { if (r?.template) localStorage.setItem(PAGE(pk), r.template); } catch {}
+  return r?.template || null;
 }
 
 let again = null;

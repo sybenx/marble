@@ -29,6 +29,8 @@ const asks = new Set();
 export const onAsk = (fn) => asks.add(fn);
 export const current = () => state?.pubkey || null;
 export const method = () => state?.method || null;
+/** This browser's own NIP-46 key (hex secret) when signed in with a phone, for its short key in the account menu. */
+export const phoneSecret = () => (state?.method === "phone" && state.phone?.sk) || null;
 
 // ── Signed out somewhere else ──
 // Taking this site away on the phone, or removing the device: the site finds out at its next

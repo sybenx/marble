@@ -6,7 +6,9 @@ import { req, relays, FAST, INDEXERS } from "./pool.js";
 import { schnorr, sha256 } from "./vendor/noble.js";
 import { outbox, resolveNip05 } from "./data.js";
 import { decode, isHex64, toHex, fromHex } from "./ids.js";
+import { loginTemplate, legacyTemplate } from "./connect.js";
 
+export const POINTER = 10046; // the pointer (Keykin SPEC §11.1); kind 30078 "keykin/login" is the old one, read during the move
 export const LOGIN_D = "keykin/login";
 
 /** An https origin and nothing else (no path, query, fragment, user or password), as the pointer must be. Or null. */
@@ -35,7 +37,7 @@ function signedAsIs(e) {
   } catch { return false; }
 }
 
-/** The login page a pointer event names, if it's that account's own, signed, and a plain https origin. Or null. */
+/** The login page an old pointer (kind 30078) names, if it's that account's own, signed, and a plain https origin. Or null. */
 export function pageFrom(event, pubkey) {
   if (!event || event.kind !== 30078 || event.pubkey !== pubkey || !Array.isArray(event.tags)) return null;
   if (!event.tags.some((t) => t[0] === "d" && t[1] === LOGIN_D)) return null;
@@ -43,25 +45,44 @@ export function pageFrom(event, pubkey) {
   return originOnly(event.tags.find((t) => t[0] === "url")?.[1]);
 }
 
+const mine = (pubkey, kind) => (e) => e?.pubkey === pubkey && e.kind === kind && Array.isArray(e.tags)
+  && (kind !== 30078 || e.tags.some((t) => t[0] === "d" && t[1] === LOGIN_D)) && signedAsIs(e);
+const newest = (list) => list.sort((a, b) => b.created_at - a.created_at)[0] || null;
+
 /**
- * Where this account's login page is: { url } (the newest pointer names one), { none: true } (no pointer, or the
- * newest one names nothing: it was taken away), or { unreachable: true } (no relay answered).
+ * What the pointers found say (pure: the lookup's decision, tested in tools/). The newest signed 10046 wins: its
+ * nostrconnect_url, checked, or none (removed: no falling back to the old kind). Only when there's no 10046 at all,
+ * the newest 30078, as the template <url>/#connect=<nostrconnect>.
+ * { url (the page's origin, shown before going there), template, event, legacy? } or { none: true, removed? }.
+ */
+export function pointerOf(found, pubkey) {
+  const now = newest(found.filter(mine(pubkey, POINTER)));
+  if (now) {
+    const t = loginTemplate(now.tags.find((x) => x[0] === "nostrconnect_url")?.[1]);
+    return t ? { url: t.origin, template: t.template, event: now } : { none: true, removed: true };
+  }
+  const old = newest(found.filter(mine(pubkey, 30078)));
+  if (!old) return { none: true };
+  const origin = pageFrom(old, pubkey);
+  return origin ? { url: origin, template: legacyTemplate(origin), event: old, legacy: true } : { none: true, removed: true };
+}
+
+/**
+ * Where this account's login page is: { url, template } (see pointerOf), { none: true } (no pointer, or the newest one
+ * names nothing: it was taken away), or { unreachable: true } (no relay answered). The one lookup: where the address is
+ * published may still change.
  */
 export async function loginPage(pubkey, { timeout = 4500 } = {}) {
-  const filter = { kinds: [30078], authors: [pubkey], "#d": [LOGIN_D] };
-  // the fast relays and the indexers at once, then the account's own write relays if those had nothing
-  let found = await req(relays(FAST, INDEXERS), filter, { timeout, settle: 700 });
-  if (!found.length) {
+  const filters = [{ kinds: [POINTER], authors: [pubkey] }, { kinds: [30078], authors: [pubkey], "#d": [LOGIN_D] }];
+  // the fast relays and the indexers at once, then the account's own write relays if those had no 10046
+  let found = await req(relays(FAST, INDEXERS), filters, { timeout, settle: 700 });
+  if (!found.some((e) => e.kind === POINTER)) {
     const own = await outbox(pubkey).catch(() => null);
     const more = relays(own?.write || own || []).filter((r) => !relays(FAST, INDEXERS).includes(r));
-    if (more.length) found = await req(more, filter, { timeout, settle: 700 });
+    if (more.length) found = found.concat(await req(more, filters, { timeout, settle: 700 }));
   }
   // newest wins, and only a signed one of this account's counts: a relay can't make one up
-  const mine = found.filter((e) => e.pubkey === pubkey && e.kind === 30078 && Array.isArray(e.tags) && e.tags.some((t) => t[0] === "d" && t[1] === LOGIN_D) && signedAsIs(e))
-    .sort((a, b) => b.created_at - a.created_at)[0];
-  if (!mine) return { none: true };
-  const url = pageFrom(mine, pubkey);
-  return url ? { url, event: mine } : { none: true, removed: true }; // (taken away: the newest names nothing)
+  return pointerOf(found, pubkey);
 }
 
 /** Who was typed: an npub or nprofile, a 64-character key, or a name@domain. The account's key, or null. */

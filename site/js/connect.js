@@ -160,12 +160,70 @@ function signWith(sk, t, { schnorr, sha256 }) {
   return { ...t, pubkey, id, sig: toHex(schnorr.sign(fromHex(id), sk)) };
 }
 
+/** A site's own nostrconnect:// code (NIP-46): its key, relays, secret, name, url (its origin) and perms, then extra. */
+export function siteCode({ pk, relays, secret, name, url, perms, device = "", extra = "" }) {
+  return `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
+    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}&perms=${encodeURIComponent(perms)}`
+    + (device ? `&device=${encodeURIComponent(device.slice(0, 60))}` : "") + extra;
+}
+
+/**
+ * This browser as a short label, like "Chrome on Windows" (Keykin SPEC 11.5: `device=` on the code, so the account
+ * page can tell this sign-in from another). From navigator.userAgentData when there is one, else the userAgent.
+ */
+export function deviceLabel(nav = globalThis.navigator) {
+  const a = nav?.userAgent || "", d = nav?.userAgentData;
+  const brands = (d?.brands || []).map((b) => b.brand);
+  const fromBrands = brands.includes("Microsoft Edge") ? "Edge" : brands.includes("Opera") ? "Opera" : brands.includes("Brave") ? "Brave"
+    : brands.includes("Google Chrome") ? "Chrome" : brands.includes("Chromium") ? "Chromium" : null;
+  const b = fromBrands || (/Edg(e|A|iOS)?\//.test(a) ? "Edge" : /OPR\/|Opera/.test(a) ? "Opera" : /SamsungBrowser/.test(a) ? "Samsung Internet"
+    : /Firefox\/|FxiOS/.test(a) ? "Firefox" : /Chrome\/|CriOS|Chromium/.test(a) ? "Chrome" : /Safari\//.test(a) ? "Safari" : null);
+  const p = d?.platform || "";
+  const os = /Windows/.test(p) ? "Windows" : /Android/.test(p) ? "Android" : /macOS/.test(p) ? "macOS" : /Chrome OS|ChromeOS/.test(p) ? "ChromeOS" : /Linux/.test(p) ? "Linux"
+    : /Windows/.test(a) ? "Windows" : /Android/.test(a) ? "Android" : /iPhone/.test(a) ? "iPhone" : /iPad/.test(a) ? "iPad" : /CrOS/.test(a) ? "ChromeOS"
+    : /Macintosh|Mac OS X/.test(a) ? "macOS" : /Linux/.test(a) ? "Linux" : null;
+  return b && os ? `${b} on ${os}` : b || (os ? `A browser on ${os}` : "");
+}
+
+/** The first 4 hex of this browser's own sign-in key (its NIP-46 client key), as the account page shows it, or null. */
+export async function shortKey(skHex) {
+  if (!/^[0-9a-f]{64}$/i.test(skHex || "")) return null;
+  const { schnorr } = await load();
+  return toHex(schnorr.getPublicKey(fromHex(skHex))).slice(0, 4);
+}
+
+// ── The login page an account names (Keykin SPEC §11.1) ──
+const PLACE = "<nostrconnect>";
+const localHost = (h) => /^(localhost|127\.0\.0\.1)$/.test(h);
+/**
+ * An account's nostrconnect_url template, checked: https (http only for localhost, and only when this page runs there
+ * too), no user or password, and exactly one <nostrconnect>, at the very end. { template, origin }, or null.
+ */
+export function loginTemplate(t) {
+  if (typeof t !== "string" || t.length > 500 || !t.endsWith(PLACE) || t.indexOf(PLACE) !== t.length - PLACE.length) return null;
+  let u;
+  try { u = new URL(t.slice(0, -PLACE.length) + "x"); } catch { return null; }
+  const here = typeof location !== "undefined" ? location.hostname : "";
+  const local = u.protocol === "http:" && localHost(u.hostname) && localHost(here);
+  if ((u.protocol !== "https:" && !local) || u.username || u.password || !u.hostname || /[\s<>]/.test(t.slice(0, -PLACE.length))) return null;
+  return { template: t, origin: u.origin };
+}
+/** The old pointer (kind 30078) names only an origin: its page is <origin>/#connect=<nostrconnect>. */
+export const legacyTemplate = (origin) => `${String(origin).replace(/\/$/, "")}/#connect=${PLACE}`;
+/**
+ * The login page's link: the template with its <nostrconnect> replaced by the code, URL-encoded once. Keykin's template
+ * ends in #connect=<nostrconnect>, so connect= is last (§11.6). Open it with no `noreferrer`: the page checks where the
+ * request came from by document.referrer.
+ */
+export const loginLink = (template, uri) => template.slice(0, -PLACE.length) + encodeURIComponent(uri);
+
 /**
  * Starts a phone sign-in: onCode(uri, svg) gets the code to show; resolves with {pubkey, remote, saved} once your
  * phone (or the login page your account names, handing the code to a device) has connected and said which account it
  * is. Rejects on signal abort. perms: what the site will ask to sign (NIP-46), shown for what it is; Marble and your
- * servers don't refuse other kinds because of it. name: the site's name the sign-in app shows. The code is marked
- * kk=account (Keykin SPEC §11.6): Marble Web signs in as the account itself, never a child key (§8k).
+ * servers don't refuse other kinds because of it. name: the site's name the sign-in app shows. The code carries no
+ * kk=account (Keykin SPEC §11.6): that mark is only for an account page's own code. Which key a site gets is the
+ * person's choice, made on their device or the login page.
  * pending: a code made earlier ({sk, secret, relays, made}, see onPending), listened for again from when it was made,
  * as after coming back from the login page in this tab. onPending(p) gets that, to keep until the sign-in ends.
  * extra: more parameters for the code, as "&k=v" (kk_login=missing: Marble found no login-page pointer, so the phone
@@ -178,8 +236,7 @@ export async function phoneSignIn({ onCode, onPending, pending = null, signal, e
   const secret = pending?.secret || toHex(crypto.getRandomValues(new Uint8Array(8)));
   const relays = pending?.relays || connectRelays();
   const made = pending?.made || now(), asked = made - 30;
-  const uri = `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}&kk=account${extra}`;
+  const uri = siteCode({ pk, relays, secret, name, url: location.origin, perms, device: deviceLabel(), extra });
   onPending?.({ sk: toHex(sk), secret, relays, made });
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
