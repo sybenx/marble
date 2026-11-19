@@ -3,6 +3,7 @@ package cc.aaro.cosign
 import android.content.Context
 import android.net.Uri
 import cc.aaro.cosign.core.Clock
+import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
 import cc.aaro.cosign.core.SiteScopes
@@ -236,7 +237,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     // what it asks: add a device, make a bunker link, become a site's signer. Only what is hard to undo
     // (removing blocked devices for good) asks Yes or No here first, and No signs that browser out.
 
-    private val notesSeen = ConcurrentHashMap.newKeySet<String>()
+    private val notesSeen = NoteTries()
     /**
      * Besides the 30-second check, one request held open at the box (Keykin SPEC 11.6): the box answers it
      * when the account page leaves a note, so the page hears back in about a second. On its own thread, with
@@ -249,7 +250,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         },
         take = { list ->
             val h = held
-            if (h != null && list.any { it.id !in notesSeen }) {
+            if (h != null && list.any { !notesSeen.has(it.id) }) {
                 if (debuggable) android.util.Log.i("Keykin", "notes_wait: ${list.size} note(s) at ${System.currentTimeMillis()}")
                 awake { takeNotes(h, list) }
             }
@@ -262,10 +263,13 @@ class Signer(private val context: Context, val slot: String = "0") {
         } catch (_: Exception) { null }
         try { f() } finally { try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) { } }
     }
-    /** Does what the account page asked, for each note in [list] this phone has not taken before. */
+    /**
+     * Does what the account page asked, for each note in [list] this phone has not done yet. A note that
+     * failed is tried again on the next check, three tries in all, and only the last failure is shown.
+     */
     private fun takeNotes(h: Held, list: List<Device.Note>) {
         for (n in list) {
-            if (!notesSeen.add(n.id)) continue
+            if (!notesSeen.begin(n.id)) continue
             try {
                 when (n.kind) {
                     "invite" -> {
@@ -295,7 +299,12 @@ class Signer(private val context: Context, val slot: String = "0") {
                         ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
                     }
                 }
-            } catch (e: Exception) { note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied") }
+                notesSeen.worked(n.id)
+            } catch (e: Exception) {
+                // The box no longer has it (it ran out, or another device answered): nothing to try again.
+                if ((e as? KeykinException)?.code == "gone") notesSeen.worked(n.id)
+                else if (notesSeen.failedOnce(n.id)) note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied")
+            }
         }
     }
     /** Yes or No to something hard to undo that the account page asked for. */
