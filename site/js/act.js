@@ -6,6 +6,7 @@ import { emojiOf, same, summary, changeOf, recentsFrom, RECENT_FROM } from "./re
 import { outbox, keep, profile, profiles, onProfile, profilesOf } from "./data.js";
 import { esc, avatar, name, personPath } from "./render.js";
 import { npub } from "./ids.js";
+import { loginLink } from "./connect.js";
 import { current, method, extensionSignedOut, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -153,8 +154,8 @@ function pendingCode() {
   return null;
 }
 function clearPending() { try { sessionStorage.removeItem(PENDING); } catch {} }
-// The login page's link: the code in the fragment, so it never goes to a server (agreed name: "connect").
-export const loginLink = (url, uri) => `${url}/#connect=${encodeURIComponent(uri)}`;
+// The login page's link (connect.js): the code in the fragment, `connect=` last.
+export { loginLink };
 
 // ── Your name first; your phone a button away ──
 // The field takes a Nostr address (name@site.com, or just site.com) or an npub. Most people will try an email: that's
@@ -211,7 +212,7 @@ function atLoginPage(url, { who = null, pending = null } = {}) {
       <p>Your account names this page to sign in at:</p>
       <p class="acct-addr">${esc(host)}</p>
       <p>It isn't part of Marble. You sign in there with a passkey, a password or your phone, and come back here signed in.</p>
-      <a class="si-button si-open" href="${esc(loginLink(url, uri))}" target="_blank" rel="noopener noreferrer" data-si="away">Sign in at ${esc(host)}</a>
+      <a class="si-button si-open" href="${esc(loginLink(url, uri))}" target="_blank" rel="noopener" data-si="away">Sign in at ${esc(host)}</a>
       <p class="si-wait"${pending ? "" : " hidden"}>${spinner}Waiting for ${esc(host)}…</p>
       <div class="si-actions"><button type="button" class="link" data-si="retype">Not you?</button><button type="button" class="link" data-si="code">Use your phone instead</button></div>`),
     { pending, keep: { url, who } });

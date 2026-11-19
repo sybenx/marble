@@ -160,12 +160,26 @@ function signWith(sk, t, { schnorr, sha256 }) {
   return { ...t, pubkey, id, sig: toHex(schnorr.sign(fromHex(id), sk)) };
 }
 
+/** A site's own nostrconnect:// code (NIP-46): its key, relays, secret, name, url (its origin) and perms, then extra. */
+export function siteCode({ pk, relays, secret, name, url, perms, extra = "" }) {
+  return `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
+    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}&perms=${encodeURIComponent(perms)}${extra}`;
+}
+
+/**
+ * The login page's link (Keykin SPEC §11.6): the code in the fragment, so it never goes to a server, URL-encoded once,
+ * and `connect=` last (the page takes everything after it as the code). Open it with no `noreferrer`: the page checks
+ * where the request came from by document.referrer.
+ */
+export const loginLink = (url, uri) => `${url}/#connect=${encodeURIComponent(uri)}`;
+
 /**
  * Starts a phone sign-in: onCode(uri, svg) gets the code to show; resolves with {pubkey, remote, saved} once your
  * phone (or the login page your account names, handing the code to a device) has connected and said which account it
  * is. Rejects on signal abort. perms: what the site will ask to sign (NIP-46), shown for what it is; Marble and your
- * servers don't refuse other kinds because of it. name: the site's name the sign-in app shows. The code is marked
- * kk=account (Keykin SPEC §11.6): Marble Web signs in as the account itself, never a child key (§8k).
+ * servers don't refuse other kinds because of it. name: the site's name the sign-in app shows. The code carries no
+ * kk=account (Keykin SPEC §11.6): that mark is only for an account page's own code. Which key a site gets is the
+ * person's choice, made on their device or the login page.
  * pending: a code made earlier ({sk, secret, relays, made}, see onPending), listened for again from when it was made,
  * as after coming back from the login page in this tab. onPending(p) gets that, to keep until the sign-in ends.
  * extra: more parameters for the code, as "&k=v" (kk_login=missing: Marble found no login-page pointer, so the phone
@@ -178,8 +192,7 @@ export async function phoneSignIn({ onCode, onPending, pending = null, signal, e
   const secret = pending?.secret || toHex(crypto.getRandomValues(new Uint8Array(8)));
   const relays = pending?.relays || connectRelays();
   const made = pending?.made || now(), asked = made - 30;
-  const uri = `nostrconnect://${pk}?${relays.map((r) => "relay=" + encodeURIComponent(r)).join("&")}&secret=${secret}`
-    + `&name=${encodeURIComponent(name)}&url=${encodeURIComponent(location.origin)}&perms=${encodeURIComponent(perms)}&kk=account${extra}`;
+  const uri = siteCode({ pk, relays, secret, name, url: location.origin, perms, extra });
   onPending?.({ sk: toHex(sk), secret, relays, made });
   onCode(uri, qrSvg(encodeQR, uri));
   // Your servers answer the code with its secret, from the signer they'll use for this site.
