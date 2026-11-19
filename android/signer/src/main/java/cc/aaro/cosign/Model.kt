@@ -70,6 +70,8 @@ data class KeyMove(val kind: String, val uri: String? = null, val phase: String 
                    val kept: Boolean = false, val problem: String? = null) : java.io.Serializable
 /** A browser asks to log in to the account page: where, as whom, for how long. */
 data class LoginAsk(val host: String, val account: String, val lasts: String) : java.io.Serializable
+/** Right after a join: the account's sign-in page is [named], a page this phone never used; switch it to this box's, [current]? Hosts. */
+data class LoginSwitch(val named: String, val current: String) : java.io.Serializable
 /** Asking a box for an account: the box, your note, and how far it got (1 asked, 2 waiting, 3 making the key). */
 data class Asking(val box: String, val note: String, val step: Int, val error: String? = null) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
@@ -113,6 +115,7 @@ data class Ui(
     val working: String? = null,
     val tap: Tap? = null,
     val loginAsk: LoginAsk? = null,
+    val loginSwitch: LoginSwitch? = null,
     val move: KeyMove? = null,
     val asking: Asking? = null,
     /** An nsec was pasted and waits for the box's code. The key itself stays in the signer process. */

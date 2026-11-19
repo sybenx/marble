@@ -364,10 +364,10 @@ class Signer(private val context: Context, val slot: String = "0") {
      * is to any write relay that lacks it (no new signature). A new one is signed only when no relay has
      * any. A pointer removed on purpose (no url) or naming another page is the person's choice: left alone.
      */
-    private fun pointerCheck(h: Held) {
+    private fun pointerCheck(h: Held, afterJoin: Boolean = false) {
         if (!pointerBusy.compareAndSet(false, true)) return
         work.execute {
-            try { pointerStep(h) }
+            try { pointerStep(h, afterJoin) }
             catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             finally { pointerBusy.set(false) }
         }
@@ -383,8 +383,25 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (prefs.contains("login-origin")) prefs.edit().remove("login-origin").apply()
         return prefs.getString(LoginPointer.PREF, null)?.ifEmpty { null }
     }
+    /**
+     * The login pages this phone used before for account [pub] (hex). Kept in their own file, which removing
+     * this phone from the account doesn't wipe: leaving and joining again at a new box is how a phone moves.
+     */
+    private val usedPages = context.getSharedPreferences(LoginPointer.USED_FILE, Context.MODE_PRIVATE)
+    private fun usedList(key: String): List<String> = try {
+        usedPages.getString(key, null)?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+    private fun usedLoginPages(pub: String) = usedList(pub)
+    /** The switches the person said Keep to, for account [pub] ([LoginPointer.pair]). */
+    private fun declinedSwitches(pub: String) = usedList("$pub:declined")
+    /** Joined a box whose code named [next] (or none): that is the current login page now, and the one before joins the used ones. */
+    private fun joinedLoginPage(pub: String, next: String?) {
+        val (now, used) = LoginPointer.joined(loginOrigin(), usedLoginPages(pub), next)
+        prefs.edit().apply { if (now != null) putString(LoginPointer.PREF, now) else remove(LoginPointer.PREF) }.apply()
+        usedPages.edit().putString(pub, JSONArray(used).toString()).apply()
+    }
     /** One check. True when it settled (nothing more to do until the next one), false when no relay answered. */
-    private fun pointerStep(h: Held): Boolean {
+    private fun pointerStep(h: Held, afterJoin: Boolean = false): Boolean {
         val pub = accountHex() ?: return false
         // No login page named by the box's code: nothing is published, not even an existing pointer sent around.
         val origin = loginOrigin() ?: return true
@@ -400,25 +417,50 @@ class Signer(private val context: Context, val slot: String = "0") {
         val targets = if (testing) writes else (writes + outbox).distinct()
         val more = targets - look.toSet()
         if (more.isNotEmpty()) byRelay = byRelay + queryEach(more, filter)
-        val plan = LoginPointer.plan(origin, pub, byRelay, targets)
+        val plan = LoginPointer.plan(origin, pub, byRelay, targets, usedLoginPages(pub), afterJoin, declinedSwitches(pub))
         if (debuggable) android.util.Log.i("Keykin", "pointer for ${pub.take(8)}: $plan (origin $origin, ${byRelay.size} of ${(look + more).size} relays answered)")
+        val to = if (testing) writes else (targets + DEFAULT_RELAYS).distinct()
         when (plan) {
             is LoginPointer.Plan.Wait -> return false
             is LoginPointer.Plan.Leave -> return true
             is LoginPointer.Plan.Act -> {
-                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has is signed anew.
+                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has, or one naming a page left behind, is signed anew.
                 for (c in plan.resend) publish(c.event, c.to)
-                for (kind in plan.sign) {
-                    val signed = signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, plan.origin), "").withId())
-                    publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
-                }
-                if (plan.sign.size == LoginPointer.KINDS.size) {
-                    prefs.edit().putString("login-page", plan.origin).apply()
-                    ui.update { it.copy(loginPage = plan.origin) }
-                    note("Your account's sign-in page is now ${plan.origin}", "approved")
-                }
+                signPointers(pub, plan.origin, plan.sign, to)
                 return true
             }
+            is LoginPointer.Plan.Ask -> {
+                pendingSwitch = Triple(pub, plan, to)
+                ui.update { it.copy(loginSwitch = LoginSwitch(host(plan.named), host(plan.current))) }
+                return true
+            }
+        }
+    }
+    private fun signPointers(pub: String, origin: String, kinds: List<Int>, to: List<String>) {
+        for (kind in kinds) publish(signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, origin), "").withId()), to)
+        if (kinds.isNotEmpty() && (kinds.size == LoginPointer.KINDS.size || prefs.getString("login-page", null) != origin)) {
+            prefs.edit().putString("login-page", origin).apply()
+            ui.update { it.copy(loginPage = origin) }
+            note("Your account's sign-in page is now $origin", "approved")
+        }
+    }
+    private fun host(origin: String) = try { java.net.URI(origin).let { u -> u.host + if (u.port != -1) ":${u.port}" else "" } } catch (_: Exception) { origin.removePrefix("https://") }
+    /** The question [LoginPointer.Plan.Ask] put on screen: the account, the plan, and the relays new pointers go to. */
+    @Volatile private var pendingSwitch: Triple<String, LoginPointer.Plan.Ask, List<String>>? = null
+    /**
+     * The person's answer to "Your sign-in page is X. Switch it to Y?". Switch: new pointers (both kinds) naming this
+     * box's page, and X counts as a page this phone used. Keep: that pair is never asked about again.
+     */
+    fun answerLoginSwitch(switch: Boolean) {
+        val (pub, ask, to) = pendingSwitch ?: return ui.update { it.copy(loginSwitch = null) }
+        pendingSwitch = null
+        ui.update { it.copy(loginSwitch = null) }
+        val a = LoginPointer.answer(ask, switch, usedLoginPages(pub), declinedSwitches(pub))
+        usedPages.edit().putString(pub, JSONArray(a.used).toString()).putString("$pub:declined", JSONArray(a.declined).toString()).apply()
+        val sign = a.sign ?: return
+        work.execute {
+            try { signPointers(pub, sign, LoginPointer.KINDS, to) }
+            catch (e: Exception) { ui.update { it.copy(error = "Couldn't switch your sign-in page: ${why(e)}") } }
         }
     }
 
@@ -695,14 +737,14 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 keep(h)
                 // The box's code (or the device's join text) may say where its login page is (SPEC 11.1).
-                LoginPointer.fromCode(qr?.login ?: j?.login, allowHttp = debuggable)?.let { prefs.edit().putString(LoginPointer.PREF, it).apply() }
+                joinedLoginPage(h.npub, LoginPointer.fromCode(qr?.login ?: j?.login, allowHttp = debuggable))
                 // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
                 if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
                 ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
-                pointerCheck(h)
+                pointerCheck(h, afterJoin = true)
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
@@ -723,6 +765,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         val h = held; val mine = meNow
         work.execute {
             if (h != null && mine != null) try { Device.block(mine, h, mine.key, send(h)) } catch (_: Exception) { }
+            // The box's login page joins the ones this phone used before, so joining again at a new box moves the pointer.
+            accountHex()?.let { pub -> try { joinedLoginPage(pub, null) } catch (_: Exception) { } }
             stop(); secrets.clear(); lists.clear(); apps.edit().clear().apply(); appTimes.edit().clear().apply(); prefs.edit().clear().apply(); history.delete(); kept.delete()
             Chip.forget(context, slot); held = null; meNow = null
             ui.value = Ui()

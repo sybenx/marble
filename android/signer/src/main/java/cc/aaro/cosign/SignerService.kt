@@ -154,6 +154,7 @@ class SignerService : Service() {
             "cancelAsk" -> s.cancelAsk(); "startAsk" -> s.startAsk(); "closeAsk" -> s.closeAsk()
             "testRelays" -> s.testRelays(text ?: return)
             "pointerNow" -> s.pointerNow()
+            "loginSwitch" -> s.answerLoginSwitch(flag)
             "setPassword" -> s.setPassword(text ?: return)
             "clearPassword" -> s.clearPassword()
             "setLoginPage" -> s.setLoginPage(text ?: "")
