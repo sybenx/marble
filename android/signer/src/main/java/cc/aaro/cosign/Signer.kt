@@ -251,11 +251,14 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val client = uri.host?.lowercase(); val secret = uri.getQueryParameter("secret")
                         val relays = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
                         if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
-                        val origin = uri.getQueryParameter("url")?.let { Uri.parse(it).host } ?: uri.getQueryParameter("name")?.take(40)?.trim()?.ifBlank { null } ?: "A site"
-                        sites.acceptNostrConnect(client!!, relays, secret, origin)
+                        // Which key, and what to call it (SPEC 11.6): a site signed in before keeps its choice, else the card's.
+                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() })
+                        val origin = pick.name
+                        pick.place?.let { childFor(it) }
+                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place)
                         pointerCheck(h)
                         Device.noteDone(me(), h, n.id, "ok", send(h))
-                        note("Connected $origin, from your account page", "approved")
+                        note(if (pick.place != null) "Connected $origin with a new account, from your account page" else "Connected $origin, from your account page", "approved")
                     }
                     "cycle" -> if (n.tap) {
                         ui.value.tap?.let { old -> listener?.onTapGone(old.id) }

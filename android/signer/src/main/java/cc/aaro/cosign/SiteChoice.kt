@@ -54,4 +54,33 @@ object SiteChoice {
         sites.firstOrNull { same(it.origin, o) }?.let { s -> return s.place?.let { Decision.Own(it) } ?: Decision.Main }
         return Decision.Ask(o)
     }
+
+    /**
+     * How to answer a `nostrconnect` note the login page left (Keykin SPEC 11.6, "Which key a site gets"):
+     * [name] names the grant and the site's record, [place] is the child to sign in as (null: the main account).
+     */
+    data class NoteSignIn(val name: String, val place: String?)
+
+    /** A web address's host, lower-case, or null. */
+    private fun urlHost(raw: String?): String? = raw?.trim()?.let { try { java.net.URI(it).host?.lowercase()?.ifEmpty { null } } catch (_: Exception) { null } }
+
+    /**
+     * What a `nostrconnect` note from the login page gets. [url] and [name] are the code's own `url` and
+     * `name`; [from] is the sender's origin as the page saw it (null if it could not tell, or an older box);
+     * [signAs] is the note's `as`. The card matched when [from]'s host is the code's `url` host: then the
+     * site is [from], else the code's `url`. A site signed in before keeps its remembered choice; otherwise
+     * `as: "site"` is a new account of its own (the child for its origin), and `"main"` or nothing is the main account.
+     */
+    fun forNote(url: String?, name: String?, from: String?, signAs: String?, sites: List<SiteSigner.Site>): NoteSignIn {
+        val codeHost = urlHost(url)
+        val matched = from != null && codeHost != null && urlHost(from) == codeHost
+        val label = if (matched) origin(from) else null
+        val named = label ?: codeHost ?: name?.take(40)?.trim()?.ifBlank { null } ?: "A site"
+        val place = when (val d = decide(if (matched) from else url, sites)) {
+            is Decision.Own -> d.place
+            is Decision.Ask -> if (signAs == "site") d.place else null
+            Decision.Main, Decision.AccountPage -> null
+        }
+        return NoteSignIn(named, place)
+    }
 }
