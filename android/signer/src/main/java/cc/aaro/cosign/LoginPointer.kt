@@ -57,6 +57,32 @@ object LoginPointer {
     /** The login page a box code or join text named ([loginPage]), as an origin. Nothing named, nothing: never the box's address. */
     fun fromCode(loginPage: String?, allowHttp: Boolean = false): String? = loginPage?.let { origin(it, allowHttp) }
 
+    /**
+     * An account-page `pointer` note (Keykin SPEC 11.6): its text is the page to make the account's sign-in page,
+     * filled in by the box from its own login page setting. Only an https origin is one; anything else is declined
+     * without asking.
+     */
+    fun requested(text: String): String? = origin(text)
+
+    /** What the person's answer to a `pointer` note leaves: the `note_done` result, the page to sign pointers for (null: none), and the account's current and used pages. */
+    data class Made(val result: String, val sign: String?, val current: String?, val used: List<String>)
+
+    /**
+     * Yes to a `pointer` note asking for [asked]: sign both kinds naming it, even over a removal or a pointer naming
+     * another page (the person asked for this one), and it is the current page from now on, the [current] one joining
+     * [used] ([joined]). No: nothing changes, and the box hears `declined`.
+     */
+    fun made(asked: String, yes: Boolean, current: String?, used: List<String>): Made =
+        if (yes) joined(current, used, asked).let { (now, all) -> Made("ok", asked, now, all) }
+        else Made("declined", null, current, used)
+
+    /**
+     * Tells the box the answer to `pointer` note [note]: always `note_done`, with `ok` or `declined`. Never
+     * `note_refuse`, which would also sign that browser out of the account page: Not now is no reason to.
+     */
+    fun reply(me: cc.aaro.keykin.core.Me, h: cc.aaro.keykin.core.Held, note: String, m: Made, send: cc.aaro.keykin.core.Send) =
+        cc.aaro.keykin.core.Device.noteDone(me, h, note, m.result, send)
+
     /** [addr] as a login page origin: https, a host, maybe a port, nothing after. Null if it isn't one. */
     fun origin(addr: String, allowHttp: Boolean = false): String? {
         val u = try { java.net.URI(addr.trim()) } catch (_: Exception) { return null }

@@ -298,6 +298,19 @@ class Signer(private val context: Context, val slot: String = "0") {
                         ui.update { it.copy(tap = Tap(n.id, "Remove blocked devices for good?", "Your account page asked. Their pieces stop working, and this can't be undone. No also signs that browser out of your account page.")) }
                         ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
                     }
+                    // Make the box's page the account's sign-in page (SPEC 11.1), after a password or passkey sign-in there.
+                    "pointer" -> {
+                        val asked = LoginPointer.requested(n.text)
+                        if (asked == null) {
+                            Device.noteDone(me(), h, n.id, "declined", send(h))
+                            note("Your account page asked to change your sign-in page, but didn't name an https page. Said No.", "denied")
+                        } else {
+                            ui.value.tap?.let { old -> listener?.onTapGone(old.id) }
+                            ui.update { it.copy(tap = Tap(n.id, "Make ${host(asked)} your sign-in page?", "Sites that look you up by name will send you there to sign in.",
+                                "pointer", asked, no = "Not now", yes = "Make it my sign-in page", danger = false)) }
+                            ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
+                        }
+                    }
                 }
                 notesSeen.worked(n.id)
             } catch (e: Exception) {
@@ -314,6 +327,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (id != null && id != t.id) return
         ui.update { it.copy(tap = null) }
         listener?.onTapGone(t.id)
+        if (t.kind == "pointer") return work.execute { answerPointer(h, t, yes, 1) }
         if (yes) change("Removing blocked devices…") { me, _ ->
             Device.cycle(me, h, null, send(h), t.id)
             Device.noteDone(me, h, t.id, "ok", send(h))
@@ -471,6 +485,37 @@ class Signer(private val context: Context, val slot: String = "0") {
             try { signPointers(pub, sign, LoginPointer.KINDS, to) }
             catch (e: Exception) { ui.update { it.copy(error = "Couldn't switch your sign-in page: ${why(e)}") } }
         }
+    }
+
+    /**
+     * The person's answer to the account page's "make this my sign-in page" (a `pointer` note, [LoginPointer.made]).
+     * Yes: both kinds naming it go to the account's write relays, whatever the pointer named before, it is this
+     * account's current page, and the box hears `ok`. No: the box hears `declined`. Try [n] of three: a failure is
+     * tried again 5 seconds later, and only the last is shown. A note the box no longer has (it ran out) is dropped.
+     */
+    private fun answerPointer(h: Held, t: Tap, yes: Boolean, n: Int, signed: Boolean = false) {
+        val asked = t.origin ?: return
+        val pub = accountHex() ?: return
+        var done = signed; val busy = "Making ${host(asked)} your sign-in page…"
+        try {
+            val m = LoginPointer.made(asked, yes, loginOrigin(), usedLoginPages(pub))
+            if (m.sign != null && !done) {
+                // Ran out while the sheet was up: nothing is published for a request no one is waiting on.
+                if (Device.notes(me(), h, send(h)).none { it.id == t.id }) return
+                ui.update { it.copy(working = busy) }
+                val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
+                signPointers(pub, m.sign, LoginPointer.KINDS, if (testing) writeRelays() else (writeRelays() + DEFAULT_RELAYS).distinct())
+                prefs.edit().apply { if (m.current != null) putString(LoginPointer.PREF, m.current) else remove(LoginPointer.PREF) }.apply()
+                usedPages.edit().putString(pub, JSONArray(m.used).toString()).apply()
+                done = true
+            }
+            LoginPointer.reply(me(), h, t.id, m, send(h))
+            if (!yes) note("Said Not now to your account page: making ${host(asked)} your sign-in page", "denied")
+        } catch (e: Exception) {
+            if ((e as? KeykinException)?.code == "gone") return
+            if (n >= 3) note("Couldn't make ${host(asked)} your sign-in page: ${why(e)}", "denied")
+            else timer.schedule({ work.execute { answerPointer(h, t, yes, n + 1, done) } }, 5, TimeUnit.SECONDS)
+        } finally { ui.update { if (it.working == busy) it.copy(working = null) else it } }
     }
 
     // --- Scanning: the box's code, a device's invite, the join text, a site's code -----------------

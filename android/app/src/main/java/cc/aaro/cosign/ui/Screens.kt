@@ -1332,9 +1332,9 @@ private fun TapSheet(t: cc.aaro.cosign.Tap, onAnswer: (Boolean) -> Unit) {
             Spacer(Modifier.height(10.dp))
             Text(t.text, style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("No", color = Kk.Text) }
+            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text(t.no, color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Danger, Color.White)) { Text("Yes, remove them") }
+            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(if (t.danger) Kk.Danger else Kk.Green, Color.White)) { Text(t.yes) }
         }
     }
 }

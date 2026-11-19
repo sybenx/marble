@@ -246,4 +246,77 @@ class LoginPointerTest {
         assertNull(Texts.qr("""{"keykin":2,"addr":"https://box.example","key":"$k","code":"c"}""").login)
         assertEquals(page, Texts.readJoin("""{"keykin":2,"join":{"addr":"https://box.example","boxKey":"$k","npub":"$k","loginPage":"$page"}}""").login)
     }
+
+    // --- A `pointer` note: the account page asks to be the sign-in page ---
+
+    @Test fun aPointerNoteNamesAnHttpsOriginOnly() {
+        assertEquals(page, LoginPointer.requested(" https://Account.syb.lol/ "))
+        assertEquals("https://box.example:8443", LoginPointer.requested("https://box.example:8443"))
+        assertNull(LoginPointer.requested("http://account.syb.lol"))
+        assertNull(LoginPointer.requested("http://10.0.2.2:8790"))
+        assertNull(LoginPointer.requested("https://account.syb.lol/login"))
+        assertNull(LoginPointer.requested("https://account.syb.lol/#connect=x"))
+        assertNull(LoginPointer.requested("https://me@account.syb.lol"))
+        assertNull(LoginPointer.requested("javascript:alert(1)"))
+        assertNull(LoginPointer.requested(""))
+    }
+
+    @Test fun yesSignsTheAskedPageAndTheOldOneJoinsTheUsed() {
+        val m = LoginPointer.made(page, true, "https://old.example", listOf("https://older.example"))
+        assertEquals("ok", m.result)
+        assertEquals(page, m.sign)
+        assertEquals(page, m.current)
+        assertEquals(listOf("https://older.example", "https://old.example"), m.used)
+    }
+
+    @Test fun yesWithNoCurrentPageOrTheSameOneAddsNothingToTheUsed() {
+        assertEquals(LoginPointer.Made("ok", page, page, emptyList()), LoginPointer.made(page, true, null, emptyList()))
+        assertEquals(LoginPointer.Made("ok", page, page, listOf("https://old.example")), LoginPointer.made(page, true, "https://ACCOUNT.syb.lol", listOf("https://old.example")))
+    }
+
+    @Test fun yesToAPageUsedBeforeKeepsTheHistoryAsJoinedDoes() {
+        val m = LoginPointer.made(page, true, "https://box.example", listOf(page, "https://old.example"))
+        assertEquals(page, m.current)
+        // As after a join: the asked page is current, and the one left behind is the newest used.
+        assertEquals(listOf(page, "https://old.example", "https://box.example"), m.used)
+    }
+
+    @Test fun noChangesNothingAndDeclines() {
+        val m = LoginPointer.made(page, false, "https://old.example", listOf("https://older.example"))
+        assertEquals(LoginPointer.Made("declined", null, "https://old.example", listOf("https://older.example")), m)
+    }
+
+    private val me = cc.aaro.keykin.core.Me(ByteArray(32) { 1 }, "Pixel 9a", null)
+    private val held = cc.aaro.keykin.core.Held(cc.aaro.keykin.core.Piece(emptyList(), 1, java.math.BigInteger.ONE), "b".repeat(64), "c".repeat(64), "http://box")
+    private fun sentFor(yes: Boolean): org.json.JSONObject {
+        var sent: org.json.JSONObject? = null
+        LoginPointer.reply(me, held, "n1", LoginPointer.made(page, yes, null, emptyList())) { sent = it; org.json.JSONObject().put("ok", true) }
+        return sent!!.getJSONObject("body")
+    }
+
+    @Test fun notNowSendsNoteDoneDeclinedNeverNoteRefuse() {
+        val body = sentFor(false)
+        assertEquals("note_done", body.getString("op"))
+        assertEquals("declined", body.getString("result"))
+        assertEquals("n1", body.getString("note"))
+        assertEquals(held.npub, body.getString("account"))
+    }
+
+    @Test fun yesSendsNoteDoneOk() {
+        val body = sentFor(true)
+        assertEquals("note_done", body.getString("op"))
+        assertEquals("ok", body.getString("result"))
+    }
+
+    @Test fun theBoxsPointerNoteReadsAsOne() {
+        val n = cc.aaro.keykin.core.Device.Note.of(org.json.JSONObject("""{"id":"n1","kind":"pointer","text":"$page","at":5,"tap":true}"""))
+        assertEquals("pointer", n.kind); assertEquals(true, n.tap)
+        assertEquals(page, LoginPointer.requested(n.text))
+    }
+
+    @Test fun yesPublishesEvenWherePlanWouldLeaveIt() {
+        // A removal, or a pointer naming a page this phone never used, is left by the checks; the person's Yes still signs.
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(null), pointer(null))), listOf(a)))
+        assertEquals(page, LoginPointer.made(page, true, page, emptyList()).sign)
+    }
 }
