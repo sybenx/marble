@@ -318,9 +318,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         ui.update { it.copy(working = "Signing…", error = null) }
         work.execute {
             try {
-                val tags = listOf(listOf("d", "keykin/login")) + if (origin.isEmpty()) emptyList() else listOf(listOf("url", origin))
-                val signed = signNow(Event(pub, Clock.now(), 30078, tags, "").withId())
-                publish(signed)
+                // Both kinds during the move (SPEC 11.1): naming the page, or taking it away, on each.
+                for (kind in LoginPointer.KINDS) publish(signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, origin.ifEmpty { null }), "").withId()))
                 prefs.edit().putString("login-page", origin).apply()
                 ui.update { it.copy(loginPage = origin.ifEmpty { null }) }
                 note(if (origin.isEmpty()) "Removed your login page's address" else "Your login page is $origin", "approved")
@@ -364,7 +363,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
         val writes = writeRelays()
         val look = if (testing) writes else (writes + DEFAULT_RELAYS).distinct()
-        val filter = "{\"kinds\":[10002,30078],\"authors\":[\"$pub\"]}"
+        val filter = "{\"kinds\":[10002,${LoginPointer.KIND},${LoginPointer.LEGACY}],\"authors\":[\"$pub\"]}"
         var byRelay = queryEach(look, filter)
         // The account's own write list, if a relay had it and this phone hadn't seen it.
         val outbox = byRelay.values.flatten().filter { it.kind == 10002 && it.pubkey == pub && it.verify() }.maxByOrNull { it.createdAt }
@@ -377,13 +376,18 @@ class Signer(private val context: Context, val slot: String = "0") {
         when (plan) {
             is LoginPointer.Plan.Wait -> return false
             is LoginPointer.Plan.Leave -> return true
-            is LoginPointer.Plan.Resend -> { publish(plan.event, plan.to); return true }
-            is LoginPointer.Plan.Sign -> {
-                val signed = signNow(Event(pub, Clock.now(), LoginPointer.KIND, listOf(listOf("d", LoginPointer.D), listOf("url", plan.origin)), "").withId())
-                publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
-                prefs.edit().putString("login-page", plan.origin).apply()
-                ui.update { it.copy(loginPage = plan.origin) }
-                note("Your account's sign-in page is now ${plan.origin}", "approved")
+            is LoginPointer.Plan.Act -> {
+                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has is signed anew.
+                for (c in plan.resend) publish(c.event, c.to)
+                for (kind in plan.sign) {
+                    val signed = signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, plan.origin), "").withId())
+                    publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
+                }
+                if (plan.sign.size == LoginPointer.KINDS.size) {
+                    prefs.edit().putString("login-page", plan.origin).apply()
+                    ui.update { it.copy(loginPage = plan.origin) }
+                    note("Your account's sign-in page is now ${plan.origin}", "approved")
+                }
                 return true
             }
         }
