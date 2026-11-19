@@ -3,6 +3,7 @@ package cc.aaro.cosign
 import android.content.Context
 import android.net.Uri
 import cc.aaro.cosign.core.Clock
+import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
 import cc.aaro.cosign.core.SiteScopes
 import cc.aaro.keykin.core.Child
@@ -177,6 +178,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (held == null && localPub == null) return
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
+        if (held != null) waiter.start()
         if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
@@ -184,7 +186,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             screenOff = r
         }
     }
-    fun stop() { pinger?.cancel(false); pinger = null; lookout?.cancel(false); lookout = null; sites.stop(); sharedXs.forgetAll() }
+    fun stop() { pinger?.cancel(false); pinger = null; lookout?.cancel(false); lookout = null; waiter.stop(); sites.stop(); sharedXs.forgetAll() }
 
     /** Ask the box who is in the account. Also how this phone learns it was blocked. */
     fun refresh() {
@@ -197,7 +199,8 @@ class Signer(private val context: Context, val slot: String = "0") {
             ui.update { it.copy(member = membership(h, members), relaysUp = 1, removedBy = null, needsCycle = members.any { m -> m.blocked },
                 online = members.associate { m -> m.idx to (m.isBox || m.idx == h.piece.i) }) }
             reportGrants(h)
-            try { takeNotes(h) } catch (_: Exception) { }
+            try { takeNotes(h, Device.notes(me(), h, send(h))) } catch (_: Exception) { }
+            if (pinger != null) waiter.start()           // the account was joined after start(), say
         } catch (e: Exception) {
             blockedHere(e)
             ui.update { it.copy(relaysUp = 0, online = it.member?.let { m -> mapOf(m.idx to true) } ?: emptyMap()) }
@@ -234,8 +237,34 @@ class Signer(private val context: Context, val slot: String = "0") {
     // (removing blocked devices for good) asks Yes or No here first, and No signs that browser out.
 
     private val notesSeen = ConcurrentHashMap.newKeySet<String>()
-    private fun takeNotes(h: Held) {
-        for (n in Device.notes(me(), h, send(h))) {
+    /**
+     * Besides the 30-second check, one request held open at the box (Keykin SPEC 11.6): the box answers it
+     * when the account page leaves a note, so the page hears back in about a second. On its own thread, with
+     * a read timeout past the box's 25 seconds. An older box refuses it, and the 30-second check carries on.
+     */
+    private val waiter = NoteWaiter(
+        wait = { seen ->
+            val h = held ?: throw KeykinException("no_account")
+            Device.notesWait(me(), h, Device.WAIT_MOST, seen, Device.http(h.addr, Device.WAIT_READ_MS))
+        },
+        take = { list ->
+            val h = held
+            if (h != null && list.any { it.id !in notesSeen }) {
+                if (debuggable) android.util.Log.i("Keykin", "notes_wait: ${list.size} note(s) at ${System.currentTimeMillis()}")
+                awake { takeNotes(h, list) }
+            }
+        })
+    /** Keeps the CPU on while answering, for at most 30 seconds, so the phone does not sleep halfway through. */
+    private fun awake(f: () -> Unit) {
+        val lock = try {
+            (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "marble:notes")
+                .apply { setReferenceCounted(false); acquire(30_000) }
+        } catch (_: Exception) { null }
+        try { f() } finally { try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) { } }
+    }
+    /** Does what the account page asked, for each note in [list] this phone has not taken before. */
+    private fun takeNotes(h: Held, list: List<Device.Note>) {
+        for (n in list) {
             if (!notesSeen.add(n.id)) continue
             try {
                 when (n.kind) {

@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- A short hold on the CPU while answering a note from the account page (Signer.awake). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application>
         <!-- Everything that holds or uses the key runs in its own process, ":signer" (Proc.kt):

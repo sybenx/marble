@@ -87,11 +87,11 @@ object Device {
         h.piece = Piece(c, h.piece.i, share); h.epoch = epoch; h.changed(h)
     }
 
-    /** Talks to a box over HTTP. */
-    fun http(addr: String): Send = { req ->
+    /** Talks to a box over HTTP. [readMs] is how long to wait for the answer: longer for a held `notes_wait`. */
+    fun http(addr: String, readMs: Int = 15000): Send = { req ->
         val c = URL("$addr/keykin").openConnection() as HttpURLConnection
         try {
-            c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 8000; c.readTimeout = 15000
+            c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 8000; c.readTimeout = readMs
             c.setRequestProperty("content-type", "application/json")
             c.outputStream.use { it.write(utf8(req.toString())) }
             JSONObject(String((if (c.responseCode < 400) c.inputStream else c.errorStream).readBytes(), Charsets.UTF_8))
@@ -324,6 +324,18 @@ object Device {
     }
     fun notes(me: Me, h: Held, send: Send = http(h.addr)): List<Note> {
         val a = call(send, seal(JSONObject().put("op", "notes").put("account", h.npub), me)).optJSONArray("notes") ?: JSONArray()
+        return List(a.length()) { Note.of(a.getJSONObject(it)) }
+    }
+    /** The most a box holds a [notesWait], in seconds, and how long to wait for its answer: well past that. */
+    const val WAIT_MOST = 25
+    const val WAIT_READ_MS = 40_000
+    /**
+     * [notes], held open (SPEC 11.6): the box answers when the account page leaves a note, or after [wait]
+     * seconds with whatever is waiting then. Notes in [seen] (this device has them already) alone do not
+     * answer at once. An older box refuses it with `unknown_op`.
+     */
+    fun notesWait(me: Me, h: Held, wait: Int = WAIT_MOST, seen: List<String> = emptyList(), send: Send = http(h.addr, WAIT_READ_MS)): List<Note> {
+        val a = call(send, seal(JSONObject().put("op", "notes_wait").put("account", h.npub).put("wait", wait).put("seen", JSONArray(seen.take(50))), me)).optJSONArray("notes") ?: JSONArray()
         return List(a.length()) { Note.of(a.getJSONObject(it)) }
     }
     fun noteDone(me: Me, h: Held, note: String, result: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "note_done").put("account", h.npub).put("note", note).put("result", result), me)) }
