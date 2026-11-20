@@ -113,6 +113,8 @@ export function start(pk = current()) {
       entries = sync.notesVault(all);
       // keyring entries there, but the signer wouldn't open any of them: not "no vault"
       if (!entries.length && all.refused.length) return fail(pk, all.refused[0]);
+      // no relay answered: not "no vault" (that would hide your notes and drop this browser's copy), tried again soon
+      if (!entries.length && !all.answered) { setTimeout(() => { if (who === pk && !session) { lastTry = 0; retry(); } }, 15000); return fail(pk, "couldn't reach your relays"); }
     } catch (err) { return fail(pk, err); }
     if (who !== pk) return null;
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
