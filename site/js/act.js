@@ -425,12 +425,20 @@ async function addLook(pk, a, signedIn) {
   const other = `<button type="button" class="link" data-add="${signedIn ? "other" : "retype"}">${signedIn ? "Use another account" : "Not you?"}</button>`;
   if (page) {
     const host = new URL(page.origin).host;
+    const link = addLink(page.origin, { invite: a.inv.text, relay: a.relay, secret: a.secret });
+    // Already signed in here: no question to ask, so straight on to your own sign-in page (it's your account's own
+    // address, and Add there is the one click). Shown for a moment so the browser's move isn't a surprise.
+    if (signedIn) {
+      view(`${title}${whoBlock(pk)}<p class="si-wait">${spinner}Going to ${esc(host)}…</p>`);
+      clearAdd();
+      return setTimeout(() => { if (mine === attempt) location.assign(link); }, 600);
+    }
     // the address is shown, in full, before anything goes there; the link is an ordinary one, so the browser shows it too
     return view(`${title}${whoBlock(pk)}
       <p>Your account names this page to sign in at:</p>
       <p class="acct-addr">${esc(host)}</p>
       <p>Sign in there and press Add. ${esc(a.inv.name)} then signs in by itself.</p>
-      <a class="si-button si-open" href="${esc(addLink(page.origin, { invite: a.inv.text, relay: a.relay, secret: a.secret }))}" data-add="away">Continue at ${esc(host)}</a>
+      <a class="si-button si-open" href="${esc(link)}" data-add="away">Continue at ${esc(host)}</a>
       <div class="si-actions">${other}<button type="button" class="link" data-add="cancel">Not now</button></div>`);
   }
   const { codeSvg } = await import("./connect.js");
