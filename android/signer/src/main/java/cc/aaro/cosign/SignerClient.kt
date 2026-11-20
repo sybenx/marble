@@ -119,7 +119,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     }
 
     // Joining, making, importing or restoring a key.
-    fun accept() = act("accept")
+    /** Making or bringing in an account needs its username and password (Keykin SPEC 11.3); joining does not. */
+    fun accept(username: String? = null, password: String? = null) = act("accept", if (username != null && password != null) AccountPassword.pack(username, password) else null)
     fun decline() = act("decline")
     fun createAccount() = act("createAccount")
     fun startJoin() = act("startJoin")
@@ -189,9 +190,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun pointerNow() = act("pointerNow")
     /** Switch (or Keep) the account's sign-in page, asked right after a join. */
     fun answerLoginSwitch(switch: Boolean) = act("loginSwitch", flag = switch)
-    /** The account page's username and password. Fingerprint. The box never sees the password. */
+    /** The account page's username and password. Fingerprint. The box never sees the password. It can be changed, never removed. */
     fun setPassword(username: String, password: String) = act("setPassword", username + "\n" + password)
-    fun clearPassword() = act("clearPassword")
     /** Where this account's login page is: published as a small signed event that marble.syb.lol reads. Empty removes it. */
     fun setLoginPage(url: String) = act("setLoginPage", url)
 

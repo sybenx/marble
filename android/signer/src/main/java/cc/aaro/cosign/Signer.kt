@@ -196,11 +196,11 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun refresh() {
         val h = held ?: return
         try {
-            val (list, _) = Device.membersAndNext(me(), h, send(h))
+            val (list, _, password) = Device.membersStatus(me(), h, send(h))
             secrets.save("helpers", JSONArray(list.filter { it.addr != null && it.key != me().key }.map { it.addr }).toString())
             val members = list.map { Member(it.i, it.name, it.kind, it.key, it.blocked, it.chip, it.added) }
             secrets.save("members", JSONArray(list.map { JSONObject().put("i", it.i).put("name", it.name).put("kind", it.kind).put("key", it.key).put("blocked", it.blocked).put("chip", it.chip).put("added", it.added) }).toString())
-            ui.update { it.copy(member = membership(h, members), relaysUp = 1, removedBy = null, needsCycle = members.any { m -> m.blocked },
+            ui.update { it.copy(member = membership(h, members), relaysUp = 1, removedBy = null, needsCycle = members.any { m -> m.blocked }, hasPassword = password ?: it.hasPassword,
                 online = members.associate { m -> m.idx to (m.isBox || m.idx == h.piece.i) }) }
             reportGrants(h)
             try { takeNotes(h, Device.notes(me(), h, send(h))) } catch (_: Exception) { }
@@ -355,23 +355,16 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     // --- Username and password for the account page, and where that page is -----------------------
 
-    /** Set the account page's username and password (text is "username\npassword"). Fingerprint. The box never sees the password. */
+    /** Change the account page's username and password (text is "username\npassword"). Fingerprint. The box never sees the password. */
     fun setPassword(text: String) {
-        val username = text.substringBefore('\n').trim().lowercase(); val password = text.substringAfter('\n', "")
-        if (!Regex("^[a-z0-9._-]{3,32}$").matches(username)) return ui.update { it.copy(error = "A username is 3 to 32 of a-z, 0-9, dot, dash and underscore.") }
-        if (password.length < 8) return ui.update { it.copy(error = "Use a password of at least 8 characters.") }
+        val (username, password) = AccountPassword.unpack(text) ?: return
+        AccountPassword.problem(username, password, password)?.let { p -> return ui.update { it.copy(error = p) } }
         change("Setting your password…") { me, h ->
             Device.passwordSet(me, h, username, password, fp("Set your account page's password"), send(h))
             prefs.edit().putString("username", username).apply()
-            ui.update { it.copy(username = username) }
+            ui.update { it.copy(username = username, hasPassword = true) }
             note("Set a username and password for your account page", "approved")
         }
-    }
-    fun clearPassword() = change("Removing your password…") { me, h ->
-        Device.passwordClear(me, h, fp("Remove your account page's password"), send(h))
-        prefs.edit().remove("username").apply()
-        ui.update { it.copy(username = null) }
-        note("Removed the password from your account page", "approved")
     }
 
     /**
@@ -983,9 +976,14 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     fun cancelJoin() = ui.update { it.copy(joinCode = null) }
 
-    /** Yes to making the account, or to joining it. */
-    fun accept() {
+    /**
+     * Yes to making the account, or to joining it. Making or bringing in an account carries its username and
+     * password ("username\npassword"), checked here first and sent as the last step of setup (Keykin SPEC 11.3).
+     */
+    fun accept(login: String? = null) {
         val o = ui.value.offer ?: return
+        AccountPassword.setupProblem(o.create, login)?.let { p -> return ui.update { it.copy(error = p) } }
+        val pw = if (o.create) AccountPassword.unpack(login) else null
         val qr = pendingQr; val j = pendingJoin
         val key = if (o.create) (bringing ?: if (o.bringing) localKey() else null) else null
         ui.update { it.copy(offer = null, joining = if (key != null) "Bringing your account to your box…" else if (o.create) "Making your account with your box…" else "Collecting this phone's piece from your box…") }
@@ -1002,6 +1000,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
                 if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
                 ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
+                if (pw != null) setupPassword(h, pw.first, pw.second)
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
@@ -1014,6 +1013,17 @@ class Signer(private val context: Context, val slot: String = "0") {
                     else -> why(e)
                 }) }
             } finally { pendingQr = null; pendingJoin = null }
+        }
+    }
+    /** The last step of making or bringing in an account. If it fails the account is still made, and the prompt stays up. */
+    private fun setupPassword(h: Held, username: String, password: String) {
+        try {
+            synchronized(boxLock) { Device.passwordSet(me(), h, username, password, fp("Set your account page's password"), send(h)) }
+            prefs.edit().putString("username", username).apply()
+            ui.update { it.copy(username = username, hasPassword = true) }
+            note("Set a username and password for your account page", "approved")
+        } catch (e: Exception) {
+            ui.update { it.copy(hasPassword = false, error = "Your account is made, but its password was not saved: ${why(e)} Set it under Your account.") }
         }
     }
     fun decline() { pendingQr = null; pendingJoin = null; ui.update { it.copy(offer = null, joining = null) } }

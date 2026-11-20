@@ -175,6 +175,12 @@ object Device {
     }
 
     fun membersAndNext(me: Me, h: Held, send: Send) = listing(me, h, send)
+    /** The members, the next index, and whether the account has a password (Keykin SPEC 11.3; null from a box too old to say). */
+    fun membersStatus(me: Me, h: Held, send: Send = http(h.addr)): Triple<List<Member>, Int, Boolean?> {
+        val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me))
+        return Triple(membersOf(r), r.getInt("next"), passwordFrom(r))
+    }
+    fun passwordFrom(r: JSONObject): Boolean? = if (r.has("password")) r.getBoolean("password") else null
     /** The members and the account's key epoch as the box answers now (vaults count a member gone after a cycle by it). */
     fun membersWithEpoch(me: Me, h: Held, send: Send = http(h.addr)): Pair<List<Member>, Int> {
         val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me)); val a = r.getJSONArray("members")
@@ -182,8 +188,11 @@ object Device {
     }
     fun members(me: Me, h: Held, send: Send = http(h.addr)): List<Member> = listing(me, h, send).first
     private fun listing(me: Me, h: Held, send: Send): Pair<List<Member>, Int> {
-        val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me)); val a = r.getJSONArray("members")
-        return List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getString("key"), m.getInt("i"), m.getString("name"), m.getString("kind"), m.has("chip"), m.getBoolean("blocked"), m.getLong("added"), if (m.has("addr")) m.getString("addr") else null) } } to r.getInt("next")
+        val r = call(send, seal(JSONObject().put("op", "members").put("account", h.npub), me))
+        return membersOf(r) to r.getInt("next")
+    }
+    private fun membersOf(r: JSONObject): List<Member> { val a = r.getJSONArray("members")
+        return List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getString("key"), m.getInt("i"), m.getString("name"), m.getString("kind"), m.has("chip"), m.getBoolean("blocked"), m.getLong("added"), if (m.has("addr")) m.getString("addr") else null) } }
     }
     fun block(me: Me, h: Held, key: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "block").put("key", key).put("account", h.npub), me)) }
     /** Needs the fingerprint. */

@@ -139,6 +139,8 @@ data class Ui(
     val keptKey: Boolean = false,
     /** The account page's username, if this phone set one. */
     val username: String? = null,
+    /** Whether the account has a password, as the box last said (Keykin SPEC 11.3); null until it says. */
+    val hasPassword: Boolean? = null,
     /** Where this account's login page is, as this phone last published it (Keykin SPEC 11.1). */
     val loginPage: String? = null,
 ) : java.io.Serializable
