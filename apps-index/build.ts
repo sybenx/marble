@@ -253,6 +253,14 @@ type App = {
 };
 const isDvm = (e: Ev) => { const ks = tags(e, "k").map((t) => Number(t[1])); return ks.length > 0 && ks.every((k) => k >= 5000 && k < 7000); };
 function handlerMeta(e: Ev): any { try { const m = JSON.parse(e.content); return m && typeof m === "object" ? m : {}; } catch { return {}; } }
+// A code host's front page is no app. A listing there opens its own project page (owner/repo) and is grouped by
+// that page, not by the host, so github.com doesn't gather everyone's projects under one entry.
+const CODE_HOST = /(^|\.)(github\.com|gitlab\.com|codeberg\.org)$/;
+function projectPage(u: URL | null): URL | null {
+  if (!u || !CODE_HOST.test(hostOf(u))) return null;
+  const parts = u.pathname.split("/").filter(Boolean);
+  return parts.length >= 2 ? new URL(`${u.origin}/${parts[0]}/${parts[1]}`) : null;
+}
 function handlerWeb(e: Ev): URL | null {
   for (const t of tags(e, "web")) { const u = publicUrl(t[1]); if (u) return new URL(u.origin + "/"); }
   return null;
@@ -284,7 +292,13 @@ for (const e of handlers.values) {
   const name = clean(m.name || m.display_name, 60);
   const u = handlerWeb(e);
   if (!name || !u || !verify(e)) continue;
-  const l: Listing = { e, name, about: clean(m.about, 200), icon: imageUrl(m.picture), host: hostOf(u), origin: u.origin + "/", zap: null, recs: recs.get(addr(e)) ?? new Set() };
+  let host = hostOf(u), origin = u.origin + "/";
+  if (CODE_HOST.test(host)) {
+    const page = [publicUrl(m.website), ...tags(e, "web").map((t) => publicUrl(t[1]))].map(projectPage).find(Boolean);
+    if (!page) continue;
+    host = hostOf(page) + page.pathname; origin = page.href;
+  }
+  const l: Listing = { e, name, about: clean(m.about, 200), icon: imageUrl(m.picture), host, origin, zap: null, recs: recs.get(addr(e)) ?? new Set() };
   (byDomain.get(l.host) ?? byDomain.set(l.host, []).get(l.host)!).push(l);
 }
 log(`domains ${byDomain.size}, android-only listings ${androidOnly.length}`);
@@ -293,6 +307,7 @@ log(`domains ${byDomain.size}, android-only listings ${androidOnly.length}`);
 const officialKeys = new Map<string, Set<string>>();
 await pool([...byDomain.keys()], 8, async (host) => {
   const keys = new Set<string>();
+  if (host.includes("/")) return void officialKeys.set(host, keys); // a project on a code host: no nostr.json of its own
   for (const q of ["", "?name=_"]) {
     try {
       const r = await fetch(`https://${host}/.well-known/nostr.json${q}`, { signal: AbortSignal.timeout(8000), redirect: "error" });
