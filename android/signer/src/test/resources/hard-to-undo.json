@@ -1,0 +1,7052 @@
+{
+ "about": "Shared cases for \"is this event hard to undo?\" Made by tools/hard-to-undo-vectors.mjs; run by test/hard-to-undo-vectors.test.ts (Keykin) and HardToUndoVectorsTest (Marble). `answers` is what each implementation answers today; `expect` is the rule only where all three agree, else \"undecided\". `prev` is the last version of that list or profile the signer saw (null: none). `now` is the signer's clock. Events are unsigned; their pubkey is a stand-in.",
+ "now": 1800000000,
+ "implementations": {
+  "keykin": "Keykin src/destructive.ts; box/box.ts refuses with needs_tap unless the request says tapped: true",
+  "marble": "Marble android/signer/src/main/java/cc/aaro/cosign/core/Policy.kt, refuse(e, now) then hold(e, prev, now)",
+  "marble-keykin-copy": "Marble android/signer/src/main/java/cc/aaro/keykin/core/Device.kt, Device.destructive(kind, tags, content)"
+ },
+ "outcomes": {
+  "marble": "Marble Android with a box. signs: nobody is asked. asks: the phone asks, and Yes signs. refuses: never signed. blocked: the phone asks (or the box's needs_tap makes it ask), and even after Yes the box refuses, because Marble sends tapped only when its copy of the Keykin rule agrees.",
+  "keykinDevices": "Devices that never send tapped today (marble-desktop, the NIP-46 bunker in src/nip46.ts, the Keykin Android app). needs_tap: refused, nobody asked. signs: signed."
+ },
+ "rules": [
+  {
+   "id": "marble-ahead-list",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "0, 3, 10000-19999, 30000-39999",
+   "then": "refuse",
+   "when": "created_at more than 600 s after now",
+   "says": "\"<Kind> dated <day>: a version dated ahead would block every later change\""
+  },
+  {
+   "id": "marble-ahead-delete-a",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "5",
+   "then": "refuse",
+   "when": "created_at more than 600 s after now, and any a tag",
+   "says": "\"Deletion dated <day>: it would delete every version until then\""
+  },
+  {
+   "id": "marble-ahead",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "any other",
+   "then": "ask",
+   "when": "created_at more than 600 s after now",
+   "says": "\"<Kind> dated in the future (<day>)\""
+  },
+  {
+   "id": "marble-vanish",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "62",
+   "then": "ask",
+   "when": "always",
+   "says": "\"Ask relays to erase everything you have ever published\""
+  },
+  {
+   "id": "marble-delete-list",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "5",
+   "then": "ask",
+   "when": "an a tag (kind:pubkey:d) or k tag naming a kind Marble keeps (0, 3, 10000-10004, 10006, 10007, 10015, 10030, 30000-30004, 30015, 30030)",
+   "says": "\"Delete your <name of the first such kind>\""
+  },
+  {
+   "id": "marble-delete-5",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "5",
+   "then": "ask",
+   "when": "5 or more e and a tags (after marble-delete-list)",
+   "says": "\"Delete <n> of your events\""
+  },
+  {
+   "id": "marble-profile-wipe",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "0",
+   "then": "ask",
+   "when": "with a previous version: 2 or more of name, display_name, picture, about, nip05, lud16, banner, website go from filled to empty, or the new content is no JSON object (or an empty one) and the old one had keys",
+   "says": "\"Wipe your profile: <fields>\" (\"everything\" when none of the eight were filled)"
+  },
+  {
+   "id": "marble-private-emptied",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "the kept kinds except 0",
+   "then": "ask",
+   "when": "with a previous version whose content was not blank and did not start with \"{\" (a private part), the new content is blank",
+   "says": "\"Empty your private <name>\""
+  },
+  {
+   "id": "marble-list-emptied",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "the kept kinds except 0",
+   "then": "ask",
+   "when": "with a previous version of 3 or more entries, none left (kind 3 counts p tags with a value; relay kinds r and relay tags; the rest every tag but d, title, description)",
+   "says": "\"Empty your <name> (it has <n> <items>)\""
+  },
+  {
+   "id": "marble-relays-most",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "10002, 10006, 10007, 30002",
+   "then": "ask",
+   "when": "with a previous version: 2 or more relays removed, and at least half (a trailing / does not count)",
+   "says": "\"Remove <r> of your <n> relays\" (+ \" (and add <a>)\")"
+  },
+  {
+   "id": "marble-list-most",
+   "impl": [
+    "marble"
+   ],
+   "kinds": "the other kept kinds except 0",
+   "then": "ask",
+   "when": "with a previous version: 10 or more entries removed, and at least a fifth",
+   "says": "\"Remove <r> of your <n> <items>s\" (+ \" (and add <a>)\")"
+  },
+  {
+   "id": "keykin-vanish",
+   "impl": [
+    "keykin",
+    "marble-keykin-copy"
+   ],
+   "kinds": "62",
+   "then": "needs a Yes on the device",
+   "when": "always",
+   "says": "\"asks every relay to erase the whole account\""
+  },
+  {
+   "id": "keykin-delete-5",
+   "impl": [
+    "keykin",
+    "marble-keykin-copy"
+   ],
+   "kinds": "5",
+   "then": "needs a Yes on the device",
+   "when": "5 or more e and a tags",
+   "says": "\"deletes five or more posts at once\""
+  },
+  {
+   "id": "keykin-follows-empty",
+   "impl": [
+    "keykin",
+    "marble-keykin-copy"
+   ],
+   "kinds": "3",
+   "then": "needs a Yes on the device",
+   "when": "no tag named p (whatever came before)",
+   "says": "\"empties the follow list\""
+  },
+  {
+   "id": "keykin-profile-empty",
+   "impl": [
+    "keykin",
+    "marble-keykin-copy"
+   ],
+   "kinds": "0",
+   "then": "needs a Yes on the device",
+   "when": "content is no JSON object, or none of name, display_name, about, picture, nip05, lud16 is a string with something besides white space (whatever came before)",
+   "says": "\"empties the profile\""
+  }
+ ],
+ "cases": [
+  {
+   "why": "a note",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 1,
+    "tags": [],
+    "content": "gm"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a reaction",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 7,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": "+"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "vanish from every relay",
+   "rules": [
+    "marble-vanish",
+    "keykin-vanish"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 62,
+    "tags": [
+     [
+      "relay",
+      "ALL_RELAYS"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Ask relays to erase everything you have ever published"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "vanish from one relay: still the whole account there",
+   "rules": [
+    "marble-vanish",
+    "keykin-vanish"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 62,
+    "tags": [
+     [
+      "relay",
+      "wss://r.example"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Ask relays to erase everything you have ever published"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "delete 4 posts",
+   "rules": [
+    "marble-delete-5",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete 5 posts",
+   "rules": [
+    "marble-delete-5",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete 5 of your events"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "delete 5 articles by address (kind 30023 is not a kept kind)",
+   "rules": [
+    "marble-delete-5",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:post-0"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:post-1"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:post-2"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:post-3"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:post-4"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete 5 of your events"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "delete 3 posts and 2 articles: e and a count together",
+   "rules": [
+    "marble-delete-5",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:a"
+     ],
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete 5 of your events"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "delete 4 posts with a k tag: k is not a target",
+   "rules": [
+    "marble-delete-5",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "k",
+      "1"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete the follow list by address",
+   "rules": [
+    "marble-delete-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "3:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete your follow list"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete one event, saying it is a relay list (k 10002)",
+   "rules": [
+    "marble-delete-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "k",
+      "10002"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete your relay list"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete the bookmarks by k 10003",
+   "rules": [
+    "marble-delete-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "k",
+      "10003"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete your bookmarks"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete a bookmark set by address",
+   "rules": [
+    "marble-delete-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "30003:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:reading"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete your bookmark set"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "delete 5, one of them the follow list: Marble names the list",
+   "rules": [
+    "marble-delete-list",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "3:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Delete your follow list"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "delete one article by address: every version of it, and neither asks",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:my-essay"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "An address deletion removes every version of an article up to now, and only refusing it when dated ahead covers that. Is one article worth a question?"
+  },
+  {
+   "why": "the first follow list this phone sees",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "follow one more",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "unfollow 9 of 30: under 10",
+   "rules": [
+    "marble-list-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Under 10 removed is never asked about, even 9 of 30 (30 percent)."
+  },
+  {
+   "why": "unfollow 10 of 30",
+   "rules": [
+    "marble-list-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 10 of your 30 follows"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "unfollow 10 of 50: exactly a fifth",
+   "rules": [
+    "marble-list-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000020"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000021"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000022"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000023"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000024"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000025"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000026"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000027"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000028"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000020"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000021"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000022"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000023"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000024"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000025"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000026"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000027"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000028"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000029"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000030"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000031"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000032"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 10 of your 50 follows"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "unfollow 10 of 51: under a fifth",
+   "rules": [
+    "marble-list-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000020"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000021"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000022"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000023"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000024"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000025"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000026"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000027"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000028"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000029"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000020"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000021"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000022"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000023"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000024"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000025"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000026"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000027"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000028"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000029"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000030"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000031"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000032"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000033"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "all 30 replaced by 30 others",
+   "rules": [
+    "marble-list-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000065"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000066"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000067"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000068"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000069"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000070"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000071"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000072"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000073"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000074"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000075"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000076"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000077"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000078"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000079"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000080"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000081"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000082"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 30 of your 30 follows (and add 30)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "down to 1 of 200",
+   "rules": [
+    "marble-list-most",
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000020"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000021"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000022"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000023"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000024"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000025"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000026"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000027"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000028"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000029"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000002f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000030"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000031"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000032"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000033"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000034"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000035"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000036"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000037"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000038"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000039"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000003f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000040"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000041"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000042"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000043"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000044"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000045"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000046"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000047"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000048"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000049"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000004f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000050"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000051"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000052"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000053"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000054"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000055"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000056"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000057"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000058"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000059"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000005f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000060"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000061"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000062"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000063"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000064"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000065"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000066"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000067"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000068"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000069"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000006f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000070"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000071"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000072"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000073"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000074"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000075"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000076"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000077"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000078"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000079"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000007f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000080"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000081"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000082"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000083"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000084"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000085"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000086"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000087"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000088"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000089"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000008f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000090"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000091"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000092"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000093"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000094"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000095"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000096"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000097"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000098"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000099"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000009f"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a0"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a1"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a2"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a3"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a4"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a5"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a6"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a7"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a8"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000a9"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000aa"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000ab"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000ac"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000ad"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000ae"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000af"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b0"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b1"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b2"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b3"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b4"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b5"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b6"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b7"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b8"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000b9"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000ba"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000bb"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000bc"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000bd"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000be"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000bf"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c0"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c1"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c2"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c3"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c4"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c5"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c6"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c7"
+     ],
+     [
+      "p",
+      "00000000000000000000000000000000000000000000000000000000000000c8"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 199 of your 200 follows"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "emptied from 3",
+   "rules": [
+    "marble-list-emptied",
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your follow list (it has 3 follows)"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "emptied from 2",
+   "rules": [
+    "marble-list-emptied",
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "emptied, with no earlier version seen (or as a site's own key, which Marble never compares)",
+   "rules": [
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "emptied of people, hashtags kept",
+   "rules": [
+    "marble-list-emptied",
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "t",
+      "nostr"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "t",
+      "nostr"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your follow list (it has 3 follows)"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the follow list"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "only bare p tags left (no key in them): Keykin sees a p tag, Marble sees no one",
+   "rules": [
+    "marble-list-emptied",
+    "keykin-follows-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p"
+     ],
+     [
+      "p"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your follow list (it has 3 follows)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "the old relay list in the content dropped, follows kept: no private part",
+   "rules": [
+    "marble-private-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000006"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000008"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000009"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000e"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000000f"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000010"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000011"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000012"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000013"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000014"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000015"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000016"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000017"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000018"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000019"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001a"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001b"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001c"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001d"
+     ],
+     [
+      "p",
+      "000000000000000000000000000000000000000000000000000000000000001e"
+     ]
+    ],
+    "content": "{\"wss://a.example\":{\"read\":true,\"write\":true}}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "name changed",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"B\",\"about\":\"x\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"A\",\"about\":\"x\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "the first profile",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "an empty first profile",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "emptied, from a name",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: name"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "one field removed",
+   "rules": [
+    "marble-profile-wipe"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\",\"about\":\"hi\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\",\"about\":\"hi\",\"picture\":\"https://x.example/p.png\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "two fields removed, the name kept",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\",\"about\":\"hi\",\"picture\":\"https://x.example/p.png\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: picture, about"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "banner and website removed, the name kept",
+   "rules": [
+    "marble-profile-wipe"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\",\"banner\":\"https://x.example/b.png\",\"website\":\"https://x.example\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: banner, website"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "only a banner left: Keykin does not count banner or website",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"banner\":\"https://x.example/b.png\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\",\"about\":\"hi\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: name, about"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a first profile with only a website",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"website\":\"https://x.example\"}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a first profile whose name is white space",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"  \"}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "content that is not JSON",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "hello"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: name"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "content that is a JSON array",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "[]"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: name"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a first profile that is JSON null",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "null"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "the name a number: Marble counts it as filled, Keykin wants a string",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":5}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "loose JSON (unquoted key, single quotes): only JSON.parse refuses it",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{name:'Aaron'}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "blocked",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a key twice: JSON.parse keeps the last, org.json refuses the whole thing",
+   "rules": [
+    "marble-profile-wipe",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"\",\"name\":\"Aaron\"}"
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"}"
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Wipe your profile: name"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "something after the object",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"Aaron\"} x"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "blocked",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a name that is only a byte order mark: JavaScript trims it, Kotlin does not",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"﻿\"}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "blocked",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a name that is only a unit separator (U+001F): Kotlin calls it blank, JavaScript does not trim it",
+   "rules": [
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 0,
+    "tags": [],
+    "content": "{\"name\":\"\\u001f\"}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "bookmarks emptied, from 4",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your bookmarks (it has 4 bookmarks)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "bookmarks emptied, from 2",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "A list of 1 or 2 emptied is never asked about."
+  },
+  {
+   "why": "the 2026-11-18 shape: public bookmarks kept, the private part (NIP-44) dropped",
+   "rules": [
+    "marble-private-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your private bookmarks"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "the private part in the old NIP-04 form dropped",
+   "rules": [
+    "marble-private-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "o6Lq2T5xvRk3o8QKk3g6WQ==?iv=Zm9vYmFyYmF6cXV4MTIzNA=="
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your private bookmarks"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "private part dropped and the public part emptied: the private part is named",
+   "rules": [
+    "marble-private-emptied",
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your private bookmarks"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "the private part replaced by a shorter one",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "A private part rewritten without what it held looks like any edit until it is read. Should a signer that can decrypt compare the entries inside?"
+  },
+  {
+   "why": "the private part dropped, with no earlier version seen",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Marble judges a list only against a version it saw; on a new phone, or for a site's own key, nothing is compared. Keykin never compares. Should the box keep the last version of each list it signed?"
+  },
+  {
+   "why": "a bookmark added, the private part kept",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000063"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10003,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "mute list: the private part dropped",
+   "rules": [
+    "marble-private-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your private mute list"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "mute list emptied, from 3",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your mute list (it has 3 mutes)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "mute list emptied, from 2",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10000,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Two muted people unmuted at once, with no question."
+  },
+  {
+   "why": "a follow set emptied (its d tag kept)",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30000,
+    "tags": [
+     [
+      "d",
+      "friends"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30000,
+    "tags": [
+     [
+      "d",
+      "friends"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your follow set (it has 5 persons)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a bookmark set: the private part dropped",
+   "rules": [
+    "marble-private-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30003,
+    "tags": [
+     [
+      "d",
+      "reading"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30003,
+    "tags": [
+     [
+      "d",
+      "reading"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your private bookmark set"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a list renamed: title and description are not entries",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30001,
+    "tags": [
+     [
+      "d",
+      "x"
+     ],
+     [
+      "title",
+      "New"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30001,
+    "tags": [
+     [
+      "d",
+      "x"
+     ],
+     [
+      "title",
+      "Old"
+     ],
+     [
+      "description",
+      "d"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: 2 of 3 dropped",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 2 of your 3 relays"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: 1 of 3 dropped",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: 2 of 4 dropped, exactly half",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ],
+     [
+      "r",
+      "wss://d"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 2 of your 4 relays"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: 2 of 5 dropped, under half",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ],
+     [
+      "r",
+      "wss://d"
+     ],
+     [
+      "r",
+      "wss://e"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: only a trailing / changed",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a/"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b/"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: all 3 replaced by 3 others",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://x"
+     ],
+     [
+      "r",
+      "wss://y"
+     ],
+     [
+      "r",
+      "wss://z"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 3 of your 3 relays (and add 3)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list emptied, from 3",
+   "rules": [
+    "marble-list-emptied"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Empty your relay list (it has 3 relays)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list emptied, from 2",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 2 of your 2 relays"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list emptied, from 1",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "With its only relay gone, nobody can find what the account writes, and neither side asks."
+  },
+  {
+   "why": "search relays: 2 of 3 dropped (relay tags)",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10007,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10007,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ],
+     [
+      "relay",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove 2 of your 3 relays"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "DM relays (kind 10050) emptied",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Kind 10050 is not a kind Marble keeps, so it is never compared: with it emptied, NIP-17 messages to the account have nowhere to go."
+  },
+  {
+   "why": "media servers (kind 10063) emptied",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10063,
+    "tags": [],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10063,
+    "tags": [
+     [
+      "server",
+      "https://a.example"
+     ],
+     [
+      "server",
+      "https://b.example"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Not a kept kind either: the account's pictures and files stop being found."
+  },
+  {
+   "why": "app data (kind 30078) emptied",
+   "rules": [],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30078,
+    "tags": [
+     [
+      "d",
+      "marble/settings"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 30078,
+    "tags": [
+     [
+      "d",
+      "marble/settings"
+     ]
+    ],
+    "content": "AhjhT8nNyAh4ozUgSqzQxVUHvOJ9n2CXhqC2HoU5Do2pW2oFmV1E8vL+Rq1PKbmT9wWkV8l7QhJbH0mF2g6uVxk="
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "An app's own settings, sealed to the account: another app writing it back empty loses them. Likely each app's own business, but the 11-18 loss had this shape."
+  },
+  {
+   "why": "a note dated 2099",
+   "rules": [
+    "marble-ahead"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 1,
+    "tags": [],
+    "content": "hi"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Note dated in the future (2099-01-01)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a note 600 s ahead: not ahead yet",
+   "rules": [
+    "marble-ahead"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000600,
+    "kind": 1,
+    "tags": [],
+    "content": "hi"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a note 601 s ahead",
+   "rules": [
+    "marble-ahead"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000601,
+    "kind": 1,
+    "tags": [],
+    "content": "hi"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Note dated in the future (2027-01-15)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a follow list 20 minutes ahead",
+   "rules": [
+    "marble-ahead-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800001200,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "refuse",
+     "says": "Follow list dated 2027-01-15: a version dated ahead would block every later change"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "refuses",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a follow list 5 minutes ahead (a fast clock)",
+   "rules": [
+    "marble-ahead-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000300,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 3,
+    "tags": [
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "sign",
+   "outcome": {
+    "marble": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "an empty profile dated 2099",
+   "rules": [
+    "marble-ahead-list",
+    "keykin-profile-empty"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 0,
+    "tags": [],
+    "content": "{}"
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "refuse",
+     "says": "Profile dated 2099-01-01: a version dated ahead would block every later change"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "empties the profile"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "empties the profile"
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "refuses",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "a follow set dated 2099",
+   "rules": [
+    "marble-ahead-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 30000,
+    "tags": [
+     [
+      "d",
+      "x"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "p",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "refuse",
+     "says": "Follow set dated 2099-01-01: a version dated ahead would block every later change"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "refuses",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "DM relays dated 2099: any replaceable kind",
+   "rules": [
+    "marble-ahead-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 10050,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "refuse",
+     "says": "Kind 10050 event dated 2099-01-01: a version dated ahead would block every later change"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "refuses",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a deletion by address dated 2099",
+   "rules": [
+    "marble-ahead-delete-a"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 5,
+    "tags": [
+     [
+      "a",
+      "30023:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1:my-essay"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "refuse",
+     "says": "Deletion dated 2099-01-01: it would delete every version until then"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "refuses",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "a deletion by id dated 2099",
+   "rules": [
+    "marble-ahead"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Deletion dated in the future (2099-01-01)"
+    },
+    "marble-keykin-copy": {
+     "decision": "sign",
+     "says": null
+    },
+    "keykin": {
+     "decision": "sign",
+     "says": null
+    }
+   },
+   "expect": "undecided",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "deleting 5 by id, dated 2099",
+   "rules": [
+    "marble-ahead",
+    "keykin-delete-5"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000002"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000003"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000004"
+     ],
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000005"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Deletion dated in the future (2099-01-01)"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "deletes five or more posts at once"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "vanish dated 2099",
+   "rules": [
+    "marble-ahead",
+    "keykin-vanish"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 62,
+    "tags": [
+     [
+      "relay",
+      "ALL_RELAYS"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Request to vanish dated in the future (2099-01-01)"
+    },
+    "marble-keykin-copy": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    },
+    "keykin": {
+     "decision": "ask",
+     "says": "asks every relay to erase the whole account"
+    }
+   },
+   "expect": "ask",
+   "outcome": {
+    "marble": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  }
+ ]
+}
