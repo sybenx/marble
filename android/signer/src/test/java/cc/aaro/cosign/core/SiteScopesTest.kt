@@ -13,6 +13,15 @@ class SiteScopesTest {
     private val stranger = "b".repeat(64)
     private val ct = "ciphertext"
 
+    @Test fun privateListsStartOnWhenTheCodeAsksToDecrypt() {
+        assertTrue(SiteScopes.asksLists("sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key"))
+        assertTrue(SiteScopes.asksLists(" nip04_decrypt "))
+        assertFalse(SiteScopes.asksLists("sign_event:1,sign_event:7,get_public_key"))
+        assertFalse("encrypting alone doesn't", SiteScopes.asksLists("nip44_encrypt"))
+        assertFalse(SiteScopes.asksLists(""))
+        assertFalse(SiteScopes.asksLists(null))
+    }
+
     @Test fun decryptWithAStrangerIsRefusedWithoutDms() {
         for (m in listOf("nip44_decrypt", "nip04_decrypt", "nip44_encrypt", "nip04_encrypt")) {
             assertEquals(m, "dms", SiteScopes.lacks(m, listOf(stranger, ct), me, lists = false, dms = false))

@@ -355,14 +355,15 @@ object Device {
      * `tap` is true when the device must ask the person Yes or No before doing it. For a `nostrconnect`
      * note, [from] is the sender's origin as the login page saw it (null when it could not tell) and
      * [signAs] is the note's `as`, `"main"` or `"site"`. An older box sends neither: null, the old behaviour.
-     * For a `bunker` note, [text] is an optional name for the site and [lists], [dms] the site's two switches (off when missing).
+     * For a `bunker` note, [text] is an optional name for the site. A `bunker` or `nostrconnect` note carries [lists], [dms],
+     * the site's two switches (off when missing); [scoped] says the box sent them at all (an older box sends them on `bunker` only).
      */
     data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean, val from: String? = null, val signAs: String? = null,
-                    val lists: Boolean = false, val dms: Boolean = false) {
+                    val lists: Boolean = false, val dms: Boolean = false, val scoped: Boolean = false) {
         companion object {
             private fun JSONObject.str(k: String) = if (isNull(k)) null else optString(k).trim().ifEmpty { null }
             fun of(n: JSONObject) = Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap"), n.str("from"), n.str("as"),
-                n.opt("lists") == true, n.opt("dms") == true)
+                n.opt("lists") == true, n.opt("dms") == true, n.has("lists") || n.has("dms"))
         }
     }
     fun notes(me: Me, h: Held, send: Send = http(h.addr)): List<Note> {

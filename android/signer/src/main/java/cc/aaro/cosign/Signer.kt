@@ -303,7 +303,10 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() })
                         val origin = pick.name
                         pick.place?.let { childFor(it) }
-                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place, how = if (n.from != null) "login" else "paste", device = uri.getQueryParameter("device"))
+                        // The site's switches, as the person set them on the account page's card. From a box too old to
+                        // carry them: "Read your private lists" on when the code asks to decrypt, as a scan has it (SPEC 11.6).
+                        val lists = if (n.scoped) n.lists else SiteScopes.asksLists(uri.getQueryParameter("perms"))
+                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place, lists, n.dms, how = if (n.from != null) "login" else "paste", device = uri.getQueryParameter("device"))
                         pointerCheck(h)
                         Device.noteDone(me(), h, n.id, "ok", send(h))
                         note(if (pick.place != null) "Connected $origin with a new account, from your account page" else "Connected $origin, from your account page", "approved")
@@ -1306,8 +1309,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 nostrConnect = Triple(client, relayList, secret); nostrConnectDevice = uri.getQueryParameter("device"); connecting = null; pendingLogin = null
                 choice = siteChoice(uri.getQueryParameter("url"), accountPage || SiteChoice.marked(text))
                 // "Read your private lists" starts on when the site asks for decrypting (NIP-46 perms); DMs never do.
-                val perms = uri.getQueryParameter("perms")?.split(',')?.map { it.trim().substringBefore(':') }.orEmpty()
-                val wants = perms.any { it == "nip44_decrypt" || it == "nip04_decrypt" }
+                val wants = SiteScopes.asksLists(uri.getQueryParameter("perms"))
                 ui.update { it.copy(error = null, connect = confirmCard(site, choice).copy(wantsLists = wants)) }
             }
         }
