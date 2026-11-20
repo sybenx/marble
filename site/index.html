@@ -15,17 +15,18 @@
 <link rel="canonical" href="https://marble.syb.lol/">
 <link rel="search" type="application/opensearchdescription+xml" title="Marble" href="/opensearch.xml">
 <link rel="modulepreload" href="/js/app.js">
-<link rel="modulepreload" href="/js/pool.js">
-<link rel="modulepreload" href="/js/ids.js">
+<link rel="modulepreload" href="/js/signin/pool.js">
+<link rel="modulepreload" href="/js/signin/ids.js">
 <link rel="modulepreload" href="/js/data.js">
 <link rel="modulepreload" href="/js/render.js">
 <link rel="modulepreload" href="/js/search.js">
 <link rel="modulepreload" href="/js/search-rank.js">
 <link rel="modulepreload" href="/js/find.js">
 <link rel="modulepreload" href="/js/me.js">
+<link rel="modulepreload" href="/js/signin/me.js">
 <link rel="modulepreload" href="/js/act.js">
 <link rel="modulepreload" href="/js/later.js">
-<link rel="modulepreload" href="/js/vendor/noble.js">
+<link rel="modulepreload" href="/js/signin/vendor/noble.js">
 <script>
   // Marble as the browser's search engine (opensearch.xml): a typed address goes to the site at once, before anything
   // else loads; anything else is a search the page shows (and keeps in Searches). Nostr links are left to the page.
@@ -40,7 +41,7 @@
     var l = /^(?:(https?):\/\/)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?)(\/\S*)?$/i.exec(q);
     if (l && (l[1] || l[3])) { location.replace(l[1] ? q : "http://" + q); return; }
   })();
-  // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/pool.js).
+  // Opened from a link to a post or a person: start connecting now, while the rest loads (FAST in js/signin/pool.js).
   if (/^\/((e|p|a)\/|note1|nevent1|npub1|nprofile1|naddr1)/.test(location.pathname)) {
     window.marbleWarm = ["wss://syb.lol", "wss://relay.ditto.pub", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]
       .map((u) => { try { return new WebSocket(u); } catch { return null; } }).filter(Boolean);
@@ -545,7 +546,7 @@
   dialog#signin, dialog#acct { border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--ink); padding: 24px; width: min(400px, calc(100vw - 32px)); }
   dialog#signin::backdrop, dialog#acct::backdrop { background: rgba(10, 9, 8, .55); }
   dialog#signin:focus, dialog#acct:focus { outline: none; }
-  /* the account button's dialog (account-page.js): the address it found, in full, before the way there */
+  /* the account button's dialog (signin/account-page.js): the address it found, in full, before the way there */
   .acct-addr { font: 600 18px ui-monospace, Menlo, Consolas, monospace; color: var(--ink) !important; overflow-wrap: anywhere; margin: 10px 0; }
   .acct-who { width: 100%; box-sizing: border-box; padding: 11px 14px; border: 1px solid var(--field-line); border-radius: 12px; background: var(--field, transparent); color: var(--ink); font: inherit; }
   .acct-who:focus { outline: 2px solid var(--accent); outline-offset: 1px; }

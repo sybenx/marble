@@ -3,7 +3,7 @@
 // Jumble's picker (github.com/CodyTseng/jumble, MIT): a search at the top, then Recent, your own emoji (NIP-30: your
 // list, kind 10030, and the sets it names, 30030), and the usual sections, with a skin tone; on a phone, a sheet from
 // the bottom. The emoji are emojibase's (MIT), trimmed into /emoji.json and fetched the first time + opens.
-import { req, relays, FAST, INDEXERS } from "./pool.js";
+import { req, relays, FAST, INDEXERS } from "./signin/pool.js";
 import { esc } from "./render.js";
 import { trayOf, keyOf, same } from "./reactions.js";
 

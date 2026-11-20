@@ -1,6 +1,6 @@
 // Turning a post's text into the page: everything escaped first, then links, pictures, videos, mentions
 // of people (their names filled in when known), quoted posts (loaded after), #tags and custom emoji.
-import { decode, npub, nevent, naddr, pathFor } from "./ids.js";
+import { decode, npub, nevent, naddr, pathFor } from "./signin/ids.js";
 import { profiles, wantProfile } from "./data.js";
 import { parseBlossom } from "./blossom.js";
 

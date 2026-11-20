@@ -3,8 +3,8 @@
 // that post already in the page: drawn, so it shows before any script runs; with its title, text and picture for the
 // previews chat apps show; and handed to the page's script (#seed), which takes over without asking again.
 // Fetched from fast relays (and the ones the link names), checked, and kept at the edge for a while.
-import { decode, npub, note, toHex, fromHex } from "../site/js/ids.js";
-import { schnorr, sha256 } from "../site/js/vendor/noble.js";
+import { decode, npub, note, toHex, fromHex } from "../site/js/signin/ids.js";
+import { schnorr, sha256 } from "../site/js/signin/vendor/noble.js";
 
 const RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol", "wss://relay.primal.net", "wss://relay.damus.io"];
 const SHARED = /^\/(?:(e|p|a)\/)?((?:note|nevent|npub|nprofile|naddr)1[02-9ac-hj-np-z]{6,})\/?$/;

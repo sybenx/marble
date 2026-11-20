@@ -1,8 +1,8 @@
 // Marble on the web: the front page's search, and the pages it opens (/e/ a post, /p/ a person,
 // /a/ an article, /?q= a search). One page; links change the view without reloading, and going back
 // shows the page as it was, at the same place.
-import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./ids.js";
-import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./pool.js";
+import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./signin/ids.js";
+import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./signin/pool.js";
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
@@ -10,7 +10,7 @@ import { split as authorIn } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows, phoneSecret } from "./me.js";
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
-import { openAccountPage } from "./account-page.js";
+import { openAccountPage } from "./signin/account-page.js";
 import * as notes from "./later.js";
 import * as vault from "./notes-vault.js";
 import { showReader, keepUrlOf, plainText } from "./reader.js";
@@ -1848,7 +1848,7 @@ function drawAccount() {
         <button type="button" data-sign-out role="menuitem">Sign out</button></div>`;
     document.body.dataset.signed = "1";
     // "This browser: key ab12": the same 4 hex the account page shows on this sign-in's row (Keykin SPEC 11.5)
-    if (phoneSecret()) import("./connect.js").then((m) => m.shortKey(phoneSecret())).then((k) => { const p = account.querySelector("[data-browser-key]"); if (k && p) { p.textContent = `This browser: key ${k}`; p.hidden = false; } }).catch(() => {});
+    if (phoneSecret()) import("./signin/connect.js").then((m) => m.shortKey(phoneSecret())).then((k) => { const p = account.querySelector("[data-browser-key]"); if (k && p) { p.textContent = `This browser: key ${k}`; p.hidden = false; } }).catch(() => {});
   } else { account.innerHTML = `<button type="button" class="sign-in">Sign in</button>`; delete document.body.dataset.signed; }
 }
 account.addEventListener("click", async (ev) => {

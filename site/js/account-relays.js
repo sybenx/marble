@@ -1,7 +1,7 @@
 // Where your synced copies live (reader.md §6): your write relays as your list (kind 10002) says, every one of them,
 // including any that's down right now (sync-guard.js counts a down one as not answering, never as not being there).
 // A lookup that heard from too few relays is "unknown", never "you have none": nothing is written until it's known.
-import { req, relays, normalize, FAST, INDEXERS, testRelay } from "./pool.js";
+import { req, relays, normalize, FAST, INDEXERS, testRelay } from "./signin/pool.js";
 import { writeList } from "./sync-guard.js";
 
 const known = new Map(); // pubkey → {write, read}, once the lookup has worked (for the visit)

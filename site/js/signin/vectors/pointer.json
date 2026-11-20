@@ -1,0 +1,1594 @@
+{
+ "about": "Shared cases for the login-page pointer (Keykin SPEC 11.1) and name-first sign-in. Made by tools/signin-vectors.mjs; run by test/signin-vectors.test.ts. `expect` is the rule; `differs` names an implementation that answers otherwise today, and what it gives. `here` is the reader's own hostname (default marble.example). Pointer states: found (origin, template, kind), removed (keykin-login says bad for a bad one), none.",
+ "account": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+ "other": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+ "here": "marble.example",
+ "templates": [
+  {
+   "template": "https://account.syb.lol/#connect=<nostrconnect>",
+   "origin": "https://account.syb.lol",
+   "from": "all"
+  },
+  {
+   "template": "https://login.example.org/signin?code=<nostrconnect>",
+   "origin": "https://login.example.org",
+   "from": "marble-web"
+  },
+  {
+   "template": "https://a.example:8443/#connect=<nostrconnect>",
+   "origin": "https://a.example:8443",
+   "from": "marble-web"
+  },
+  {
+   "template": "https://signer.example/connect?uri=<nostrconnect>",
+   "origin": "https://signer.example",
+   "from": "keykin-login"
+  },
+  {
+   "template": "https://signer.example.com:8443/<nostrconnect>",
+   "origin": "https://signer.example.com:8443",
+   "from": "tube"
+  },
+  {
+   "template": "https://Account.syb.lol:443/x#connect=<nostrconnect>",
+   "origin": "https://account.syb.lol",
+   "from": "marble-android"
+  },
+  {
+   "template": "http://127.0.0.1:7470/#connect=<nostrconnect>",
+   "here": "localhost",
+   "origin": "http://127.0.0.1:7470",
+   "from": "keykin-login",
+   "why": "a local page, for a reader running locally"
+  },
+  {
+   "template": "http://localhost:7070/#connect=<nostrconnect>",
+   "here": "localhost",
+   "origin": "http://localhost:7070",
+   "from": "tube"
+  },
+  {
+   "template": "http://account.syb.lol/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "not https"
+  },
+  {
+   "template": "http://localhost:8080/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "http localhost when the reader is not on localhost"
+  },
+  {
+   "template": "http://127.0.0.1:7470/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "http 127.0.0.1 when the reader is not local"
+  },
+  {
+   "template": "https://me:pw@account.syb.lol/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "user and password"
+  },
+  {
+   "template": "https://me@account.syb.lol/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "user"
+  },
+  {
+   "template": "https://account.syb.lol/#connect=",
+   "origin": null,
+   "why": "no placeholder"
+  },
+  {
+   "template": "https://account.syb.lol/#connect=<nostrconnect>&x=1",
+   "origin": null,
+   "why": "placeholder not at the end"
+  },
+  {
+   "template": "https://account.syb.lol/<nostrconnect>#connect=<nostrconnect>",
+   "origin": null,
+   "why": "two placeholders"
+  },
+  {
+   "template": "https://account.syb.lol/#a=<nostrconnect>&b=<nostrconnect>",
+   "origin": null,
+   "why": "two placeholders"
+  },
+  {
+   "template": "https://account.syb.lol/<nostrconnect>/x",
+   "origin": null,
+   "why": "placeholder not at the end"
+  },
+  {
+   "template": "javascript:alert(1)//<nostrconnect>",
+   "origin": null,
+   "why": "not a web address"
+  },
+  {
+   "template": "<nostrconnect>",
+   "origin": null,
+   "why": "only the placeholder"
+  },
+  {
+   "template": "/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "no origin"
+  },
+  {
+   "template": "",
+   "origin": null,
+   "why": "empty"
+  },
+  {
+   "template": 42,
+   "origin": null,
+   "why": "not a string"
+  },
+  {
+   "template": null,
+   "origin": null,
+   "why": "missing"
+  },
+  {
+   "template": "https://<nostrconnect>",
+   "origin": null,
+   "from": "tube",
+   "why": "the code would go into the host",
+   "differs": {
+    "signin": "https://x",
+    "keykin-login": "https://x"
+   }
+  },
+  {
+   "template": "https://account.syb.lol<nostrconnect>",
+   "origin": null,
+   "from": "tube",
+   "why": "the code would go into the host: the origin shown is not where the link goes",
+   "differs": {
+    "signin": "https://account.syb.lolx",
+    "keykin-login": "https://account.syb.lolx"
+   }
+  },
+  {
+   "template": "https://account.syb.lol.<nostrconnect>",
+   "origin": null,
+   "from": "tube",
+   "why": "the code would go into the host",
+   "differs": {
+    "signin": "https://account.syb.lol.x",
+    "keykin-login": "https://account.syb.lol.x"
+   }
+  },
+  {
+   "template": "https://account.syb.lol/ #connect=<nostrconnect>",
+   "origin": null,
+   "from": "tube",
+   "why": "white space",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  },
+  {
+   "template": " https://account.syb.lol/#connect=<nostrconnect>",
+   "origin": null,
+   "why": "white space before it",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  },
+  {
+   "template": "https://account.syb.lol/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<nostrconnect>",
+   "origin": null,
+   "from": "tube",
+   "why": "longer than 500",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  }
+ ],
+ "origins": [
+  {
+   "url": "https://account.syb.lol",
+   "origin": "https://account.syb.lol"
+  },
+  {
+   "url": "https://account.syb.lol/",
+   "origin": "https://account.syb.lol"
+  },
+  {
+   "url": "https://account.syb.lol:8443",
+   "origin": "https://account.syb.lol:8443"
+  },
+  {
+   "url": "http://localhost:7070",
+   "here": "localhost",
+   "origin": "http://localhost:7070"
+  },
+  {
+   "url": "http://127.0.0.1:7070",
+   "here": "localhost",
+   "origin": "http://127.0.0.1:7070"
+  },
+  {
+   "url": "http://account.syb.lol",
+   "origin": null
+  },
+  {
+   "url": "ftp://account.syb.lol",
+   "origin": null
+  },
+  {
+   "url": "javascript:alert(1)",
+   "origin": null
+  },
+  {
+   "url": "https://account.syb.lol/login",
+   "origin": null
+  },
+  {
+   "url": "https://account.syb.lol/?x=1",
+   "origin": null
+  },
+  {
+   "url": "https://account.syb.lol/#x",
+   "origin": null
+  },
+  {
+   "url": "https://me:pw@account.syb.lol",
+   "origin": null
+  },
+  {
+   "url": "account.syb.lol",
+   "origin": null
+  },
+  {
+   "url": "",
+   "origin": null
+  },
+  {
+   "url": "http://localhost:7070",
+   "origin": null
+  },
+  {
+   "url": 42,
+   "origin": null
+  },
+  {
+   "url": null,
+   "origin": null
+  },
+  {
+   "url": "http://example.com",
+   "here": "localhost",
+   "origin": null
+  },
+  {
+   "url": "https://ACCOUNT.syb.lol",
+   "origin": null,
+   "why": "not written as its origin",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  },
+  {
+   "url": "https://account.syb.lol:443",
+   "origin": null,
+   "why": "not written as its origin",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  },
+  {
+   "url": " https://account.syb.lol",
+   "origin": null,
+   "why": "white space before it",
+   "differs": {
+    "keykin-login": "https://account.syb.lol"
+   }
+  },
+  {
+   "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+   "origin": null,
+   "why": "longer than 200",
+   "differs": {
+    "keykin-login": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+   }
+  }
+ ],
+ "links": [
+  {
+   "template": "https://account.syb.lol/#connect=<nostrconnect>",
+   "code": "nostrconnect://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?relay=wss%3A%2F%2Fsyb.lol&secret=s1&name=Marble&url=https%3A%2F%2Fmarble.syb.lol",
+   "link": "https://account.syb.lol/#connect=nostrconnect%3A%2F%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%3Frelay%3Dwss%253A%252F%252Fsyb.lol%26secret%3Ds1%26name%3DMarble%26url%3Dhttps%253A%252F%252Fmarble.syb.lol"
+  },
+  {
+   "template": "https://signer.example.com/c?uri=<nostrconnect>",
+   "code": "nostrconnect://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?relay=wss%3A%2F%2Fsyb.lol&secret=s1&name=Marble&url=https%3A%2F%2Fmarble.syb.lol",
+   "link": "https://signer.example.com/c?uri=nostrconnect%3A%2F%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%3Frelay%3Dwss%253A%252F%252Fsyb.lol%26secret%3Ds1%26name%3DMarble%26url%3Dhttps%253A%252F%252Fmarble.syb.lol"
+  },
+  {
+   "template": "https://a.example/#c=<nostrconnect>",
+   "code": "nostrconnect://x?a=$&b=<nostrconnect>",
+   "link": "https://a.example/#c=nostrconnect%3A%2F%2Fx%3Fa%3D%24%26b%3D%3Cnostrconnect%3E",
+   "why": "$ patterns and a placeholder in the code are put in as they are, encoded"
+  }
+ ],
+ "legacy": [
+  {
+   "origin": "https://old.example",
+   "template": "https://old.example/#connect=<nostrconnect>"
+  },
+  {
+   "origin": "https://old.example/",
+   "template": "https://old.example/#connect=<nostrconnect>",
+   "differs": {
+    "keykin-login": "https://old.example//#connect=<nostrconnect>"
+   },
+   "why": "readers only ever pass URL.origin, so harmless"
+  }
+ ],
+ "pointers": [
+  {
+   "why": "nothing found",
+   "events": [],
+   "expect": {
+    "state": "none"
+   }
+  },
+  {
+   "why": "a good 10046 (with a relays tag)",
+   "events": [
+    {
+     "id": "63ba0e84e5d6af6ff50355cefa828a6c25e640c7b0a47272ed4d6affd96d4021",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/#connect=<nostrconnect>"
+      ],
+      [
+       "relays",
+       "wss://syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "30fa958d932543001145d5b431666626b1caf756b4fa0aa5201ca7e8abbff21dfbd7ceb64f14b5d77fc798c6ec1ac41a1315aecb4eba4705bb95c1a4afcac47b"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://account.syb.lol",
+    "template": "https://account.syb.lol/#connect=<nostrconnect>",
+    "kind": 10046
+   }
+  },
+  {
+   "why": "the newest 10046 wins",
+   "events": [
+    {
+     "id": "7c116ade6496d04cff4142f288eb0df0dee6340f223c7a17c06411759b1e43d8",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://old.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "747ce9019797edf9e30c8e34b1cd40fa39f148053c9b863ac7277fbfbfb249be0478ab2509b66960771e5e08dd9b4befc7727e30561540c103ff81149056ce8e"
+    },
+    {
+     "id": "8bb9eaabf5da68bf7686b940efb4d9736615f80bd8cea5f6ac0f5205b47b2233",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 200,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "45614b3a56a9091fd8d552940700c70ee6079c0c82c5f73ef544450da87f75bc9a8c7e8b1c954d985526a00a6903757738ce7e1e01812136720676e72d8927f2"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://account.syb.lol",
+    "template": "https://account.syb.lol/#connect=<nostrconnect>",
+    "kind": 10046
+   }
+  },
+  {
+   "why": "a 10046 wins over a newer 30078",
+   "events": [
+    {
+     "id": "56d505e3602193428a5d1b98398e7320796df5113754d97f4caf2b1e773a71ce",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "0b0887b77399b7c5add4506f8c2550a213d58153e89b85b8a47231e5d5a40b6f93748b047d56a498974ebaea11ab364369ce586388e17beff33ca93c7db89e80"
+    },
+    {
+     "id": "c2f409b94b930878be64bfde3b56d6c1e6c744195638be3a151baefd0bd40d1d",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 500,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://old.example"
+      ]
+     ],
+     "content": "",
+     "sig": "c18b831e8dadecf812baea0ec69b8f095bcba90856c3223ca2244481e4a54766a18980ed3356cae8afaccfe88d776f34d76bdb9ac4f9ef038fd4190870cc49ed"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://account.syb.lol",
+    "template": "https://account.syb.lol/#connect=<nostrconnect>",
+    "kind": 10046
+   }
+  },
+  {
+   "why": "no 10046 at all: the 30078, as <url>/#connect=<nostrconnect>",
+   "events": [
+    {
+     "id": "71db91438d94ae2b68b24f6c53468bbfadc5fc9a75477900cdd0f60da77ad228",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://old.example"
+      ]
+     ],
+     "content": "",
+     "sig": "821d9d398f16f66d14888ec59848a30935a3ebb660231d140a3c288f8d37a258edd483ac6460c6e335997af4e1c8e3ebd2244880b73fb7bd8318833e2926088d"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://old.example",
+    "template": "https://old.example/#connect=<nostrconnect>",
+    "kind": 30078
+   }
+  },
+  {
+   "why": "the newest 10046 has no nostrconnect_url: removed, no falling back",
+   "events": [
+    {
+     "id": "00a835ee80118a54bc267e6da15f2b2dbf4eb7fd81eab0a8f5a0f38df9f9933e",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [
+      [
+       "relays",
+       "wss://syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "030875a17d15421139f110d92fcebda0c9a35e07d5a9120f1e97d8d8006511f19321fe067b28723b8a8d1bd2ee51f5f06e6f2127c3da0a53ffa9e1cc7cfc122d"
+    },
+    {
+     "id": "71db91438d94ae2b68b24f6c53468bbfadc5fc9a75477900cdd0f60da77ad228",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://old.example"
+      ]
+     ],
+     "content": "",
+     "sig": "821d9d398f16f66d14888ec59848a30935a3ebb660231d140a3c288f8d37a258edd483ac6460c6e335997af4e1c8e3ebd2244880b73fb7bd8318833e2926088d"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "removed after an older good one, and a newer 30078 does not bring it back",
+   "events": [
+    {
+     "id": "56d505e3602193428a5d1b98398e7320796df5113754d97f4caf2b1e773a71ce",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "0b0887b77399b7c5add4506f8c2550a213d58153e89b85b8a47231e5d5a40b6f93748b047d56a498974ebaea11ab364369ce586388e17beff33ca93c7db89e80"
+    },
+    {
+     "id": "fbb9f2f9552fb0013b1ac9a268b46c7d30aafe9177725df774324eaf72091670",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [],
+     "content": "",
+     "sig": "42cf7bc0d7af7c6ae548d473e3f6815c8a03752939edbf521273c34528ae1116deff75b69c8e288d6bedad72a39671b8ec37376a9f07f41251520d269513bc4c"
+    },
+    {
+     "id": "f96229acd0802e4814e6a98022525a36c062324b5928a62fcb330eb99eeec79f",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 900,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "de3f6a9a1bf48bbcec45c532d35f11d803f5e80784674856ae3c1e03b91299a79b8de272feaaf7aa50148e3a7b2aede3161c7d3776a7b0cfa00d02ce78fc5d00"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "the newest 10046 has a bad template: removed (keykin-login calls it bad), no falling back",
+   "events": [
+    {
+     "id": "0cca067fac8a697ffd1f6190dd89f679a80fe221453eccb53e4ce93e3fe40690",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "http://evil.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "cf4caace36b0233bdab7af8b3ff2bd4f6d77b10110e28a2fafa2c8013e5a422e2cd3d04cc37fc987f8ff32db8fc9042400ede743a2d4919483e8cbb2f892f2c9"
+    },
+    {
+     "id": "71db91438d94ae2b68b24f6c53468bbfadc5fc9a75477900cdd0f60da77ad228",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://old.example"
+      ]
+     ],
+     "content": "",
+     "sig": "821d9d398f16f66d14888ec59848a30935a3ebb660231d140a3c288f8d37a258edd483ac6460c6e335997af4e1c8e3ebd2244880b73fb7bd8318833e2926088d"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "an empty template",
+   "events": [
+    {
+     "id": "a20166139f9cb20500f2ddbe00395de8e6486bbbb436912f6b38405541b03c34",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [
+      [
+       "nostrconnect_url",
+       ""
+      ]
+     ],
+     "content": "",
+     "sig": "618ca6000ec75cd4e3def5ec2ae7d1fe9da1d32dce17764c000307d72d2e32f4d59c48b72d431ab5ccdd1e1a6619e5bcb8548b03b982c73b23ea0d5ce6263fc8"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "a 30078 with no url: removed",
+   "events": [
+    {
+     "id": "776c01db6f7f4ac9c60b011bec9e4c78051998668cbaa3e6fa72b2290b9724d0",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ]
+     ],
+     "content": "",
+     "sig": "7f1a252db94543ee8aa8f96ecf542aa15f391765ea0800c24f122ff73ac65f848cab279ce4637fa33bd4f5eb78755512903490d4cd4e9ad0dd7471536323cdc3"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "the newest 30078 removed it",
+   "events": [
+    {
+     "id": "c1358ac7bc8c6cbaac8f7ccd4803f9dadbaf7347be16ab85df7a5b1cae573e25",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d37"
+    },
+    {
+     "id": "23391ed4365e3b791c9885cada48815201e912ae2ad34303f9e03d296978f268",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 500,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ]
+     ],
+     "content": "",
+     "sig": "4d28f101611ac002eb243de3aa71747aca55fb01a38a4baffb1ca743d04567e68bfab3ca22df8f62232fa6d212774f394915f833bda99decc428f0bf796cb6b2"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "the newest 30078 removed it, given in the other order",
+   "events": [
+    {
+     "id": "23391ed4365e3b791c9885cada48815201e912ae2ad34303f9e03d296978f268",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 500,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ]
+     ],
+     "content": "",
+     "sig": "4d28f101611ac002eb243de3aa71747aca55fb01a38a4baffb1ca743d04567e68bfab3ca22df8f62232fa6d212774f394915f833bda99decc428f0bf796cb6b2"
+    },
+    {
+     "id": "c1358ac7bc8c6cbaac8f7ccd4803f9dadbaf7347be16ab85df7a5b1cae573e25",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d37"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "a newer address wins over a removal",
+   "events": [
+    {
+     "id": "23391ed4365e3b791c9885cada48815201e912ae2ad34303f9e03d296978f268",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 500,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ]
+     ],
+     "content": "",
+     "sig": "4d28f101611ac002eb243de3aa71747aca55fb01a38a4baffb1ca743d04567e68bfab3ca22df8f62232fa6d212774f394915f833bda99decc428f0bf796cb6b2"
+    },
+    {
+     "id": "62aa4e32a9c0e9b8cc2efad2cadbaa60590e3fe66afd83de4d2d1043f8151090",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 1000,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://new.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "a3a4596cf18d5caa73304cb17b81cbf8d222b3a83013fe56f0e1eacdfd32c409f5056dba878dc2f70d59e7064ebb8c0ab338c96b989894de3e5fc73f4493266c"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://new.syb.lol",
+    "template": "https://new.syb.lol/#connect=<nostrconnect>",
+    "kind": 30078
+   }
+  },
+  {
+   "why": "a 30078 naming http, or a path: removed",
+   "events": [
+    {
+     "id": "83375bde0a339e97a750aa21a30131283d96560a5ceac468b859a378896db1e3",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "http://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "e77f11f0c55920712d0cff555e0a0ad5019acbf03b2db130a8c704346fd984a316e4d0229dd472ca6533565bd5c358be1083dfdf43fe77a6f74ae0685f603b73"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "a 30078 naming a path: removed",
+   "events": [
+    {
+     "id": "f734abe1f5e40497c3c0e4c05d7cac95493be12c5ac373c8e0d3c3e7515fb2cd",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol/path"
+      ]
+     ],
+     "content": "",
+     "sig": "ed131acda11f8881c4a464f3ad2a3279348c7c2589b1492bb02cc14c0af3b58a74661fed16e07003397fc18c5d882e55005e247120b49dd87a06b04ad43634a8"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "a 30078 not written as its origin: removed",
+   "events": [
+    {
+     "id": "cd922568a82a9a67923e4967b18a15cbfcc1ed75e63864cfc46a5fb421a34a79",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://ACCOUNT.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "54464a8b7ecc7057e2d62793c0bf55e90bf1180108687b43025db75672610dbc4fb997bf95e9ad6dd104bcdf078b0f8c4794212ec8c2980eebf1ffb08c172c47"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://account.syb.lol",
+     "template": "https://account.syb.lol/#connect=<nostrconnect>",
+     "kind": 30078
+    }
+   }
+  },
+  {
+   "why": "another app's 30078 (another d)",
+   "events": [
+    {
+     "id": "44672ae7ed2fe7a40cb0d90da3b59e21dcd5f42e6afe2fda2f8938d5e29719cb",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "other"
+      ],
+      [
+       "url",
+       "https://x.example"
+      ]
+     ],
+     "content": "",
+     "sig": "15bbbb308b30f1e6009c19dc72c201657e03f115c374b7e9458df06e99bc629f1dc42ae92cc65fcda118c0de89981d19071d3529c9b1df42533b509bff1a9bd1"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   }
+  },
+  {
+   "why": "a kind 1 with the same tags",
+   "events": [
+    {
+     "id": "d7d12fb84c4439e836bdacb49077d7de79a201722be9b4811697926ee4f050b4",
+     "kind": 1,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://evil.example"
+      ]
+     ],
+     "content": "",
+     "sig": "5c88f832fadf0380b6515082cf49c9b45048390bab36b0741cac2ce3dae69107178160108aac3fee4ae8e95a3eac857e4b237196dec07cec2b28410fa74cd6ff"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   }
+  },
+  {
+   "why": "someone else's 10046 and 30078",
+   "events": [
+    {
+     "id": "1395da97f8cb9113ccae161e9dbe24e2b32027c6b1a886d598ff458dbc0edb9d",
+     "kind": 10046,
+     "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "ce09013504ff6db5770b9f9e468086b2c53ab729284dac30aecf62214649193093b8f1e76f6992af91866f76721096c555a514b3221d6b5246b8cdbe62129112"
+    },
+    {
+     "id": "722b45d33bc62d48b7d554e44c2b567669983820c58c06a017275fbee009319b",
+     "kind": 30078,
+     "pubkey": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://evil.example"
+      ]
+     ],
+     "content": "",
+     "sig": "58fece2a8bfdd60f72a54ff165c20a424795c9f8b0d262237a8b2cb54acb6d85f98e3dfb9a9d379d06559a13627c2e10bdef844f30e6dad4a52138653846de09"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   }
+  },
+  {
+   "why": "junk",
+   "events": [
+    null,
+    1,
+    "x",
+    {}
+   ],
+   "expect": {
+    "state": "none"
+   }
+  },
+  {
+   "why": "a changed 10046 (the id no longer matches)",
+   "events": [
+    {
+     "id": "56d505e3602193428a5d1b98398e7320796df5113754d97f4caf2b1e773a71ce",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://evil.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "0b0887b77399b7c5add4506f8c2550a213d58153e89b85b8a47231e5d5a40b6f93748b047d56a498974ebaea11ab364369ce586388e17beff33ca93c7db89e80"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://evil.example",
+     "template": "https://evil.example/#connect=<nostrconnect>",
+     "kind": 10046
+    }
+   }
+  },
+  {
+   "why": "a changed 10046 is no 10046: the 30078 is read",
+   "events": [
+    {
+     "id": "56d505e3602193428a5d1b98398e7320796df5113754d97f4caf2b1e773a71ce",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://evil.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "0b0887b77399b7c5add4506f8c2550a213d58153e89b85b8a47231e5d5a40b6f93748b047d56a498974ebaea11ab364369ce586388e17beff33ca93c7db89e80"
+    },
+    {
+     "id": "b8dfacfc2e849748ab6d4d752c0b77a5b700207fc5dd1969bf10b56164ffdb53",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 50,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://old.example"
+      ]
+     ],
+     "content": "",
+     "sig": "f731810a7f7f26900ecc5fb79903ceaf83d528d7f0742a657230d371ebc41d25ac9847bd52f6d00d4874e7e009bfda9a62f358fe60a2d6779c2f1c8e062881fb"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://old.example",
+    "template": "https://old.example/#connect=<nostrconnect>",
+    "kind": 30078
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://evil.example",
+     "template": "https://evil.example/#connect=<nostrconnect>",
+     "kind": 10046
+    }
+   }
+  },
+  {
+   "why": "a bad signature",
+   "events": [
+    {
+     "id": "c1358ac7bc8c6cbaac8f7ccd4803f9dadbaf7347be16ab85df7a5b1cae573e25",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d00"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://account.syb.lol",
+     "template": "https://account.syb.lol/#connect=<nostrconnect>",
+     "kind": 30078
+    }
+   }
+  },
+  {
+   "why": "the same id with another address",
+   "events": [
+    {
+     "id": "c1358ac7bc8c6cbaac8f7ccd4803f9dadbaf7347be16ab85df7a5b1cae573e25",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://evil.example"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d37"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://evil.example",
+     "template": "https://evil.example/#connect=<nostrconnect>",
+     "kind": 30078
+    }
+   }
+  },
+  {
+   "why": "a forged newer one does not hide the real one",
+   "events": [
+    {
+     "id": "c1358ac7bc8c6cbaac8f7ccd4803f9dadbaf7347be16ab85df7a5b1cae573e25",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://account.syb.lol"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d37"
+    },
+    {
+     "id": "d4fd6b68e6eaab320f6e658fc3b9abd26b2477ed621f5e5abcb186b9ddbaa5c3",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 200,
+     "tags": [
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://evil.example"
+      ]
+     ],
+     "content": "",
+     "sig": "fe8b0c33a2bc64da4f3bf2861055706e39691c55552b8e204321f967e59731033ba157407001a722a0635b9095937c6a56017f58746fc79f80001767c5141d37"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://account.syb.lol",
+    "template": "https://account.syb.lol/#connect=<nostrconnect>",
+    "kind": 30078
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://evil.example",
+     "template": "https://evil.example/#connect=<nostrconnect>",
+     "kind": 30078
+    }
+   }
+  },
+  {
+   "why": "a local template, for a reader on localhost",
+   "here": "localhost",
+   "events": [
+    {
+     "id": "359c1d91b4d287dd0b2ea5b29c9fc5117ec75b85ab658e4a1201bb76b0a89975",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "http://127.0.0.1:7470/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "d18a13a98c9cf43aba3ac9731730a8d4549d0749c0b0765b0786136c82e2c1396b3285d8366b038705c0117100e20f3a8b8f0f90a9010d5c12bf2352995d6bbe"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "http://127.0.0.1:7470",
+    "template": "http://127.0.0.1:7470/#connect=<nostrconnect>",
+    "kind": 10046
+   }
+  },
+  {
+   "why": "a local template, for a reader that is not local",
+   "events": [
+    {
+     "id": "359c1d91b4d287dd0b2ea5b29c9fc5117ec75b85ab658e4a1201bb76b0a89975",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "http://127.0.0.1:7470/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "d18a13a98c9cf43aba3ac9731730a8d4549d0749c0b0765b0786136c82e2c1396b3285d8366b038705c0117100e20f3a8b8f0f90a9010d5c12bf2352995d6bbe"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   }
+  },
+  {
+   "why": "a template with white space",
+   "events": [
+    {
+     "id": "7aeb0dfd5f48c5d5459da9aa1d07e9b7db2cb5e9df7429fd6dd57e688d67c9f3",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://account.syb.lol/ #connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "8e785b7b487c948f8991ba144601f2b6250a6f42d93088fe381a82a9fb8756e7a1ba4298eabd40013e9007221fad6a87c6d0422e7c29bb39249e09bd7813212d"
+    }
+   ],
+   "expect": {
+    "state": "removed"
+   },
+   "differs": {
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://account.syb.lol",
+     "template": "https://account.syb.lol/ #connect=<nostrconnect>",
+     "kind": 10046
+    }
+   }
+  },
+  {
+   "why": "two 10046 at the same second: the lower id wins (NIP-01), given higher id first",
+   "events": [
+    {
+     "id": "5b49a2347120769b58dc586eabe8e02d2937124f9a57a070a8e1b7ef522e919a",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://a.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "323b7fd8a357340b2b1ce9a29854872c6dd7c15a3a167ce9df3525a74f2bfe0f2f30474ba6f7cd151f56822f7c08b1a5359bf24619a0a488cf52215e424eb13f"
+    },
+    {
+     "id": "13fb0949476470d794104e01461f350a7ae950384723c4cbde8058db7bc4ebea",
+     "kind": 10046,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 300,
+     "tags": [
+      [
+       "nostrconnect_url",
+       "https://b.example/#connect=<nostrconnect>"
+      ]
+     ],
+     "content": "",
+     "sig": "6c89835e19ff62430c2c24c5f5d7c8d8eea513dbf7362274577b4f7d9da59d1b0442b019d220e02e9ca88ba0732c590db55900f85c94ead7cbb59039e1dd105a"
+    }
+   ],
+   "expect": {
+    "state": "found",
+    "origin": "https://b.example",
+    "template": "https://b.example/#connect=<nostrconnect>",
+    "kind": 10046
+   },
+   "differs": {
+    "signin": {
+     "state": "found",
+     "origin": "https://a.example",
+     "template": "https://a.example/#connect=<nostrconnect>",
+     "kind": 10046
+    },
+    "keykin-login": {
+     "state": "found",
+     "origin": "https://a.example",
+     "template": "https://a.example/#connect=<nostrconnect>",
+     "kind": 10046
+    }
+   }
+  },
+  {
+   "why": "a 30078 whose first d is another app's: its address is that one (NIP-01), so it is not the pointer",
+   "events": [
+    {
+     "id": "1a1445a8e03cf767c9ec527b9fbe600b04446840c450063c1a7e3182b2a3ff7a",
+     "kind": 30078,
+     "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+     "created_at": 100,
+     "tags": [
+      [
+       "d",
+       "other"
+      ],
+      [
+       "d",
+       "keykin/login"
+      ],
+      [
+       "url",
+       "https://x.example"
+      ]
+     ],
+     "content": "",
+     "sig": "afd76e2664edc3f19576632d8ccc493bad3c274dbbe1fdc0fdcc9b470cee58e5c3c4c24d830af6db0da9b7d3116cdd897cbcd43b73d1d00438f4042e9e9b2f9f"
+    }
+   ],
+   "expect": {
+    "state": "none"
+   },
+   "differs": {
+    "signin": {
+     "state": "found",
+     "origin": "https://x.example",
+     "template": "https://x.example/#connect=<nostrconnect>",
+     "kind": 30078
+    }
+   }
+  }
+ ],
+ "typed": [
+  {
+   "typed": "Aaron@Herbstmeister.com",
+   "expect": {
+    "name": "aaron",
+    "domain": "herbstmeister.com"
+   }
+  },
+  {
+   "typed": "  a.b_c-d@sub.example.org ",
+   "expect": {
+    "name": "a.b_c-d",
+    "domain": "sub.example.org"
+   }
+  },
+  {
+   "typed": "herbstmeister.com",
+   "expect": {
+    "name": "_",
+    "domain": "herbstmeister.com"
+   }
+  },
+  {
+   "typed": "_@herbstmeister.com",
+   "expect": {
+    "name": "_",
+    "domain": "herbstmeister.com"
+   }
+  },
+  {
+   "typed": "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   }
+  },
+  {
+   "typed": "nostr:npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   }
+  },
+  {
+   "typed": "nprofile1qythwumn8ghj7un9d3shjtn90psk6urvv5hxxmmdqqsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8gj7sqkj",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   },
+   "why": "an nprofile with its relay before its key"
+  },
+  {
+   "typed": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   }
+  },
+  {
+   "typed": "3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   }
+  },
+  {
+   "typed": "NPUB180CVV07TJDRRGPA0J7J7TMNYL2YR6YR7L8J4S3EVF6U64TH6GKWSYJH6W6",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   },
+   "why": "bech32 may be all upper case",
+   "differs": {
+    "signin": null
+   }
+  },
+  {
+   "typed": "NOSTR:npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
+   "expect": {
+    "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+   },
+   "differs": {
+    "signin": null
+   }
+  },
+  {
+   "typed": "npub180cvv07TJDRRGPA0J7J7TMNYL2YR6YR7L8J4S3EVF6U64TH6GKWSYJH6W6",
+   "expect": null,
+   "why": "mixed case is not bech32",
+   "differs": {
+    "signin": {
+     "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+    }
+   }
+  },
+  {
+   "typed": "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6wq",
+   "expect": null,
+   "why": "a bad checksum"
+  },
+  {
+   "typed": "bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+   "expect": null,
+   "why": "63 hex"
+  },
+  {
+   "typed": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkxnxjx",
+   "expect": null,
+   "why": "31 bytes"
+  },
+  {
+   "typed": "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw",
+   "expect": null,
+   "why": "never a secret key"
+  },
+  {
+   "typed": "aaron+tag@example.com",
+   "expect": null,
+   "why": "NIP-05 names are a-z0-9-_.",
+   "differs": {
+    "signin": {
+     "name": "aaron+tag",
+     "domain": "example.com"
+    }
+   }
+  },
+  {
+   "typed": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+   "expect": null,
+   "why": "longer than 400",
+   "differs": {
+    "signin": {
+     "name": "_",
+     "domain": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+    }
+   }
+  },
+  {
+   "typed": "",
+   "expect": null
+  },
+  {
+   "typed": "   ",
+   "expect": null
+  },
+  {
+   "typed": "aaron",
+   "expect": null
+  },
+  {
+   "typed": "aaron@",
+   "expect": null
+  },
+  {
+   "typed": "@herbstmeister.com",
+   "expect": null
+  },
+  {
+   "typed": "a b@c.com",
+   "expect": null
+  },
+  {
+   "typed": "https://herbstmeister.com",
+   "expect": null
+  },
+  {
+   "typed": "x@y",
+   "expect": null
+  },
+  {
+   "typed": null,
+   "expect": null
+  }
+ ],
+ "nip05": [
+  {
+   "name": "aaron",
+   "domain": "herbstmeister.com",
+   "status": 200,
+   "body": {
+    "names": {
+     "aaron": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+    }
+   },
+   "expect": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 200,
+   "body": {
+    "names": {
+     "Aaron": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+    }
+   },
+   "expect": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+   "why": "a name in another case still matches"
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 200,
+   "body": {
+    "names": {
+     "Aaron": "3BF0C63FCB93463407AF97A5E5EE64FA883D107EF9E558472C4EB9AAAEFA459D"
+    }
+   },
+   "expect": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+   "why": "an upper case key, lowercased",
+   "differs": {
+    "signin": null
+   }
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 200,
+   "body": {
+    "names": {}
+   },
+   "expect": null
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 200,
+   "body": {
+    "names": {
+     "aaron": "npub1xyz"
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 404,
+   "body": {},
+   "expect": null
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 500,
+   "body": {},
+   "expect": null
+  },
+  {
+   "name": "aaron",
+   "domain": "x.com",
+   "status": 200,
+   "body": "<html>",
+   "expect": null
+  },
+  {
+   "name": "__proto__",
+   "domain": "x.com",
+   "status": 200,
+   "body": {
+    "names": {}
+   },
+   "expect": null
+  }
+ ]
+}

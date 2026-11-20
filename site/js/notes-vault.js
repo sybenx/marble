@@ -6,7 +6,7 @@
 //
 // later.js asks: state(), notes(), write(changes), resolve(...). Everything is versioned (§5.3): an edit or a removal
 // is a new version, so none asks for confirmation. Hard-to-undo things (§12.4) aren't offered on a page.
-import { req, publish, FAST, relays as join } from "./pool.js";
+import { req, publish, FAST, relays as join } from "./signin/pool.js";
 import { accountRelays } from "./account-relays.js";
 import { current, sign, nip44DecryptFrom, canVault, onMe } from "./me.js";
 
