@@ -7,7 +7,7 @@ import { outbox, keep, profile, profiles, onProfile, profilesOf } from "./data.j
 import { esc, avatar, name, personPath } from "./render.js";
 import { npub } from "./ids.js";
 import { loginLink, loginTemplate, legacyTemplate } from "./connect.js";
-import { ADD, addFromHash, addLink, readInvite } from "./add-device.js";
+import { ADD, addFromHash, addLink, readInvite, returnOk } from "./add-device.js";
 import { current, method, extensionSignedOut, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -370,17 +370,22 @@ if (!current() && pendingCode()) setTimeout(() => openSignIn(), 0);
 dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!picking) close(); });
 
 // ── Adding Marble on a Mac (Keykin SPEC 11.6, `add=`; the rules in add-device.js) ──
-// The Mac's Sign in opens this page with its invite. Your account (this browser's, or the name you type) names its
-// login page; "Continue at <host>" goes there with the invite, where you press Add, and the page sends the Mac its join
-// code on the Mac's relay. With no login page, the invite as a code for your phone's Add a device. This page signs
-// nothing and keeps nothing: the invite stays in this tab only until it is handed on.
+// The Mac's Sign in opens this page with its invite, a PKCE challenge, a return address on this computer and a state.
+// Your account (this browser's, or the name you type) names its login page; "Continue at <host>" goes there with the
+// four, where you press Add, and the page hands the approval back to the Mac on this computer. With no login page, the
+// invite as a code for your phone's Add a device. This page signs nothing and keeps nothing: the invite stays in this
+// tab only until it is handed on. A return that is not this computer is left alone.
 const addTaken = addFromHash(location.hash); // (read before the page tidies its address: app.js)
 if (addTaken) {
   history.replaceState(history.state, "", location.pathname + location.search + (addTaken.rest ? "#" + addTaken.rest : ""));
-  try { if (addTaken.invite) sessionStorage.setItem(ADD, JSON.stringify({ invite: addTaken.invite.text, relay: addTaken.relay, secret: addTaken.secret })); } catch {}
+  try { if (addTaken.invite && !addTaken.bad) sessionStorage.setItem(ADD, JSON.stringify({ invite: addTaken.invite.text, app: addTaken.app })); else sessionStorage.removeItem(ADD); } catch {}
 }
 function addWaiting() {
-  try { const o = JSON.parse(sessionStorage.getItem(ADD) || "null"); const inv = o && readInvite(o.invite); return inv ? { inv, relay: o.relay || null, secret: o.secret || null } : null; } catch { return null; }
+  try {
+    const o = JSON.parse(sessionStorage.getItem(ADD) || "null"), inv = o && readInvite(o.invite);
+    const app = o?.app && returnOk(o.app.ret) ? o.app : null;
+    return inv ? { inv, app } : null;
+  } catch { return null; }
 }
 function clearAdd() { try { sessionStorage.removeItem(ADD); } catch {} }
 const whoBlock = (pk) => `<div class="si-who">${avatar(pk, 40)}<span class="si-acct"><span class="si-name">${esc(name(pk))}</span><span class="si-fp">${npub(pk).slice(0, 12)}…<b>${npub(pk).slice(-6)}</b></span></span></div>`;
@@ -388,7 +393,10 @@ const whoBlock = (pk) => `<div class="si-who">${avatar(pk, 40)}<span class="si-a
 function openAdd() {
   if (!dialog.open) dialog.showModal();
   const a = addWaiting();
-  if (!a) return view(`<h2 id="si-title">Add a device</h2><p class="si-note">Something sent you here to add a device, but what it sent is not a Keykin invite, so it was left alone. Go back to the app and try again.</p>
+  const why = addTaken?.bad === "return" ? "Something sent you here to add a device and send the approval somewhere that is not this computer, so it was left alone."
+    : addTaken?.bad === "incomplete" ? "Something sent you here to add a device, but what it sent is not complete, so it was left alone. Go back to the app and try again."
+    : "Something sent you here to add a device, but what it sent is not a Keykin invite, so it was left alone. Go back to the app and try again.";
+  if (!a) return view(`<h2 id="si-title">Add a device</h2><p class="si-note">${why}</p>
     <div class="si-actions"><button type="button" class="si-button" data-si="close">OK</button></div>`);
   current() ? addLook(current(), a, true) : addAskName(a);
 }
@@ -425,7 +433,7 @@ async function addLook(pk, a, signedIn) {
   const other = `<button type="button" class="link" data-add="${signedIn ? "other" : "retype"}">${signedIn ? "Use another account" : "Not you?"}</button>`;
   if (page) {
     const host = new URL(page.origin).host;
-    const link = addLink(page.origin, { invite: a.inv.text, relay: a.relay, secret: a.secret });
+    const link = addLink(page.origin, a.inv.text, a.app);
     // Already signed in here: no question to ask, so straight on to your own sign-in page (it's your account's own
     // address, and Add there is the one click). Shown for a moment so the browser's move isn't a surprise.
     if (signedIn) {
