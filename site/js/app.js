@@ -143,11 +143,13 @@ const replyTo = (e) => {
 const rootOf = (e) => (e.tags || []).find((t) => t[0] === "e" && t[3] === "root") || null;
 const warning = (e) => (e.tags || []).find((t) => t[0] === "content-warning");
 
-// Keep: any post or article, kept in Notes by its address (as the Reader's star keeps it, so the two agree), top right
+// Keep: any post, article or thing made in another app (a live stream…), kept in Notes by its address (as the Reader's star keeps it, so the two agree), top right
 // of the post. Kept again it's taken out, unless the note has your own words under it: those are taken out in Notes.
 const KEEP_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h10a1 1 0 0 1 1 1V20l-6-3.8L6 20V4.5a1 1 0 0 1 1-1z"/></svg>';
 const keptNote = (url) => notes.items().find((n) => n.url === url) || null;
-const keepTitle = (e) => e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] || "Untitled" : `${name(e.pubkey)}: ${plainText(e) || "A post"}`;
+// (something made in another app, a live stream say, by its own title: its content is often empty, JSON or code)
+const keepTitle = (e) => e.kind === 30023 ? (e.tags.find((t) => t[0] === "title") || [])[1] || "Untitled"
+  : !SHORT_TEXT.has(e.kind) && e.kind !== 6 ? `${name(e.pubkey)}: ${aboutLine(e)}` : `${name(e.pubkey)}: ${plainText(e) || "A post"}`;
 const keepable = new Map(); // id → the post a Keep button was drawn for
 function keepButton(e) {
   keepable.set(e.id, e);
@@ -389,7 +391,7 @@ function quoteCard(q, entity) {
   if (kind !== "other") return card(q, { compact: true, context: false }).replace("<article ", `<article data-card="${kind}" data-ref="${esc(refOf(q))}" `);
   keep(q);
   return `<article class="card compact other" data-card="other" data-ref="${esc(refOf(q))}" data-href="/${esc(entity)}">
-    ${who(q.pubkey, q)}<p class="about-line">${esc(aboutLine(q))}</p><a class="open-other" href="/${esc(entity)}" data-open="pending">Open ›</a></article>`;
+    ${who(q.pubkey, q, { keep: q })}<p class="about-line">${esc(aboutLine(q))}</p><a class="open-other" href="/${esc(entity)}" data-open="pending">Open ›</a></article>`;
 }
 
 function fillLater(root = pageEl) {
@@ -700,7 +702,7 @@ function showOther(e) {
   page("view", aboutLine(e));
   const entity = e.kind >= 30000 && e.kind < 40000
     ? naddr({ kind: e.kind, pubkey: e.pubkey, identifier: (e.tags.find((t) => t[0] === "d") || [])[1] || "" }) : nevent(e.id, { author: e.pubkey });
-  pageEl.innerHTML = `<div class="thread"><article class="card main other" data-id="${e.id}">${who(e.pubkey, e, { big: true })}
+  pageEl.innerHTML = `<div class="thread"><article class="card main other" data-id="${e.id}">${who(e.pubkey, e, { big: true, keep: e })}
     <p class="about-line">${esc(aboutLine(e))}</p>
     <p><a class="link open-other" href="https://njump.me/${entity}" target="_blank" rel="noopener noreferrer" data-open="pending">Open it elsewhere ›</a></p></article></div>`;
   // where it's made to be seen, if that's known; else a general viewer
