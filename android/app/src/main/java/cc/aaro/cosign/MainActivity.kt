@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra("paste")?.let { CosignApp.instance.phone.pasted(it) }
         intent?.getStringExtra("act")?.let { a -> CosignApp.instance.phone.let { p -> when (a) {
             "accept" -> p.accept(); "startJoin" -> p.startJoin(); "confirmAddDevice" -> p.confirmAddDevice(); "confirmConnect" -> p.confirmConnect(intent.getStringExtra("arg"))
-            "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(); "leave" -> p.leave()
+            "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(intent.getStringExtra("arg")); "leave" -> p.leave()
             "confirmReportLost" -> p.confirmReportLost(); "refresh" -> p.refresh()
             "reportLost" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::askReportLost)
             "unblock" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::unblock)

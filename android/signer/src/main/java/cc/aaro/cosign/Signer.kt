@@ -216,7 +216,7 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     private fun grantOf(g: AppGrant) = g.pk.take(32)
     private fun reportGrants(h: Held) {
-        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.origin ?: "A site", it.added, it.key, it.device, it.how) } +
+        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.label, it.added, it.key, it.device, it.how) } +
             apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Device.Grant(grantOf(it), "app", it.label, appTimes.getLong(it.pkg + ":added", 0)) }
         val revoked = try { Device.reportGrants(me(), h, mine, send(h)) } catch (_: Exception) { return }   // an older box: it keeps no list
         if (revoked.isNotEmpty()) dropRevoked(revoked.toSet())
@@ -224,7 +224,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** The box says these were revoked: they go from this phone's lists too. */
     private fun dropRevoked(ids: Set<String>) {
         rememberRevoked(ids)
-        for (s in sites.sites()) if (s.grant in ids) { sites.signOut(s.key); note("${s.origin ?: "A site"} was signed out from your account page", "denied") }
+        for (s in sites.sites()) if (s.grant in ids) { sites.signOut(s.key); note("${s.label} was signed out from your account page", "denied") }
         for (g in apps.all.keys.mapNotNull { appGrant(it) }) if (grantOf(g) in ids) { apps.edit().remove(g.pkg).apply(); note("${g.label} was signed out from your account page", "denied") }
         sharedXs.forgetAll(); showSites()
     }
@@ -274,7 +274,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                         Device.noteDone(me(), h, n.id, Texts.join(h, loginOrigin()), send(h))
                         note("Added ${inv.name} to your account, from your account page", "approved")
                     }
-                    "bunker" -> { Device.noteDone(me(), h, n.id, sites.bunker(signerRelays()), send(h)); note("Made a bunker link for your account page", "approved") }
+                    "bunker" -> { Device.noteDone(me(), h, n.id, sites.bunker(signerRelays(), SiteSigner.siteName(n.text), n.lists, n.dms), send(h)); note("Made a bunker link for your account page", "approved") }
                     "nostrconnect" -> {
                         val uri = Uri.parse(n.text.trim().replaceFirst(Regex("^nostrconnect:(?!//)"), "nostrconnect://"))
                         val client = uri.host?.lowercase(); val secret = uri.getQueryParameter("secret")
@@ -852,7 +852,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     fun pointerNow() { if (debuggable) held?.let { pointerCheck(it) } }
 
     private fun showSites() {
-        val fromSites = try { sites.sites().map { Site(it.key, it.origin ?: "A site", it.added, it.used, null, it.via, own = it.place != null, scoped = true, lists = it.lists, dms = it.dms) } } catch (_: Exception) { emptyList() }
+        val fromSites = try { sites.sites().map { Site(it.key, it.label, it.added, it.used, null, it.via, own = it.place != null, scoped = true, lists = it.lists, dms = it.dms) } } catch (_: Exception) { emptyList() }
         val fromApps = apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Site(it.pk, it.label, appTimes.getLong(it.pkg + ":added", 0), appTimes.getLong(it.pkg + ":used", 0), null, "App on this phone") }
         ui.update { u -> u.copy(sites = fromSites + fromApps, member = u.member?.let { m -> m.copy(group = m.group.copy(relays = try { sites.sites().flatMap { it.relays }.distinct() } catch (_: Exception) { emptyList() })) }) }
     }
@@ -871,7 +871,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         sites.setScopes(pk, lists, dms)
         if ((was.dms && !dms) || (was.lists && !lists)) sharedXs.forget(was.grant)
         showSites()
-        note("${was.origin ?: "A site"}: private lists ${if (lists) "on" else "off"}, DMs ${if (dms) "on" else "off"}", "approved")
+        note("${was.label}: private lists ${if (lists) "on" else "off"}, DMs ${if (dms) "on" else "off"}", "approved")
     }
 
     fun confirmConnect(pick: String? = null) {
@@ -1023,12 +1023,15 @@ class Signer(private val context: Context, val slot: String = "0") {
         }
     }
 
-    /** A bunker:// link to paste into a site. Shown by the signer process (the app only learns that there is one). */
-    fun makeBunker() {
+    /**
+     * A bunker:// link to paste into a site. Shown by the signer process (the app only learns that there is one).
+     * [name] is what the person said the site is, if anything; [lists] and [dms] its two switches.
+     */
+    fun makeBunker(name: String? = null, lists: Boolean = false, dms: Boolean = false) {
         if (!isMember) return
         work.execute {
             try {
-                val link = sites.bunker(signerRelays())
+                val link = sites.bunker(signerRelays(), SiteSigner.siteName(name), lists, dms)
                 if (debuggable) android.util.Log.i("Keykin", "bunker link $link")     // for tests on an emulator; never in a release build
                 ui.update { it.copy(bunker = link, error = null) }
             } catch (e: Exception) { ui.update { it.copy(error = why(e)) } }
@@ -1052,7 +1055,7 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** One request from a site that is signed in. Anything destructive waits for you here first. */
     private fun siteAct(site: SiteSigner.Site, method: String, params: List<String>): String {
-        val by = site.origin ?: "A site"
+        val by = site.label
         // A site with an account of its own signs and reads as that account only.
         val own = site.place?.let { childFor(it) }
         // Its switches (SiteScopes): DMs and private lists only when they're on; refused outright, never asked.

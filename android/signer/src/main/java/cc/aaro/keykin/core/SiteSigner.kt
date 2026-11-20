@@ -40,6 +40,10 @@ class SiteSigner(
         const val TICKET_SECONDS = 900L
         /** A code's `device=` label, cleaned: no control characters, trimmed, at most 60 characters; null when empty. */
         fun deviceLabel(s: String?): String? = s?.replace(Regex("[\\u0000-\\u001f\\u007f]"), "")?.trim()?.take(60)?.ifEmpty { null }
+        /** A site's name, typed when its bunker link was made or from its first post's client tag: cleaned the same way. */
+        fun siteName(s: String?): String? = deviceLabel(s)
+        /** What a site with neither origin nor name is called. A record may hold it as its origin (a code with no url or name). */
+        const val UNNAMED = "A site"
         fun fresh(): JSONObject = JSONObject().put("sk", hex(random(32))).put("clients", JSONArray()).put("tickets", JSONArray())
     }
     /**
@@ -52,7 +56,14 @@ class SiteSigner(
                     /** The site's own label for where it runs, from the code's `device=` (Keykin SPEC 11.5), at most 60 characters. */
                     val device: String? = null,
                     /** How it came in, for the box: login, scan, paste or bunker (Keykin SPEC 11.5). */
-                    val how: String? = null)
+                    val how: String? = null,
+                    /** For a site with no origin: the name typed when its bunker link was made, else its first post's client tag. */
+                    val name: String? = null) {
+        /** What the lists and the box call it: its origin, else its name, else "A site". */
+        val label: String get() = origin?.takeIf { it != UNNAMED } ?: name ?: UNNAMED
+        /** Neither origin nor name: its first post's client tag may name it. */
+        val unnamed: Boolean get() = (origin == null || origin == UNNAMED) && name == null
+    }
 
     private val sk = unhex(state.getString("sk"))
     val pubkey: String = Secp.pub(sk)
@@ -69,28 +80,31 @@ class SiteSigner(
         Site(it.getString("key"), if (it.has("origin")) it.getString("origin") else null, strings(it.optJSONArray("relays")), it.optLong("added"), it.optLong("used"), it.optString("via", "A scanned code"),
             it.optString("grant").ifEmpty { hex(random(16)).also { g -> it.put("grant", g); changed(state) } }, it.optString("as").ifEmpty { null },
             it.optBoolean("lists"), it.optBoolean("dms"), it.optString("device").ifEmpty { null },
-            it.optString("how").ifEmpty { null } ?: howOf(it.optString("via", "A scanned code")))
+            it.optString("how").ifEmpty { null } ?: howOf(it.optString("via", "A scanned code")), it.optString("name").ifEmpty { null })
     } }
     private fun howOf(via: String) = when (via) { "A pasted bunker link" -> "bunker"; "A scanned code" -> "scan"; else -> null }
     /** How many relays this signer is connected to, of how many it wants. */
     fun relaysUp(): Pair<Int, Int> = opened.size to sockets.size
 
     /** A ticket for `origin`, good once and for 15 minutes, to be handed to the site that showed the code. */
-    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code", place: String? = null, lists: Boolean = false, dms: Boolean = false): JSONObject {
+    fun mint(origin: String?, relays: List<String>, via: String = "A scanned code", place: String? = null, lists: Boolean = false, dms: Boolean = false, name: String? = null): JSONObject {
         // With a place, the site gets that place's own account (made before this is called), not this one.
         val npub = (if (place != null) accountAs(place) else account()) ?: refuse("no_account")
         val t = JSONObject().put("v", 1).put("pubkey", npub).put("signer", pubkey).put("relays", JSONArray(relays)).put("t", hex(random(16))).put("expires", now() + TICKET_SECONDS)
         synchronized(state) {
-            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place) })
+            state.getJSONArray("tickets").put(JSONObject().put("t", t.getString("t")).put("expires", t.getLong("expires")).put("relays", JSONArray(relays)).put("via", via).put("lists", lists).put("dms", dms).apply { if (origin != null) put("origin", origin); if (place != null) put("as", place); siteName(name)?.let { put("name", it) } })
             changed(state)
         }
         start()
         return t
     }
 
-    /** A link to paste into a site (NIP-46). Its secret is a ticket: once, and for 15 minutes. */
-    fun bunker(relays: List<String>): String {
-        val t = mint(null, relays, "A pasted bunker link")
+    /**
+     * A link to paste into a site (NIP-46). Its secret is a ticket: once, and for 15 minutes. [name] is what the
+     * person said the site is (optional), [lists] and [dms] the site's two switches.
+     */
+    fun bunker(relays: List<String>, name: String? = null, lists: Boolean = false, dms: Boolean = false): String {
+        val t = mint(null, relays, "A pasted bunker link", lists = lists, dms = dms, name = name)
         return "bunker://$pubkey?" + relays.joinToString("&") { "relay=" + java.net.URLEncoder.encode(it, "UTF-8") } + "&secret=" + t.getString("t")
     }
 
@@ -196,6 +210,20 @@ class SiteSigner(
         for (i in 0 until a.length()) a.getJSONObject(i).let { if (it.getString("key") == client && now() - it.optLong("used") > 60) { it.put("used", now()); changed(state) } }
     }
 
+    /**
+     * A site with no origin and no name takes the name its post carries in a client tag (`["client", "<name>", ...]`).
+     * A name, once there, stays: the one typed for its bunker link, or the first tag. True when it was named now.
+     */
+    private fun nameFromPost(client: String, event: String?): Boolean = synchronized(state) {
+        val tags = try { JSONObject(event ?: return@synchronized false).optJSONArray("tags") } catch (_: Exception) { null } ?: return@synchronized false
+        val name = (0 until tags.length()).firstNotNullOfOrNull { i -> tags.optJSONArray(i)?.takeIf { it.optString(0) == "client" && !it.isNull(1) }?.let { siteName(it.optString(1)) } } ?: return@synchronized false
+        val a = state.getJSONArray("clients")
+        for (i in 0 until a.length()) a.getJSONObject(i).let {
+            if (it.getString("key") == client && (!it.has("origin") || it.optString("origin") == UNNAMED) && it.optString("name").isEmpty()) { it.put("name", name); changed(state); return@synchronized true }
+        }
+        false
+    }
+
     /** One request from a site. Returns the NIP-46 `result`, or throws. */
     fun answer(client: String, method: String, params: List<String>): String {
         if (method == "connect") {
@@ -205,12 +233,13 @@ class SiteSigner(
                 val t = ticket ?: refuse("bad_secret")          // a ticket works once
                 state.put("tickets", keep)
                 state.getJSONArray("clients").put(JSONObject().put("key", client).put("relays", t.optJSONArray("relays") ?: JSONArray()).put("added", now()).put("used", now()).put("grant", hex(random(16)))
-                    .put("via", t.optString("via", "A scanned code")).put("lists", t.optBoolean("lists")).put("dms", t.optBoolean("dms")).apply { if (t.has("origin")) put("origin", t.getString("origin")); if (t.has("as")) put("as", t.getString("as")) })
+                    .put("via", t.optString("via", "A scanned code")).put("lists", t.optBoolean("lists")).put("dms", t.optBoolean("dms")).apply { if (t.has("origin")) put("origin", t.getString("origin")); if (t.has("as")) put("as", t.getString("as")); if (t.has("name")) put("name", t.getString("name")) })
                 changed(state)
             }
             return params.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: "ack"
         }
-        val site = sites().firstOrNull { it.key == client } ?: refuse("not_connected")
+        val first = sites().firstOrNull { it.key == client } ?: refuse("not_connected")
+        val site = (if (method == "sign_event" && first.unnamed && nameFromPost(client, params.getOrNull(0))) sites().firstOrNull { it.key == client } else null) ?: first
         // A site with an account of its own only ever sees that one.
         val npub = (if (site.place != null) accountAs(site.place) else account()) ?: refuse("no_account")
         used(client)
