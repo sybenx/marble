@@ -116,6 +116,19 @@ class SocialTest {
         assertEquals(true, SearchRank.exact("Alex  Gleason 🦊", "alex gleason"))
     }
 
+    @Test fun bareLookAlikesDontPassSomeoneStillBeingCounted() {
+        // "florian", 2026-11-20: relay.ditto.pub answers first with dozens of bare "Florian"s and their counts (1–3) come in
+        // before the real one's (23,910); while his is on the way he stays on top.
+        val bare = (0 until 30).map { Hit(('a' + it % 20).toString().repeat(64), "Florian", 1000 + it, followers = (it % 4).toLong(), bare = true) }
+        val real = Hit("f".repeat(63) + "0", "florian", 0, followers = null)
+        assertEquals(real.pubkey, SearchRank.sort(bare + real, "florian").first().pubkey)
+        assertEquals(real.pubkey, SearchRank.sort(bare + real.copy(followers = 23_910), "florian").first().pubkey)
+        // Bare is a profile with nothing but a name (a picture doesn't count); an address or an about says more.
+        assertEquals(true, Hit.bare(Person("a".repeat(64), "Florian", "https://x/p.jpg", "", null, 0)))
+        assertEquals(false, Hit.bare(Person("a".repeat(64), "florian", null, null, "florian@slidestr.net", 0)))
+        assertEquals(false, Hit.bare(Person("a".repeat(64), "Florian", null, "builds things", null, 0)))
+    }
+
     @Test fun linksThatCarryAnIdentifierOpenIt() {
         assertEquals(Ref.Profile(fiatjaf), Ref.parse("https://njump.me/npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6"))
         assertEquals(Ref.Note(note), Ref.parse("https://primal.net/e/nevent1qqsfwwdfzmpmdt9jj533a5tx2n73ucmelcs5ah0vxcxy2995jhe9njgpz3mhxue69uhhyetvv9ujuerpd46hxtnfduy3kz48"))

@@ -2025,24 +2025,30 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught))
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
-            fun add(pk: String, name: String?, rank: Int = 9) { hits.putIfAbsent(pk, Hit(pk, name, rank * 1000 + order.getAndIncrement(), follow = pk in mine)) }
+            fun add(p: Person, rank: Int = 9) { hits.putIfAbsent(p.pubkey, Hit(p.pubkey, p.name, rank * 1000 + order.getAndIncrement(), follow = p.pubkey in mine, bare = Hit.bare(p))) }
 
             val relayJobs = ArrayList<kotlinx.coroutines.Job>()
             // What arrives (a count, a checked address) only marks the list changed; it's redrawn at most five times a second.
             val dirty = java.util.concurrent.atomic.AtomicBoolean(false)
             val redraw = launch { while (true) { delay(200); if (dirty.getAndSet(false)) show(true) } }
-            // Trust is looked up one batch after another, so each relay sees one counting connection at a time.
-            val toEnrich = kotlinx.coroutines.channels.Channel<List<Person>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-            val enricher = launch { for (batch in toEnrich) enrich(batch, text, hits) { dirty.set(true) } }
+            // Follower counts: each counting relay takes the batches one after another (one counting connection
+            // each), on its own, so a slow one never holds up what the other has to say.
+            val toCount = SearchRelays.COUNTS.associateWith { kotlinx.coroutines.channels.Channel<List<Person>>(kotlinx.coroutines.channels.Channel.UNLIMITED) }
+            val checks = java.util.Collections.synchronizedList(ArrayList<kotlinx.coroutines.Job>())
+            val counters = toCount.map { (url, queue) -> launch { for (batch in queue) count(url, batch, hits) { dirty.set(true) } } }
+            fun enrich(batch: List<Person>) {
+                toCount.values.forEach { it.trySend(batch) }
+                checks += launch { checkAddresses(batch, text, hits) { dirty.set(true) } }
+            }
             if (tag == null) {
                 // Your follows, from what this phone knows: no waiting.
-                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, text) }.forEach { add(it.pubkey, it.name) }
+                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, text) }.forEach { add(it) }
                 show(true); mark("follows: ${hits.size}")
                 // name@domain: whoever it names, at the top.
                 if (Nip05.isAddress(text)) relayJobs += launch {
                     val pk = Nip05.lookup(text)?.takeIf { isHex32(it) } ?: return@launch
                     People.want(listOf(pk))
-                    hits[pk] = Hit(pk, People.known.value[pk]?.name, -1, follow = pk in mine, nip05 = Nip05.Check.OK)
+                    hits[pk] = Hit(pk, People.known.value[pk]?.name, -1, follow = pk in mine, nip05 = Nip05.Check.OK)  // an address: never bare
                     show(true); mark("address found")
                 }
                 val relays = SearchRelays.FAST.map { it to 8000L } + SearchRelays.SLOW.map { it to 3500L } + Sources.extra.value.map { it to 3000L }
@@ -2051,11 +2057,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val evs = Fetch.query(listOf(url), mapOf("kinds" to listOf(0), "search" to text, "limit" to 50), wait).filter { it.kind == 0 }
                     People.add(evs)
                     val fresh = evs.mapNotNull { e -> Person.of(e)?.takeIf { !hits.containsKey(it.pubkey) } }
-                    fresh.forEach { add(it.pubkey, it.name, i) }
+                    fresh.forEach { add(it, i) }
                     show(true); mark("${url.removePrefix("wss://")}: ${evs.size} people")
                     // Trust for the ones whose names match: those are the ones whose order matters.
                     val named = fresh.filter { SearchRank.matches(it.name, text) }
-                    if (named.isNotEmpty()) toEnrich.send(named.take(30))
+                    if (named.isNotEmpty()) enrich(named.take(30))
                 }
             }
             if (split != null) {
@@ -2098,7 +2104,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             relayJobs.joinAll()
             // Likely spam out of the ranking (strangers only): manufactured likes, or an author who writes like spam.
             if (!notes.isEmpty()) kotlinx.coroutines.withTimeoutOrNull(6000) { searchSpam(synchronized(notes) { notes.distinctBy { it.id }.toList() }, mine, caught) { show(true) } }
-            toEnrich.close(); enricher.join(); redraw.cancel()
+            // Every batch is queued by now (the relay jobs queue them).
+            synchronized(checks) { checks.toList() }.joinAll()
+            toCount.values.forEach { it.close() }; counters.joinAll(); redraw.cancel()
             People.want(hits.keys.toList())
             show(false); mark("done")
         }
@@ -2127,15 +2135,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (caught.isNotEmpty()) publish()
     }
 
-    /** Follower counts and NIP-05 checks for people a search just found, filled into [hits] as they come. */
-    private suspend fun enrich(people: List<Person>, query: String, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) = kotlinx.coroutines.withTimeoutOrNull(6500) { kotlinx.coroutines.coroutineScope {
-        // Each count and each check counts as soon as it's in: no waiting for the slowest.
-        for (url in SearchRelays.COUNTS) launch {
-            Fetch.counts(url, people.associate { it.pubkey to mapOf("kinds" to listOf(3), "#p" to listOf(it.pubkey)) }, 6000, inFlight = 15) { pk, c ->
-                hits.computeIfPresent(pk) { _, h -> if ((h.followers ?: -1) >= c) h else h.copy(followers = c) }; changed()
-            }
+    /** Follower counts from one relay for people a search just found, filled into [hits] as they come; the higher count wins. */
+    private suspend fun count(url: String, people: List<Person>, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) {
+        Fetch.counts(url, people.associate { it.pubkey to mapOf("kinds" to listOf(3), "#p" to listOf(it.pubkey)) }, 6000, inFlight = 15) { pk, c ->
+            hits.computeIfPresent(pk) { _, h -> if ((h.followers ?: -1) >= c) h else h.copy(followers = c) }; changed()
         }
-        // Addresses checked for the exact names only (the order among those is what they decide), within a few seconds.
+    }
+
+    /** NIP-05 checks for the exact names only (the order among those is what they decide), within a few seconds. */
+    private suspend fun checkAddresses(people: List<Person>, query: String, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) = kotlinx.coroutines.withTimeoutOrNull(6500) { kotlinx.coroutines.coroutineScope {
         val gate = kotlinx.coroutines.sync.Semaphore(8)
         people.filter { it.nip05 != null && SearchRank.exact(it.name, query) }.take(12).map { p ->
             async { gate.withPermit { Nip05.check(p.pubkey, p.nip05) }.also { c -> hits.computeIfPresent(p.pubkey) { _, h -> h.copy(nip05 = c) }; changed() } }
