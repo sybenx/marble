@@ -132,6 +132,102 @@ class LoginPointerTest {
         assertEquals(Plan.Leave("names $odd (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(odd))), listOf(a)))
     }
 
+    // --- The pointer follows the box this phone signs with ---
+
+    private val oldBox = "https://old-box.example"
+    private fun both(origin: String, at: Long = 100) = listOf(pointer46(LoginPointer.template(origin), at), pointer(origin, at))
+    private val bothKinds = listOf(10046, 30078)
+
+    @Test fun movedToANewBoxSignsBothKindsNamingIt() {
+        // The newest of both kinds names a page this phone used before: the person moved, so both are signed anew.
+        val old = both(oldBox, 200)
+        assertEquals(Plan.Act(page, sign = bothKinds), LoginPointer.plan(page, pk, mapOf(a to old, b to old), listOf(a, b), listOf(oldBox)))
+        // Either kind alone naming it is enough, and the other kind is signed too where it is missing.
+        assertEquals(Plan.Act(page, sign = bothKinds), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer("https://Old-Box.example/"))), listOf(a), listOf(oldBox)))
+        assertEquals(Plan.Act(page, sign = bothKinds), LoginPointer.plan(page, pk, mapOf(a to listOf(old[0])), listOf(a), listOf(oldBox)))
+        // One kind already moved (named this page), the other still on the old one: only the old one is signed, the new one kept.
+        val new46 = pointer46(tpl, 300)
+        assertEquals(Plan.Act(page, sign = listOf(30078), resend = listOf(LoginPointer.Copy(new46, listOf(b)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(new46, old[1]), b to listOf(old[1])), listOf(a, b), listOf(oldBox)))
+    }
+
+    @Test fun aPageNeverUsedHereIsLeftEvenAfterAMove() {
+        assertEquals(Plan.Leave("names https://other.example (30078)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer("https://other.example")), b to emptyList()), listOf(a, b), listOf(oldBox)))
+        // One kind on a page used here, the other on one never used: the unknown one wins, nothing is signed.
+        assertEquals(Plan.Leave("names https://other.example (10046)"),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(LoginPointer.template("https://other.example")), pointer(oldBox))), listOf(a), listOf(oldBox)))
+    }
+
+    @Test fun aRemovalIsLeftEvenAfterAMove() {
+        assertEquals(Plan.Leave("removed on purpose (30078)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer(oldBox, 100)), b to listOf(pointer(null, 200))), listOf(a, b), listOf(oldBox)))
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(null, 200), pointer(oldBox))), listOf(a), listOf(oldBox)))
+    }
+
+    @Test fun theSamePageIsSentAroundAsBeforeWithAHistory() {
+        val (p46, p78) = both()
+        assertEquals(Plan.Act(page, resend = listOf(LoginPointer.Copy(p46, listOf(b)), LoginPointer.Copy(p78, listOf(b)))),
+            LoginPointer.plan(page, pk, mapOf(a to listOf(p46, p78), b to emptyList()), listOf(a, b), listOf(oldBox)))
+        // Back at a box used before: its page is current again, so pointers naming it are kept, not re-signed.
+        assertEquals(Plan.Leave("on every write relay that answered"), LoginPointer.plan(page, pk, mapOf(a to listOf(p46, p78)), listOf(a), listOf(oldBox, page)))
+    }
+
+    @Test fun withNoCurrentPageAMoveSignsNothing() =
+        assertEquals(Plan.Leave("no login page"), LoginPointer.plan(null, pk, mapOf(a to both(oldBox)), listOf(a), listOf(oldBox), afterJoin = true))
+
+    @Test fun joiningANewBoxMakesItsPageCurrentAndKeepsTheOldOne() {
+        assertEquals(page to listOf(oldBox), LoginPointer.joined(oldBox, emptyList(), page))
+        assertEquals(page to emptyList<String>(), LoginPointer.joined(null, emptyList(), page))
+        // The same box's page again: nothing moves.
+        assertEquals(page to emptyList<String>(), LoginPointer.joined(page, emptyList(), LoginPointer.origin("https://Account.syb.lol")))
+        // A box whose code names no page: none is current, and the one left is kept.
+        assertEquals(null to listOf(oldBox), LoginPointer.joined(oldBox, emptyList(), null))
+        // No repeats; the newest stays last; only the last few are kept.
+        assertEquals(page to listOf("https://c.example", oldBox), LoginPointer.joined(oldBox, listOf(oldBox, "https://c.example"), page))
+        val many = (1..20).map { "https://b$it.example" }
+        assertEquals(LoginPointer.USED_MAX, LoginPointer.joined(oldBox, many, page).second.size)
+        assertEquals(oldBox, LoginPointer.joined(oldBox, many, page).second.last())
+    }
+
+    // --- Right after a join, a page never used here is asked about once ---
+
+    private val unknown = "https://account.syb.lol"
+    private val newBox = "https://new-box.example"
+
+    @Test fun aJoinAsksAboutAPageNeverUsedHereButASignInCheckLeavesIt() {
+        val by = mapOf(a to both(unknown))
+        assertEquals(Plan.Ask(newBox, unknown), LoginPointer.plan(newBox, pk, by, listOf(a), afterJoin = true))
+        assertEquals(Plan.Leave("names $unknown (10046)"), LoginPointer.plan(newBox, pk, by, listOf(a)))
+        // Only the old kind out there: asked about the same way.
+        assertEquals(Plan.Ask(newBox, unknown), LoginPointer.plan(newBox, pk, mapOf(a to listOf(pointer(unknown))), listOf(a), afterJoin = true))
+        // A page used here before needs no question: it moves.
+        assertEquals(Plan.Act(newBox, sign = bothKinds), LoginPointer.plan(newBox, pk, by, listOf(a), listOf(unknown), afterJoin = true))
+    }
+
+    @Test fun switchSignsTheNewPageAndRecordsTheOldOne() {
+        val ans = LoginPointer.answer(Plan.Ask(newBox, unknown), true, listOf(oldBox), emptyList())
+        assertEquals(newBox, ans.sign)
+        assertEquals(listOf(oldBox, unknown), ans.used)
+        assertEquals(emptyList<String>(), ans.declined)
+        // Recorded as used: a later move goes past it with no question, even at a sign-in check.
+        assertEquals(Plan.Act("https://third.example", sign = bothKinds), LoginPointer.plan("https://third.example", pk, mapOf(a to both(unknown)), listOf(a), ans.used))
+    }
+
+    @Test fun keepRecordsThePairAndALaterJoinLeavesIt() {
+        val ans = LoginPointer.answer(Plan.Ask(newBox, unknown), false, listOf(oldBox), emptyList())
+        assertNull(ans.sign)
+        assertEquals(listOf(oldBox), ans.used)
+        assertEquals(listOf(LoginPointer.pair(unknown, newBox)), ans.declined)
+        val by = mapOf(a to listOf(pointer("https://Account.syb.lol/")))
+        assertEquals(Plan.Leave("names https://Account.syb.lol (30078)"), LoginPointer.plan(newBox, pk, by, listOf(a), ans.used, afterJoin = true, declined = ans.declined))
+        // Only that pair: joining yet another box asks again.
+        assertEquals(Plan.Ask("https://third.example", "https://Account.syb.lol"), LoginPointer.plan("https://third.example", pk, by, listOf(a), ans.used, afterJoin = true, declined = ans.declined))
+    }
+
+    @Test fun aRemovalIsNeverAskedAbout() {
+        assertEquals(Plan.Leave("removed on purpose (30078)"), LoginPointer.plan(newBox, pk, mapOf(a to listOf(pointer(unknown, 100), pointer(null, 200))), listOf(a), afterJoin = true))
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(newBox, pk, mapOf(a to listOf(pointer46(null, 200), pointer(unknown))), listOf(a), afterJoin = true))
+    }
+
     @Test fun noRelayAnsweredWaits() {
         assertEquals(Plan.Wait, LoginPointer.plan(page, pk, emptyMap(), listOf(a)))
     }
@@ -149,5 +245,78 @@ class LoginPointerTest {
         assertEquals(page, Texts.qr("""{"keykin":2,"addr":"https://box.example","key":"$k","code":"c","loginPage":"$page"}""").login)
         assertNull(Texts.qr("""{"keykin":2,"addr":"https://box.example","key":"$k","code":"c"}""").login)
         assertEquals(page, Texts.readJoin("""{"keykin":2,"join":{"addr":"https://box.example","boxKey":"$k","npub":"$k","loginPage":"$page"}}""").login)
+    }
+
+    // --- A `pointer` note: the account page asks to be the sign-in page ---
+
+    @Test fun aPointerNoteNamesAnHttpsOriginOnly() {
+        assertEquals(page, LoginPointer.requested(" https://Account.syb.lol/ "))
+        assertEquals("https://box.example:8443", LoginPointer.requested("https://box.example:8443"))
+        assertNull(LoginPointer.requested("http://account.syb.lol"))
+        assertNull(LoginPointer.requested("http://10.0.2.2:8790"))
+        assertNull(LoginPointer.requested("https://account.syb.lol/login"))
+        assertNull(LoginPointer.requested("https://account.syb.lol/#connect=x"))
+        assertNull(LoginPointer.requested("https://me@account.syb.lol"))
+        assertNull(LoginPointer.requested("javascript:alert(1)"))
+        assertNull(LoginPointer.requested(""))
+    }
+
+    @Test fun yesSignsTheAskedPageAndTheOldOneJoinsTheUsed() {
+        val m = LoginPointer.made(page, true, "https://old.example", listOf("https://older.example"))
+        assertEquals("ok", m.result)
+        assertEquals(page, m.sign)
+        assertEquals(page, m.current)
+        assertEquals(listOf("https://older.example", "https://old.example"), m.used)
+    }
+
+    @Test fun yesWithNoCurrentPageOrTheSameOneAddsNothingToTheUsed() {
+        assertEquals(LoginPointer.Made("ok", page, page, emptyList()), LoginPointer.made(page, true, null, emptyList()))
+        assertEquals(LoginPointer.Made("ok", page, page, listOf("https://old.example")), LoginPointer.made(page, true, "https://ACCOUNT.syb.lol", listOf("https://old.example")))
+    }
+
+    @Test fun yesToAPageUsedBeforeKeepsTheHistoryAsJoinedDoes() {
+        val m = LoginPointer.made(page, true, "https://box.example", listOf(page, "https://old.example"))
+        assertEquals(page, m.current)
+        // As after a join: the asked page is current, and the one left behind is the newest used.
+        assertEquals(listOf(page, "https://old.example", "https://box.example"), m.used)
+    }
+
+    @Test fun noChangesNothingAndDeclines() {
+        val m = LoginPointer.made(page, false, "https://old.example", listOf("https://older.example"))
+        assertEquals(LoginPointer.Made("declined", null, "https://old.example", listOf("https://older.example")), m)
+    }
+
+    private val me = cc.aaro.keykin.core.Me(ByteArray(32) { 1 }, "Pixel 9a", null)
+    private val held = cc.aaro.keykin.core.Held(cc.aaro.keykin.core.Piece(emptyList(), 1, java.math.BigInteger.ONE), "b".repeat(64), "c".repeat(64), "http://box")
+    private fun sentFor(yes: Boolean): org.json.JSONObject {
+        var sent: org.json.JSONObject? = null
+        LoginPointer.reply(me, held, "n1", LoginPointer.made(page, yes, null, emptyList())) { sent = it; org.json.JSONObject().put("ok", true) }
+        return sent!!.getJSONObject("body")
+    }
+
+    @Test fun notNowSendsNoteDoneDeclinedNeverNoteRefuse() {
+        val body = sentFor(false)
+        assertEquals("note_done", body.getString("op"))
+        assertEquals("declined", body.getString("result"))
+        assertEquals("n1", body.getString("note"))
+        assertEquals(held.npub, body.getString("account"))
+    }
+
+    @Test fun yesSendsNoteDoneOk() {
+        val body = sentFor(true)
+        assertEquals("note_done", body.getString("op"))
+        assertEquals("ok", body.getString("result"))
+    }
+
+    @Test fun theBoxsPointerNoteReadsAsOne() {
+        val n = cc.aaro.keykin.core.Device.Note.of(org.json.JSONObject("""{"id":"n1","kind":"pointer","text":"$page","at":5,"tap":true}"""))
+        assertEquals("pointer", n.kind); assertEquals(true, n.tap)
+        assertEquals(page, LoginPointer.requested(n.text))
+    }
+
+    @Test fun yesPublishesEvenWherePlanWouldLeaveIt() {
+        // A removal, or a pointer naming a page this phone never used, is left by the checks; the person's Yes still signs.
+        assertEquals(Plan.Leave("removed on purpose (10046)"), LoginPointer.plan(page, pk, mapOf(a to listOf(pointer46(null), pointer(null))), listOf(a)))
+        assertEquals(page, LoginPointer.made(page, true, page, emptyList()).sign)
     }
 }
