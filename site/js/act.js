@@ -7,6 +7,7 @@ import { outbox, keep, profile, profiles, onProfile, profilesOf } from "./data.j
 import { esc, avatar, name, personPath } from "./render.js";
 import { npub } from "./ids.js";
 import { loginLink, loginTemplate, legacyTemplate } from "./connect.js";
+import { ADD, addFromHash, addLink, readInvite } from "./add-device.js";
 import { current, method, extensionSignedOut, signedInWithPhone, sign, myWriteRelays, onMe, onAsk, choose, neither, onSignedOut } from "./me.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -367,6 +368,97 @@ dialog.addEventListener("submit", (ev) => {
 // Back in this tab from the login page with a code still waiting: the sign-in picks up where it was.
 if (!current() && pendingCode()) setTimeout(() => openSignIn(), 0);
 dialog.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!picking) close(); });
+
+// ── Adding Marble on a Mac (Keykin SPEC 11.6, `add=`; the rules in add-device.js) ──
+// The Mac's Sign in opens this page with its invite. Your account (this browser's, or the name you type) names its
+// login page; "Continue at <host>" goes there with the invite, where you press Add, and the page sends the Mac its join
+// code on the Mac's relay. With no login page, the invite as a code for your phone's Add a device. This page signs
+// nothing and keeps nothing: the invite stays in this tab only until it is handed on.
+const addTaken = addFromHash(location.hash); // (read before the page tidies its address: app.js)
+if (addTaken) {
+  history.replaceState(history.state, "", location.pathname + location.search + (addTaken.rest ? "#" + addTaken.rest : ""));
+  try { if (addTaken.invite) sessionStorage.setItem(ADD, JSON.stringify({ invite: addTaken.invite.text, relay: addTaken.relay, secret: addTaken.secret })); } catch {}
+}
+function addWaiting() {
+  try { const o = JSON.parse(sessionStorage.getItem(ADD) || "null"); const inv = o && readInvite(o.invite); return inv ? { inv, relay: o.relay || null, secret: o.secret || null } : null; } catch { return null; }
+}
+function clearAdd() { try { sessionStorage.removeItem(ADD); } catch {} }
+const whoBlock = (pk) => `<div class="si-who">${avatar(pk, 40)}<span class="si-acct"><span class="si-name">${esc(name(pk))}</span><span class="si-fp">${npub(pk).slice(0, 12)}…<b>${npub(pk).slice(-6)}</b></span></span></div>`;
+
+function openAdd() {
+  if (!dialog.open) dialog.showModal();
+  const a = addWaiting();
+  if (!a) return view(`<h2 id="si-title">Add a device</h2><p class="si-note">Something sent you here to add a device, but what it sent is not a Keykin invite, so it was left alone. Go back to the app and try again.</p>
+    <div class="si-actions"><button type="button" class="si-button" data-si="close">OK</button></div>`);
+  current() ? addLook(current(), a, true) : addAskName(a);
+}
+function addAskName(a, note = "", typed = "") {
+  attempt++;
+  view(`<h2 id="si-title">Add ${esc(a.inv.name)} to your account</h2>
+    <p>Type your name. Marble finds your account's sign-in page and sends you there to add it.</p>
+    <form data-form="addname"><label for="si-who">Your name</label>
+      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="herbstmeister.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <div class="si-actions"><button type="button" class="link" data-add="cancel">Not now</button><button type="submit" class="si-button">Continue</button></div></form>
+    ${note ? `<div class="si-said" role="status">${note}</div>` : ""}`);
+}
+async function addLookUp(a, typed) {
+  const mine = ++attempt;
+  if (EMAIL.test(typed)) return addAskName(a, `<p>${esc(typed)} looks like an email address. Type your name, like herbstmeister.com.</p>`, typed);
+  view(`<h2 id="si-title">Add ${esc(a.inv.name)} to your account</h2><p class="si-wait">${spinner}Looking for ${esc(typed)}…</p>
+    <div class="si-actions"><button type="button" class="si-button" data-add="retype">Cancel</button></div>`);
+  const { whose } = await import("./account-page.js");
+  const pk = await whose(typed);
+  if (mine !== attempt) return;
+  if (!pk) return addAskName(a, `<p>Marble couldn't find ${esc(typed)}. Check the name.</p>`, typed);
+  lastTyped = typed;
+  addLook(pk, a, false);
+}
+async function addLook(pk, a, signedIn) {
+  const mine = ++attempt;
+  const title = `<h2 id="si-title">Add ${esc(a.inv.name)} to your account</h2>`;
+  view(`${title}<p class="si-wait">${spinner}Looking for your sign-in page…</p>`);
+  const { loginPage } = await import("./account-page.js");
+  const [r] = await Promise.all([loginPage(pk), Promise.race([profile(pk).catch(() => null), new Promise((ok) => setTimeout(ok, 1500))])]);
+  if (mine !== attempt) return;
+  let page = r.template ? pageOf(r.template) : null;
+  if (!page) { if (r.removed) forgetPage(pk); page = rememberedPage(pk); }
+  const other = `<button type="button" class="link" data-add="${signedIn ? "other" : "retype"}">${signedIn ? "Use another account" : "Not you?"}</button>`;
+  if (page) {
+    const host = new URL(page.origin).host;
+    // the address is shown, in full, before anything goes there; the link is an ordinary one, so the browser shows it too
+    return view(`${title}${whoBlock(pk)}
+      <p>Your account names this page to sign in at:</p>
+      <p class="acct-addr">${esc(host)}</p>
+      <p>Sign in there and press Add. ${esc(a.inv.name)} then signs in by itself.</p>
+      <a class="si-button si-open" href="${esc(addLink(page.origin, { invite: a.inv.text, relay: a.relay, secret: a.secret }))}" data-add="away">Continue at ${esc(host)}</a>
+      <div class="si-actions">${other}<button type="button" class="link" data-add="cancel">Not now</button></div>`);
+  }
+  const { codeSvg } = await import("./connect.js");
+  const svg = await codeSvg(a.inv.text);
+  if (mine !== attempt) return;
+  view(`<h2 id="si-title">Add ${esc(a.inv.name)} with your phone</h2>${whoBlock(pk)}
+    <p class="si-note">${r.unreachable ? "Marble couldn't reach the places your sign-in page is listed." : r.removed ? "Your account's sign-in page was removed." : "Your account doesn't name a sign-in page yet."}</p>
+    <div class="qr">${svg}</div>
+    <p>On your phone, open Marble, tap your picture, then Add a device, and scan this. Then paste the join code your phone shows into ${esc(a.inv.name)}.</p>
+    <div class="si-actions">${other}<button type="button" class="link" data-si="copy" data-code="${esc(a.inv.text)}">Copy the invite</button><button type="button" class="si-button" data-add="cancel">Done</button></div>`);
+}
+dialog.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-add]");
+  if (!b) return;
+  const a = addWaiting(), what = b.dataset.add;
+  if (what === "away") return clearAdd(); // the link goes on to the login page, with the invite
+  if (what === "cancel") { clearAdd(); attempt++; return dialog.close(); }
+  if (!a) return;
+  if (what === "other") addAskName(a);
+  else if (what === "retype") addAskName(a, "", lastTyped);
+});
+dialog.addEventListener("submit", (ev) => {
+  if (ev.target.dataset.form !== "addname") return;
+  ev.preventDefault();
+  const a = addWaiting(), t = String(new FormData(ev.target).get("who") || "").trim();
+  if (a && t) addLookUp(a, t);
+});
+if (addTaken || addWaiting()) setTimeout(() => openAdd(), 0);
 
 /** Something only a signed-in account can do: true if it can go ahead, else the sign-in opens. */
 function canAct() {
