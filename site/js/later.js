@@ -101,11 +101,12 @@ export function keepPage(url, title, note = "") {
  * the file's name ("Screenshot 2026-11-20 at 10.42.13"), so it can be filtered and found on any device. Returns the
  * note, or throws with a sentence to show (notes-vault.js uploadPicture).
  */
-export async function keepPicture(file) {
-  const pic = await vault.uploadPicture(file);
+export async function keepPicture(file, onProgress = null) {
+  const pic = await vault.uploadPicture(file, onProgress);
   const name = String(file.name || "").replace(/\.[a-z0-9]{1,5}$/i, "").trim().slice(0, NOTE_MAX);
   const t = now(), item = { id: newId(), text: name || "Picture", created: t, updated: t, done: null, deleted: null, pictures: [pic] };
   if (!vault.active() || !vault.write(item)) throw new Error("Your notes vault isn't open here.");
+  vault.flush(); // (at once, not after the 2 s pause typing waits for)
   listeners.forEach((fn) => fn());
   return item;
 }

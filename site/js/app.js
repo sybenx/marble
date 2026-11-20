@@ -1713,6 +1713,8 @@ function showNotes(signal, tab) {
     if (item && ev.target.closest("[data-open]")) {
       if (item.url) return notes.opened(item.url, item.text, item.text);
       ev.preventDefault();
+      // a picture's note (a screenshot): its words are only a file name, so a click shows the picture, never a search
+      if (item.pictures?.length) { const img = $("img.note-pic", row); if (img) zoom(img); return; }
       // your own words: searched again, here
       input.value = notes.wordsOf(item.text);
       return showResults(notes.wordsOf(item.text));
@@ -1780,10 +1782,11 @@ async function keepPictures(files) {
   if (!currentMe()) { toast("Sign in to keep pictures in your Notes."); return openSignIn(); }
   if (!vault.canKeepPictures()) return toast(vault.state() === "removed" ? "This browser was removed from your account, so it can't add to your notes."
     : "Pictures go in your notes vault, which isn't open here. Open Notes to see why.");
-  toast(files.length === 1 ? "Keeping the picture…" : `Keeping ${files.length} pictures…`, { stay: true });
   let kept = 0, why = "";
-  for (const f of files) {
-    try { await notes.keepPicture(f); kept++; } catch (err) { why = String(err?.message || err); }
+  for (const [n, f] of files.entries()) {
+    const label = files.length === 1 ? "Keeping the picture" : `Keeping picture ${n + 1} of ${files.length}`;
+    toast(`${label}: opening your notes vault…`, { stay: true, progress: 0 });
+    try { await notes.keepPicture(f, (p, step) => toast(`${label}${step ? `: ${step}` : ""}…`, { stay: true, progress: p })); kept++; } catch (err) { why = String(err?.message || err); }
   }
   toast(kept ? `${kept === 1 ? "Kept in Notes" : `${kept} kept in Notes`}${why ? `. ${why}` : ""}` : why || "Couldn't keep that.");
 }

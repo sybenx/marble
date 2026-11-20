@@ -420,22 +420,36 @@ export class Session {
    * Uploads a blob (nv1) to the first two write servers that take every part (one if the list has one), with one
    * upload auth per server signed by the account (the person's decision, 2026-11-18). Returns its ref.
    */
-  async upload(_dev, plain, need = 2, key) {
+  // (the servers wanted are tried at once, not one after another, each signed for at the same time; one that refuses
+  // is replaced by the next on the list. onProgress(fraction): how much of the bytes the slowest of them has taken.)
+  async upload(_dev, plain, need = 2, key, onProgress = null) {
     const { ref, parts } = await V.nv1Seal(plain, key);
     const servers = this.writeServers, want = Math.min(need, servers.length);
-    let on = 0;
-    for (const server of servers) {
-      if (on >= want) break;
-      let why = null;
+    const total = parts.reduce((a, p) => a + p.length, 0) || 1;
+    let on = 0, next = 0;
+    const sent = new Map(); // server → bytes taken so far
+    let step = "";
+    const tellProgress = () => { if (onProgress) { const v = [...sent.values()].sort((a, b) => b - a).slice(0, want); onProgress(v.length < want ? 0 : Math.min(...v) / total, step); } };
+    const host = (s) => { try { return new URL(s).host; } catch { return s; } };
+    const one = async (server) => {
+      let why = null, done = 0;
+      sent.set(server, 0);
       try {
+        step = "waiting for your signer"; tellProgress();
         const auth = await this.signer.sign(blossomAuth("upload", ref.parts, server));
+        step = `sending to ${host(server)}`; tellProgress();
         for (let i = 0; i < parts.length && !why; i++) {
-          const r = await this.net.put(server, parts[i], auth);
+          const r = await this.net.put(server, parts[i], auth, (n) => { sent.set(server, done + n); tellProgress(); });
           if (r !== true && !(r && r.ok && (!r.sha256 || r.sha256 === ref.parts[i]))) why = (r && r.why) || "refused";
+          done += parts[i].length; sent.set(server, done); tellProgress();
         }
       } catch (err) { why = String(err?.message || err); }
-      if (why) this.uploadLog.push({ server, why, at: now() }); else on++;
-    }
+      if (why) { sent.delete(server); this.uploadLog.push({ server, why, at: now() }); return next < servers.length ? one(servers[next++]) : null; }
+      on++;
+    };
+    const lanes = [];
+    while (next < want) lanes.push(one(servers[next++]));
+    await Promise.all(lanes);
     if (!want || on < want) throw new Error("storage unavailable");
     return ref;
   }

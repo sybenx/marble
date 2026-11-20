@@ -16,10 +16,17 @@ const ALSO = ["wss://relay.ditto.pub", "wss://syb.lol"]; // where Discover and s
 // ── A short message at the bottom ────────────────────────────────────────────────────────────────────
 
 let toastTimer = null;
-export function toast(text, { stay = false } = {}) {
+/** progress: 0..1 shows a bar under the words (a picture going up), null none. */
+export function toast(text, { stay = false, progress = null } = {}) {
   let el = $("#toast");
   if (!el) { el = document.createElement("div"); el.id = "toast"; el.setAttribute("role", "status"); document.body.append(el); }
-  el.textContent = text;
+  if (el.dataset.text !== text || (progress === null) !== !el.querySelector(".toast-bar")) {
+    el.textContent = text;
+    el.dataset.text = text;
+    if (progress !== null) el.insertAdjacentHTML("beforeend", `<span class="toast-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span></span></span>`);
+  }
+  const bar = el.querySelector(".toast-bar");
+  if (bar) { const pc = Math.round(Math.max(0, Math.min(1, progress)) * 100); bar.firstChild.style.width = pc + "%"; bar.setAttribute("aria-valuenow", pc); }
   el.hidden = !text;
   clearTimeout(toastTimer);
   if (text && !stay) toastTimer = setTimeout(() => (el.hidden = true), 3500);
