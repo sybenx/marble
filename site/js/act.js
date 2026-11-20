@@ -175,7 +175,7 @@ function askName(note = "", typed = "") {
   missingFor = null;
   view(`<h2 id="si-title">Sign in</h2>
     <form data-form="name"><label for="si-who">Your Nostr address or npub</label>
-      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="herbstmeister.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="name@site.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
       <div class="si-actions"><button type="submit" class="si-button">Continue</button></div></form>
     ${note ? `<div class="si-said" role="status">${note}</div>` : `<p class="si-or"><span>or</span></p>${PHONE_BUTTON}`}
     <div class="si-actions"><button type="button" class="link si-small" data-si="signer">Use a signer app</button></div>
@@ -405,13 +405,13 @@ function addAskName(a, note = "", typed = "") {
   view(`<h2 id="si-title">Add ${esc(a.inv.name)} to your account</h2>
     <p>Type your name. Marble finds your account's sign-in page and sends you there to add it.</p>
     <form data-form="addname"><label for="si-who">Your name</label>
-      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="herbstmeister.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <input id="si-who" name="who" class="acct-who" type="text" value="${esc(typed)}" placeholder="name@site.com or npub1…" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
       <div class="si-actions"><button type="button" class="link" data-add="cancel">Not now</button><button type="submit" class="si-button">Continue</button></div></form>
     ${note ? `<div class="si-said" role="status">${note}</div>` : ""}`);
 }
 async function addLookUp(a, typed) {
   const mine = ++attempt;
-  if (EMAIL.test(typed)) return addAskName(a, `<p>${esc(typed)} looks like an email address. Type your name, like herbstmeister.com.</p>`, typed);
+  if (EMAIL.test(typed)) return addAskName(a, `<p>${esc(typed)} looks like an email address. Type your name, like name@site.com.</p>`, typed);
   view(`<h2 id="si-title">Add ${esc(a.inv.name)} to your account</h2><p class="si-wait">${spinner}Looking for ${esc(typed)}…</p>
     <div class="si-actions"><button type="button" class="si-button" data-add="retype">Cancel</button></div>`);
   const { whose } = await import("./account-page.js");
