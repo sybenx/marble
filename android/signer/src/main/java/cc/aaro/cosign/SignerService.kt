@@ -134,7 +134,7 @@ class SignerService : Service() {
     private fun act(s: Signer, action: String, text: String?, flag: Boolean) {
         val u = s.ui.value
         when (action) {
-            "accept" -> s.accept()
+            "accept" -> s.accept(text)
             "decline" -> s.decline()
             "createAccount" -> s.createAccount()
             "startJoin" -> s.startJoin()
@@ -159,7 +159,6 @@ class SignerService : Service() {
             "pointerNow" -> s.pointerNow()
             "loginSwitch" -> s.answerLoginSwitch(flag)
             "setPassword" -> s.setPassword(text ?: return)
-            "clearPassword" -> s.clearPassword()
             "setLoginPage" -> s.setLoginPage(text ?: "")
             "closeBunker" -> s.closeBunker()
             "refresh" -> Thread { s.refresh() }.start()

@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import cc.aaro.cosign.AccountPassword
 import cc.aaro.cosign.Ask
 import cc.aaro.cosign.Change
 import cc.aaro.cosign.BatchAsk
@@ -321,7 +322,7 @@ private fun Joining(text: String, onCancel: () -> Unit) = Page {
 }
 
 @Composable
-private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) = if (offer.create) MakeKeyPrompt(offer.box, offer.bringing, onJoin, onCancel) else Page {
+private fun JoinPrompt(offer: Offer, onJoin: (String?, String?) -> Unit, onCancel: () -> Unit) = if (offer.create) MakeKeyPrompt(offer.box, offer.bringing, { u, p -> onJoin(u, p) }, onCancel) else Page {
     Spacer(Modifier.height(24.dp))
     Text("Use your account on this phone?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
     Spacer(Modifier.height(8.dp))
@@ -333,38 +334,51 @@ private fun JoinPrompt(offer: Offer, onJoin: () -> Unit, onCancel: () -> Unit) =
     Text("Almost everything happens without asking. Anything destructive, like unfollowing most people, wiping your profile or deleting a pile of posts, waits for you here.",
         color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.weight(1f))
-    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Use it on this phone", style = MaterialTheme.typography.labelLarge) }
+    Button({ onJoin(null, null) }, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Use it on this phone", style = MaterialTheme.typography.labelLarge) }
     Spacer(Modifier.height(8.dp))
     TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
 }
 
 /** The box's code was read: this phone and the box make the account together. */
 @Composable
-private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: () -> Unit, onCancel: () -> Unit) = if (bringing) Page {
+private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: (String, String) -> Unit, onCancel: () -> Unit) = Page {
+    var name by remember { mutableStateOf("") }
+    var word by remember { mutableStateOf("") }
+    var again by remember { mutableStateOf("") }
+    val problem = AccountPassword.problem(name, word, again)
     Spacer(Modifier.height(24.dp))
-    Text("Bring your account to this box?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
+    Text(if (bringing) "Bring your account to this box?" else "Create your account?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
     Spacer(Modifier.height(20.dp))
-    Text("This phone splits your key with your box at $box. From then on the two sign together, and each of your other devices gets a piece of its own. Your account and its npub stay the same.",
-        color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
-    Spacer(Modifier.height(12.dp))
-    Text("The whole key stays on this phone too, sealed, as your backup. You can forget it later under Your account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
-    Spacer(Modifier.weight(1f))
-    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Bring it in", style = MaterialTheme.typography.labelLarge) }
+    if (bringing) {
+        Text("This phone splits your key with your box at $box. From then on the two sign together, and each of your other devices gets a piece of its own. Your account and its npub stay the same.",
+            color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(12.dp))
+        Text("The whole key stays on this phone too, sealed, as your backup. You can forget it later under Your account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+    } else {
+        Text("This phone and your box at $box make it together. Nobody holds all of it, not even this phone, so a lost phone or a hacked site can't post as you.",
+            color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(12.dp))
+        Text("Almost everything happens without asking. Anything destructive, like unfollowing most people, wiping your profile or deleting a pile of posts, waits for you here.",
+            color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+    }
+    // Every account has a password, set here before setup is done (Keykin SPEC 11.3).
+    Spacer(Modifier.height(20.dp))
+    Text("Choose a username and password for your account page. You can change the password later.", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.height(8.dp))
-    TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
-} else Page {
-    Spacer(Modifier.height(24.dp))
-    Text("Create your account?", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
-    Spacer(Modifier.height(20.dp))
-    Text(
-        "This phone and your box at $box make it together. Nobody holds all of it, not even this phone, so a lost phone or a hacked site can't post as you.",
-        color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
-    )
-    Spacer(Modifier.height(12.dp))
-    Text("Almost everything happens without asking. Anything destructive, like unfollowing most people, wiping your profile or deleting a pile of posts, waits for you here.",
-        color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+    TextField(name, { name = it.trim().lowercase().take(32) }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Username") })
+    Spacer(Modifier.height(8.dp))
+    TextField(word, { word = it.take(200) }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Password") },
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+    Spacer(Modifier.height(8.dp))
+    TextField(again, { again = it.take(200) }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Password again") },
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+    if (problem != null && (name.isNotEmpty() || word.isNotEmpty() || again.isNotEmpty()) && !(problem.startsWith("The two") && again.isEmpty()))
+        Text(problem, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+    Text("Setting it needs your fingerprint. Your box never sees the password.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
     Spacer(Modifier.weight(1f))
-    Button(onJoin, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Create my account", style = MaterialTheme.typography.labelLarge) }
+    Button({ onJoin(name, word) }, Modifier.fillMaxWidth().height(56.dp), enabled = problem == null, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+        Text(if (bringing) "Bring it in" else "Create my account", style = MaterialTheme.typography.labelLarge)
+    }
     Spacer(Modifier.height(8.dp))
     TextButton(onCancel, Modifier.fillMaxWidth()) { Text("Not now", color = Vault.Muted) }
 }
@@ -1279,6 +1293,9 @@ private fun AccountPageRows(ui: Ui, phone: Phone) {
     var page by remember { mutableStateOf(false) }
     var pass by remember { mutableStateOf(false) }
     Column {
+        if (AccountPassword.needsPrompt(ui.member != null, ui.hasPassword))
+            Text(AccountPassword.PROMPT, color = Vault.Text, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().clickable { pass = true }.padding(vertical = 10.dp))
         Row(Modifier.fillMaxWidth().clickable { page = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(ui.loginPage?.removePrefix("https://") ?: "No address yet", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
@@ -1288,10 +1305,10 @@ private fun AccountPageRows(ui: Ui, phone: Phone) {
         }
         Row(Modifier.fillMaxWidth().clickable { pass = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(ui.username?.let { "Username: $it" } ?: "No username and password", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                Text(ui.username?.let { "Username: $it" } ?: if (ui.hasPassword == true) "Password set" else "No username and password yet", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
                 Text("A password alone can look, block a device, sign things out and log out. Anything more needs a device's fingerprint.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             }
-            Text(if (ui.username == null) "Set" else "Change", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium)
+            Text(if (ui.username == null && ui.hasPassword != true) "Set" else "Change", color = Vault.Accent, style = MaterialTheme.typography.bodyMedium)
         }
     }
     if (page) {
@@ -1311,6 +1328,8 @@ private fun AccountPageRows(ui: Ui, phone: Phone) {
     if (pass) {
         var name by remember { mutableStateOf(ui.username ?: "") }
         var word by remember { mutableStateOf("") }
+        var again by remember { mutableStateOf("") }
+        val problem = AccountPassword.problem(name, word, again)
         AlertDialog(
             onDismissRequest = { pass = false },
             title = { Text("Username and password") },
@@ -1319,13 +1338,14 @@ private fun AccountPageRows(ui: Ui, phone: Phone) {
                 Spacer(Modifier.height(8.dp))
                 TextField(word, { word = it.take(200) }, singleLine = true, placeholder = { Text("Password") },
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-                Text("Setting it needs your fingerprint. Your box never sees the password.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Spacer(Modifier.height(8.dp))
+                TextField(again, { again = it.take(200) }, singleLine = true, placeholder = { Text("Password again") },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                if (problem != null && again.isNotEmpty()) Text(problem, color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Text("Setting it needs your fingerprint. Your box never sees the password. It can be changed, not removed.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             } },
-            confirmButton = { TextButton({ phone.setPassword(name, word); pass = false }, enabled = name.length >= 3 && word.length >= 8) { Text("Set, with my fingerprint", color = Vault.Accent) } },
-            dismissButton = { Row {
-                if (ui.username != null) TextButton({ phone.clearPassword(); pass = false }) { Text("Remove", color = Vault.Danger) }
-                TextButton({ pass = false }) { Text("Cancel") }
-            } },
+            confirmButton = { TextButton({ phone.setPassword(name, word); pass = false }, enabled = problem == null) { Text("Set, with my fingerprint", color = Vault.Accent) } },
+            dismissButton = { TextButton({ pass = false }) { Text("Cancel") } },
             containerColor = Vault.Surface,
         )
     }
