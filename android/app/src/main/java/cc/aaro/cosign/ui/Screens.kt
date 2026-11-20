@@ -126,6 +126,7 @@ fun App(phone: Phone, ui: Ui) {
         ui.bunker?.let { androidx.compose.runtime.LaunchedEffect(Unit) { phone.reveal() } }
         ui.working?.let { WorkingSheet(it) }
         ui.tap?.let { TapSheet(it, phone::tap) }
+        ui.loginSwitch?.let { LoginSwitchSheet(it, phone::answerLoginSwitch) }
         ui.takeOut?.let { if (it.stage == cc.aaro.cosign.TakeOut.Stage.SHOWING) androidx.compose.runtime.LaunchedEffect(Unit) { phone.reveal() } else TakeOutSheet(it, phone::closeTakeOut) }
     }
 }
@@ -1331,9 +1332,31 @@ private fun TapSheet(t: cc.aaro.cosign.Tap, onAnswer: (Boolean) -> Unit) {
             Spacer(Modifier.height(10.dp))
             Text(t.text, style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("No", color = Kk.Text) }
+            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text(t.no, color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Danger, Color.White)) { Text("Yes, remove them") }
+            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(if (t.danger) Kk.Danger else Kk.Green, Color.White)) { Text(t.yes) }
+        }
+    }
+}
+
+/**
+ * Right after joining a box: the account's sign-in page (Keykin SPEC 11.1) names a page this phone never used.
+ * Switch it to this box's, or keep it (and never be asked about the pair again).
+ */
+@Composable
+internal fun LoginSwitchSheet(s: cc.aaro.cosign.LoginSwitch, onAnswer: (Boolean) -> Unit) {
+    Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
+        Column(
+            Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
+        ) {
+            Text("Your sign-in page is ${s.named}. Switch it to ${s.current}?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
+            Spacer(Modifier.height(10.dp))
+            Text("Sites that look you up by name send you to your sign-in page. ${s.current} is your box's.", style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton({ onAnswer(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Keep ${s.named}", color = Kk.Text) }
+            Spacer(Modifier.height(10.dp))
+            Button({ onAnswer(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Switch") }
         }
     }
 }

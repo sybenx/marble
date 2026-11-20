@@ -3,6 +3,7 @@ package cc.aaro.cosign
 import android.content.Context
 import android.net.Uri
 import cc.aaro.cosign.core.Clock
+import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
 import cc.aaro.cosign.core.SiteScopes
@@ -236,7 +237,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     // what it asks: add a device, make a bunker link, become a site's signer. Only what is hard to undo
     // (removing blocked devices for good) asks Yes or No here first, and No signs that browser out.
 
-    private val notesSeen = ConcurrentHashMap.newKeySet<String>()
+    private val notesSeen = NoteTries()
     /**
      * Besides the 30-second check, one request held open at the box (Keykin SPEC 11.6): the box answers it
      * when the account page leaves a note, so the page hears back in about a second. On its own thread, with
@@ -249,7 +250,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         },
         take = { list ->
             val h = held
-            if (h != null && list.any { it.id !in notesSeen }) {
+            if (h != null && list.any { !notesSeen.has(it.id) }) {
                 if (debuggable) android.util.Log.i("Keykin", "notes_wait: ${list.size} note(s) at ${System.currentTimeMillis()}")
                 awake { takeNotes(h, list) }
             }
@@ -262,10 +263,13 @@ class Signer(private val context: Context, val slot: String = "0") {
         } catch (_: Exception) { null }
         try { f() } finally { try { if (lock?.isHeld == true) lock.release() } catch (_: Exception) { } }
     }
-    /** Does what the account page asked, for each note in [list] this phone has not taken before. */
+    /**
+     * Does what the account page asked, for each note in [list] this phone has not done yet. A note that
+     * failed is tried again on the next check, three tries in all, and only the last failure is shown.
+     */
     private fun takeNotes(h: Held, list: List<Device.Note>) {
         for (n in list) {
-            if (!notesSeen.add(n.id)) continue
+            if (!notesSeen.begin(n.id)) continue
             try {
                 when (n.kind) {
                     "invite" -> {
@@ -294,8 +298,26 @@ class Signer(private val context: Context, val slot: String = "0") {
                         ui.update { it.copy(tap = Tap(n.id, "Remove blocked devices for good?", "Your account page asked. Their pieces stop working, and this can't be undone. No also signs that browser out of your account page.")) }
                         ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
                     }
+                    // Make the box's page the account's sign-in page (SPEC 11.1), after a password or passkey sign-in there.
+                    "pointer" -> {
+                        val asked = LoginPointer.requested(n.text)
+                        if (asked == null) {
+                            Device.noteDone(me(), h, n.id, "declined", send(h))
+                            note("Your account page asked to change your sign-in page, but didn't name an https page. Said No.", "denied")
+                        } else {
+                            ui.value.tap?.let { old -> listener?.onTapGone(old.id) }
+                            ui.update { it.copy(tap = Tap(n.id, "Make ${host(asked)} your sign-in page?", "Sites that look you up by name will send you there to sign in.",
+                                "pointer", asked, no = "Not now", yes = "Make it my sign-in page", danger = false)) }
+                            ui.value.tap?.let { listener?.onTap(it) }; Cosign.host.joined(context)
+                        }
+                    }
                 }
-            } catch (e: Exception) { note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied") }
+                notesSeen.worked(n.id)
+            } catch (e: Exception) {
+                // The box no longer has it (it ran out, or another device answered): nothing to try again.
+                if ((e as? KeykinException)?.code == "gone") notesSeen.worked(n.id)
+                else if (notesSeen.failedOnce(n.id)) note("Couldn't do what your account page asked (${n.kind}): ${why(e)}", "denied")
+            }
         }
     }
     /** Yes or No to something hard to undo that the account page asked for. */
@@ -305,6 +327,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (id != null && id != t.id) return
         ui.update { it.copy(tap = null) }
         listener?.onTapGone(t.id)
+        if (t.kind == "pointer") return work.execute { answerPointer(h, t, yes, 1) }
         if (yes) change("Removing blocked devices…") { me, _ ->
             Device.cycle(me, h, null, send(h), t.id)
             Device.noteDone(me, h, t.id, "ok", send(h))
@@ -364,10 +387,10 @@ class Signer(private val context: Context, val slot: String = "0") {
      * is to any write relay that lacks it (no new signature). A new one is signed only when no relay has
      * any. A pointer removed on purpose (no url) or naming another page is the person's choice: left alone.
      */
-    private fun pointerCheck(h: Held) {
+    private fun pointerCheck(h: Held, afterJoin: Boolean = false) {
         if (!pointerBusy.compareAndSet(false, true)) return
         work.execute {
-            try { pointerStep(h) }
+            try { pointerStep(h, afterJoin) }
             catch (e: Exception) { if (debuggable) android.util.Log.i("Keykin", "pointer failed: $e") }
             finally { pointerBusy.set(false) }
         }
@@ -383,8 +406,25 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (prefs.contains("login-origin")) prefs.edit().remove("login-origin").apply()
         return prefs.getString(LoginPointer.PREF, null)?.ifEmpty { null }
     }
+    /**
+     * The login pages this phone used before for account [pub] (hex). Kept in their own file, which removing
+     * this phone from the account doesn't wipe: leaving and joining again at a new box is how a phone moves.
+     */
+    private val usedPages = context.getSharedPreferences(LoginPointer.USED_FILE, Context.MODE_PRIVATE)
+    private fun usedList(key: String): List<String> = try {
+        usedPages.getString(key, null)?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+    private fun usedLoginPages(pub: String) = usedList(pub)
+    /** The switches the person said Keep to, for account [pub] ([LoginPointer.pair]). */
+    private fun declinedSwitches(pub: String) = usedList("$pub:declined")
+    /** Joined a box whose code named [next] (or none): that is the current login page now, and the one before joins the used ones. */
+    private fun joinedLoginPage(pub: String, next: String?) {
+        val (now, used) = LoginPointer.joined(loginOrigin(), usedLoginPages(pub), next)
+        prefs.edit().apply { if (now != null) putString(LoginPointer.PREF, now) else remove(LoginPointer.PREF) }.apply()
+        usedPages.edit().putString(pub, JSONArray(used).toString()).apply()
+    }
     /** One check. True when it settled (nothing more to do until the next one), false when no relay answered. */
-    private fun pointerStep(h: Held): Boolean {
+    private fun pointerStep(h: Held, afterJoin: Boolean = false): Boolean {
         val pub = accountHex() ?: return false
         // No login page named by the box's code: nothing is published, not even an existing pointer sent around.
         val origin = loginOrigin() ?: return true
@@ -400,26 +440,82 @@ class Signer(private val context: Context, val slot: String = "0") {
         val targets = if (testing) writes else (writes + outbox).distinct()
         val more = targets - look.toSet()
         if (more.isNotEmpty()) byRelay = byRelay + queryEach(more, filter)
-        val plan = LoginPointer.plan(origin, pub, byRelay, targets)
+        val plan = LoginPointer.plan(origin, pub, byRelay, targets, usedLoginPages(pub), afterJoin, declinedSwitches(pub))
         if (debuggable) android.util.Log.i("Keykin", "pointer for ${pub.take(8)}: $plan (origin $origin, ${byRelay.size} of ${(look + more).size} relays answered)")
+        val to = if (testing) writes else (targets + DEFAULT_RELAYS).distinct()
         when (plan) {
             is LoginPointer.Plan.Wait -> return false
             is LoginPointer.Plan.Leave -> return true
             is LoginPointer.Plan.Act -> {
-                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has is signed anew.
+                // A copy a relay lacks goes again as it is (no new signature); a kind no relay has, or one naming a page left behind, is signed anew.
                 for (c in plan.resend) publish(c.event, c.to)
-                for (kind in plan.sign) {
-                    val signed = signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, plan.origin), "").withId())
-                    publish(signed, if (testing) writes else (targets + DEFAULT_RELAYS).distinct())
-                }
-                if (plan.sign.size == LoginPointer.KINDS.size) {
-                    prefs.edit().putString("login-page", plan.origin).apply()
-                    ui.update { it.copy(loginPage = plan.origin) }
-                    note("Your account's sign-in page is now ${plan.origin}", "approved")
-                }
+                signPointers(pub, plan.origin, plan.sign, to)
+                return true
+            }
+            is LoginPointer.Plan.Ask -> {
+                pendingSwitch = Triple(pub, plan, to)
+                ui.update { it.copy(loginSwitch = LoginSwitch(host(plan.named), host(plan.current))) }
                 return true
             }
         }
+    }
+    private fun signPointers(pub: String, origin: String, kinds: List<Int>, to: List<String>) {
+        for (kind in kinds) publish(signNow(Event(pub, Clock.now(), kind, LoginPointer.tags(kind, origin), "").withId()), to)
+        if (kinds.isNotEmpty() && (kinds.size == LoginPointer.KINDS.size || prefs.getString("login-page", null) != origin)) {
+            prefs.edit().putString("login-page", origin).apply()
+            ui.update { it.copy(loginPage = origin) }
+            note("Your account's sign-in page is now $origin", "approved")
+        }
+    }
+    private fun host(origin: String) = try { java.net.URI(origin).let { u -> u.host + if (u.port != -1) ":${u.port}" else "" } } catch (_: Exception) { origin.removePrefix("https://") }
+    /** The question [LoginPointer.Plan.Ask] put on screen: the account, the plan, and the relays new pointers go to. */
+    @Volatile private var pendingSwitch: Triple<String, LoginPointer.Plan.Ask, List<String>>? = null
+    /**
+     * The person's answer to "Your sign-in page is X. Switch it to Y?". Switch: new pointers (both kinds) naming this
+     * box's page, and X counts as a page this phone used. Keep: that pair is never asked about again.
+     */
+    fun answerLoginSwitch(switch: Boolean) {
+        val (pub, ask, to) = pendingSwitch ?: return ui.update { it.copy(loginSwitch = null) }
+        pendingSwitch = null
+        ui.update { it.copy(loginSwitch = null) }
+        val a = LoginPointer.answer(ask, switch, usedLoginPages(pub), declinedSwitches(pub))
+        usedPages.edit().putString(pub, JSONArray(a.used).toString()).putString("$pub:declined", JSONArray(a.declined).toString()).apply()
+        val sign = a.sign ?: return
+        work.execute {
+            try { signPointers(pub, sign, LoginPointer.KINDS, to) }
+            catch (e: Exception) { ui.update { it.copy(error = "Couldn't switch your sign-in page: ${why(e)}") } }
+        }
+    }
+
+    /**
+     * The person's answer to the account page's "make this my sign-in page" (a `pointer` note, [LoginPointer.made]).
+     * Yes: both kinds naming it go to the account's write relays, whatever the pointer named before, it is this
+     * account's current page, and the box hears `ok`. No: the box hears `declined`. Try [n] of three: a failure is
+     * tried again 5 seconds later, and only the last is shown. A note the box no longer has (it ran out) is dropped.
+     */
+    private fun answerPointer(h: Held, t: Tap, yes: Boolean, n: Int, signed: Boolean = false) {
+        val asked = t.origin ?: return
+        val pub = accountHex() ?: return
+        var done = signed; val busy = "Making ${host(asked)} your sign-in page…"
+        try {
+            val m = LoginPointer.made(asked, yes, loginOrigin(), usedLoginPages(pub))
+            if (m.sign != null && !done) {
+                // Ran out while the sheet was up: nothing is published for a request no one is waiting on.
+                if (Device.notes(me(), h, send(h)).none { it.id == t.id }) return
+                ui.update { it.copy(working = busy) }
+                val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
+                signPointers(pub, m.sign, LoginPointer.KINDS, if (testing) writeRelays() else (writeRelays() + DEFAULT_RELAYS).distinct())
+                prefs.edit().apply { if (m.current != null) putString(LoginPointer.PREF, m.current) else remove(LoginPointer.PREF) }.apply()
+                usedPages.edit().putString(pub, JSONArray(m.used).toString()).apply()
+                done = true
+            }
+            LoginPointer.reply(me(), h, t.id, m, send(h))
+            if (!yes) note("Said Not now to your account page: making ${host(asked)} your sign-in page", "denied")
+        } catch (e: Exception) {
+            if ((e as? KeykinException)?.code == "gone") return
+            if (n >= 3) note("Couldn't make ${host(asked)} your sign-in page: ${why(e)}", "denied")
+            else timer.schedule({ work.execute { answerPointer(h, t, yes, n + 1, done) } }, 5, TimeUnit.SECONDS)
+        } finally { ui.update { if (it.working == busy) it.copy(working = null) else it } }
     }
 
     // --- Scanning: the box's code, a device's invite, the join text, a site's code -----------------
@@ -695,14 +791,14 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 keep(h)
                 // The box's code (or the device's join text) may say where its login page is (SPEC 11.1).
-                LoginPointer.fromCode(qr?.login ?: j?.login, allowHttp = debuggable)?.let { prefs.edit().putString(LoginPointer.PREF, it).apply() }
+                joinedLoginPage(h.npub, LoginPointer.fromCode(qr?.login ?: j?.login, allowHttp = debuggable))
                 // Kept first, forgotten never (unless you say so): the whole key, sealed, as this account's backup.
                 if (key != null) { secrets.save("nsec", key.toHex()); key.fill(0); bringing = null }
                 ui.update { it.copy(joining = null, error = null, bringing = false, keptKey = key != null, member = membership(h, emptyList())) }
                 note(if (key != null) "Brought your account to your box. The whole key is kept on this phone as its backup" else if (o.create) "Made your account with your box" else "Joined your account on this phone", "approved")
                 refresh(); start()
                 Cosign.host.joined(context)
-                pointerCheck(h)
+                pointerCheck(h, afterJoin = true)
             } catch (e: Exception) {
                 ui.update { it.copy(joining = null, error = when ((e as? KeykinException)?.code) {
                     "no_box" -> "Couldn't reach the box at ${o.box}. Is this phone on the same network as it?"
@@ -723,6 +819,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         val h = held; val mine = meNow
         work.execute {
             if (h != null && mine != null) try { Device.block(mine, h, mine.key, send(h)) } catch (_: Exception) { }
+            // The box's login page joins the ones this phone used before, so joining again at a new box moves the pointer.
+            accountHex()?.let { pub -> try { joinedLoginPage(pub, null) } catch (_: Exception) { } }
             stop(); secrets.clear(); lists.clear(); apps.edit().clear().apply(); appTimes.edit().clear().apply(); prefs.edit().clear().apply(); history.delete(); kept.delete()
             Chip.forget(context, slot); held = null; meNow = null
             ui.value = Ui()

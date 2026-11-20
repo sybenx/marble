@@ -58,8 +58,12 @@ data class Line(val ts: Long, val text: String, val kind: String = "info") : jav
 data class TakeOut(val stage: Stage, val text: String = "", val until: Long? = null, val nsec: String? = null, val npub: String? = null, val twinUnknown: Boolean = false) : java.io.Serializable {
     enum class Stage { WAITING, SHOWING, FAILED }
 }
-/** Something hard to undo that the account page asked for: Yes or No, on this phone. */
-data class Tap(val id: String, val title: String, val text: String) : java.io.Serializable
+/**
+ * Something the account page asked for that needs a Yes or No on this phone: removing blocked devices for good
+ * ([kind] "cycle"), or making [origin] the account's sign-in page ("pointer"). [no] and [yes] are the buttons.
+ */
+data class Tap(val id: String, val title: String, val text: String, val kind: String = "cycle", val origin: String? = null,
+               val no: String = "No", val yes: String = "Yes, remove them", val danger: Boolean = true) : java.io.Serializable
 /**
  * The whole key moving between your devices by QRST: this phone receiving it ("receive"), or sending it
  * ("consent" before anything moves, then "send"). Only the session's public state; never the key.
@@ -70,6 +74,8 @@ data class KeyMove(val kind: String, val uri: String? = null, val phase: String 
                    val kept: Boolean = false, val problem: String? = null) : java.io.Serializable
 /** A browser asks to log in to the account page: where, as whom, for how long. */
 data class LoginAsk(val host: String, val account: String, val lasts: String) : java.io.Serializable
+/** Right after a join: the account's sign-in page is [named], a page this phone never used; switch it to this box's, [current]? Hosts. */
+data class LoginSwitch(val named: String, val current: String) : java.io.Serializable
 /** Asking a box for an account: the box, your note, and how far it got (1 asked, 2 waiting, 3 making the key). */
 data class Asking(val box: String, val note: String, val step: Int, val error: String? = null) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
@@ -113,6 +119,7 @@ data class Ui(
     val working: String? = null,
     val tap: Tap? = null,
     val loginAsk: LoginAsk? = null,
+    val loginSwitch: LoginSwitch? = null,
     val move: KeyMove? = null,
     val asking: Asking? = null,
     /** An nsec was pasted and waits for the box's code. The key itself stays in the signer process. */

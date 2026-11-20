@@ -195,6 +195,9 @@ class MainActivity : ComponentActivity() {
             "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
             "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
             "tapYes" -> p.tap(true); "tapNo" -> p.tap(false)
+            "loginSwitch" -> p.answerLoginSwitch(true); "loginKeep" -> p.answerLoginSwitch(false)
+            // The account page's "make this my sign-in page" (a pointer note): Yes or No, as the sheet's buttons.
+            "pointerYes" -> p.tap(true); "pointerNo" -> p.tap(false)
             "createLocal" -> p.createLocal(); "receiveKey" -> p.receiveKey(); "keepKey" -> p.keepKey(); "sendKey" -> p.sendKey()
             "moveDigits" -> p.moveDigits(intent.getStringExtra("arg")); "closeMove" -> p.closeMove()
             "import" -> p.importKey((intent.getStringExtra("arg") ?: "").toCharArray()); "forgetKey" -> p.forgetKey()
