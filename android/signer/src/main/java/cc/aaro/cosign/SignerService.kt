@@ -146,7 +146,7 @@ class SignerService : Service() {
             "cycle" -> s.cycle()
             "unblock" -> s.unblock(text ?: return)
             "digits" -> s.digits(flag)
-            "makeBunker" -> s.makeBunker()
+            "makeBunker" -> (text ?: "").split('\n', limit = 2).let { p -> val f = p[0].split(','); s.makeBunker(p.getOrNull(1), "lists" in f, "dms" in f) }
             "cancelImport" -> s.cancelImport()
             "forgetKey" -> s.forgetKey()
             "tap" -> s.tap(flag, text)

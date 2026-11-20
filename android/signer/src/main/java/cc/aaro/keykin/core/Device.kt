@@ -305,14 +305,38 @@ object Device {
 
     // --- What this device has let in, and revoking (SPEC 11.5) ---------------------------------------
 
-    /** [client], [device] and [via] are optional (SPEC 11.5): the site's NIP-46 key, its own label, and how it came in. */
-    data class Grant(val id: String, val kind: String, val name: String, val since: Long, val client: String? = null, val device: String? = null, val via: String? = null)
+    /**
+     * [client], [device] and [via] are optional (SPEC 11.5): the site's NIP-46 key, its own label, and how it came in.
+     * [lists] and [dms] are a site's two switches ("Read your private lists", "Read and send DMs"), sent for sites only.
+     */
+    data class Grant(val id: String, val kind: String, val name: String, val since: Long, val client: String? = null, val device: String? = null, val via: String? = null,
+                     val lists: Boolean? = null, val dms: Boolean? = null)
+    /** What the account page wants a site's switches to be. Null leaves that switch as it is. */
+    data class Want(val lists: Boolean? = null, val dms: Boolean? = null)
+    /** The box's answer to a [grantsReply]: the ids that were revoked, and the switches the account page wants, by grant id. */
+    data class Grants(val revoked: List<String>, val scopes: Map<String, Want>)
     /** Tells the box this device's whole list. Returns the ids that were revoked, to drop from the list. */
-    fun reportGrants(me: Me, h: Held, grants: List<Grant>, send: Send = http(h.addr)): List<String> {
+    fun reportGrants(me: Me, h: Held, grants: List<Grant>, send: Send = http(h.addr)): List<String> = grantsReply(me, h, grants, send).revoked
+    /** Tells the box this device's whole list. Returns what was revoked and the switches the account page wants changed. */
+    fun grantsReply(me: Me, h: Held, grants: List<Grant>, send: Send = http(h.addr)): Grants {
         val a = JSONArray(grants.map { JSONObject().put("id", it.id).put("kind", it.kind).put("name", it.name).put("since", it.since)
-            .apply { it.client?.let { c -> put("client", c) }; it.device?.let { d -> put("device", d) }; it.via?.let { v -> put("via", v) } } })
-        val r = call(send, seal(JSONObject().put("op", "grants").put("account", h.npub).put("grants", a), me)).optJSONArray("revoked") ?: JSONArray()
-        return List(r.length()) { r.getString(it) }
+            .apply { it.client?.let { c -> put("client", c) }; it.device?.let { d -> put("device", d) }; it.via?.let { v -> put("via", v) }
+                it.lists?.let { l -> put("lists", l) }; it.dms?.let { d -> put("dms", d) } } })
+        val reply = call(send, seal(JSONObject().put("op", "grants").put("account", h.npub).put("grants", a), me))
+        val r = reply.optJSONArray("revoked") ?: JSONArray()
+        return Grants(List(r.length()) { r.getString(it) }, scopesOf(reply.optJSONObject("scopes")))
+    }
+    /** `scopes: { "<grantId>": { "lists"?: bool, "dms"?: bool } }`. Anything but a boolean counts as absent; an entry with neither is dropped. */
+    internal fun scopesOf(o: JSONObject?): Map<String, Want> {
+        if (o == null) return emptyMap()
+        fun JSONObject.bool(k: String) = opt(k) as? Boolean
+        val out = LinkedHashMap<String, Want>()
+        for (id in o.keys()) {
+            val e = o.optJSONObject(id) ?: continue
+            val w = Want(e.bool("lists"), e.bool("dms"))
+            if (w.lists != null || w.dms != null) out[id] = w
+        }
+        return out
     }
     fun revoke(me: Me, h: Held, grant: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "revoke").put("account", h.npub).put("grant", grant), me)) }
 
@@ -322,11 +346,14 @@ object Device {
      * `tap` is true when the device must ask the person Yes or No before doing it. For a `nostrconnect`
      * note, [from] is the sender's origin as the login page saw it (null when it could not tell) and
      * [signAs] is the note's `as`, `"main"` or `"site"`. An older box sends neither: null, the old behaviour.
+     * For a `bunker` note, [text] is an optional name for the site and [lists], [dms] the site's two switches (off when missing).
      */
-    data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean, val from: String? = null, val signAs: String? = null) {
+    data class Note(val id: String, val kind: String, val text: String, val at: Long, val tap: Boolean, val from: String? = null, val signAs: String? = null,
+                    val lists: Boolean = false, val dms: Boolean = false) {
         companion object {
             private fun JSONObject.str(k: String) = if (isNull(k)) null else optString(k).trim().ifEmpty { null }
-            fun of(n: JSONObject) = Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap"), n.str("from"), n.str("as"))
+            fun of(n: JSONObject) = Note(n.getString("id"), n.getString("kind"), n.optString("text"), n.optLong("at"), n.optBoolean("tap"), n.str("from"), n.str("as"),
+                n.opt("lists") == true, n.opt("dms") == true)
         }
     }
     fun notes(me: Me, h: Held, send: Send = http(h.addr)): List<Note> {

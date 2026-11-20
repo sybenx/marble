@@ -172,8 +172,12 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun closeConnect() = act("closeConnect")
     /** The five digits this phone shows were compared with the site's. */
     fun digits(same: Boolean) = act("digits", flag = same)
-    /** A bunker:// link to paste into a site: made, then shown by the signer ([reveal]). */
-    fun makeBunker() = act("makeBunker")
+    /**
+     * A bunker:// link to paste into a site: made, then shown by the signer ([reveal]). [name] is what the person
+     * said the site is (optional), [lists] and [dms] the site's two switches. The link never comes back here.
+     */
+    fun makeBunker(name: String? = null, lists: Boolean = false, dms: Boolean = false) =
+        act("makeBunker", listOfNotNull("lists".takeIf { lists }, "dms".takeIf { dms }).joinToString(",") + "\n" + name.orEmpty())
     fun closeBunker() = act("closeBunker")
     /** Yes or No to something hard to undo that your account page asked for. */
     fun tap(yes: Boolean, id: String? = null) = act("tap", id, flag = yes)

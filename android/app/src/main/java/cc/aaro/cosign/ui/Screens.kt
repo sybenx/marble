@@ -484,6 +484,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
     val names by social.deviceNames.collectAsState()
     var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
+    var bunkerAsk by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
     // Opened for Recent changes (a notification's tap): its place depends on what is above it, so scroll until its heading is drawn.
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -579,7 +580,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 Text("Sign in to a site", style = MaterialTheme.typography.labelLarge)
             }
         }
-        item { TextButton({ phone.makeBunker() }, contentPadding = PaddingValues(0.dp)) { Text("Get a bunker link to paste into a site", color = Vault.Accent) } }
+        item { TextButton({ bunkerAsk = true }, contentPadding = PaddingValues(0.dp)) { Text("Get a bunker link to paste into a site", color = Vault.Accent) } }
         // Marble's own way in (its likes, follows and saved interests) isn't one of them: removing it would break Marble.
         val sites = ui.sites.filterNot { ownGrant(it) }
         if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
@@ -770,6 +771,25 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             },
             confirmButton = { TextButton({ social.nameDevice(cc.aaro.cosign.Social.deviceKey(d), text); renaming = null }, enabled = text.isNotBlank()) { Text("Save", color = Vault.Accent) } },
             dismissButton = { TextButton({ renaming = null }) { Text("Cancel") } },
+            containerColor = Vault.Surface,
+        )
+    }
+    // A bunker link says nothing of the site it is for, so the person may name it here. The link itself stays in the signer.
+    if (bunkerAsk) {
+        var name by remember { mutableStateOf("") }
+        var lists by remember { mutableStateOf(false) }
+        var dms by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { bunkerAsk = false },
+            title = { Text("Get a bunker link") },
+            text = { Column {
+                TextField(name, { name = it.take(60) }, singleLine = true, placeholder = { Text("Which site is it for?") })
+                Text("Optional. It's the name you'll see in your list. Left empty, the site's own name is used once it posts.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Spacer(Modifier.height(12.dp))
+                SiteScopeSwitches(lists, dms, { lists = it }, { dms = it })
+            } },
+            confirmButton = { TextButton({ phone.makeBunker(name.trim().ifEmpty { null }, lists, dms); bunkerAsk = false }) { Text("Get link", color = Vault.Accent) } },
+            dismissButton = { TextButton({ bunkerAsk = false }) { Text("Cancel") } },
             containerColor = Vault.Surface,
         )
     }

@@ -197,7 +197,7 @@ class MainActivity : ComponentActivity() {
             // A test's own relay for one-code sign-ins (--es arg ws://127.0.0.1:7777), and its own login page for "Use my name".
             "qrstRelays" -> p.testQrstRelays(intent.getStringExtra("arg") ?: ""); "marbleWeb" -> p.testMarbleWeb(intent.getStringExtra("arg") ?: "")
             "accept" -> p.accept(); "startJoin" -> p.startJoin(); "confirmAddDevice" -> p.confirmAddDevice(); "confirmConnect" -> p.confirmConnect(intent.getStringExtra("arg"))
-            "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(); "leave" -> p.leave()
+            "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(intent.getStringExtra("arg")); "leave" -> p.leave()
             "confirmReportLost" -> p.confirmReportLost(); "refresh" -> p.refresh()
             "reportLost" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::askReportLost)
             "unblock" -> p.ui.value.member?.group?.members?.firstOrNull { it.name == intent.getStringExtra("arg") }?.let(p::unblock)
