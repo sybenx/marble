@@ -3,6 +3,7 @@
 // With nothing passed, the small defaults below work alone. No DOM here: layer 1 imports this in Node too.
 import { req, relays, FAST, INDEXERS } from "./pool.js";
 import { npub } from "./ids.js";
+import { nip05Key } from "./pure.js";
 
 // ── Where someone posts and reads (their kind 10002), as Marble Web's data.js reads it ──
 const outboxes = new Map(); // pubkey → Promise<{write, read}>
@@ -32,10 +33,11 @@ async function resolveNip05(address, timeout = 4000) {
     setTimeout(() => ctrl.abort(), timeout);
     const r = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`, { signal: ctrl.signal, redirect: "error" });
     const data = await r.json();
-    const names = data?.names || {};
-    const pk = names[name] ?? Object.entries(names).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1];
-    if (!/^[0-9a-f]{64}$/.test(pk || "")) return null;
-    return { pubkey: pk, relays: (data.relays?.[pk] || []).slice(0, 3) };
+    const pk = nip05Key(data, name); // pure.js: the name as written, else in another case; 64 hex, lower case
+    if (!pk) return null;
+    const relays = data?.relays && typeof data.relays === "object"
+      ? Object.entries(data.relays).find(([k]) => k.toLowerCase() === pk)?.[1] : null;
+    return { pubkey: pk, relays: Array.isArray(relays) ? relays.slice(0, 3) : [] };
   } catch { return null; }
 }
 

@@ -1,5 +1,5 @@
 {
- "about": "Shared cases for the login-page pointer (Keykin SPEC 11.1) and name-first sign-in. Made by tools/signin-vectors.mjs; run by test/signin-vectors.test.ts. `expect` is the rule; `differs` names an implementation that answers otherwise today, and what it gives. `here` is the reader's own hostname (default marble.example). Pointer states: found (origin, template, kind), removed (keykin-login says bad for a bad one), none.",
+ "about": "Shared cases for the login-page pointer (Keykin SPEC 11.1) and name-first sign-in. Made by tools/signin-vectors.mjs; run by test/signin-vectors.test.ts. `expect` is the rule, and signin/ gives it in every case; `differs` names another implementation that answers otherwise today, and what it gives. `here` is the reader's own hostname (default marble.example). Pointer states: found (origin, template, kind), removed (keykin-login says bad for a bad one), none.",
  "account": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
  "other": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
  "here": "marble.example",
@@ -133,7 +133,6 @@
    "from": "tube",
    "why": "the code would go into the host",
    "differs": {
-    "signin": "https://x",
     "keykin-login": "https://x"
    }
   },
@@ -143,7 +142,6 @@
    "from": "tube",
    "why": "the code would go into the host: the origin shown is not where the link goes",
    "differs": {
-    "signin": "https://account.syb.lolx",
     "keykin-login": "https://account.syb.lolx"
    }
   },
@@ -153,7 +151,6 @@
    "from": "tube",
    "why": "the code would go into the host",
    "differs": {
-    "signin": "https://account.syb.lol.x",
     "keykin-login": "https://account.syb.lol.x"
    }
   },
@@ -1280,12 +1277,6 @@
     "kind": 10046
    },
    "differs": {
-    "signin": {
-     "state": "found",
-     "origin": "https://a.example",
-     "template": "https://a.example/#connect=<nostrconnect>",
-     "kind": 10046
-    },
     "keykin-login": {
      "state": "found",
      "origin": "https://a.example",
@@ -1322,14 +1313,6 @@
    ],
    "expect": {
     "state": "none"
-   },
-   "differs": {
-    "signin": {
-     "state": "found",
-     "origin": "https://x.example",
-     "template": "https://x.example/#connect=<nostrconnect>",
-     "kind": 30078
-    }
    }
   }
  ],
@@ -1398,29 +1381,18 @@
    "expect": {
     "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
    },
-   "why": "bech32 may be all upper case",
-   "differs": {
-    "signin": null
-   }
+   "why": "bech32 may be all upper case"
   },
   {
    "typed": "NOSTR:npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
    "expect": {
     "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
-   },
-   "differs": {
-    "signin": null
    }
   },
   {
    "typed": "npub180cvv07TJDRRGPA0J7J7TMNYL2YR6YR7L8J4S3EVF6U64TH6GKWSYJH6W6",
    "expect": null,
-   "why": "mixed case is not bech32",
-   "differs": {
-    "signin": {
-     "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
-    }
-   }
+   "why": "mixed case is not bech32"
   },
   {
    "typed": "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6wq",
@@ -1445,24 +1417,12 @@
   {
    "typed": "aaron+tag@example.com",
    "expect": null,
-   "why": "NIP-05 names are a-z0-9-_.",
-   "differs": {
-    "signin": {
-     "name": "aaron+tag",
-     "domain": "example.com"
-    }
-   }
+   "why": "NIP-05 names are a-z0-9-_."
   },
   {
    "typed": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
    "expect": null,
-   "why": "longer than 400",
-   "differs": {
-    "signin": {
-     "name": "_",
-     "domain": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
-    }
-   }
+   "why": "longer than 400"
   },
   {
    "typed": "",
@@ -1535,10 +1495,7 @@
     }
    },
    "expect": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
-   "why": "an upper case key, lowercased",
-   "differs": {
-    "signin": null
-   }
+   "why": "an upper case key, lowercased"
   },
   {
    "name": "aaron",

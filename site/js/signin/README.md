@@ -16,29 +16,43 @@ with esbuild. It is a different thing and is left alone.
 
 | Layer | Entry | Files | Needs |
 |---|---|---|---|
-| 1. Rules, no screen | `rules.js` | `connect.js`, `pointer.js`, `hooks.js`, `pool.js`, `ids.js`, `vendor/` | nothing at import; imports in Node |
+| 1. Rules, no screen | `rules.js` | `pure.js`, `connect.js`, `pointer.js`, `hooks.js`, `pool.js`, `ids.js`, `vendor/` | nothing at import; imports in Node |
 | 2. Who is signed in | `me.js` | layer 1 | a browser (`localStorage`, `location`) |
 | 3. The dialog | `dialog.js` | `toast.js`, `account-page.js`, layers 1 and 2 | a page (`document`), `signin.css` |
 
 Layer 1 loads none of layer 2 or 3, and layer 2 loads nothing of layer 3 (`test/signin-layers.test.ts` checks this).
+`pure.js` alone loads only `ids.js`: a page that only checks names, templates and links imports it and nothing else
+(no relay pool, no vendored crypto).
 
 **Layer 1 in Node.** Everything imports cleanly. The pure rules work: `loginTemplate`, `legacyTemplate`, `loginLink`,
-`originOnly`, `pageFrom`, `pointerOf`, `siteCode`, `deviceLabel`, `shortKey`, `parseBunker`, `encrypt`, `decrypt`,
-`conversationKey`, and `whose` given a `resolveNip05` hook (or Node's own `fetch`). The parts that talk to relays
+`originOnly`, `pageFrom`, `pointerOf`, `typedName`, `bech32Key`, `nip05Key`, `siteCode`, `deviceLabel`, `shortKey`,
+`parseBunker`, `encrypt`, `decrypt`, `conversationKey`, and `whose` given a `resolveNip05` hook (or Node's own `fetch`).
+
+**Local login pages.** `originOnly(url, local)`, `loginTemplate(template, local)`, `pageFrom(event, pubkey, local)` and
+`pointerOf(found, pubkey, local)` take whether a login page on this machine (`http://localhost` or `http://127.0.0.1`)
+counts. Left out, it counts only when the page's own `location` is localhost, as before. A server has no `location`
+and decides per request (Tube: when Tube itself is reached on localhost), so it passes `true` or `false`. The parts that talk to relays
 (`loginPage`, `connectRelays`, `phoneSignIn`, `bunkerSignIn`, `Remote`, and the default `outbox` and `profile` hooks)
 read the page's `location` (pool.js `testRelay`) and use `WebSocket` and `document`, so in Node they throw
 `ReferenceError: location is not defined` today. That is how Marble's code was; it was not changed.
 
 ## Files and exports
 
-- `connect.js` (from Marble's `connect.js`, unchanged): the NIP-46 client and the sign-in code.
+- `pure.js` (new): the pure rules, importing only `ids.js`. `PLACEHOLDER` (`<nostrconnect>`), `originOnly`,
+  `loginTemplate`, `legacyTemplate`, `loginLink`, `typedName` (what was typed: `{ pubkey }`, `{ name, domain }` with a
+  bare domain as `_`, or null), `bech32Key` (the key in an npub or nprofile), `nip05Key(body, name)` (the key a
+  NIP-05 answer gives). `connect.js` and `pointer.js` re-export theirs from here, so their importers did not change.
+- `connect.js` (from Marble's `connect.js`): the NIP-46 client and the sign-in code.
   `connectRelays`, `encrypt`, `decrypt`, `conversationKey`, `Remote`, `siteCode`, `deviceLabel`, `shortKey`,
-  `loginTemplate`, `legacyTemplate`, `loginLink`, `phoneSignIn`, `parseBunker`, `bunkerSignIn`, `codeSvg`.
+  `loginTemplate`, `legacyTemplate`, `loginLink` (these three from `pure.js`), `phoneSignIn`, `parseBunker`,
+  `bunkerSignIn`, `codeSvg`.
 - `pointer.js` (from Marble's `account-page.js`, its rules): `POINTER` (10046), `LOGIN_D` ("keykin/login"),
-  `originOnly`, `pageFrom`, `pointerOf`, `loginPage`, `whose`. Its calls to Marble's `data.js` go through the hooks.
+  `originOnly` (from `pure.js`), `pageFrom`, `pointerOf`, `loginPage`, `whose` (reads the name with `typedName`). Its
+  calls to Marble's `data.js` go through the hooks.
+- `pure.d.ts`, `pointer.d.ts`: types for those two, for a site written in TypeScript (Tube's server).
 - `hooks.js` (new): `configure`, `hooks`, `defaults`, `watchProfiles`. See Hooks below.
-- `rules.js` (new): layer 1 in one import. Re-exports all of `connect.js` and `pointer.js`, and `configure`,
-  `hooks`, `defaults`.
+- `rules.js` (new): layer 1 in one import. Re-exports all of `connect.js` and `pointer.js`, `PLACEHOLDER`,
+  `typedName`, `bech32Key` and `nip05Key` from `pure.js`, and `configure`, `hooks`, `defaults`.
 - `pool.js`, `ids.js`, `vendor/noble.js`, `vendor/sign.js`: Marble's, unchanged. `pool.js`: `FAST`, `INDEXERS`,
   `MORE`, `verify`, `testRelay`, `normalize`, `relays`, `warm`, `req`, `count`, `subscribe`, `publish`, `foundOn`,
   `connectTimes`. `ids.js`: `toHex`, `fromHex`, `isHex64`, `decode`, `npub`, `note`, `nevent`, `nprofile`, `naddr`,
@@ -83,7 +97,7 @@ shared. Each is read at the moment it is called, so `configure` may come after t
 | Hook | Called as | Default |
 |---|---|---|
 | `outbox` | `outbox(pk)` → `Promise<{write, read}>` | kind 10002 from the indexers and fast relays, as Marble's `data.js` |
-| `resolveNip05` | `resolveNip05("name@domain" or "domain")` → `Promise<{pubkey, relays} \| null>` | `/.well-known/nostr.json`, as Marble's `data.js` |
+| `resolveNip05` | `resolveNip05("name@domain" or "domain")` → `Promise<{pubkey, relays} \| null>` | `/.well-known/nostr.json`, as Marble's `data.js`, the key read with `nip05Key` |
 | `profile` | `profile(pk)` → `Promise<profile \| null>` | kind 0 from the fast relays and indexers, kept in a small store |
 | `profileOf` | `profileOf(pk)` → profile or undefined, what is known now | that store |
 | `onProfile` | `onProfile(fn)` → a function that stops it; `fn(pk, profile)` | that store |
@@ -147,8 +161,9 @@ They were gathered from the tests of Marble Web, Keykin Login (`login/static/poi
 ### The rules, as the cases have them
 
 - A template is `https://` (or `http://localhost` or `127.0.0.1` when the reader runs there), at most 500
-  characters, with no white space, no user or password, and one `<nostrconnect>` at its very end. The origin shown is
-  where the link goes, so the placeholder may not be part of the host.
+  characters, with no white space or control characters, no user or password, and one `<nostrconnect>` at its very
+  end. The origin shown is where the link goes, so the placeholder may not be part of the host: filled with a code of
+  the real shape the template keeps its origin, and the text before the placeholder starts with that origin.
 - The old kind's `url` is an https origin written as itself (no path, query, fragment, user, upper case or `:443`),
   at most 200 characters.
 - Only the account's own events, with a good id and signature, count. The newest 10046 decides: a good template,
@@ -158,4 +173,6 @@ They were gathered from the tests of Marble Web, Keykin Login (`login/static/poi
   nprofile (all lower or all upper case), or 64 hex, each with or without `nostr:`, at most 400 characters.
 - A NIP-05 answer's key is 64 hex, either case, given back lower case.
 
-Where this package differs from these today is listed in the cases. It was moved, not fixed.
+This package gives `expect` in every case (`test/signin-vectors.test.ts` fails if it strays, and the cases may not
+name it in `differs`). Until 2026-11-20 it was looser in a few: the placeholder in the host,
+ties at the same second, a 30078 whose first `d` is another app's, typed names, and an upper case NIP-05 key.

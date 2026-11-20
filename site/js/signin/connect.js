@@ -193,29 +193,8 @@ export async function shortKey(skHex) {
 }
 
 // ── The login page an account names (Keykin SPEC §11.1) ──
-const PLACE = "<nostrconnect>";
-const localHost = (h) => /^(localhost|127\.0\.0\.1)$/.test(h);
-/**
- * An account's nostrconnect_url template, checked: https (http only for localhost, and only when this page runs there
- * too), no user or password, and exactly one <nostrconnect>, at the very end. { template, origin }, or null.
- */
-export function loginTemplate(t) {
-  if (typeof t !== "string" || t.length > 500 || !t.endsWith(PLACE) || t.indexOf(PLACE) !== t.length - PLACE.length) return null;
-  let u;
-  try { u = new URL(t.slice(0, -PLACE.length) + "x"); } catch { return null; }
-  const here = typeof location !== "undefined" ? location.hostname : "";
-  const local = u.protocol === "http:" && localHost(u.hostname) && localHost(here);
-  if ((u.protocol !== "https:" && !local) || u.username || u.password || !u.hostname || /[\s<>]/.test(t.slice(0, -PLACE.length))) return null;
-  return { template: t, origin: u.origin };
-}
-/** The old pointer (kind 30078) names only an origin: its page is <origin>/#connect=<nostrconnect>. */
-export const legacyTemplate = (origin) => `${String(origin).replace(/\/$/, "")}/#connect=${PLACE}`;
-/**
- * The login page's link: the template with its <nostrconnect> replaced by the code, URL-encoded once. Keykin's template
- * ends in #connect=<nostrconnect>, so connect= is last (§11.6). Open it with no `noreferrer`: the page checks where the
- * request came from by document.referrer.
- */
-export const loginLink = (template, uri) => template.slice(0, -PLACE.length) + encodeURIComponent(uri);
+// Its template, the old kind as a template, and the link: pure.js, re-exported here as before.
+export { loginTemplate, legacyTemplate, loginLink } from "./pure.js";
 
 /**
  * Starts a phone sign-in: onCode(uri, svg) gets the code to show; resolves with {pubkey, remote, saved} once your
