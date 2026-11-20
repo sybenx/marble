@@ -173,7 +173,10 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (intent.action == Intent.ACTION_VIEW) intent.dataString?.takeIf { handled.take(it, fresh) }?.let {
-            CosignApp.instance.phone.scanned(it)
+            // A new device's code opened as a link was not read by Marble's own camera: anyone can write such a
+            // link, so it counts as pasted and the digits are compared before anything is added.
+            if (intent.data?.host == "marble.syb.lol" && intent.data?.path == "/add") CosignApp.instance.phone.pasted(it)
+            else CosignApp.instance.phone.scanned(it)
             linkAt = android.os.SystemClock.uptimeMillis()
         }
         testHook(intent)
