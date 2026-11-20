@@ -65,14 +65,24 @@ const net = {
     return null;
   },
   /** BUD-02 upload: {ok, why, sha256 (as the server describes the blob)}. */
-  async put(server, bytes, auth) {
-    try {
-      const r = await fetch(`${server.replace(/\/+$/, "")}/upload`, { method: "PUT", body: bytes, signal: AbortSignal.timeout(30000),
-        headers: { "Content-Type": "application/octet-stream", Authorization: "Nostr " + btoa(JSON.stringify(auth)) } });
-      if (!r.ok) return { ok: false, why: `${r.status} ${r.headers.get("X-Reason") || ""}`.trim() };
-      const d = await r.json().catch(() => null);
-      return { ok: true, sha256: typeof d?.sha256 === "string" ? d.sha256 : null };
-    } catch (err) { return { ok: false, why: String(err?.message || err) }; }
+  // (XMLHttpRequest, not fetch: it says how much has gone up, for the picture's progress bar)
+  put(server, bytes, auth, onSent) {
+    return new Promise((done) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", `${server.replace(/\/+$/, "")}/upload`);
+      x.timeout = Math.max(30000, bytes.length / 50); // (30 s, or about 50 KB/s for a big picture)
+      x.setRequestHeader("Content-Type", "application/octet-stream");
+      x.setRequestHeader("Authorization", "Nostr " + btoa(JSON.stringify(auth)));
+      if (onSent) x.upload.onprogress = (e) => onSent(e.loaded);
+      x.onload = () => {
+        if (x.status < 200 || x.status >= 300) return done({ ok: false, why: `${x.status} ${x.getResponseHeader("X-Reason") || ""}`.trim() });
+        let d = null; try { d = JSON.parse(x.responseText); } catch {}
+        done({ ok: true, sha256: typeof d?.sha256 === "string" ? d.sha256 : null });
+      };
+      x.onerror = () => done({ ok: false, why: "network error" });
+      x.ontimeout = () => done({ ok: false, why: "timed out" });
+      x.send(bytes);
+    });
   },
 };
 const signer = (pk) => ({ pubkey: pk, sign: (t) => sign(t), decrypt: (eph, ct) => nip44DecryptFrom(eph, ct) });
@@ -103,6 +113,8 @@ export function start(pk = current()) {
       entries = sync.notesVault(all);
       // keyring entries there, but the signer wouldn't open any of them: not "no vault"
       if (!entries.length && all.refused.length) return fail(pk, all.refused[0]);
+      // no relay answered: not "no vault" (that would hide your notes and drop this browser's copy), tried again soon
+      if (!entries.length && !all.answered) { setTimeout(() => { if (who === pk && !session) { lastTry = 0; retry(); } }, 15000); return fail(pk, "couldn't reach your relays"); }
     } catch (err) { return fail(pk, err); }
     if (who !== pk) return null;
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
@@ -275,7 +287,7 @@ const MAX_PICTURE = 25 * 1024 * 1024;
  * Uploads a picture (a File or Blob) as a blob of your notes vault: {ref, mime, w, h}. Throws with a sentence to show
  * when it can't (not an image, too big, no vault, your storage servers refused it).
  */
-export async function uploadPicture(file) {
+export async function uploadPicture(file, onProgress = null) {
   if (opening) await opening;
   if (!session || status === "removed") throw new Error(status === "removed" ? "This browser was removed from your account, so it can't add to your notes." : "Your notes vault isn't open here.");
   const { notes: N } = libNow;
@@ -285,7 +297,7 @@ export async function uploadPicture(file) {
   let w = 0, h = 0;
   try { const b = await createImageBitmap(new Blob([bytes], { type: file.type })); w = b.width; h = b.height; b.close(); }
   catch { throw new Error("That file isn't a picture this browser can open."); }
-  const ref = await session.upload(await session.device(), bytes, 2).catch(() => { throw new Error("Your storage servers wouldn't take the picture. Try again in a moment."); });
+  const ref = await session.upload(await session.device(), bytes, 2, undefined, onProgress).catch(() => { throw new Error("Your storage servers wouldn't take the picture. Try again in a moment."); });
   const pic = { ref, mime: file.type, w, h };
   pictureUrls.set(ref.parts[0], URL.createObjectURL(new Blob([bytes], { type: file.type })));
   return pic;
