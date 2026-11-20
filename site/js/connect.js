@@ -284,6 +284,9 @@ export async function bunkerSignIn(link, { perms = "sign_event:1,sign_event:7,si
   } catch (err) { remote.stop(); throw err; }
 }
 
+/** Any text as a code to scan (the sign-in's own drawing), for the Mac's invite (add-device.js). */
+export async function codeSvg(data) { const { encodeQR } = await load(); return qrSvg(encodeQR, data); }
+
 function qrSvg(encodeQR, data) {
   const m = encodeQR(data, "raw", { ecc: "medium", border: 3 });
   let d = "";
