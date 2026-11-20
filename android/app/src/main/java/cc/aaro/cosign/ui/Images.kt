@@ -51,6 +51,7 @@ object Images {
         memory.get(key)?.let { return it }
         // A Blossom link: found where its hints say, then loaded (and kept) under its own name.
         if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { load(it, px) }?.also { memory.put(key, it) }
+        if (url.startsWith("file://")) return withContext(Dispatchers.IO) { local(url)?.let { decode(it, px) } }?.also { memory.put(key, it) }
         if (!url.startsWith("https://") || synchronized(failed) { url in failed }) return null
         return gate.withPermit {
             withContext(Dispatchers.IO) {
@@ -59,16 +60,26 @@ object Images {
                         val body = r.body ?: return@use null
                         if (!r.isSuccessful || body.contentLength() > MAX_BYTES) null else body.source().let { s -> s.request(MAX_BYTES + 1); if (s.buffer.size > MAX_BYTES) null else s.readByteArray() }
                     } ?: error("no image")
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    var sample = 1
-                    while (bounds.outWidth / (sample * 2) >= px) sample *= 2
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("not an image")
-                    bmp.asImageBitmap().also { memory.put(key, it) }
+                    (decode(bytes, px) ?: error("not an image")).also { memory.put(key, it) }
                 } catch (_: Exception) { synchronized(failed) { failed += url }; null }
             }
         }
     }
+
+    private fun decode(bytes: ByteArray, px: Int): ImageBitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= px) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+    }
+
+    /** A picture this app keeps itself (a note's, opened from your vault): only from its own cache folder. */
+    fun local(url: String): ByteArray? = try {
+        val f = File(android.net.Uri.parse(url).path ?: "").canonicalFile
+        val dir = File(CosignApp.instance.cacheDir, "notepics").canonicalFile
+        if (f.parentFile == dir && f.length() in 1..(30L * 1024 * 1024)) f.readBytes() else null
+    } catch (_: Exception) { null }
 }
 
 /**
@@ -77,10 +88,10 @@ object Images {
  */
 suspend fun Images.animated(url: String): android.graphics.drawable.Drawable? {
     if (url.startsWith("blossom:")) return cc.aaro.cosign.Blossom.resolve(url)?.let { animated(it) }
-    if (!url.startsWith("https://")) return null
+    if (!url.startsWith("https://") && !url.startsWith("file://")) return null
     return withContext(Dispatchers.IO) {
         try {
-            val bytes = Fetch.http.newCall(Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@withContext null
+            val bytes = if (url.startsWith("file://")) local(url) ?: return@withContext null else Fetch.http.newCall(Request.Builder().url(url).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } ?: return@withContext null
             if (bytes.size > 12 * 1024 * 1024) return@withContext null
             android.graphics.ImageDecoder.decodeDrawable(android.graphics.ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)))
         } catch (_: Exception) { null }

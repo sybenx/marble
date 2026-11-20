@@ -3558,6 +3558,7 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(cc.aaro.cosign.readable(it) { pk -> People.known.value[pk]?.name }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
+            NotePictures(item, social, nav)
             val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
             // (After the notes trial, no ages: only where it's from.)
             // No ages (home-rules.md: no counts, no ages).
@@ -3583,6 +3584,34 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
         }
     }
     HorizontalDivider(color = Vault.Edge)
+}
+
+/**
+ * A note's pictures (a screenshot kept on Marble Web, in your notes vault): opened from the vault into this app's own
+ * cache the first time, then shown at their own shape; a tap shows them full screen.
+ */
+@Composable
+private fun NotePictures(item: cc.aaro.cosign.LaterItem, social: Social, nav: Nav) {
+    val pics = item.extra["pics"] as? org.json.JSONArray ?: return
+    val context = LocalContext.current
+    val list = remember(pics.toString()) { (0 until pics.length()).mapNotNull { pics.optJSONObject(it) } }
+    val files by androidx.compose.runtime.produceState<List<String?>>(List(list.size) { null }, pics.toString(), social.vaultNotes) {
+        val dir = java.io.File(context.cacheDir, "notepics")
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { list.map { p ->
+            // (one opened before shows at once, the vault open or not)
+            (cc.aaro.cosign.notes.VaultNotes.pictureFile(p, dir)?.takeIf { it.length() > 0 } ?: social.vaultNotes?.picture(p, dir))?.let { "file://" + it.absolutePath } } }
+    }
+    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        list.forEachIndexed { i, p ->
+            val ratio = if (p.optInt("w") > 0 && p.optInt("h") > 0) p.optInt("w").toFloat() / p.optInt("h") else 1.6f
+            val shape = RoundedCornerShape(10.dp)
+            val url = files.getOrNull(i)
+            Box(Modifier.widthIn(max = 300.dp).heightIn(max = 220.dp).aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f).clip(shape).border(1.dp, Vault.Line, shape)
+                .clickable(enabled = url != null) { nav.pictures(files.filterNotNull(), files.take(i).count { it != null }) }) {
+                NetImage(url, Modifier.fillMaxSize(), 1080, ContentScale.Crop, "Picture: " + cc.aaro.cosign.Later.wordsOf(item.text))
+            }
+        }
+    }
 }
 
 /**

@@ -18,7 +18,8 @@ import org.json.JSONObject
  * engine. The mapping is the one agreed with Marble Web (side-session notes, vaults-android.md):
  *
  *  meta `{"kind":"note","created","title":"","tags":[],"done","pinned":false,"id","updated"}` plus `done_at`, `url`,
- *  `quote` and `app` (Later's `from`) when set; data `{"text"}`, or a blob over 4 KiB; entry =
+ *  `quote` and `app` (Later's `from`) when set, and `pictures` `[{"ref": nv1 ref, "mime", "w", "h"}]` (a screenshot
+ *  kept on Marble Web: each its own blob; shown here, kept as it is when the note changes); data `{"text"}`, or a blob over 4 KiB; entry =
  *  hex(TH("marble/later/1", id))[0:32]; a removal is a deleted version.
  *
  * Each Later item carries the version it was based on (`vv`) and its entry (`ve`) in its extra fields, so an edit here
@@ -71,7 +72,35 @@ class VaultNotes(
         val updated = m.optLong("updated", m.optLong("created"))
         return LaterItem(m.optString("id").ifEmpty { p.entry }, textOf(v, p) ?: "", m.optLong("created"), updated,
             done = if (m.optBoolean("done")) m.optLong("done_at", updated) else null, url = m.optString("url").ifEmpty { null },
-            extra = mapOf("ve" to p.entry, "vv" to p.ver), quote = m.optString("quote").ifEmpty { null }, from = m.optString("app").ifEmpty { null })
+            extra = mapOf("ve" to p.entry, "vv" to p.ver) + (picturesOf(m)?.let { mapOf("pics" to it) } ?: emptyMap()), quote = m.optString("quote").ifEmpty { null }, from = m.optString("app").ifEmpty { null })
+    }
+
+    /** A note's pictures that can be shown (a valid ref, a picture type), or null when it has none. */
+    private fun picturesOf(m: JSONObject): JSONArray? {
+        val a = m.optJSONArray("pictures") ?: return null
+        val out = JSONArray()
+        for (k in 0 until a.length()) {
+            val p = a.optJSONObject(k) ?: continue
+            if (p.optString("mime") !in PICTURE_TYPES || runCatching { BlobRef(p.getJSONObject("ref")) }.isFailure) continue
+            out.put(JSONObject().put("ref", p.getJSONObject("ref")).put("mime", p.optString("mime")).put("w", p.optInt("w")).put("h", p.optInt("h")))
+        }
+        return out.takeIf { it.length() > 0 }
+    }
+
+    /**
+     * A note's picture as a file in [dir] (this app's own cache), fetched and opened from the vault the first time. Null
+     * while it can't be had. Blocks: call it off the main thread.
+     */
+    fun picture(pic: JSONObject, dir: java.io.File): java.io.File? {
+        val f = pictureFile(pic, dir) ?: return null
+        if (f.length() > 0) return f
+        val ref = BlobRef(pic.getJSONObject("ref"))
+        val v = vault ?: return null
+        val bytes = runCatching { v.fetch(ref, keep = false) }.getOrNull() ?: return null
+        dir.mkdirs()
+        val tmp = java.io.File(dir, f.name + ".part")
+        tmp.writeBytes(bytes)
+        return f.takeIf { tmp.renameTo(it) }
     }
 
     /** Later's item as the meta it maps to, over [base]'s meta so members this version doesn't know are kept (§5.2). */
@@ -239,6 +268,14 @@ class VaultNotes(
 
     companion object {
         const val PROFILE = "notes"
+        /** Where a note's picture is kept on this phone once opened (named by its first part's hash), or null for a bad one. */
+        fun pictureFile(pic: JSONObject, dir: java.io.File): java.io.File? {
+            val ref = runCatching { BlobRef(pic.getJSONObject("ref")) }.getOrNull() ?: return null
+            val ext = when (pic.optString("mime")) { "image/png" -> "png"; "image/jpeg" -> "jpg"; "image/gif" -> "gif"; "image/webp" -> "webp"; else -> return null }
+            return java.io.File(dir, "${ref.parts[0]}.$ext")
+        }
+        /** Pictures a note can show (as Marble Web keeps them). */
+        val PICTURE_TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
         fun entryFor(id: String) = thHex("marble/later/1", id.toByteArray())
     }
 }

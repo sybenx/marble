@@ -245,10 +245,11 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     }
     private fun refKey(r: BlobRef) = hex(sha256(utf8(canon(r.json)))).substring(0, 32)
     /** A blob's plaintext: kept here, or fetched from the vault's servers (null: missing for now). */
-    fun fetch(ref: BlobRef): ByteArray? {
+    /** A blob's plaintext; kept in the store unless [keep] is false (a picture: the app keeps its own copy). */
+    fun fetch(ref: BlobRef, keep: Boolean = true): ByteArray? {
         store.get("blob/" + refKey(ref))?.let { return unhex(it) }
         val b = vs.storage.get(ref, readServers()) ?: return null
-        store.put("blob/" + refKey(ref), hex(b))
+        if (keep) store.put("blob/" + refKey(ref), hex(b))
         return b
     }
 

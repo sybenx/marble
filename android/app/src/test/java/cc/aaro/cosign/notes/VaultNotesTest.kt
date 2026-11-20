@@ -125,4 +125,36 @@ class VaultNotesTest {
         assertEquals(long, shown(bItems)["0000000000000009"])
         assertTrue(a.vault!!.state().entries[VaultNotes.entryFor("0000000000000009")]!!.shown.data!!.has("blob"))
     }
+
+    /** A screenshot kept on Marble Web: its own blob named in the note's meta; shown here, and kept when the note is ticked. */
+    @Test fun pictureFromWeb() {
+        val a = device("Pixel")
+        assertEquals(0, a.import(emptyList()))
+        var items = a.push(listOf(LaterItem("0000000000000042", "seed", clock, clock)))!!
+        val v = a.vault!!
+        val png = ByteArray(70_000) { (it * 7 % 251).toByte() }
+        val ref = v.upload(png, need = 2)!!
+        val pic = JSONObject().put("ref", ref.json).put("mime", "image/png").put("w", 1440).put("h", 900)
+        val bad = JSONObject().put("ref", JSONObject().put("alg", "nv1")).put("mime", "image/png")
+        val meta = JSONObject().put("kind", "note").put("created", clock).put("updated", clock).put("done", false).put("id", "00000000000000aa")
+            .put("title", "").put("tags", org.json.JSONArray()).put("pinned", false).put("pictures", org.json.JSONArray().put(pic).put(bad))
+        v.enqueue(listOf(cc.aaro.vaults.Put.make(VaultNotes.entryFor("00000000000000aa"), emptyList(), meta, JSONObject().put("text", "Screenshot 2026-11-20 at 10.42.13"), false).json))
+        assertTrue(v.sync())
+
+        val b = device("Mac")
+        var bItems = b.pull(emptyList())!!
+        val shot = bItems.first { it.id == "00000000000000aa" }
+        val pics = shot.extra["pics"] as org.json.JSONArray
+        assertEquals("only the good one", 1, pics.length())
+        val dir = java.nio.file.Files.createTempDirectory("notepics").toFile()
+        val f = b.picture(pics.getJSONObject(0), dir)!!
+        assertTrue(f.name.endsWith(".png")); assertTrue(f.readBytes().contentEquals(png))
+
+        // Ticked done here: the picture stays in the note's meta.
+        clock += 10
+        bItems = b.push(bItems.map { if (it.id == "00000000000000aa") it.copy(done = clock, updated = clock) else it })!!
+        val shown = b.vault!!.state().entries[VaultNotes.entryFor("00000000000000aa")]!!.shown
+        assertTrue(shown.meta.optBoolean("done")); assertEquals(2, shown.meta.getJSONArray("pictures").length())
+        dir.deleteRecursively()
+    }
 }
