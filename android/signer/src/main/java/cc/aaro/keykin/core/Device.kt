@@ -205,9 +205,16 @@ object Device {
         return i
     }
 
-    /** The new device's side: collect both halves and build its piece. */
-    fun join(me: Me, j: JoinText, send: Send = http(j.addr)): Held {
-        val r = call(send, seal(JSONObject().put("op", "welcome").put("account", j.npub), me))
+    /**
+     * The new device's side: collect both halves and build its piece. A device added through the account page
+     * (Keykin SPEC 7, 11.6) also shows the approval code the page gave, and its PKCE verifier when its invite went
+     * there with a challenge; without them the box holds its piece back.
+     */
+    fun join(me: Me, j: JoinText, send: Send = http(j.addr), code: String? = null, verifier: String? = null): Held {
+        val r = call(send, seal(JSONObject().put("op", "welcome").put("account", j.npub).apply {
+            if (code != null) put("code", code)
+            if (verifier != null) put("verifier", verifier)
+        }, me))
         if (r.getString("npub") != j.npub) refuse("wrong_account")
         val c = r.getJSONArray("commitment").let { a -> List(a.length()) { a.getString(it) } }
         if (c.size != 2 || c[0].substring(2) != j.npub) refuse("wrong_account")

@@ -21,8 +21,14 @@ export function readInvite(text) {
 
 const challengeOk = (c) => typeof c === "string" && /^[A-Za-z0-9_-]{43}$/.test(c) ? c : null;
 const stateOk = (x) => typeof x === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(x) ? x : null;
-/** A return address on this computer only: http, 127.0.0.1 or localhost, a port, nothing else (RFC 8252 7.3). */
+/** The https addresses a phone app takes its approval back on (RFC 8252 7.2, a claimed App Link), exactly as written. */
+export const APP_RETURNS = ["https://marble.syb.lol/joined"];
+/**
+ * Where the approval may go: a loopback address on this computer (http, 127.0.0.1 or localhost, a port, nothing else;
+ * RFC 8252 7.3), or Marble on Android's own App Link above (its "Use my name" sign-in).
+ */
 export function returnOk(r) {
+  if (typeof r === "string" && APP_RETURNS.includes(r)) return r;
   let u;
   try { u = new URL(r); } catch { return null; }
   return typeof r === "string" && r.length < 300 && u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname) && u.port && !u.username && !u.password && !u.hash ? u.href : null;

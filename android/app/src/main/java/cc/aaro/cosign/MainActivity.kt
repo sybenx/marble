@@ -148,6 +148,16 @@ class MainActivity : ComponentActivity() {
             intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "marble" && intent.data?.host == "search" -> intent.data?.getQueryParameter("q")
             else -> null
         }
+        // Back from the account page ("Use my name"), or a new device's code opened as a web page first (marble.syb.lol/add,
+        // a tap there): handed to the signer. The second was not read by Marble's own camera, so it counts as pasted.
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "marble" && intent.data?.host == "joined") {
+            intent.dataString?.takeIf { handled.take(it, fresh) }?.let { CosignApp.instance.phone.scanned(it) }
+            return
+        }
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "marble" && intent.data?.host == "add") {
+            intent.data?.encodedQuery?.takeIf { handled.take(it, fresh) }?.let { CosignApp.instance.phone.pasted("https://marble.syb.lol/add#$it") }
+            return
+        }
         if (intent.action == Intent.ACTION_SEARCH || intent.data?.scheme == "marble") {
             searched?.trim()?.take(200)?.takeIf { it.isNotEmpty() }?.let { cc.aaro.cosign.ui.OpenSearch.query.value = it }
             return
@@ -179,6 +189,10 @@ class MainActivity : ComponentActivity() {
         // so an emulator with no camera can go through making, joining and changing an account.
         intent?.getStringExtra("paste")?.let { CosignApp.instance.phone.pasted(it) }
         intent?.getStringExtra("act")?.let { a -> CosignApp.instance.phone.let { p -> when (a) {
+            "startSignIn" -> p.startSignIn(); "signInByName" -> p.signInByName(); "addYes" -> p.addDigits(true); "addNo" -> p.addDigits(false)
+            "cancelAdd" -> p.cancelAddDevice()
+            // A test's own relay for one-code sign-ins (--es arg ws://127.0.0.1:7777), and its own login page for "Use my name".
+            "qrstRelays" -> p.testQrstRelays(intent.getStringExtra("arg") ?: ""); "marbleWeb" -> p.testMarbleWeb(intent.getStringExtra("arg") ?: "")
             "accept" -> p.accept(); "startJoin" -> p.startJoin(); "confirmAddDevice" -> p.confirmAddDevice(); "confirmConnect" -> p.confirmConnect(intent.getStringExtra("arg"))
             "digits" -> p.digits(true); "cycle" -> p.cycle(); "formKey" -> p.takeOutViaServers(); "bunker" -> p.makeBunker(); "leave" -> p.leave()
             "confirmReportLost" -> p.confirmReportLost(); "refresh" -> p.refresh()
@@ -211,7 +225,7 @@ class MainActivity : ComponentActivity() {
             "pointer" -> p.pointerNow()
             "closeAll" -> { p.closeConnect(); p.closeJoinText(); p.closeBunker(); p.closeTakeOut(); p.clearError() }
             "approve" -> p.ui.value.asks.firstOrNull()?.let { p.decide(it.id, true) }
-            "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.outside) " (elsewhere)" else "") + (if (it.held) " (amber)" else "") + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} tap=${u.tap?.title} bringing=${u.bringing} keptKey=${u.keptKey} box=${u.member?.box} move=${u.move} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })
+            "state" -> android.util.Log.i("MarbleState", p.ui.value.let { u -> "member=${u.member?.group?.npub} idx=${u.member?.idx} epoch=${u.member?.epoch} members=${u.member?.group?.members?.map { "${it.idx}:${it.name}:${it.role}${if (it.blocked) ":blocked" else ""}" }} box=${u.relaysUp} sites=${u.sites.map { it.origin + "/" + it.via }} asks=${u.asks.map { it.hold }} error=${u.error} offer=${u.offer} joinCode=${u.joinCode} joinText=${u.joinText} signIn=${u.signIn} adding=${u.adding} addDigits=${u.addDigits} connect=${u.connect} working=${u.working} takeOut=${u.takeOut?.stage} bunker=${u.bunker != null} changes=${u.changes.map { it.text + (if (it.outside) " (elsewhere)" else "") + (if (it.held) " (amber)" else "") + (if (it.undone) " (undone)" else "") }} needsCycle=${u.needsCycle} tap=${u.tap?.title} bringing=${u.bringing} keptKey=${u.keptKey} box=${u.member?.box} move=${u.move} username=${u.username} loginPage=${u.loginPage} removedBy=${u.removedBy} log=${u.log.take(6).map { it.text }}" })
             else -> {}
         } } }
         // A relay of the test's own (a local one, say) for the home screen to read from too.

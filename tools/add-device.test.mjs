@@ -32,6 +32,11 @@ for (const bad of ["https://evil.example/done", "http://192.168.1.5:8080/done", 
   ok(x.bad === "return" && x.app === null, "refused return: " + bad);
 }
 ok(returnOk("http://localhost:5000/done") === "http://localhost:5000/done", "localhost is this computer too");
+// Marble on Android's App Link, exactly; nothing else on that host
+ok(returnOk("https://marble.syb.lol/joined") === "https://marble.syb.lol/joined", "the Android app's App Link return");
+for (const bad of ["https://marble.syb.lol/joined/", "https://marble.syb.lol/joined?x=1", "https://marble.syb.lol/", "http://marble.syb.lol/joined", "https://marble.syb.lol.evil.example/joined"])
+  ok(returnOk(bad) === null, "refused return: " + bad);
+ok(addFromHash(`#challenge=${challenge}&return=${encodeURIComponent("https://marble.syb.lol/joined")}&state=${state}&add=` + encodeURIComponent(invite)).app?.ret === "https://marble.syb.lol/joined", "an Android sign-in carries on");
 ok(addFromHash(`#return=${encodeURIComponent(ret)}&state=${state}&add=` + encodeURIComponent(invite)).bad === "incomplete", "no challenge: left alone");
 ok(addFromHash(`#challenge=short&return=${encodeURIComponent(ret)}&state=${state}&add=` + encodeURIComponent(invite)).bad === "incomplete", "a bad challenge: left alone");
 ok(addFromHash(`#challenge=${challenge}&return=${encodeURIComponent(ret)}&add=` + encodeURIComponent(invite)).bad === "incomplete", "no state: left alone");

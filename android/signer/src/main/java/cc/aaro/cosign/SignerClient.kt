@@ -123,6 +123,14 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun decline() = act("decline")
     fun createAccount() = act("createAccount")
     fun startJoin() = act("startJoin")
+    /** "Sign in" on a new device: its one code, for a device in the account to scan (Keykin SPEC 8b). */
+    fun startSignIn() = act("startSignIn"); fun closeSignIn() = act("closeSignIn")
+    /** "Use my name": the account page approves, and this phone comes back signed in. */
+    fun signInByName() = act("signInByName"); fun openedLink() = act("openedLink")
+    /** Adding a device by a pasted code: the digits are the same, or not. */
+    fun addDigits(same: Boolean) = act("addDigits", flag = same)
+    /** Debug builds only: a test's own Marble Web (or login page), and its own relay for one-code sign-ins. */
+    fun testMarbleWeb(url: String) = act("testMarbleWeb", url); fun testQrstRelays(urls: String) = act("testQrstRelays", urls)
     fun cancelJoin() = act("cancelJoin")
     fun scanned(text: String) = act("scanned", text)
     /** A code that was copied and pasted, not read by this phone's camera: a site's code is then checked by comparing digits. */

@@ -393,7 +393,7 @@ const whoBlock = (pk) => `<div class="si-who">${avatar(pk, 40)}<span class="si-a
 function openAdd() {
   if (!dialog.open) dialog.showModal();
   const a = addWaiting();
-  const why = addTaken?.bad === "return" ? "Something sent you here to add a device and send the approval somewhere that is not this computer, so it was left alone."
+  const why = addTaken?.bad === "return" ? "Something sent you here to add a device and send the approval somewhere that is not this device, so it was left alone."
     : addTaken?.bad === "incomplete" ? "Something sent you here to add a device, but what it sent is not complete, so it was left alone. Go back to the app and try again."
     : "Something sent you here to add a device, but what it sent is not a Keykin invite, so it was left alone. Go back to the app and try again.";
   if (!a) return view(`<h2 id="si-title">Add a device</h2><p class="si-note">${why}</p>

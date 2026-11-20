@@ -78,6 +78,13 @@ data class LoginAsk(val host: String, val account: String, val lasts: String) : 
 data class LoginSwitch(val named: String, val current: String) : java.io.Serializable
 /** Asking a box for an account: the box, your note, and how far it got (1 asked, 2 waiting, 3 making the key). */
 data class Asking(val box: String, val note: String, val step: Int, val error: String? = null) : java.io.Serializable
+/**
+ * "Sign in" on a new device (Keykin SPEC 8b): its one code ([uri], once a relay is ready), the five digits when the
+ * other device asks to compare, and a page to open for "Use my name" ([open]).
+ */
+data class SignInCode(val uri: String? = null, val digits: String? = null, val connected: Boolean = false, val open: String? = null) : java.io.Serializable
+/** Adding a device whose code was pasted: does [name] show these [digits]? */
+data class AddDigits(val name: String, val digits: String) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
 class NeedsApproval(val what: String) : Exception(what)
 class Revoked : Exception("revoked")
@@ -104,6 +111,10 @@ data class Ui(
     val adding: AddingDevice? = null,
     /** This phone's invite, to show as a QR on a phone that is joining an account. */
     val joinCode: String? = null,
+    /** Signing in on this new device with one code. */
+    val signIn: SignInCode? = null,
+    /** Adding a device by a pasted code: the digits to compare. */
+    val addDigits: AddDigits? = null,
     /** After adding a device: the text that device needs to find the box, to show as a QR. */
     val joinText: String? = null,
     val connect: Connect? = null,

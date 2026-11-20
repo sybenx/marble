@@ -62,6 +62,18 @@
                 <data android:pathPrefix="/e/" />
                 <data android:pathPrefix="/p/" />
                 <data android:pathPrefix="/relay/" />
+                <!-- A new device's sign-in code (Keykin SPEC 8b), read by the phone's camera app, and the way back
+                     from the account page after "Use my name" (SPEC 11.6). -->
+                <data android:path="/add" />
+                <data android:path="/joined" />
+            </intent-filter>
+            <!-- The same two, from marble.syb.lol's own pages when the link above did not open the app (a tap there). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="marble" android:host="add" />
+                <data android:scheme="marble" android:host="joined" />
             </intent-filter>
             <!-- Your server's "Add your phone" code, as a link on its page, for when the page is
                  open on this phone and there's nothing to scan. The app asks before joining. -->

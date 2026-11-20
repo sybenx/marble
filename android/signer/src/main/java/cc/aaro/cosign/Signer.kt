@@ -14,7 +14,10 @@ import cc.aaro.keykin.core.Fingerprint
 import cc.aaro.keykin.core.Held
 import cc.aaro.keykin.core.Invite
 import cc.aaro.keykin.core.JoinText
+import cc.aaro.keykin.core.KeykinDeviceProfile
 import cc.aaro.keykin.core.KeykinException
+import cc.aaro.keykin.core.KeykinGift
+import cc.aaro.keykin.core.KeykinInvite
 import cc.aaro.keykin.core.Me
 import cc.aaro.keykin.core.Qr
 import cc.aaro.keykin.core.Send
@@ -535,6 +538,11 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun scan(text: String, pasted: Boolean) {
         val t = text.trim()
         val err = { s: String -> ui.update { it.copy(error = s) } }
+        // Back from the account page after "Use my name" (Keykin SPEC 11.6): this phone's approval code.
+        if (t.startsWith(NAMED_RETURN) || t.startsWith("marble://joined")) return namedBack(t)
+        // A new device's one code (Keykin SPEC 8b, QRST keykin-device).
+        PairingUri.allowLoopback = debuggable
+        try { PairingUri.parse(t) } catch (_: Exception) { null }?.takeIf { it.profile == KeykinDeviceProfile.id }?.let { p -> return scannedAddCode(t, p, pasted || PairingUri.isHandoff(t)) }
         if (t.startsWith("{")) {
             val o = try { JSONObject(t) } catch (_: Exception) { return err("That isn't a code $appName understands.") }
             if (o.optInt("keykin") != 2) return err("That isn't a code $appName understands.")
@@ -712,6 +720,193 @@ class Signer(private val context: Context, val slot: String = "0") {
         note("Forgot the whole key on this phone", "denied")
     }
 
+    // --- One code: a new device signs in, a device in the account adds it (Keykin SPEC 8b) -------------
+    //
+    // The new device shows one code (QRST profile keykin-device) with its invite in it. A device in the account
+    // scans it and decides what the new one gets, because only it knows the setup: with a box, a piece of its own
+    // (this phone adds it, then sends the join text); with no box, the whole key (this phone keeps its own copy).
+    // A camera scan has no digits. A pasted code or link compares five digits before anything is added. The new
+    // device keeps what arrives with no second tap: the person pressed Sign in there.
+
+    private fun addDeps(check: CodeCheck) = TransferDeps(KeykinDeviceProfile, qrstStore, env, ADD_BASE, check)
+    private var signInT: Transfer<KeykinGift>? = null
+    @Volatile private var signInTaken = false
+
+    /** "Sign in" on a new device: show its one code and wait. */
+    fun startSignIn() {
+        if (isMember) return
+        PairingUri.allowLoopback = debuggable
+        signInT?.let { old -> try { old.cancel() } catch (_: Exception) { }; old.dispose() }
+        signInTaken = false
+        ui.update { it.copy(error = null, signIn = (it.signIn ?: SignInCode()).copy(uri = null, digits = null, connected = false)) }
+        val t = Transfer.show(addDeps(CodeCheck.NONE), cc.aaro.qrst.core.Role.RECEIVER)
+        signInT = t
+        t.onChange = { showSignIn(t) }
+        showSignIn(t)
+    }
+    fun closeSignIn() {
+        signInT?.let { t -> try { t.cancel() } catch (_: Exception) { }; t.dispose() }
+        signInT = null
+        ui.update { it.copy(signIn = null) }
+    }
+    private fun showSignIn(t: Transfer<KeykinGift>) {
+        if (signInT !== t) return
+        val v = t.view(); val s = v.session
+        if (s.phase == Phase.ACCEPT) work.execute { if (signInT === t) try { t.accept() } catch (_: Exception) { } }
+        if (s.phase == Phase.ENDED) {
+            if (v.value != null) { if (!signInTaken) { signInTaken = true; work.execute { takeGift(t) } }; return }
+            // Ran out or went wrong before anything came: a fresh code, as if Sign in were pressed again.
+            if (!signInTaken) { signInTaken = true; timer.schedule({ if (signInT === t) startSignIn() }, 1, TimeUnit.SECONDS) }
+            return
+        }
+        val uri = v.uri?.let { try { KeykinDeviceProfile.withInvite(it, Texts.invite(me())) } catch (_: Exception) { null } }
+        ui.update { u -> if (u.member != null) u else u.copy(signIn = (u.signIn ?: SignInCode()).copy(uri = uri, digits = s.code, connected = v.connected)) }
+    }
+    private fun takeGift(t: Transfer<KeykinGift>) {
+        val g = t.takeValue() ?: return
+        timer.schedule({ t.dispose() }, 2, TimeUnit.SECONDS)      // let the acknowledgement leave first
+        when (g) {
+            is KeykinGift.Join -> {
+                signInT = null
+                joinWith(JoinText(g.addr, g.boxKey, g.npub, g.loginPage))
+            }
+            is KeykinGift.Whole -> {
+                signInT = null
+                try { becomeLocal(g.nsec, "Signed in from your other device") } finally { g.nsec.fill(0) }
+                ui.update { it.copy(signIn = null) }
+            }
+        }
+    }
+    /** Collects this phone's piece from the box the join text names (with the account page's approval code and verifier, when it went that way). */
+    private fun joinWith(j: JoinText, code: String? = null, verifier: String? = null) {
+        plainHttp(j.addr)?.let { msg -> return ui.update { it.copy(error = msg) } }
+        ui.update { it.copy(joining = "Signing in…", error = null) }
+        try {
+            val h = Device.join(me(), j, Device.http(j.addr), code, verifier)
+            keep(h)
+            joinedLoginPage(h.npub, LoginPointer.fromCode(j.login, allowHttp = debuggable))
+            ui.update { it.copy(joining = null, signIn = null, error = null, member = membership(h, emptyList())) }
+            note("Joined your account on this phone", "approved")
+            refresh(); start()
+            Cosign.host.joined(context)
+            pointerCheck(h, afterJoin = true)
+        } catch (e: Exception) {
+            ui.update { it.copy(joining = null, error = if ((e as? KeykinException)?.code == "no_box") "Couldn't reach your box at ${j.addr}." else why(e)) }
+            if (code == null) startSignIn()
+        }
+    }
+
+    /** A device in the account read a new device's code: ask "Add <name>?", nothing moves yet. */
+    private var pendingAdd: Triple<PairingParams, KeykinInvite, Boolean>? = null
+    private var addDigitsAnswer: CompletableFuture<Boolean>? = null
+    private fun scannedAddCode(text: String, p: PairingParams, pasted: Boolean) {
+        val err = { s: String -> ui.update { it.copy(error = s) } }
+        if (!isMember) return err("That's a new device's code. Scan it with a device that's already in your account.")
+        if (p.mode != Mode.OFFER) return err("That isn't a code $appName understands.")
+        val inv = KeykinDeviceProfile.inviteOf(text) ?: return err("That isn't a code $appName understands.")
+        if (ui.value.member?.group?.members?.any { it.pk == inv.key } == true) return err("That device is already in your account.")
+        pendingInvite = null
+        pendingAdd = Triple(p, inv, pasted)
+        ui.update { it.copy(error = null, adding = AddingDevice(inv.key, inv.name.take(40))) }
+    }
+    /** Add, on that question: the digits first when the code was not read by camera, then the fingerprint, then what the new device gets. */
+    private fun addByCode() {
+        val (p, inv, pasted) = pendingAdd ?: return
+        pendingAdd = null
+        val camera = !pasted
+        val busy = "Adding ${inv.name}…"
+        ui.update { it.copy(adding = null, working = busy, error = null) }
+        work.execute {
+            val t = Transfer.join(addDeps(if (camera) CodeCheck.NONE else CodeCheck.COMPARE), p, camera)
+            fun until(ms: Long, pred: (TransferView<KeykinGift>) -> Boolean): TransferView<KeykinGift> {
+                val end = System.currentTimeMillis() + ms
+                while (true) { val v = t.view(); if (pred(v)) return v; if (System.currentTimeMillis() > end) throw KeykinException("device_silent"); Thread.sleep(80) }
+            }
+            var gift: KeykinGift? = null
+            try {
+                val v = until(30_000) { it.session.phase == Phase.RELEASE || it.stage == TransferView.Stage.ENDED }
+                if (v.stage == TransferView.Stage.ENDED) throw KeykinException("device_silent")
+                when (v.session.check) {
+                    CodeCheck.NONE -> {}
+                    CodeCheck.COMPARE -> {
+                        val f = CompletableFuture<Boolean>(); addDigitsAnswer = f
+                        ui.update { it.copy(working = null, addDigits = AddDigits(inv.name, v.session.compare ?: throw KeykinException("device_silent"))) }
+                        val same = try { f.get(120, TimeUnit.SECONDS) } catch (_: Exception) { false }
+                        ui.update { it.copy(addDigits = null, working = busy) }
+                        if (!same) { t.rejectMatch(); throw KeykinException("digits_differ") }
+                    }
+                    else -> throw KeykinException("bad_qr")
+                }
+                // Only now, with the person's yes and (if asked) the same digits: the fingerprint and the add.
+                val h = held
+                gift = if (h != null) synchronized(boxLock) {
+                    Device.add(me(), h, Invite(inv.key, inv.name, inv.chip), fp("Add ${inv.name} to your account"), send(h))
+                    val join = KeykinGift.Join(h.addr, h.boxKey, h.npub, loginOrigin())
+                    try { KeykinDeviceProfile.encode(join); join } catch (_: Exception) { KeykinGift.Join(h.addr, h.boxKey, h.npub) }
+                } else {
+                    // No box: the whole key. This phone keeps its own; the prompt is the plain kind, nothing a box could check.
+                    if (me().chip != null) Chip.sign(context, slot, "Add ${inv.name}", env.random(32))
+                    KeykinGift.Whole(localKey() ?: throw KeykinException("no_key"))
+                }
+                if (v.session.check == CodeCheck.NONE) t.release(gift) else t.confirmMatch(gift)
+                val end = until(60_000) { it.stage == TransferView.Stage.ENDED }
+                if (end.session.outcome != Outcome.DELIVERED && end.session.outcome != Outcome.SENT_UNCONFIRMED) throw KeykinException("device_silent")
+                note("Added ${inv.name} to your account", "approved")
+            } catch (e: Exception) {
+                blockedHere(e)
+                if ((e as? KeykinException)?.code != "cancelled") ui.update { it.copy(addDigits = null, error = when ((e as? KeykinException)?.code) {
+                    "device_silent" -> "${inv.name} didn't answer. Press Sign in there again and scan the new code."
+                    "digits_differ" -> "The digits were different. Nothing was added."
+                    else -> why(e)
+                }) }
+            } finally {
+                (gift as? KeykinGift.Whole)?.nsec?.fill(0)
+                addDigitsAnswer = null
+                ui.update { it.copy(working = null) }
+                t.dispose()
+                refresh()
+            }
+        }
+    }
+    /** The digits on this phone were compared with the new device's: the same, or not. */
+    fun addDigits(same: Boolean) { addDigitsAnswer?.complete(same) }
+
+    // --- "Use my name": no device at hand, the account page approves (Keykin SPEC 7 and 11.6) -------------
+    //
+    // As Marble on the Mac does it (OAuth for native apps, RFC 8252 with PKCE), with this app's App Link as the way
+    // back: Marble Web finds the account's sign-in page, Add there, a device of the account adds this phone, and the
+    // box holds its piece until this phone shows the approval code with its verifier.
+
+    fun signInByName() {
+        if (isMember) return
+        fun b64(b: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
+        val verifier = b64(env.random(32)); val state = b64(env.random(16))
+        val challenge = b64(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))
+        prefs.edit().putString("named-signin", JSONObject().put("verifier", verifier).put("state", state).put("at", Clock.now()).toString()).apply()
+        val web = (if (debuggable) context.getSharedPreferences("keykin", 0).getString("marble-web", null) else null) ?: MARBLE_WEB
+        fun enc(x: String) = java.net.URLEncoder.encode(x, "UTF-8").replace("+", "%20")
+        val url = "$web/#challenge=$challenge&return=${enc(NAMED_RETURN)}&state=$state&add=${enc(Texts.invite(me()))}"
+        if (debuggable) android.util.Log.i("Keykin", "named sign-in: $url")
+        ui.update { it.copy(error = null, signIn = (it.signIn ?: SignInCode()).copy(open = url)) }
+    }
+    fun openedLink() = ui.update { it.copy(signIn = it.signIn?.copy(open = null)) }
+    /** Debug builds: where "Use my name" opens, instead of marble.syb.lol (a test's own login page). */
+    fun testMarbleWeb(url: String) { if (debuggable) context.getSharedPreferences("keykin", 0).edit().putString("marble-web", url.trimEnd('/')).apply() }
+    /** Debug builds: the relays this phone's one-code sign-ins use (a test's own relay). */
+    fun testQrstRelays(urls: String) { if (debuggable) { PairingUri.allowLoopback = true; qrstStore.setConfigured(urls.split(',').map { it.trim() }.filter { it.isNotEmpty() }) } }
+    private fun namedBack(text: String) {
+        val err = { s: String -> ui.update { it.copy(error = s) } }
+        val raw = text.substringAfter('#', "").ifEmpty { text.substringAfter('?', "") }
+        val q = raw.split('&').mapNotNull { kv -> kv.indexOf('=').takeIf { it > 0 }?.let { i -> kv.substring(0, i) to (try { java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8") } catch (_: Exception) { "" }) } }.toMap()
+        val o = prefs.getString("named-signin", null)?.let { try { JSONObject(it) } catch (_: Exception) { null } }
+        if (isMember) return err("This phone is already in an account.")
+        if (o == null || q["state"] != o.optString("state") || Clock.now() - o.optLong("at") > 1800) return err("That sign-in isn't one this phone started. Press Sign in and try again.")
+        val code = q["code"]?.takeIf { it.isNotEmpty() } ?: return err("That sign-in came back without its code. Try again.")
+        val j = try { Texts.readJoin(q["join"] ?: "") } catch (e: Exception) { return err(why(e)) }
+        prefs.edit().remove("named-signin").apply()
+        work.execute { joinWith(j, code, o.getString("verifier")) }
+    }
+
     // --- Asking a box for an account (Keykin SPEC 11.4) -------------------------------------------
     //
     // For someone with no setup code: ask, and the box's admin approves. The answer carries the box's
@@ -843,6 +1038,7 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** Yes to adding the device whose invite was scanned. Then it needs the join text, shown next. */
     fun confirmAddDevice() {
+        if (pendingAdd != null) return addByCode()
         val inv = pendingInvite ?: return
         ui.update { it.copy(adding = null) }
         change("Adding ${inv.name}…") { me, h ->
@@ -852,7 +1048,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             note("Added ${inv.name} to your account", "approved")
         }
     }
-    fun cancelAddDevice() { pendingInvite = null; ui.update { it.copy(adding = null) } }
+    fun cancelAddDevice() { pendingInvite = null; pendingAdd = null; ui.update { it.copy(adding = null) } }
     fun closeJoinText() = ui.update { it.copy(joinText = null) }
     fun lockMissing() = ui.update { it.copy(adding = null, error = "Set up a fingerprint on this phone first: changing your account needs it.") }
 
@@ -1748,6 +1944,12 @@ class Signer(private val context: Context, val slot: String = "0") {
         /** How long something destructive waits for your answer before the app or site is told no. */
         const val ASK_LIFE = 120_000L
         val DEFAULT_RELAYS = listOf("wss://syb.lol", "wss://nos.lol", "wss://relay.primal.net")
+        /** Marble Web, which finds an account's sign-in page for "Use my name". */
+        const val MARBLE_WEB = "https://marble.syb.lol"
+        /** Where a new device's one code points (an App Link to Marble). */
+        const val ADD_BASE = "https://marble.syb.lol/add"
+        /** Where the account page sends this phone's approval back (an App Link to Marble; Keykin SPEC 11.6). */
+        const val NAMED_RETURN = "https://marble.syb.lol/joined"
         /** Where apps look up anyone's lists, asked too when [checkLists] looks for yours. */
         val INDEX_RELAYS = listOf("wss://purplepag.es", "wss://user.kindpag.es")
         /** Who made a change found on your relays, for its row: any app with your key, or another device with your box. */

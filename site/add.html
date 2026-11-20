@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Marble</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  :root { --ground: #f4f4f4; --text: #1d1d1d; --muted: #6b6b6b; --accent: #2f6fdf; }
+  @media (prefers-color-scheme: dark) { :root { --ground: #141414; --text: #ececec; --muted: #9a9a9a; --accent: #7aa7ff; } }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 17px/1.5 system-ui, sans-serif; }
+  main { max-width: 420px; margin: 18vh auto 0; padding: 0 16px; }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 20px; }
+  a.go { display: block; text-align: center; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+  p { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Add a device</h1>
+  <a class="go" id="go" hidden>Open Marble</a>
+  <p id="other" hidden>Scan this code with Marble on a phone that is already signed in.</p>
+</main>
+<script>
+// A new device's sign-in code (QRST keykin-device, Keykin SPEC 8b), opened as a web page instead of in Marble: on an
+// Android phone with Marble, a tap opens it there. Handed over this way it was not read by Marble's own camera, so
+// Marble compares five digits with the new device before anything is added. Nothing here reads or keeps the code.
+(() => {
+  const code = location.hash.slice(1);
+  if (!code || !/android/i.test(navigator.userAgent)) { document.getElementById("other").hidden = false; return; }
+  const go = document.getElementById("go");
+  go.href = `intent://add?${code}#Intent;scheme=marble;package=cc.aaro.cosign;end`;
+  go.hidden = false;
+})();
+</script>
+</body>
+</html>

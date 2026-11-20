@@ -99,12 +99,11 @@ fun App(phone: Phone, ui: Ui) {
             ui.offer != null -> JoinPrompt(ui.offer!!, phone::accept, phone::decline)
             ui.joining != null -> Joining(ui.joining!!, phone::decline)
             ui.asking != null && ui.member == null -> AskScreen(ui.asking!!, phone)
+            ui.signIn != null && ui.member == null -> SignInScreen(ui.signIn!!, ui.error, phone)
             ui.joinCode != null && ui.member == null -> JoinCode(ui.joinCode!!, ui.error, onScan = { phone.clearError(); scanning = true }, onPaste = phone::pasted, onCancel = phone::cancelJoin)
             ui.member == null -> Column(Modifier.fillMaxSize()) {
-                // "I already have an account": its nsec first (straight to the signer), then the box's code, as for a new one.
-                var importing by remember { mutableStateOf(false) }
-                Box(Modifier.weight(1f)) { Welcome(ui.error, onCreate = phone::createLocal, onOther = { phone.clearError(); phone.receiveKey() }, onHave = { phone.clearError(); importing = true }) }
-                if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars) }
+                // Two buttons. Sign in shows one code; "I have my key" (an nsec) is on that screen.
+                Box(Modifier.weight(1f)) { Welcome(ui.error, onCreate = phone::createLocal, onSignIn = { phone.clearError(); phone.startSignIn() }) }
                 // A place for another key: the ones you have are a tap away.
                 val others = CosignApp.instance.accounts.all.filter { it !== phone && it.isMember }
                 if (others.isNotEmpty()) TextButton({ CosignApp.instance.accounts.forget(phone.slot); CosignApp.instance.accounts.show(others.first().slot) },
@@ -120,6 +119,7 @@ fun App(phone: Phone, ui: Ui) {
         ui.move?.let { KeyMoveScreen(it, phone) }
         ui.summary?.let { UndoSiteSheet(it, phone::confirmUndoSite, phone::closeSummary) }
         ui.adding?.let { AddDeviceSheet(it, phone) }
+        ui.addDigits?.let { AddDigitsSheet(it, phone) }
         ui.reporting?.let { ReportLostSheet(it, phone) }
         ui.removedBy?.let { RemovedSheet(it, phone) }
         // A bunker link and the whole key never come to this process: the signer shows them (SignerActivity).
@@ -207,7 +207,7 @@ private fun Page(content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp), content = content)
 
 @Composable
-private fun Welcome(error: String?, onCreate: () -> Unit, onOther: () -> Unit, onHave: () -> Unit) = Column(Modifier.fillMaxSize().background(Kk.Ground).safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
+private fun Welcome(error: String?, onCreate: () -> Unit, onSignIn: () -> Unit) = Column(Modifier.fillMaxSize().background(Kk.Ground).safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp)) {
     Spacer(Modifier.weight(1f))
     Text(appName, style = MaterialTheme.typography.headlineMedium, color = Vault.Text)
     Spacer(Modifier.height(12.dp))
@@ -217,12 +217,46 @@ private fun Welcome(error: String?, onCreate: () -> Unit, onOther: () -> Unit, o
     Spacer(Modifier.weight(1f))
     Button(onCreate, Modifier.fillMaxWidth().height(56.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Create your account", style = MaterialTheme.typography.labelLarge) }
     Spacer(Modifier.height(10.dp))
-    OutlinedButton(onOther, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("I have an account on another device", color = Vault.Text) }
-    Spacer(Modifier.height(8.dp))
-    OutlinedButton(onHave, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("I have my secret key", color = Vault.Text) }
+    OutlinedButton(onSignIn, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Sign in", color = Vault.Text) }
     Spacer(Modifier.height(10.dp))
-    Text("Your key stays on this phone, sealed. It is never deleted unless you choose to.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted,
-        modifier = Modifier.align(Alignment.CenterHorizontally))
+}
+
+/**
+ * "Sign in" on a new device (Keykin SPEC 8b): one code for a device in the account to scan. That device decides what
+ * this one gets. Below it: Use my name (the account page approves), Paste a code, and I have my key.
+ */
+@Composable
+private fun SignInScreen(si: cc.aaro.cosign.SignInCode, error: String?, phone: Phone) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var importing by remember { mutableStateOf(false) }
+    BackHandler { phone.closeSignIn() }
+    si.open?.let { url -> androidx.compose.runtime.LaunchedEffect(url) {
+        try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (_: Exception) { }
+        phone.openedLink()
+    } }
+    Page {
+        Spacer(Modifier.height(24.dp))
+        Text("Scan with your phone", style = MaterialTheme.typography.headlineSmall, color = Vault.Text)
+        Spacer(Modifier.height(16.dp))
+        val uri = si.uri
+        if (uri != null) {
+            val qr = remember(uri) { qrBitmap(uri, 720) }
+            androidx.compose.foundation.Image(qr.asImageBitmap(), "Sign-in code", Modifier.fillMaxWidth().aspectRatio(1f).background(Color.White, RoundedCornerShape(12.dp)).padding(12.dp))
+        } else Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+        si.digits?.let { d ->
+            Spacer(Modifier.height(14.dp))
+            Text(d.chunked(1).joinToString(" "), fontFamily = PlexMono, style = MaterialTheme.typography.displaySmall, color = Vault.Text, modifier = Modifier.align(Alignment.CenterHorizontally))
+        }
+        error?.let { Spacer(Modifier.height(12.dp)); Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
+        Spacer(Modifier.weight(1f))
+        TextButton({ phone.clearError(); phone.signInByName() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Use my name", color = Vault.Accent) }
+        Row(Modifier.align(Alignment.CenterHorizontally)) {
+            TextButton({ val t = pasted(context).trim(); if (t.isEmpty()) phone.showError("Copy the code first, then tap Paste a code.") else { phone.clearError(); phone.pasted(t) } }) { Text("Paste a code", color = Vault.Muted) }
+            TextButton({ phone.clearError(); importing = true }) { Text("I have my key", color = Vault.Muted) }
+            TextButton({ phone.closeSignIn() }) { Text("Cancel", color = Vault.Muted) }
+        }
+    }
+    if (importing) ImportSheet({ importing = false }) { chars -> importing = false; phone.importKey(chars) }
 }
 
 /**
@@ -531,13 +565,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
         if (!m.chip) item { Muted("This phone has no fingerprint set up, so it can sign but can't change your account (add a device, unblock, cycle keys, show the key).") }
         val tier1 = m.box.isEmpty()
-        if (ui.keptKey) item {
-            Column {
-                TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Send my key to another device", color = Vault.Accent) }
-                Muted("On the other device, choose I have an account on another device, then scan the code it shows.")
-            }
-        }
-        if (!tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
+        // One button for any account: the new device's code says what it is, and this phone decides what it gets (Keykin SPEC 8b).
+        item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
         if (!tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Log in to your box's page", color = Vault.Accent) } }
 
         // Your account page (Keykin Login): where it is, and the username and password that can look and block there.
@@ -1186,7 +1215,7 @@ private fun RemovedSheet(by: String, phone: Phone) {
     }
 }
 
-/** You scanned a new device's code: add it, with your fingerprint. */
+/** You scanned a new device's code: "Add <name>?" Add asks for the fingerprint. */
 @Composable
 private fun AddDeviceSheet(a: cc.aaro.cosign.AddingDevice, phone: Phone) {
     BackHandler { phone.cancelAddDevice() }
@@ -1195,16 +1224,31 @@ private fun AddDeviceSheet(a: cc.aaro.cosign.AddingDevice, phone: Phone) {
             Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
                 .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Add ${a.name} to your account?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
-            Spacer(Modifier.height(10.dp))
-            Text("It gets its own piece of your account and can sign with your box, like this phone. This phone and your box each give half of that piece; nothing ever holds all of your account.",
-                style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
-            Spacer(Modifier.height(6.dp))
-            Text("$appName asks for your fingerprint, and your box checks it.", style = MaterialTheme.typography.bodySmall, color = Kk.Muted)
+            Text("Add ${a.name}?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton({ phone.cancelAddDevice() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Don't add", color = Kk.Text) }
+            OutlinedButton({ phone.cancelAddDevice() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("Not now", color = Kk.Text) }
             Spacer(Modifier.height(10.dp))
-            Button({ phone.confirmAddDevice() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Add with my fingerprint") }
+            Button({ phone.confirmAddDevice() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Add") }
+        }
+    }
+}
+
+/** Adding a device by a pasted code: the five digits here, which the new device shows too. */
+@Composable
+private fun AddDigitsSheet(d: cc.aaro.cosign.AddDigits, phone: Phone) {
+    BackHandler { phone.addDigits(false) }
+    Box(Modifier.fillMaxSize().background(Vault.Scrim), contentAlignment = Alignment.BottomCenter) {
+        Column(
+            Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp)
+                .background(Kk.Ground, RoundedCornerShape(20.dp)).border(1.dp, Kk.Line, RoundedCornerShape(20.dp)).padding(22.dp),
+        ) {
+            Text("Does ${d.name} show these digits?", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
+            Spacer(Modifier.height(16.dp))
+            Text(d.digits.chunked(1).joinToString(" "), fontFamily = PlexMono, style = MaterialTheme.typography.displaySmall, color = Kk.Text)
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton({ phone.addDigits(false) }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Kk.Line)) { Text("No", color = Kk.Text) }
+            Spacer(Modifier.height(10.dp))
+            Button({ phone.addDigits(true) }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Kk.Green, Color.White)) { Text("Yes") }
         }
     }
 }
