@@ -216,11 +216,21 @@ class Signer(private val context: Context, val slot: String = "0") {
     // box (from the account page, or from here) makes the box refuse that grant from any device.
 
     private fun grantOf(g: AppGrant) = g.pk.take(32)
-    private fun reportGrants(h: Held) {
-        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.origin ?: "A site", it.added, it.key, it.device, it.how) } +
+    /**
+     * Each site carries its two switches, and the box may answer with the ones the account page wants changed
+     * (`scopes`). Those are set here as the site's sheet sets them; the report that follows carries the new
+     * switches back, which tells the box it is done. [echo]: this report is that one. Whatever its reply changes
+     * waits for the next regular report, so a box that keeps asking cannot keep this phone reporting.
+     */
+    private fun reportGrants(h: Held, echo: Boolean = false) {
+        val mine = (try { sites.sites() } catch (_: Exception) { emptyList() }).map { Device.Grant(it.grant, "site", it.origin ?: "A site", it.added, it.key, it.device, it.how, it.lists, it.dms) } +
             apps.all.keys.mapNotNull { appGrant(it) }.filter { it.pkg != context.packageName }.map { Device.Grant(grantOf(it), "app", it.label, appTimes.getLong(it.pkg + ":added", 0)) }
-        val revoked = try { Device.reportGrants(me(), h, mine, send(h)) } catch (_: Exception) { return }   // an older box: it keeps no list
-        if (revoked.isNotEmpty()) dropRevoked(revoked.toSet())
+        val reply = try { Device.grantsReply(me(), h, mine, send(h)) } catch (_: Exception) { return }   // an older box: it keeps no list
+        if (reply.revoked.isNotEmpty()) dropRevoked(reply.revoked.toSet())
+        if (reply.scopes.isEmpty()) return
+        quietGrants.set(true)
+        val changed = try { SiteSwitches.fromPage(sites, reply.scopes, sharedXs::forget, ::note) } catch (_: Exception) { 0 } finally { quietGrants.remove() }
+        if (changed > 0 && !echo) work.execute { reportGrants(h, echo = true) }
     }
     /** The box says these were revoked: they go from this phone's lists too. */
     private fun dropRevoked(ids: Set<String>) {
@@ -229,7 +239,9 @@ class Signer(private val context: Context, val slot: String = "0") {
         for (g in apps.all.keys.mapNotNull { appGrant(it) }) if (grantOf(g) in ids) { apps.edit().remove(g.pkg).apply(); note("${g.label} was signed out from your account page", "denied") }
         sharedXs.forgetAll(); showSites()
     }
-    private fun grantsChanged() { val h = held ?: return; work.execute { reportGrants(h) } }
+    /** Set while the account page's switches are applied: the report after them is sent once, not once per site. */
+    private val quietGrants = ThreadLocal<Boolean>()
+    private fun grantsChanged() { if (quietGrants.get() == true) return; val h = held ?: return; work.execute { reportGrants(h) } }
 
     // --- Things the account page started, for this phone to finish (Keykin SPEC 11.6) --------------
 
@@ -966,8 +978,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     /** A signed-in site's switches, from its sheet. Turning DMs off forgets what it could read them with. */
     fun setSiteScopes(pk: String, lists: Boolean, dms: Boolean) {
         val was = sites.sites().firstOrNull { it.key == pk } ?: return
-        sites.setScopes(pk, lists, dms)
-        if ((was.dms && !dms) || (was.lists && !lists)) sharedXs.forget(was.grant)
+        SiteSwitches.set(sites, was, lists, dms, sharedXs::forget)
         showSites()
         note("${was.origin ?: "A site"}: private lists ${if (lists) "on" else "off"}, DMs ${if (dms) "on" else "off"}", "approved")
     }
