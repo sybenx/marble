@@ -1608,11 +1608,17 @@ function showNotes(signal, tab) {
         ${i.url ? `<span class="site-icon" aria-hidden="true">${esc(host(i.url).slice(0, 1).toUpperCase())}</span>` : ""}
         <span class="note-text"><span class="nt${i.url ? "" : " typed"}">${mark(notes.wordsOf(i.text), f)}</span>${i.text.includes("\n→ ") ? `<span class="nstep">${esc(i.text.slice(notes.wordsOf(i.text).length + 1))}</span>` : ""}
           ${i.quote ? `<span class="nq">${esc(i.quote)}</span>` : ""}
+          ${i.pictures?.length ? `<span class="note-pics">${i.pictures.map((p) => notePic(p, i.text)).join("")}</span>` : ""}
           <span class="nm">${esc([i.url ? host(i.url) : i.from, notes.inView().includes(i.id) && "kept in view", i.deletedOn && `deleted on ${i.deletedOn}`].filter(Boolean).join(" · "))}</span></span>
       </a>
       ${i.conflict ? `<button type="button" class="link versions" data-versions aria-expanded="${openConflict === i.id}">${i.versions.length} versions</button>` : ""}
       <button type="button" class="remove" data-remove aria-label="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>${i.conflict && openConflict === i.id ? conflictPanel(i) : ""}`;
+  // a picture kept in the note (a screenshot dropped or pasted on the page): shown once it has loaded from the vault
+  const notePic = (p, alt) => {
+    const u = vault.pictureUrl(p), r = p.w && p.h ? ` style="aspect-ratio: ${p.w} / ${p.h}"` : "";
+    return u ? `<img class="note-pic" src="${esc(u)}" alt="${esc(notes.wordsOf(alt))}"${r}>` : `<span class="note-pic loading"${r} aria-label="Picture loading"></span>`;
+  };
   // A conflict (vaults §5.4, §11.1): both texts side by side; keep one, keep both, or write the one you want
   let openConflict = null, editing = null;
   const conflictPanel = (i) => `<div class="conflict" data-conflict="${esc(i.id)}">
@@ -1674,6 +1680,8 @@ function showNotes(signal, tab) {
   };
   filter.addEventListener("input", draw);
   root.onclick = (ev) => {
+    const pic = ev.target.closest("img.note-pic");
+    if (pic) { ev.preventDefault(); return zoom(pic); }
     const stray = ev.target.closest("[data-strays]");
     if (stray) return stray.dataset.strays === "add" ? notes.adoptStrays() : notes.dropStrays();
     const chip = ev.target.closest("[data-show]");
@@ -1751,12 +1759,59 @@ document.addEventListener("click", (ev) => {
   if (c && !ev.target.closest("button, video, details summary, .who") && !getSelection().toString()) go(c.dataset.href);
 });
 
+// ── Pictures into Notes: a screenshot (or any picture) dragged onto the page, or pasted outside a text field, is kept
+// as a note of its own in your notes vault (later.js keepPicture), encrypted like the rest of your notes. ──
+
+const pictureFiles = (dt) => [...(dt?.files || [])].filter((f) => /^image\//.test(f.type));
+const dragsFiles = (dt) => [...(dt?.types || [])].includes("Files");
+let dropDepth = 0;
+function dropCue(on) {
+  let el = $("#drop-cue");
+  if (on && !el) {
+    el = document.createElement("div"); el.id = "drop-cue"; el.setAttribute("aria-hidden", "true");
+    el.innerHTML = `<div><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-5 4 4 2.5-2.5L20 17"/></svg>
+      <b>Drop to keep it in your Notes</b><span>${LOCK}Only you</span></div>`;
+    document.body.append(el);
+  }
+  if (el) el.hidden = !on;
+}
+async function keepPictures(files) {
+  if (!files.length) return;
+  if (!currentMe()) { toast("Sign in to keep pictures in your Notes."); return openSignIn(); }
+  if (!vault.canKeepPictures()) return toast(vault.state() === "removed" ? "This browser was removed from your account, so it can't add to your notes."
+    : "Pictures go in your notes vault, which isn't open here. Open Notes to see why.");
+  toast(files.length === 1 ? "Keeping the picture…" : `Keeping ${files.length} pictures…`, { stay: true });
+  let kept = 0, why = "";
+  for (const f of files) {
+    try { await notes.keepPicture(f); kept++; } catch (err) { why = String(err?.message || err); }
+  }
+  toast(kept ? `${kept === 1 ? "Kept in Notes" : `${kept} kept in Notes`}${why ? `. ${why}` : ""}` : why || "Couldn't keep that.");
+}
+document.addEventListener("dragenter", (ev) => { if (!dragsFiles(ev.dataTransfer)) return; dropDepth++; dropCue(true); });
+document.addEventListener("dragleave", () => { if (dropDepth && --dropDepth === 0) dropCue(false); });
+document.addEventListener("dragover", (ev) => { if (!dragsFiles(ev.dataTransfer)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; });
+document.addEventListener("drop", (ev) => {
+  if (!dragsFiles(ev.dataTransfer)) return;
+  ev.preventDefault(); // (never the browser's own: opening the file in place of Marble)
+  dropDepth = 0; dropCue(false);
+  const files = pictureFiles(ev.dataTransfer);
+  if (!files.length) return toast("Only pictures can be dropped here.");
+  keepPictures(files);
+});
+document.addEventListener("paste", (ev) => {
+  const files = pictureFiles(ev.clipboardData);
+  // (in a text field, text pasted goes in as always; a picture alone, with no text, is kept)
+  if (!files.length || (ev.target.closest?.("input, textarea, [contenteditable]") && ev.clipboardData.getData("text/plain"))) return;
+  ev.preventDefault();
+  keepPictures(files);
+});
+
 // A picture, large; with ← and → through the rest of the post's pictures (its gallery, or the article's).
 const dialog = $("#zoom");
 let shown = [], at = 0;
 function zoom(img) {
-  const set = img.closest(".media, .prose, .article") || img.parentElement;
-  shown = [...set.querySelectorAll(".media img, .prose img, img.cover, :scope > img")].filter((x) => !x.closest(".quote-slot") || x.closest(".quote-slot") === img.closest(".quote-slot"));
+  const set = img.closest(".media, .prose, .article, .note-list") || img.parentElement;
+  shown = [...set.querySelectorAll(".media img, .prose img, img.cover, img.note-pic, :scope > img")].filter((x) => !x.closest(".quote-slot") || x.closest(".quote-slot") === img.closest(".quote-slot"));
   if (!shown.includes(img)) shown = [img];
   show(shown.indexOf(img));
   dialog.showModal();

@@ -503,6 +503,16 @@
   .nt { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
   .nt.typed { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 16px; }
   .is-done .nt { color: var(--muted); text-decoration: line-through; }
+  .note-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .note-pic { display: block; max-width: min(100%, 320px); max-height: 220px; width: auto; height: auto; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; background: var(--card); }
+  .note-pic.loading { width: 160px; max-height: 120px; cursor: default; }
+  #drop-cue { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 82%, transparent); pointer-events: none; padding: 16px; }
+  #drop-cue[hidden] { display: none; }
+  #drop-cue > div { display: grid; justify-items: center; gap: 8px; padding: 28px 36px; border: 2px dashed var(--accent); border-radius: 22px; background: var(--card); color: var(--ink); text-align: center; }
+  #drop-cue svg { width: 40px; height: 40px; fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  #drop-cue b { font-size: 18px; }
+  #drop-cue span { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 14px; }
+  #drop-cue span svg { width: 14px; height: 14px; stroke: var(--muted); }
   .nq { color: var(--muted); font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
   .nm { color: var(--muted); font-size: 14px; }
   .nm:empty { display: none; }

@@ -152,6 +152,8 @@ export async function stop(pk) {
   clearTimeout(timer);
   if (pk) await idb("delete", pk);
   session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); status = "none"; why = "";
+  for (const u of pictureUrls.values()) if (u) URL.revokeObjectURL(u);
+  pictureUrls.clear();
   if (who === pk || !pk) who = "";
   tell();
 }
@@ -180,7 +182,7 @@ function asItem(n) {
   const x = n.note;
   return { id: x.id, text: x.text ?? "", created: x.created, updated: x.updated, done: x.done, deleted: null, url: x.url, quote: x.quote, from: x.app,
     entry: n.entry, ver: x.ver, meta: x.meta, base: n.current, conflict: n.conflict, versions: n.conflict ? n.versions.map((v) => ({ ver: v.ver, text: v.text ?? blobTexts.get(v.ver) ?? "", device: v.device, done: v.done, meta: v.meta })) : null,
-    deletedOn: n.deletedOn, long: !!x.blob };
+    deletedOn: n.deletedOn, long: !!x.blob, pictures: x.pictures };
 }
 /** Whether an entry for this note id exists in the vault at all (any version, deleted included). */
 export function has(id) {
@@ -218,7 +220,9 @@ export async function flush() {
     for (const [id, q] of taking) {
       const entry = N.entryOf(id);
       if (q.note.deleted) { if (q.base.length) ops.push(N.deletePut(entry, q.base)); continue; }
-      const note = { id, text: q.note.text, created: q.note.created, updated: q.note.updated, done: q.note.done, url: q.note.url, quote: q.note.quote, app: q.note.from };
+      const note = { id, text: q.note.text, created: q.note.created, updated: q.note.updated, done: q.note.done, url: q.note.url, quote: q.note.quote, app: q.note.from,
+        // (a new note's pictures; a note's pictures already in the vault stay as its meta has them)
+        pictures: q.meta.pictures === undefined && q.note.pictures?.length ? q.note.pictures : undefined };
       let data = null;
       if (N.needsBlob(note.text)) {
         const dev = await s.device();
@@ -261,6 +265,43 @@ async function remember() {
 const blobTexts = new Map(), blobFailed = new Set();
 /** A note's text; one kept in a blob shows a line saying so until it has loaded. */
 export const textOf = (item) => (item.long && !item.text ? blobTexts.get(item.ver) || (blobFailed.has(item.ver) ? "(This note hasn't loaded yet.)" : "(Loading this note…)") : item.text);
+
+// ── pictures (a screenshot dropped or pasted on the page): each an encrypted blob of the vault, named in the note ──
+
+/** Whether a picture can be kept now: the vault is open here (or opening, and will be). */
+export const canKeepPictures = () => (!!session && status !== "removed") || status === "opening";
+const MAX_PICTURE = 25 * 1024 * 1024;
+/**
+ * Uploads a picture (a File or Blob) as a blob of your notes vault: {ref, mime, w, h}. Throws with a sentence to show
+ * when it can't (not an image, too big, no vault, your storage servers refused it).
+ */
+export async function uploadPicture(file) {
+  if (opening) await opening;
+  if (!session || status === "removed") throw new Error(status === "removed" ? "This browser was removed from your account, so it can't add to your notes." : "Your notes vault isn't open here.");
+  const { notes: N } = libNow;
+  if (!N.PICTURE_TYPES.includes(file.type)) throw new Error("Only PNG, JPEG, GIF and WebP pictures can go in your notes.");
+  if (file.size > MAX_PICTURE) throw new Error("That picture is over 25 MB.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let w = 0, h = 0;
+  try { const b = await createImageBitmap(new Blob([bytes], { type: file.type })); w = b.width; h = b.height; b.close(); }
+  catch { throw new Error("That file isn't a picture this browser can open."); }
+  const ref = await session.upload(await session.device(), bytes, 2).catch(() => { throw new Error("Your storage servers wouldn't take the picture. Try again in a moment."); });
+  const pic = { ref, mime: file.type, w, h };
+  pictureUrls.set(ref.parts[0], URL.createObjectURL(new Blob([bytes], { type: file.type })));
+  return pic;
+}
+// pictures loaded on this page: first part's sha → object URL (null while loading, false when it wouldn't load)
+const pictureUrls = new Map();
+/** A picture's address on this page, or null while it loads (Notes is told when it has). */
+export function pictureUrl(pic) {
+  const k = pic.ref.parts[0];
+  if (pictureUrls.has(k)) return pictureUrls.get(k) || null;
+  if (!session) return null;
+  pictureUrls.set(k, null);
+  session.blob(pic.ref).then((b) => { pictureUrls.set(k, URL.createObjectURL(new Blob([b], { type: pic.mime }))); tell(); })
+    .catch(() => { pictureUrls.delete(k); });
+  return null;
+}
 
 // ── conflicts (§5.4, §11.1): keep this, keep both, or edit ──
 

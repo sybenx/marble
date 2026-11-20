@@ -60,13 +60,29 @@ await a.catchUp();
 const oddN = notes(a).find((x) => x.note.id === "fedcba9876543210");
 ok(oddN && N.notePut({ ...oddN.note, text: "y", updated: 2 }, [oddN.note.ver], oddN.note.meta).meta.colour === "blue", "unknown meta members kept");
 
+// a picture kept in a note (a screenshot dropped on Marble Web): its own blob, named in meta; kept through edits
+{
+  const png = new Uint8Array(70000).map((_, i) => i * 7 % 251); // (past one 64 KiB chunk)
+  const ref = await b.upload(await b.device(), png, 2);
+  const pic = { ref, mime: "image/png", w: 1440, h: 900 };
+  await b.commit([N.notePut({ id: "9900000000000000", text: "Screenshot 2026-11-20 at 10.42.13", created: 8, updated: 8, pictures: [pic] }, [])]);
+  await a.catchUp();
+  const got = notes(a).find((x) => x.note.id === "9900000000000000").note;
+  ok(got.pictures.length === 1 && got.pictures[0].w === 1440 && got.pictures[0].mime === "image/png", "the picture is named in the note");
+  const back = await a.blob(got.pictures[0].ref);
+  ok(back.length === png.length && back.every((x, i) => x === png[i]), "and opens to the same bytes on another device");
+  const ticked = N.notePut({ ...got, pictures: undefined, done: 9, updated: 9 }, [got.ver], got.meta);
+  ok(ticked.meta.pictures?.length === 1, "ticking it done keeps the picture");
+  ok(N.picturesOf({ pictures: [{ ref: { alg: "nv1" }, mime: "image/png" }, { ...pic, mime: "text/html" }] }).length === 0, "a bad ref or a type that isn't a picture is never shown");
+}
+
 // many edits: segments past 8 KiB, and a fresh device still sees everything
 for (let i = 0; i < 40; i++) await a.commit([N.notePut({ id: "aa" + String(i).padStart(14, "0"), text: "note " + i + " ".repeat(200), created: 2, updated: 2 }, [])], { catchUp: false });
 const head = [...net.events.values()].find((e) => e.kind === V.KIND.HEAD && a.heads.get(e.pubkey + "/" + e.tags[0][1])?.id === e.id && e.pubkey === [...a.vault.roster().dvks.values()].find((d) => d.name === "Marble Web").dvk);
 const body = JSON.parse(C.nip44Decrypt(a.epochs.get(head.tags[0][1]).e.opsKey, head.content));
 ok(body.segment && body.commits.length < 40, "older commits moved to a segment");
 const fresh = await session();
-ok(notes(fresh).length === 41, "a fresh device reaches every commit through the segment chain");
+ok(notes(fresh).length === 42, "a fresh device reaches every commit through the segment chain");
 
 // a reader added (the owner's AUTH, through the app): ρ moves; the next write rekeys with a wrap
 const readerSec = C.randomKey(), reader = C.pubHex(readerSec);

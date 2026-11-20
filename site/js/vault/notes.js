@@ -1,11 +1,12 @@
 // The notes profile (vaults.md §11.1) as Marble writes it (the contract with Marble Android, 2026-11-17):
 //   meta {"kind": "note", "created", "title": "", "tags": [], "done": bool, "pinned": false, "id": <Marble's note id>,
-//         "updated", "done_at"? (only when done), "url"? , "quote"?, "app"? (Later's `from`)}; members it doesn't know
-//         are kept when a note is rewritten (§5.2);
+//         "updated", "done_at"? (only when done), "url"? , "quote"?, "app"? (Later's `from`),
+//         "pictures"? [{"ref": nv1 ref, "mime", "w", "h"}] (a screenshot or other picture kept in the note, each its own
+//         blob; Marble Web 2026-11-20)}; members it doesn't know are kept when a note is rewritten (§5.2);
 //   entry = hex(TH("marble/later/1", utf8(note id)))[0:32], for imported and new notes alike;
 //   data {"text": the whole note} inline up to 4 KiB, else {"blob": nv1 ref}.
 import { thHex, utf8, isHex } from "./crypto.js";
-import { makePut } from "./core.js";
+import { makePut, refOK } from "./core.js";
 
 export const INLINE = 4096;
 export const entryOf = (noteId) => thHex("marble/later/1", 32, utf8(noteId));
@@ -20,12 +21,17 @@ export function metaOf(note, base = {}) {
   if (note.url) m.url = note.url;
   if (note.quote) m.quote = note.quote;
   if (note.app) m.app = note.app;
+  if (note.pictures !== undefined) { if (note.pictures.length) m.pictures = note.pictures; else delete m.pictures; }
   return m;
 }
 /** A put for a note's text and fields; `data` given when the text is in a blob. */
 export function notePut(note, supersedes, base = {}, data = null) {
   return makePut(entryOf(note.id), supersedes, metaOf(note, base), data ?? { text: note.text }, false);
 }
+/** Pictures a note can show: images in a browser's own formats, each a valid blob ref. */
+export const PICTURE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+export const picturesOf = (m) => (Array.isArray(m?.pictures) ? m.pictures : []).filter((p) => isObj(p) && refOK(p.ref) && PICTURE_TYPES.includes(p.mime))
+  .map((p) => ({ ref: p.ref, mime: p.mime, w: p.w | 0, h: p.h | 0 }));
 export const needsBlob = (text) => utf8(text).length > INLINE;
 /** Deleting a note: the deleted version (§5.3), superseding the versions it replaces. */
 export const deletePut = (entry, supersedes) => makePut(entry, supersedes, { kind: "note" }, null, true);
@@ -35,7 +41,8 @@ export function noteOf(put, text = put.data?.text ?? null) {
   const m = put.meta;
   return { id: typeof m.id === "string" ? m.id : put.entry, entry: put.entry, ver: put.ver, text, blob: isObj(put.data?.blob) ? put.data.blob : null,
     created: m.created | 0, updated: m.updated | 0, done: m.done === true ? (m.done_at | 0) || m.updated | 0 : null,
-    url: typeof m.url === "string" ? m.url : undefined, quote: typeof m.quote === "string" ? m.quote : undefined, app: typeof m.app === "string" ? m.app : undefined, meta: m };
+    url: typeof m.url === "string" ? m.url : undefined, quote: typeof m.quote === "string" ? m.quote : undefined, app: typeof m.app === "string" ? m.app : undefined,
+    pictures: picturesOf(m), meta: m };
 }
 
 /**

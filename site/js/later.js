@@ -96,6 +96,19 @@ export function keepPage(url, title, note = "") {
   put(item);
   return { item, before: have || null };
 }
+/**
+ * A picture (a screenshot dropped or pasted on the page) kept as a note of its own, in your notes vault: its words are
+ * the file's name ("Screenshot 2026-11-20 at 10.42.13"), so it can be filtered and found on any device. Returns the
+ * note, or throws with a sentence to show (notes-vault.js uploadPicture).
+ */
+export async function keepPicture(file) {
+  const pic = await vault.uploadPicture(file);
+  const name = String(file.name || "").replace(/\.[a-z0-9]{1,5}$/i, "").trim().slice(0, NOTE_MAX);
+  const t = now(), item = { id: newId(), text: name || "Picture", created: t, updated: t, done: null, deleted: null, pictures: [pic] };
+  if (!vault.active() || !vault.write(item)) throw new Error("Your notes vault isn't open here.");
+  listeners.forEach((fn) => fn());
+  return item;
+}
 /** Undo of a keepPage: the note as it was before (or removed, if it wasn't there). */
 export function unkeep({ item, before }) {
   const i = own(item);
