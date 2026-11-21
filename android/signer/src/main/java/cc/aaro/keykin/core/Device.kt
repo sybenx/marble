@@ -61,7 +61,12 @@ object Device {
         if (fp != null) out.put("fp", fp(bytes))
         return out
     }
-    private fun call(send: Send, req: JSONObject): JSONObject = send(req).also { if (it.has("error")) refuse(it.getString("error")) }
+    private fun call(send: Send, req: JSONObject): JSONObject = send(req).also { if (it.has("error")) failed(it) }
+    /** An error answer as an exception, with the box's `why` when it gave one (Keykin SPEC 11.6, The tap). */
+    private fun failed(r: JSONObject): Nothing {
+        val why = r.optString("why").replace(Regex("[\\u0000-\\u001f\\u007f]"), " ").trim().take(300).ifEmpty { null }
+        throw KeykinException(r.getString("error"), why, why)
+    }
 
     /**
      * A request that depends on the current pieces. If the keys were cycled while this device was away, the
@@ -71,7 +76,7 @@ object Device {
         var tries = 0
         while (true) {
             val r = send(seal(body().put("epoch", h.epoch).put("account", h.npub), me, fp))
-            if (r.optString("error") != "stale" || tries++ > 0 || r.optJSONArray("catchups") == null) { if (r.has("error")) refuse(r.getString("error")); return r }
+            if (r.optString("error") != "stale" || tries++ > 0 || r.optJSONArray("catchups") == null) { if (r.has("error")) failed(r); return r }
             var share = h.piece.share
             val cs = r.getJSONArray("catchups")
             for (k in 0 until cs.length()) cs.getJSONObject(k).let { c -> share = share.add(BigInteger(Seal.from(me.sk, c.getString("from"), "cycle", c.getString("sealed")), 16)).mod(N) }
@@ -148,7 +153,9 @@ object Device {
     /** Signs a Nostr event with the box. Returns the whole signed event. */
     /**
      * `grant` names the site or app this signature is for (SPEC 11.5); leave it out for the person's own use.
-     * `tapped`: the person said Yes on this device to a hard-to-undo event ([destructive]). Without it the box answers `needs_tap`.
+     * `tapped`: the person said Yes on this device to this event. The box decides what needs it (Keykin SPEC 11.6, The tap):
+     * without it such an event fails with `needs_tap`, whose [KeykinException.why] is the question to put to the person,
+     * and the same request with `tapped` signs it. One the box never signs fails with `dated_ahead` and its why.
      */
     fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false, child: Child? = null): JSONObject {
         // As a child (SPEC 8k): the event is the child's, and both pieces move by its tweak. Read after any catch-up.
@@ -386,19 +393,4 @@ object Device {
     /** The person tapped No. The note goes, and the browser that asked is signed out of the account page. */
     fun noteRefuse(me: Me, h: Held, note: String, send: Send = http(h.addr)) { call(send, seal(JSONObject().put("op", "note_refuse").put("account", h.npub).put("note", note), me)) }
 
-    /**
-     * Why an event is hard to undo, in a few words, or null if it is ordinary (the Keykin repo's
-     * src/destructive.ts, line for line). The box refuses such an event unless the device says the
-     * person tapped Yes.
-     */
-    fun destructive(kind: Int, tags: List<List<String>>, content: String): String? {
-        if (kind == 62) return "asks every relay to erase the whole account"
-        if (kind == 5 && tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") } >= 5) return "deletes five or more posts at once"
-        if (kind == 3 && tags.none { it.isNotEmpty() && it[0] == "p" }) return "empties the follow list"
-        if (kind == 0) {
-            val p = try { JSONObject(content) } catch (_: Exception) { null }
-            if (p == null || listOf("name", "display_name", "about", "picture", "nip05", "lud16").none { k -> (p.opt(k) as? String)?.isNotBlank() == true }) return "empties the profile"
-        }
-        return null
-    }
 }

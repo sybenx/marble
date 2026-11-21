@@ -2,6 +2,7 @@ package cc.aaro.cosign
 
 import android.content.Context
 import android.net.Uri
+import cc.aaro.cosign.core.BoxAsk
 import cc.aaro.cosign.core.Clock
 import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
@@ -159,6 +160,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         "wrong_account" -> "That code is for a different account."
         "no_account" -> "$appName isn't set up yet."
         "denied" -> "You said no."
+        "needs_tap", "dated_ahead" -> (e as KeykinException).let { k -> k.why ?: if (k.code == "needs_tap") BOX_ASKS else "Your box won't sign something dated ahead." }
         "site_silent" -> "The site didn't answer. Ask it for a new code."
         "digits_differ" -> "The digits were different, so nothing was sent."
         "site_declined" -> "The site cancelled."
@@ -1444,12 +1446,12 @@ class Signer(private val context: Context, val slot: String = "0") {
             try { return Event.sign(cc.aaro.qrst.core.publicKeyHex(k), ev.createdAt, ev.kind, ev.tags, ev.content, k, env) } finally { k.fill(0) }
         }
         val h = held ?: error("$appName isn't set up yet")
-        // The box wants to hear that you said Yes to the few things it calls hard to undo. What this phone itself
-        // signs to put something back (an undo, a repost) or at your own word is always that.
-        val yes = tapped && Device.destructive(ev.kind, ev.tags, ev.content) != null
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, yes, asChild) } }
+        // The box decides what is hard to undo and wants to hear that you said Yes (`tapped`). What this phone itself
+        // signs to put something back (an undo, a repost) or at your own word is always that. Its `needs_tap`, with the
+        // question in its own words, goes up to [BoxAsk], which asks you and sends this again.
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild) } }
             catch (e: KeykinException) {
-                if (e.code == "needs_tap") throw NeedsApproval(boxHold(ev))
+                if (e.code == "needs_tap") throw e
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
                 blockedHere(e); if (e.code == "no_box") ui.update { it.copy(relaysUp = 0) }; throw IllegalStateException(why(e))
             }
@@ -1463,16 +1465,15 @@ class Signer(private val context: Context, val slot: String = "0") {
      */
     private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null): Event {
         Policy.refuse(ev)?.let { throw IllegalStateException(it) }
-        var held = approved
-        // This phone's own rules (against the last version of a list it saw), and the box's shorter list. A site's own
-        // account has no lists kept here: its change is judged on its own, never against the main account's lists.
-        if (!approved) ((if (asChild == null) holdFor(ev) else Policy.hold(ev, null)) ?: Device.destructive(ev.kind, ev.tags, ev.content)?.let { boxHold(ev) })?.let { hold ->
-            if (!mayAsk) throw NeedsApproval(hold)
-            if (!askAndWait(by, ev, hold)) { note("Said no to $by: $hold", "denied"); throw KeykinException("denied") }
-            held = true
-        }
+        // This phone's own rules first (against the last version of a list it saw), then the box's: it decides, and asks
+        // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
+        // judged on its own, never against the main account's lists.
+        val own = if (approved) null else if (asChild == null) holdFor(ev) else Policy.hold(ev, null)
         val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
-        val signed = signNow(ev, grant, held, asChild)
+        val (signed, held) = BoxAsk.sign(own, approved, BOX_ASKS, { hold ->
+            if (!mayAsk) throw NeedsApproval(hold)
+            askAndWait(by, ev, hold).also { if (!it) note("Said no to $by: $hold", "denied") }
+        }) { tapped -> signNow(ev, grant, tapped, asChild) }
         // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
         if (asChild == null) remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
@@ -1480,14 +1481,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         return signed
     }
 
-    /** What the box calls hard to undo, said the way this phone's own holds are. */
-    private fun boxHold(ev: Event) = when (Device.destructive(ev.kind, ev.tags, ev.content)) {
-        "asks every relay to erase the whole account" -> "Ask relays to erase everything you have ever published"
-        "deletes five or more posts at once" -> "Delete ${ev.tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") }} of your events"
-        "empties the follow list" -> "Empty your follow list"
-        "empties the profile" -> "Wipe your profile: everything"
-        else -> "Something that is hard to undo"
-    }
+    /** The question when a box from before it gave its reason asks for your Yes. */
+    private val BOX_ASKS = "Your box asks for your Yes before signing this"
     private val answers = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
     private fun askAndWait(by: String, ev: Event, hold: String): Boolean {
         val ask = Ask(env.random(8).toHex(), by, ev, hold, System.currentTimeMillis() + ASK_LIFE)
@@ -1660,8 +1655,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val c = childFor(place)
         val e = Event(c.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId()
         Policy.refuse(e)?.let { throw IllegalStateException(it) }
-        if (!approved) (Policy.hold(e, null) ?: Device.destructive(e.kind, e.tags, e.content)?.let { boxHold(e) })?.let { throw NeedsApproval(it) }
-        return signNow(e, grant, approved, c)
+        return BoxAsk.sign(if (approved) null else Policy.hold(e, null), approved, BOX_ASKS, { throw NeedsApproval(it) }) { tapped -> signNow(e, grant, tapped, c) }.value
     }
     /** NIP-44 as [place]'s child, with [peer]. */
     fun nip44As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip44With(peer, text, encrypt, grant, childFor(place))
@@ -1895,7 +1889,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         work.execute {
             try {
                 val old = objects(readArray(kept)).mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }.firstOrNull { it.id == d.id } ?: return@execute
-                val signed = signNow(Event(pub, Clock.now(), old.kind, old.tags, old.content).withId())
+                val signed = signNow(Event(pub, Clock.now(), old.kind, old.tags, old.content).withId(), tapped = true)
                 publish(signed)
                 synchronized(this) { kept.writeText(JSONArray(objects(readArray(kept)).filter { Event.fromMap(Json.parse(it.getString("event")))?.id != d.id }).toString()) }
                 remember(signed, null, appName, true)
