@@ -416,7 +416,8 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     /** A post, someone, or an article (found first; if it can't be, it opens on marble.syb.lol). */
     suspend fun ref(r: cc.aaro.cosign.Ref, context: android.content.Context) = when (r) {
         is cc.aaro.cosign.Ref.Note -> thread(r.id)
-        is cc.aaro.cosign.Ref.Profile -> profile(r.pubkey)
+        // An nprofile's relays: asked too when their profile is looked for (people from elsewhere are often only there).
+        is cc.aaro.cosign.Ref.Profile -> { cc.aaro.cosign.Social.hint(r.pubkey, r.relays); profile(r.pubkey) }
         // Something from another app: to that app (Social.openTarget), never its raw content in a thread.
         is cc.aaro.cosign.Ref.Addr -> social.fetchAddr(r).let { ev -> if (ev != null && OtherApps.drawn(ev.kind)) thread(ev.id)
             else cc.aaro.cosign.Tabs.open(context, ev?.let { social.openTarget(it) } ?: ("https://marble.syb.lol/" + r.naddr), false, Vault.dark, Vault.Ground.toArgb(), null) }
