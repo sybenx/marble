@@ -116,7 +116,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun me(): Me = meNow ?: synchronized(this) {
         meNow ?: run {
             val o = secrets.load("device")?.let(::JSONObject)
-                ?: JSONObject().put("sk", env.random(32).toHex()).put("name", (android.os.Build.MODEL ?: "").ifBlank { "Phone" }.take(40)).also { secrets.save("device", it.toString()) }
+                ?: JSONObject().put("sk", env.random(32).toHex()).put("name", DeviceLabel.readable(context)).also { secrets.save("device", it.toString()) }
             val chip = try { Chip.publicKey(context, slot) } catch (_: Exception) { null }
             Me(o.getString("sk").hexToBytes(), o.getString("name"), chip).also { meNow = it }
         }

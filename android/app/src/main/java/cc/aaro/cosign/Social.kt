@@ -1445,7 +1445,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             vaultNotesBy.getOrPut(me) {
                 val vs = cc.aaro.vaults.Vaults(cc.aaro.cosign.notes.PhoneAccount(phone, me) { vaultBlossom(me) }, cc.aaro.cosign.notes.VaultNet, cc.aaro.cosign.notes.VaultNet,
                     cc.aaro.cosign.notes.VaultStore(CosignApp.instance, me), { Clock.now() }, { listTargets().ifEmpty { writeRelays() } },
-                    (android.os.Build.MODEL ?: "").ifBlank { "Phone" }.take(40))
+                    readableDeviceName(CosignApp.instance))
                 cc.aaro.cosign.notes.VaultNotes(vs, Clock::now) { kotlinx.coroutines.runBlocking { newVaultPlaces(vs) } }
             }
         }
@@ -1684,7 +1684,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
         prefs.edit().putString("deviceNames", namesJson(merged)).apply()
         // This device's own name, as people know it, if it has none yet.
         val own = phone.ui.value.member?.let { m -> m.group.members.firstOrNull { it.idx == m.idx } }?.let(::deviceKey)
-        if (own != null && own !in merged) nameDevice(own, readableDeviceName(CosignApp.instance))
+        // A name it got by itself before readable names (the bare model number) is replaced too; one you chose stays.
+        if (own != null && (own !in merged || DeviceLabel.isOldDefault(merged[own]?.name))) nameDevice(own, readableDeviceName(CosignApp.instance))
         else if (merged != theirs) sendDeviceNames()
     }
 
@@ -3630,13 +3631,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             } ?: emptyMap()
         } catch (_: Exception) { emptyMap() }
         /** This device as people call it: the name set in the system's settings, else its maker and model ("Onn 11 Tablet Pro", not "100071485"). */
-        fun readableDeviceName(context: android.content.Context): String {
-            val set = try { android.provider.Settings.Global.getString(context.contentResolver, android.provider.Settings.Global.DEVICE_NAME) } catch (_: Exception) { null }
-            if (!set.isNullOrBlank() && set != android.os.Build.MODEL) return set.trim().take(40)
-            val maker = android.os.Build.MANUFACTURER.trim().replaceFirstChar { it.uppercase() }
-            val model = android.os.Build.MODEL.trim()
-            return (if (model.startsWith(maker, ignoreCase = true)) model else "$maker $model").trim().ifEmpty { "This device" }.take(40)
-        }
+        fun readableDeviceName(context: android.content.Context): String = DeviceLabel.readable(context)
 
         private fun remember(es: List<Event>) {
             synchronized(notes) { for (e in es) notes[e.id] = e }
