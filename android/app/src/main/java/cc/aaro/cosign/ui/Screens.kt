@@ -491,7 +491,9 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                            onSpecial: () -> Unit = {}, onNews: () -> Unit = {}) {
     val m = ui.member!!
     var leaving by remember { mutableStateOf(false) }
-    var advanced by remember { mutableStateOf(false) }
+    // Which page of the account: null is the short list; a row opens its page (AccountPages). Kept while Special Follow is open.
+    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = page != null) { page = AccountPages.up(page) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val people by cc.aaro.cosign.People.known.collectAsState()
@@ -501,31 +503,29 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
     var bunkerAsk by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
-    // Opened for Recent changes (a notification's tap): its place depends on what is above it, so scroll until its heading is drawn.
-    val list = androidx.compose.foundation.lazy.rememberLazyListState()
-    // Collected, not a key: clearing the request must not restart (and so cancel) the scroll it asked for.
+    // Opened for Recent changes (a notification's tap): straight to its page.
     LaunchedEffect(Unit) {
-        DebugOpen.changes.collect { asked ->
-            if (!asked) return@collect
-            DebugOpen.changes.value = false
-            for (i in 0 until 40) {
-                val at = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "recent" }
-                if (at != null) { list.animateScrollToItem(at.index); break }
-                if (!list.canScrollForward) break
-                list.scrollBy(1200f)
-            }
-        }
+        DebugOpen.changes.collect { asked -> if (asked) { DebugOpen.changes.value = false; page = AccountPages.CHANGES } }
     }
+    // Marble's own way in (its likes, follows and saved interests) isn't one of them: removing it would break Marble.
+    val sites = ui.sites.filterNot { ownGrant(it) }
+    val tier1 = m.box.isEmpty()
+    // A site page whose last way in was removed has nothing left to show: back to the list.
+    LaunchedEffect(page, sites) { AccountPages.origin(page)?.let { o -> if (sites.none { it.origin == o }) page = AccountPages.SITES } }
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(page) { list.scrollToItem(0) }
 
     LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack, Modifier.padding(end = 8.dp).size(32.dp)) {
+                IconButton({ if (page == null) onBack() else page = AccountPages.up(page) }, Modifier.padding(end = 8.dp).size(32.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text)
                 }
-                Text("Your account", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+                Text(AccountPages.title(page), style = MaterialTheme.typography.titleLarge, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.height(16.dp))
+        }
+        if (page == null) item {
+            Spacer(Modifier.height(2.dp))
             var switching by remember { mutableStateOf(false) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).clickable(onClick = onProfile), verticalAlignment = Alignment.CenterVertically) {
@@ -548,7 +548,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
             ui.error?.let { Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
         }
-        // The paper backup's nudge is on the home screen; here it's under Keep your account safe.
+        // What needs you stays on top of the short list.
+        if (page == null) {
         items(ui.future, key = { "future:" + it.id }) { f -> FutureCard(f) { phone.removeFuture(f) } }
         items(ui.deleting, key = { "deleting:" + it.batch }) { d -> DeletingCard(d, now) { phone.cancelDeletion(d.batch) } }
         items(ui.batchAsks, key = { "batch:" + it.batch }) { b -> BatchCard(b, now) { approve -> phone.decideBatch(b.batch, approve) } }
@@ -560,7 +561,14 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             item { Text("$silent of your $of write relays haven't answered in a week", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 6.dp)) }
         }
-        item { Heading("Your devices") }
+        item {
+            Column {
+                for (row in AccountPages.rows(sites, m.group.members.count { !it.isBox })) MenuRow(row.label, row.count) { page = row.page }
+            }
+        }
+        }
+
+        if (page == AccountPages.DEVICES) {
         items(m.group.members.filter { !it.isBox }, key = { "member:" + it.idx }) { d ->
             // What you've called it (on any of your devices), else the name it joined with. A long press renames it.
             val name = names[cc.aaro.cosign.Social.deviceKey(d)]?.name ?: d.name
@@ -580,7 +588,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
         }
         if (!m.chip) item { Muted("This phone has no fingerprint set up, so it can sign but can't change your account (add a device, unblock, cycle keys, show the key).") }
-        val tier1 = m.box.isEmpty()
         // One button for any account: the new device's code says what it is, and this phone decides what it gets (Keykin SPEC 8b).
         item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Add a device", color = Vault.Accent) } }
         if (!tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Log in to your box's page", color = Vault.Accent) } }
@@ -588,26 +595,35 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         // Your account page (Keykin Login): where it is, and the username and password that can look and block there.
         if (!tier1) item { Heading("Your account page") }
         if (!tier1) item { AccountPageRows(ui, phone) }
+        }
 
-        item { Heading("Apps and sites you're signed in to") }
+        if (page == AccountPages.SITES) {
         item {
             Button(onScan, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
                 Text("Sign in to a site", style = MaterialTheme.typography.labelLarge)
             }
         }
         item { TextButton({ bunkerAsk = true }, contentPadding = PaddingValues(0.dp)) { Text("Get a bunker link to paste into a site", color = Vault.Accent) } }
-        // Marble's own way in (its likes, follows and saved interests) isn't one of them: removing it would break Marble.
-        val sites = ui.sites.filterNot { ownGrant(it) }
         if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
-        // One entry per website, with each way it's connected inside.
-        items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
-            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes,
-                changes = ui.changes.filter { it.by == origin && !it.undone }, onUndoOne = { phone.undo(it) })
+        // One row per website, newest used first; its page has what it changed and its Undo.
+        items(AccountPages.siteRows(sites), key = { "site:" + it.first }) { (origin, used) ->
+            MenuRow(origin.removePrefix("https://"), "used ${ago(used)}") { page = AccountPages.site(origin) }
+        }
+        }
+
+        // One site: what it changed, each with Undo, then its ways in (Undo all, Remove, switches).
+        AccountPages.origin(page)?.let { origin ->
+            val changed = AccountPages.changesBy(origin, ui.changes)
+            if (changed.isEmpty()) item { Muted("No changes from it yet.") }
+            items(changed, key = { "change:" + it.id }) { ChangeRow(it) { phone.undo(it) } }
+            val grants = sites.filter { it.origin == origin }
+            if (grants.isNotEmpty()) item(key = "grants:$origin") {
+                SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes)
+            }
         }
 
         // Following: your Special Follow list and where the news comes from.
-        item { Heading("Following") }
-        item {
+        if (page == AccountPages.FOLLOWING) item {
             val special by social.special.collectAsState()
             Column {
                 Row(Modifier.fillMaxWidth().clickable(onClick = onSpecial).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -631,8 +647,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
 
         // Translation: posts in a language you don't read are translated on this phone; these you read are left as they are.
-        item { Heading("Languages you read") }
-        item {
+        if (page == AccountPages.LANGUAGES) item {
             val added by cc.aaro.cosign.OnDevice.added.collectAsState()
             var adding by remember { mutableStateOf(false) }
             val phoneLangs = remember { val l = android.os.LocaleList.getDefault(); (0 until l.size()).map { l[it].language }.distinct() }
@@ -656,11 +671,10 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                     color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
             }
         }
-        item { TranslateSetting() }
+        if (page == AccountPages.LANGUAGES) item { TranslateSetting() }
 
         // Search: the engine Enter goes to, its suggestions as you type, and when "Search posts" shows. On this phone.
-        item { Heading("Search") }
-        item {
+        if (page == AccountPages.SEARCH) item {
             val context = androidx.compose.ui.platform.LocalContext.current
             val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
             val suggest by cc.aaro.cosign.SearchPrefs.suggestions.collectAsState()
@@ -697,6 +711,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
 
         // The paper backup is not decided for Keykin (one paper piece does nothing alone). Until it is: a second device.
+        if (page == AccountPages.DEVICES) {
         item { Heading("Keep your account safe") }
         if (tier1) item {
             Muted("Your key is on this phone, sealed, and it signs from here. It is never deleted unless you choose to. To keep a copy, send it to another device of yours.")
@@ -723,22 +738,19 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 else "Your account is on $devices devices and your box. Any one device with the box can sign, so losing one loses nothing: block it from another.")
         }
 
-        item(key = "recent") { Heading("Recent changes") }
+        }
+
+        if (page == AccountPages.CHANGES) {
         if (ui.changes.isEmpty()) item { Muted("Follows, profile, bookmarks… every change made through this phone shows up here, with Undo, and changes made in other apps or devices once $appName finds them.") }
-        items(ui.changes.take(12), key = { "change:" + it.id }) { ChangeRow(it) { phone.undo(it) } }
+        items(ui.changes, key = { "change:" + it.id }) { ChangeRow(it) { phone.undo(it) } }
 
         if (ui.deleted.isNotEmpty()) {
             item { Heading("Deleted, with copies kept") }
             items(ui.deleted, key = { "deleted:" + it.id }) { DeletedRow(it) { phone.repost(it) } }
         }
-
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp).clickable { advanced = !advanced }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Advanced", style = MaterialTheme.typography.titleSmall, color = Vault.Muted, modifier = Modifier.weight(1f))
-                Text(if (advanced) "▴" else "▾", color = Vault.Muted)
-            }
         }
-        if (advanced) {
+
+        if (page == AccountPages.ADVANCED) {
             item {
                 if (tier1) Muted("Your account is a Nostr key, kept on this phone. A Keykin box is optional: signing in to one splits the key between this phone and the box, so a lost phone can be blocked. This phone keeps the whole key either way.")
                 if (tier1) TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Sign in to a Keykin box", color = Vault.Accent) }
