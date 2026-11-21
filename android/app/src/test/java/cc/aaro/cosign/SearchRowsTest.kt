@@ -70,6 +70,20 @@ class SearchRowsTest {
 
     @Test fun site() = check(SearchRows.site("jumble.social"), "jumble.social", "Website", "", Goes.Browser, "Open jumble.social in your browser")
 
+    @Test fun siteThatIsAChip() = check(SearchRows.site("jumble.social", chip = true), "jumble.social", "Website", "", Goes.Marble, "Open jumble.social in Marble")
+
+    @Test fun anyHttpsAddressCanOpenOnThePane() {
+        // An address the index doesn't know (astral.syb.lol): a visit, which Keep turns into a chip.
+        val v = SearchRows.paneSite(Sites.match("astral.syb.lol")!!)!!
+        assertEquals("https://astral.syb.lol", v.origin)
+        assertEquals(cc.aaro.cosign.web.WebSite.Kind.VISITING, v.kind)
+        assertEquals(false, v.asks)
+        // One already on the pane: its chip.
+        assertEquals(cc.aaro.cosign.web.WebSite.Kind.BUILT_IN, SearchRows.paneSite(Sites.match("jumble.social")!!)!!.kind)
+        // http (a name on your network): the browser only.
+        assertEquals(null, SearchRows.paneSite(Sites.match("router/")!!))
+    }
+
     @Test fun handleWithAName() = check(SearchRows.handle("Mastodon", "Cody", "@cody@mastodon.social"),
         "Cody", "Profile on Mastodon", "@cody@mastodon.social", Goes.Browser, "Open Cody's profile on Mastodon in your browser")
 

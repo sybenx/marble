@@ -3226,7 +3226,13 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
         focusManager.clearFocus()
     }
     // A site, from the box: in Searches too, with the site under it.
-    fun goTo(s: cc.aaro.cosign.Sites.Go) { social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, s.url, s.address) }; SearchText.search.value = null; openInBrowser(context, s.url) }
+    // In Marble (the web pane) when it's a chip you kept, or when you ask for it ([pane]); otherwise the browser.
+    val feedV by social.feedVersion.collectAsState()
+    fun goTo(s: cc.aaro.cosign.Sites.Go, pane: Boolean = false) {
+        social.searches.searched(t, SearchText.search.value).let { social.searches.opened(it.id, s.url, s.address) }; SearchText.search.value = null
+        val site = cc.aaro.cosign.SearchRows.paneSite(s)?.takeIf { feedV == 5 && (pane || it.kind != cc.aaro.cosign.web.WebSite.Kind.VISITING) }
+        if (site == null) openInBrowser(context, s.url) else { nav.home(); WebWanted.value = site to s.url }
+    }
     val go = {
         when {
             t.isEmpty() || pasted != null -> {}
@@ -3284,7 +3290,11 @@ private fun SearchScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize
                 }
                 item(key = "place") { GoToPlace(name) { goToPlace(name, nav, context) } }
             }
-            site?.takeUnless { siteIsApp }?.let { s -> item(key = "wh") { Heading("Web") }; item(key = "site") { GoToSite(s) { goTo(s) } } }
+            site?.takeUnless { siteIsApp }?.let { s -> item(key = "wh") { Heading("Web") }; item(key = "site") {
+                val paneSite = remember(s) { cc.aaro.cosign.SearchRows.paneSite(s) }.takeIf { feedV == 5 }
+                GoToSite(s, chip = paneSite != null && paneSite.kind != cc.aaro.cosign.web.WebSite.Kind.VISITING,
+                    onPane = paneSite?.takeIf { it.kind == cc.aaro.cosign.web.WebSite.Kind.VISITING }?.let { { goTo(s, pane = true) } }) { goTo(s) }
+            } }
             if (apps.isNotEmpty()) item(key = "apph") { Heading("Apps") }
             items(apps, key = { "app:" + it.address + it.url }) { a ->
                 AppRow(a, followSet) {
@@ -3930,10 +3940,14 @@ private fun AppRow(a: cc.aaro.cosign.AppEntry, follows: Set<String>, onOpen: () 
     }
 }
 
-/** "google.com, Website": the top row of search, for an address or a well-known site's name. Opens the browser. */
+/**
+ * "google.com, Website": the top row of search, for an address or a well-known site's name. A tap opens the browser, or
+ * Marble's web pane when it's a chip you kept ([chip]). [onPane]: an "Open in Marble" button that opens it there as a
+ * visit, which you can Keep as a chip (any https site, not only the index's apps).
+ */
 @Composable
-private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) {
-    val r = cc.aaro.cosign.SearchRows.site(s.address)
+private fun GoToSite(s: cc.aaro.cosign.Sites.Go, chip: Boolean = false, onPane: (() -> Unit)? = null, onGo: () -> Unit) {
+    val r = cc.aaro.cosign.SearchRows.site(s.address, chip)
     Row(
         Modifier.fillMaxWidth().clickable(onClickLabel = r.say, onClick = onGo).padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -3947,6 +3961,17 @@ private fun GoToSite(s: cc.aaro.cosign.Sites.Go, onGo: () -> Unit) {
             KindLine(r)
         }
         GoesTo(r.goes)
+        onPane?.let { open ->
+            Row(
+                Modifier.padding(start = 10.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(16.dp))
+                    .clickable(onClickLabel = "Open ${s.address} in Marble", onClick = open).padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Glyphs.pane, null, tint = Vault.Accent, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("In Marble", color = Vault.Accent, style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }
 

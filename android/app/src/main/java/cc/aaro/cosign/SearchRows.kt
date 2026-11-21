@@ -45,8 +45,17 @@ object SearchRows {
         return Row(a.name, kind, listOfNotNull(detail, "You follow them".takeIf { a.pubkey in follows }).joinToString(" · "), goes, say)
     }
 
-    /** "Go to" an address: the bare address, a website, in the browser. */
-    fun site(address: String) = Row(address, "Website", "", Goes.Browser, "Open $address in your browser")
+    /**
+     * Where a "Go to" row's site opens on the web pane: the chip already on its origin (one you kept), or a visiting chip
+     * for an https address, which you can then Keep. Null for http (a name on your network): the browser only. A visit
+     * can't ask to sign in until you keep it, the same as an app from the index.
+     */
+    fun paneSite(go: Sites.Go): WebSite? = WebSites.byOrigin(WebRules.originOf(go.url)) ?: WebSites.visiting(go.address, go.url)
+
+    /** "Go to" an address: the bare address, a website. In the browser, or in Marble when it's already a chip of yours ([chip]). */
+    fun site(address: String, chip: Boolean = false) =
+        if (chip) Row(address, "Website", "", Goes.Marble, "Open $address in Marble")
+        else Row(address, "Website", "", Goes.Browser, "Open $address in your browser")
 
     /** A handle's page elsewhere: who (their name, or the handle), "Profile on Mastodon" and the handle, in the browser. */
     fun handle(on: String, name: String?, handle: String) =

@@ -34,6 +34,18 @@ Score (the phone and the page add text match and "you follow them"): official 40
 recommenders `8 x log2(1 + n)`, the seed's network `0.6 x min(40, follows + 25 if followed directly)`, nostr-builder 5,
 live 5, updated in 90 days 3, nsite substance (3+ files 3, else -10; no description -3), Android-only -15.
 
+## Your own sites (own-apps/)
+
+A site is only in the index if a trusted key has published a NIP-89 handler (kind 31990) or an nsite for it. Typing an
+address that isn't there still works in Marble: the "Go to" row's "In Marble" button opens any https site on the web pane,
+where Keep makes it a chip. `own-apps/` holds the unsigned handler events for Aaron's own sites (astral.syb.lol,
+discover.syb.lol). Each domain's `/.well-known/nostr.json` names Aaron's key as `_`, so the listing counts as official.
+Sign and publish one with your own key (nak asks nothing else; `--sec` takes an nsec, ncryptsec or bunker URL):
+
+    nak event --sec <yours> wss://relay.ditto.pub wss://purplepag.es wss://relay.primal.net wss://syb.lol < own-apps/astral.json
+
+It's in the next daily build. Republishing with the same `d` replaces it.
+
 ## apps.json
 
 ```json
