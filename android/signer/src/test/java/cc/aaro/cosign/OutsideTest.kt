@@ -83,14 +83,17 @@ class OutsideTest {
         assertNotNull(o.alarm)
         assertNull("9 is not most", Policy.outside(prev, list(3, (1..31).map { p(it) }))!!.alarm)
         assertEquals("Follow list: all 40 follows removed", Policy.outside(prev, list(3, emptyList()))!!.text)
-        // Relays: two or more and half, or all of them; said as old against new.
+        // The relay list and DM relays: any change at all is an alarm (Aaron, 2026-11-21), said as old against new.
         val relays = list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"), listOf("r", "wss://d")))
         val half = Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a/"), listOf("r", "wss://b"))))!!
         assertEquals("Relay list: changed from a, b, c and d to a and b", half.text)
         assertEquals("Changed from a, b, c and d to a and b.", half.alarm)
         val one = Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"))))!!
-        assertNull(one.alarm)
+        assertEquals("Changed from a, b, c and d to a, b and c.", one.alarm)
         assertEquals("Relay list: changed from a, b, c and d to a, b and c", one.text)
+        // Other relay lists: two or more and half, or all of them.
+        val search = list(10007, listOf(listOf("relay", "wss://a"), listOf("relay", "wss://b"), listOf("relay", "wss://c"), listOf("relay", "wss://d")))
+        assertNull(Policy.outside(search, list(10007, listOf(listOf("relay", "wss://a"), listOf("relay", "wss://b"), listOf("relay", "wss://c"))))!!.alarm)
     }
 
     /** 2026-11-21 01:44:57 UTC: Vector wrote its own DM relays (kind 10050) over Aaron's from 2026-10-25. */
@@ -115,13 +118,17 @@ class OutsideTest {
         assertEquals(1, q.level)
         assertEquals("Change your DM relays from haven.aaro.cc/inbox, herbstmeister.com/inbox, relay.vantis.ninja, herbstmeister.com and bothy-relay.sybenx.workers.dev " +
             "to jskitty.com/nostr, asia.vectorapp.io/nostr, nostr.computingcache.com and relay.ditto.pub", q.says)
-        // Adding one, or dropping one of several, is everyday: no question.
-        assertNull(Policy.question(dm("wss://haven.aaro.cc/inbox", "wss://x"), dm("wss://haven.aaro.cc/inbox"), T))
-        assertNull(Policy.question(dm("wss://a", "wss://b"), dm("wss://a", "wss://b", "wss://c"), T))
-        // Its only relay swapped for another: asked.
+        // Every change to the DM relays is asked about (Aaron, 2026-11-21): adding one, dropping one of several.
+        assertEquals("Add x to your DM relays", Policy.question(dm("wss://haven.aaro.cc/inbox", "wss://x"), dm("wss://haven.aaro.cc/inbox"), T)!!.says)
+        assertEquals("Remove c from your DM relays", Policy.question(dm("wss://a", "wss://b"), dm("wss://a", "wss://b", "wss://c"), T)!!.says)
+        assertNull(Policy.question(dm("wss://b", "wss://a/"), dm("wss://a", "wss://b"), T))
+        // Its only relay swapped for another: asked, as for any other relay list.
         assertEquals("Change your group invite relays from a to x", Policy.question(list(10051, listOf(listOf("relay", "wss://x"))), list(10051, listOf(listOf("relay", "wss://a"))), T)!!.says)
-        // An earlier version is needed: the first one seen is the baseline.
-        assertNull(Policy.question(vector, null, T))
+        // With no earlier version seen, an app's first list would replace one signed elsewhere: asked too.
+        assertEquals("Set your DM relays to jskitty.com/nostr, asia.vectorapp.io/nostr, nostr.computingcache.com and relay.ditto.pub", Policy.question(vector, null, T)!!.says)
+        // A child key's relays are its app's to set.
+        assertNull(Policy.question(vector, oct25, T, child = true))
+        assertNull(Policy.question(vector, null, T, child = true))
     }
 
     @Test fun severalLossesInOneRow() {

@@ -119,12 +119,24 @@
    "says": "\"Empty your <name> (it has <n> <items>)\""
   },
   {
+   "id": "marble-relays-reviewed",
+   "impl": [
+    "marble",
+    "box"
+   ],
+   "kinds": "10002, 10050",
+   "then": "ask",
+   "level": 1,
+   "when": "any change to the relays it names, an addition too, and always when no earlier version was seen (Aaron, 2026-11-21: relay changes are always looked at by hand). r and relay tags; a trailing / and the order do not count",
+   "says": "\"Set your <name> to <relays>\" with no earlier version (\"to no relays\" when empty), \"Add <relays> to your <name>\", \"Remove <relays> from your <name>\", \"Remove every relay from your <name>: <old relays>\", else \"Change your <name> from <old relays> to <new relays>\". Relays as below"
+  },
+  {
    "id": "marble-relays-most",
    "impl": [
     "marble",
     "box"
    ],
-   "kinds": "10002, 10006, 10007, 10050, 10051, 30002",
+   "kinds": "10006, 10007, 10051, 30002",
    "then": "ask",
    "level": 1,
    "when": "with a previous version: at least half its relays removed, and 2 or more of them or all of them (an app writing its defaults over yours). r and relay tags; a trailing / does not count",
@@ -5889,7 +5901,7 @@
   {
    "why": "relay list: 2 of 3 dropped",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -5926,12 +5938,12 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Change your relay list from a, b and c to a",
+     "says": "Remove b and c from your relay list",
      "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Change your relay list from a, b and c to a",
+     "says": "Remove b and c from your relay list",
      "level": 1
     }
    },
@@ -5947,7 +5959,7 @@
   {
    "why": "relay list: 1 of 3 dropped",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -5981,126 +5993,6 @@
      [
       "r",
       "wss://c"
-     ]
-    ],
-    "content": ""
-   },
-   "answers": {
-    "marble": {
-     "decision": "sign",
-     "says": null,
-     "level": null
-    },
-    "box": {
-     "decision": "sign",
-     "says": null,
-     "level": null
-    }
-   },
-   "expect": "sign",
-   "level": null,
-   "outcome": {
-    "marble": "signs",
-    "marbleAlone": "signs",
-    "mac": "signs",
-    "keykinDevices": "signs"
-   }
-  },
-  {
-   "why": "relay list: 1 of 2 dropped, one kept",
-   "rules": [
-    "marble-relays-most"
-   ],
-   "event": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [
-     [
-      "r",
-      "wss://a"
-     ]
-    ],
-    "content": ""
-   },
-   "prev": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [
-     [
-      "r",
-      "wss://a"
-     ],
-     [
-      "r",
-      "wss://b"
-     ]
-    ],
-    "content": ""
-   },
-   "answers": {
-    "marble": {
-     "decision": "sign",
-     "says": null,
-     "level": null
-    },
-    "box": {
-     "decision": "sign",
-     "says": null,
-     "level": null
-    }
-   },
-   "expect": "sign",
-   "level": null,
-   "outcome": {
-    "marble": "signs",
-    "marbleAlone": "signs",
-    "mac": "signs",
-    "keykinDevices": "signs"
-   }
-  },
-  {
-   "why": "relay list: 2 of 4 dropped, exactly half",
-   "rules": [
-    "marble-relays-most"
-   ],
-   "event": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [
-     [
-      "r",
-      "wss://a"
-     ],
-     [
-      "r",
-      "wss://b"
-     ]
-    ],
-    "content": ""
-   },
-   "prev": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [
-     [
-      "r",
-      "wss://a"
-     ],
-     [
-      "r",
-      "wss://b"
-     ],
-     [
-      "r",
-      "wss://c"
-     ],
-     [
-      "r",
-      "wss://d"
      ]
     ],
     "content": ""
@@ -6108,12 +6000,12 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Change your relay list from a, b, c and d to a and b",
+     "says": "Remove c from your relay list",
      "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Change your relay list from a, b, c and d to a and b",
+     "says": "Remove c from your relay list",
      "level": 1
     }
    },
@@ -6127,9 +6019,9 @@
    }
   },
   {
-   "why": "relay list: 2 of 5 dropped, under half",
+   "why": "relay list: one added",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6163,47 +6055,35 @@
      [
       "r",
       "wss://b"
-     ],
-     [
-      "r",
-      "wss://c"
-     ],
-     [
-      "r",
-      "wss://d"
-     ],
-     [
-      "r",
-      "wss://e"
      ]
     ],
     "content": ""
    },
    "answers": {
     "marble": {
-     "decision": "sign",
-     "says": null,
-     "level": null
+     "decision": "ask",
+     "says": "Add c to your relay list",
+     "level": 1
     },
     "box": {
-     "decision": "sign",
-     "says": null,
-     "level": null
+     "decision": "ask",
+     "says": "Add c to your relay list",
+     "level": 1
     }
    },
-   "expect": "sign",
-   "level": null,
+   "expect": "ask",
+   "level": 1,
    "outcome": {
-    "marble": "signs",
-    "marbleAlone": "signs",
-    "mac": "signs",
-    "keykinDevices": "signs"
+    "marble": "asks",
+    "marbleAlone": "asks",
+    "mac": "asks",
+    "keykinDevices": "needs_tap"
    }
   },
   {
    "why": "relay list: only a trailing / changed",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6259,9 +6139,127 @@
    }
   },
   {
+   "why": "relay list: the same relays in another order",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://b"
+     ],
+     [
+      "r",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    },
+    "box": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    }
+   },
+   "expect": "sign",
+   "level": null,
+   "outcome": {
+    "marble": "signs",
+    "marbleAlone": "signs",
+    "mac": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "relay list: one read marker changed, the relays the same",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a",
+      "read"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ],
+     [
+      "r",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    },
+    "box": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    }
+   },
+   "expect": "sign",
+   "level": null,
+   "outcome": {
+    "marble": "signs",
+    "marbleAlone": "signs",
+    "mac": "signs",
+    "keykinDevices": "signs"
+   },
+   "uncaught": "Only which relays are named is compared, not whether each is for reading or writing."
+  },
+  {
    "why": "relay list: all 3 replaced by 3 others",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6327,7 +6325,7 @@
   {
    "why": "relay list: its only relay swapped for another",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6377,7 +6375,7 @@
   {
    "why": "relay list: 8 replaced, six named",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6455,7 +6453,7 @@
   {
    "why": "relay list emptied, from 3",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6506,9 +6504,9 @@
    }
   },
   {
-   "why": "relay list emptied, from 2",
+   "why": "relay list emptied, from 1",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6518,6 +6516,44 @@
     "content": ""
    },
    "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10002,
+    "tags": [
+     [
+      "r",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Remove every relay from your relay list: a",
+     "level": 1
+    },
+    "box": {
+     "decision": "ask",
+     "says": "Remove every relay from your relay list: a",
+     "level": 1
+    }
+   },
+   "expect": "ask",
+   "level": 1,
+   "outcome": {
+    "marble": "asks",
+    "marbleAlone": "asks",
+    "mac": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "relay list with no earlier version seen",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
     "created_at": 1800000000,
     "kind": 10002,
@@ -6533,60 +6569,16 @@
     ],
     "content": ""
    },
+   "prev": null,
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove every relay from your relay list: a and b",
+     "says": "Set your relay list to a and b",
      "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove every relay from your relay list: a and b",
-     "level": 1
-    }
-   },
-   "expect": "ask",
-   "level": 1,
-   "outcome": {
-    "marble": "asks",
-    "marbleAlone": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
-   }
-  },
-  {
-   "why": "relay list emptied, from 1",
-   "rules": [
-    "marble-relays-most"
-   ],
-   "event": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [],
-    "content": ""
-   },
-   "prev": {
-    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
-    "created_at": 1800000000,
-    "kind": 10002,
-    "tags": [
-     [
-      "r",
-      "wss://a"
-     ]
-    ],
-    "content": ""
-   },
-   "answers": {
-    "marble": {
-     "decision": "ask",
-     "says": "Remove every relay from your relay list: a",
-     "level": 1
-    },
-    "box": {
-     "decision": "ask",
-     "says": "Remove every relay from your relay list: a",
+     "says": "Set your relay list to a and b",
      "level": 1
     }
    },
@@ -6658,9 +6650,71 @@
    }
   },
   {
-   "why": "DM relays (kind 10050) replaced by an app's defaults",
+   "why": "search relays: 1 of 3 dropped",
    "rules": [
     "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10007,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10007,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ],
+     [
+      "relay",
+      "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    },
+    "box": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    }
+   },
+   "expect": "sign",
+   "level": null,
+   "outcome": {
+    "marble": "signs",
+    "marbleAlone": "signs",
+    "mac": "signs",
+    "keykinDevices": "signs"
+   }
+  },
+  {
+   "why": "DM relays (kind 10050) replaced by an app's defaults",
+   "rules": [
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6736,9 +6790,82 @@
    }
   },
   {
+   "why": "DM relays (kind 10050) set by an app, no earlier version seen",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [
+     [
+      "relay",
+      "wss://jskitty.com/nostr"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Set your DM relays to jskitty.com/nostr",
+     "level": 1
+    },
+    "box": {
+     "decision": "ask",
+     "says": "Set your DM relays to jskitty.com/nostr",
+     "level": 1
+    }
+   },
+   "expect": "ask",
+   "level": 1,
+   "outcome": {
+    "marble": "asks",
+    "marbleAlone": "asks",
+    "mac": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "DM relays set to none, no earlier version seen",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Set your DM relays to no relays",
+     "level": 1
+    },
+    "box": {
+     "decision": "ask",
+     "says": "Set your DM relays to no relays",
+     "level": 1
+    }
+   },
+   "expect": "ask",
+   "level": 1,
+   "outcome": {
+    "marble": "asks",
+    "marbleAlone": "asks",
+    "mac": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
    "why": "DM relays (kind 10050) emptied",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6787,7 +6914,7 @@
   {
    "why": "DM relays: one added",
    "rules": [
-    "marble-relays-most"
+    "marble-relays-reviewed"
    ],
    "event": {
     "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
@@ -6805,6 +6932,64 @@
      [
       "relay",
       "wss://c"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Add c to your DM relays",
+     "level": 1
+    },
+    "box": {
+     "decision": "ask",
+     "says": "Add c to your DM relays",
+     "level": 1
+    }
+   },
+   "expect": "ask",
+   "level": 1,
+   "outcome": {
+    "marble": "asks",
+    "marbleAlone": "asks",
+    "mac": "asks",
+    "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "DM relays: the same ones again",
+   "rules": [
+    "marble-relays-reviewed"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10050,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
      ]
     ],
     "content": ""
@@ -6902,6 +7087,60 @@
     "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
+   }
+  },
+  {
+   "why": "group invite relays: one added",
+   "rules": [
+    "marble-relays-most"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10051,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ],
+     [
+      "relay",
+      "wss://b"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 1800000000,
+    "kind": 10051,
+    "tags": [
+     [
+      "relay",
+      "wss://a"
+     ]
+    ],
+    "content": ""
+   },
+   "answers": {
+    "marble": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    },
+    "box": {
+     "decision": "sign",
+     "says": null,
+     "level": null
+    }
+   },
+   "expect": "sign",
+   "level": null,
+   "outcome": {
+    "marble": "signs",
+    "marbleAlone": "signs",
+    "mac": "signs",
+    "keykinDevices": "signs"
    }
   },
   {

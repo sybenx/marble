@@ -39,6 +39,24 @@ object Policy {
         val kept = after.toSet(); val removed = before.count { it !in kept }
         return before.isNotEmpty() && removed >= before.size * 0.5 && (removed >= 2 || removed == before.size)
     }
+    /** The relay lists whose every change is asked about: the relay list and the DM relays (Aaron, 2026-11-21). */
+    val REVIEWED = setOf(10002, 10050)
+    /** The set of relays a list names, as compared: r and relay tags, a trailing / not counted. */
+    private fun relaysOf(e: Event) = e.tags.filter { it.size > 1 && (it[0] == "r" || it[0] == "relay") }.map { it[1].trimEnd('/') }.distinct()
+    /** Any change to a reviewed relay list, in words that say which relays come and go. Null when the relays are the same. */
+    private fun relayReview(e: Event, prev: Event?): BoxAsk.Question? {
+        val after = relaysOf(e); val name = kindName(e.kind)
+        if (prev == null) return BoxAsk.Question(if (after.isNotEmpty()) "Set your $name to ${relayWords(after)}" else "Set your $name to no relays", 1)
+        val before = relaysOf(prev); val had = before.toSet(); val kept = after.toSet()
+        val added = after.filter { it !in had }; val removed = before.filter { it !in kept }
+        return when {
+            added.isEmpty() && removed.isEmpty() -> null
+            after.isEmpty() -> BoxAsk.Question("Remove every relay from your $name: ${relayWords(before)}", 1)
+            removed.isEmpty() -> BoxAsk.Question("Add ${relayWords(added)} to your $name", 1)
+            added.isEmpty() -> BoxAsk.Question("Remove ${relayWords(removed)} from your $name", 1)
+            else -> BoxAsk.Question("Change your $name from ${relayWords(before)} to ${relayWords(after)}", 1)
+        }
+    }
     /** How far ahead of now a clock may be; past this, an event is dated in the future. */
     const val AHEAD = 600L
     private fun replaceable(k: Int) = k == 0 || k == 3 || k in 10000 until 20000 || k in 30000 until 40000
@@ -125,11 +143,11 @@ object Policy {
      * wiping the profile, emptying the follow list, deleting a whole kept list, a list's private part emptied. Yes only
      * on this phone, behind the fingerprint.
      */
-    fun question(e: Event, prev: Event?, now: Long = Clock.now()): BoxAsk.Question? {
+    fun question(e: Event, prev: Event?, now: Long = Clock.now(), child: Boolean = false): BoxAsk.Question? {
         if (e.createdAt > now + AHEAD) {
             if (refuse(e, now) != null) return null
             // Level 1, unless the same event dated now would be level 2 (a request to vanish, a list's deletion by k).
-            val level = question(e.copy(createdAt = now), prev, now)?.level ?: 1
+            val level = question(e.copy(createdAt = now), prev, now, child)?.level ?: 1
             return BoxAsk.Question("${upper(kindName(e.kind))} dated in the future (${day(e.createdAt)})", level)
         }
         if (e.kind == 62) return BoxAsk.Question("Ask relays to erase everything you have ever published", 2)
@@ -140,6 +158,9 @@ object Policy {
             if (targets >= 5) return BoxAsk.Question("Delete $targets of your events", 1)
             return null
         }
+        // Where you are found and where DMs to you go: every change is looked at by hand, an addition too, and one with no
+        // earlier version seen. A child key's relays are its app's to set, which is what the child is for.
+        if (e.kind in REVIEWED) return if (child) null else relayReview(e, prev)
         if (e.kind !in ARCHIVED || prev == null) return null
         if (e.kind == 0) return wiped(prev, e)?.let { gone ->
             // Nothing left that says who this is: the whole profile goes.
@@ -218,7 +239,8 @@ object Policy {
         val before = old.map { it.first }; val after = new.map { it.first }
         val had = before.toSet(); val kept = after.toSet()
         val removed = before.count { it !in kept }; val added = after.count { it !in had }
-        val big = if (now.kind in RELAYISH) relaysCut(before, after)
+        val big = if (now.kind in REVIEWED) added > 0 || removed > 0
+            else if (now.kind in RELAYISH) relaysCut(before, after)
             else (after.isEmpty() && before.size >= 3) || (removed >= 10 && removed >= before.size * 0.2)
         // A relay list: which relays went and which came in (the title already says which list).
         val relays = relayChange(prev, now)?.let { if (it.startsWith("from ")) "changed $it" else it }

@@ -1489,7 +1489,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
         // judged on its own, never against the main account's lists.
         // Its level goes with it even when you already said Yes: at level 2 the fingerprint is still to come.
-        val own = if (asChild == null) questionFor(ev) else Policy.question(ev, null)
+        val own = if (asChild == null) questionFor(ev) else Policy.question(ev, null, child = true)
         val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
         // The questions you said Yes to here stay in [answering] until this ends, so a screen that asked can stay up
         // for the fingerprint (Android opens it only over a screen of this app).
@@ -1685,7 +1685,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val c = childFor(place)
         val e = Event(c.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId()
         Policy.refuse(e)?.let { throw IllegalStateException(it) }
-        return boxSays { BoxAsk.sign(Policy.question(e, null), approved, Asking.unsaid(e), { throw NeedsApproval(it.says, it.level) }) { tapped, finger -> signNow(e, grant, tapped, c, finger) }.value }
+        return boxSays { BoxAsk.sign(Policy.question(e, null, child = true), approved, Asking.unsaid(e), { throw NeedsApproval(it.says, it.level) }) { tapped, finger -> signNow(e, grant, tapped, c, finger) }.value }
     }
     /** NIP-44 as [place]'s child, with [peer]. */
     fun nip44As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip44With(peer, text, encrypt, grant, childFor(place))

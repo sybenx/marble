@@ -2118,7 +2118,7 @@
       "content": "",
       "created_at": 1800000000
     },
-    "hold": "Change your relay list from a, b and c to a",
+    "hold": "Remove b and c from your relay list",
     "refuse": null
   },
   {
@@ -2158,7 +2158,7 @@
       "content": "",
       "created_at": 1800000000
     },
-    "hold": null,
+    "hold": "Remove c from your relay list",
     "refuse": null
   },
   {
