@@ -303,16 +303,47 @@ sealed class Ref {
     }
 }
 
-/** What a note replies to: the note right above it, and the thread's first note. */
+/**
+ * What a note replies to: the note right above it, and the thread's first note. A comment (NIP-22, kind 1111)
+ * names its parent with a lowercase `e` and its root with an uppercase `E`; one on an article or a web page has
+ * no parent note at all (see [isReply]).
+ */
 fun parentOf(e: Event): String? {
+    if (e.kind == COMMENT) return e.tags.firstOrNull { it.size > 1 && it[0] == "e" }?.get(1)
     val es = e.tags.filter { it.size > 1 && it[0] == "e" }
     return es.firstOrNull { it.getOrNull(3) == "reply" }?.get(1) ?: es.firstOrNull { it.getOrNull(3) == "root" }?.get(1)
         ?: es.lastOrNull { it.getOrNull(3).isNullOrEmpty() || it[3] !in setOf("mention") }?.get(1)
 }
 fun rootOf(e: Event): String? {
+    if (e.kind == COMMENT) return e.tags.firstOrNull { it.size > 1 && it[0] == "E" }?.get(1)
     val es = e.tags.filter { it.size > 1 && it[0] == "e" }
     return es.firstOrNull { it.getOrNull(3) == "root" }?.get(1) ?: es.firstOrNull { it.getOrNull(3).isNullOrEmpty() }?.get(1)
 }
+
+/** NIP-22: a comment, on a note, an article, a video or a web page. */
+const val COMMENT = 1111
+
+/**
+ * The tags of a comment answering [parent], itself a comment (NIP-22: a reply to a comment is a comment). The
+ * thread's root (uppercase E/A/I/K/P) is kept as the parent has it; the parent is named in lowercase.
+ */
+fun commentReplyTags(parent: Event, people: List<String>): List<List<String>> = buildList {
+    parent.tags.filter { it.size > 1 && it[0] in setOf("E", "A", "I", "K", "P") }.forEach { add(it) }
+    add(listOf("e", parent.id, "", parent.pubkey))
+    add(listOf("k", COMMENT.toString()))
+    people.forEach { add(listOf("p", it)) }
+}
+
+/** What a comment with no parent note is on, in a few words: a web page's site, else "an article" or "a post". */
+fun commentedOn(e: Event): String {
+    val i = e.tags.firstOrNull { it.size > 1 && it[0] == "I" }?.get(1)
+    if (i != null && (i.startsWith("http://") || i.startsWith("https://"))) return try { java.net.URI(i).host?.removePrefix("www.") } catch (_: Exception) { null } ?: "a web page"
+    val k = e.tags.firstOrNull { it.size > 1 && it[0] == "K" }?.get(1)
+    return if (k == "30023") "an article" else "a post"
+}
+
+/** Answers something: a reply to a note, or any comment (even one on a web page, which has no parent note). */
+fun isReply(e: Event) = e.kind == COMMENT || parentOf(e) != null
 
 /** The home feed: today's stories for the box at the top, and the posts from people. It ends. */
 data class Feed(val stories: List<TopicCard> = emptyList(), val posts: List<Pick> = emptyList(), val loading: Boolean = false, val failed: Boolean = false, val at: Long = 0) {
@@ -2090,10 +2121,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 }
             }
             // Posts: the fast relays together, the slow ones on their own.
-            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
+            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1, COMMENT), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, COMMENT, 30023), "search" to text, "limit" to 40)
             for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
-                // Posts and long-form articles (an article counts once, as its newest version).
-                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == 30023 }
+                // Posts, comments and long-form articles (an article counts once, as its newest version).
+                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == COMMENT || it.kind == 30023 }
                     .sortedByDescending { it.createdAt }.distinctBy { if (it.kind == 30023) "a:" + it.pubkey + ":" + (it.firstTag("d") ?: it.id) else it.id }
                 remember(got)
                 notes += got.filter { safe(it) }
@@ -2399,10 +2430,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * [until]: older than this, for the next page. Returns when every relay has answered or given up.
      */
     suspend fun notesBy(pk: String, until: Long? = null, onSome: (List<Event>) -> Unit) = kotlinx.coroutines.coroutineScope {
-        val filter = buildMap<String, Any> { put("kinds", listOf(1, 6, 21, 22)); put("authors", listOf(pk)); put("limit", 30); until?.let { put("until", it - 1) } }
+        val filter = buildMap<String, Any> { put("kinds", listOf(1, 6, 21, 22, COMMENT)); put("authors", listOf(pk)); put("limit", 30); until?.let { put("until", it - 1) } }
         val lock = Any()
         fun deliver(got: List<Event>) {
-            val mine = got.filter { it.pubkey == pk && it.kind in listOf(1, 6, 21, 22) }
+            val mine = got.filter { it.pubkey == pk && it.kind in listOf(1, 6, 21, 22, COMMENT) }
             if (mine.isEmpty()) return
             val inner = mine.filter { it.kind == 6 }.mapNotNull { reposted(it) }
             remember(mine.filter { it.kind != 6 } + inner)
@@ -2537,13 +2568,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return null
         val body = text.trim().ifEmpty { return null }
         val root = rootOf(parent) ?: parent.id
-        val tags = buildList {
+        val people = (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
+        val kind = if (parent.kind == COMMENT) COMMENT else 1
+        val tags = if (kind == COMMENT) commentReplyTags(parent, people) else buildList {
             add(listOf("e", root, "", "root"))
             if (root != parent.id) add(listOf("e", parent.id, "", "reply"))
-            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
-                .forEach { add(listOf("p", it)) }
+            people.forEach { add(listOf("p", it)) }
         }
-        val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
+        val signed = actEvent(Event(me, Clock.now(), kind, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
         FeedLog.act(parent.id, "reply", "root" to root.takeIf { it != parent.id })
         remember(listOf(signed))
         // In the thread it was written in, under the post it answers, at once.
@@ -2580,15 +2612,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         notices.update { it.copy(loading = true) }
         scope.launch {
             afterPaint()
-            val evs = Fetch.query(readRelays(), mapOf("kinds" to listOf(1, 6, 7), "#p" to listOf(me), "limit" to 80), 7000).filter { it.pubkey != me && it.pubkey !in muted.value }
+            val evs = Fetch.query(readRelays(), mapOf("kinds" to listOf(1, COMMENT, 6, 7), "#p" to listOf(me), "limit" to 80), 7000).filter { it.pubkey != me && it.pubkey !in muted.value }
             val list = evs.sortedByDescending { it.createdAt }.map { e ->
                 when (e.kind) {
                     7 -> Notice(e, Notice.Type.REACTION, e.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1))
                     6 -> Notice(e, Notice.Type.REPOST, e.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1))
-                    else -> if (parentOf(e) != null) Notice(e, Notice.Type.REPLY, e.id) else Notice(e, Notice.Type.MENTION, e.id)
+                    else -> if (isReply(e)) Notice(e, Notice.Type.REPLY, e.id) else Notice(e, Notice.Type.MENTION, e.id)
                 }
             }
-            remember(evs.filter { it.kind == 1 })
+            remember(evs.filter { it.kind == 1 || it.kind == COMMENT })
             // What the likes were on: your notes.
             val about = list.filter { it.type == Notice.Type.REACTION || it.type == Notice.Type.REPOST }.mapNotNull { it.about }.distinct().filter { note(it) == null }
             if (about.isNotEmpty()) remember(Fetch.query(readRelays(), mapOf("ids" to about.take(60)), 5000))
@@ -2726,10 +2758,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val ids = synchronized(wantCounts) { wantCounts.toList().also { wantCounts.clear() } }.filter { counted.add(it) }
             if (ids.isEmpty()) return@launch
             val got = ids.chunked(100).map { part -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"),
-                mapOf("kinds" to listOf(1, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
+                mapOf("kinds" to listOf(1, COMMENT, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
             val byTarget = HashMap<String, MutableList<Event>>()
             for (r in got) {
-                val target = if (r.kind == 1) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
+                val target = if (r.kind == 1 || r.kind == COMMENT) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
                 if (target != null && target in ids) byTarget.getOrPut(target) { ArrayList() } += r
             }
             engagement.update { m ->
@@ -2738,7 +2770,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val likes = rs.filter { it.kind == 7 && it.content != "-" }.distinctBy { it.pubkey }
                     val emojis = likes.groupingBy { it.content.ifBlank { "+" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key to it.value }
                     val had = m[id] ?: Engagement()
-                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 }), likes = maxOf(had.likes, likes.size),
+                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 || it.kind == COMMENT }), likes = maxOf(had.likes, likes.size),
                         reposts = maxOf(had.reposts, rs.count { it.kind == 6 || it.kind == 16 }), emojis = if (likes.size >= had.likes) emojis else had.emojis)
                 }
             }

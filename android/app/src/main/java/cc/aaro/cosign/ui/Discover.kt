@@ -164,6 +164,7 @@ import cc.aaro.cosign.appName
 import cc.aaro.qrst.core.Event
 import cc.aaro.qrst.core.hexToBytes
 import cc.aaro.cosign.parentOf
+import cc.aaro.cosign.commentedOn
 import cc.aaro.cosign.shortNpub
 import kotlinx.coroutines.delay
 
@@ -1914,7 +1915,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
     val offer = nav.social.offers.collectAsState().value[n.id]
     var original by remember(n.id) { mutableStateOf(false) }
     // A link with a preview shows as a card instead of in the text; an article as a card of its own.
-    val link = remember(n.id) { if (pick != null) Calm.link(n) else if (n.kind == 1) Body.of(n).previewLink?.url else null }
+    val link = remember(n.id) { if (pick != null) Calm.link(n) else if (n.kind == 1 || n.kind == cc.aaro.cosign.COMMENT) Body.of(n).previewLink?.url else null }
     if (link != null && pick == null) LaunchedEffect(link) { nav.social.wantPreview(link) }
     val card = if (n.kind == 30023) remember(n.id) { Preview(n.firstTag("title") ?: "Article", n.firstTag("image"), n.firstTag("summary") ?: "", "Article") } else link?.let { previews[it] }
     val body = remember(n.id, tr, original, card != null) {
@@ -1954,6 +1955,10 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             LaunchedEffect(n.id) { People.want(body.mentions + listOfNotNull(to)) }
             if (indent == 0 && parentOf(n) != null) {
                 Text("Replying to ${to?.let { people[it]?.shown ?: shortNpub(it) } ?: "a note"}", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+            } else if (indent == 0 && n.kind == cc.aaro.cosign.COMMENT) {
+                // A comment on something that isn't a note: an article, a video, a web page.
+                val on = remember(n.id) { commentedOn(n) }
+                Text("Comment on $on", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
             }
             // Likely spam (manufactured likes, or an author who posts like it): said plainly, the reason a tap away.
             nav.social.spam.collectAsState().value[n.id]?.let { SpamCue(it) { nav.social.notSpam(n) } }
@@ -1966,7 +1971,7 @@ private fun NoteCard(n: Event, people: Map<String, Person>, liked: Boolean, nav:
             val text = remember(body, people.size) { body.annotated(people, nav) }
             val emoji = remember(body) { body.emojiContent() }
             // Translated (on the phone), at the top where a long post starts: the original a tap away, in place.
-            if (!veiled && n.kind == 1) LaunchedEffect(n.id) { nav.social.lookAt(n) }
+            if (!veiled && (n.kind == 1 || n.kind == cc.aaro.cosign.COMMENT)) LaunchedEffect(n.id) { nav.social.lookAt(n) }
             tr?.let { t ->
                 Text("Translated from ${OnDevice.name(t.from ?: "")} · " + if (original) "Show translation" else "Show original",
                     color = Vault.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 2.dp).clickable { original = !original })
@@ -2083,7 +2088,7 @@ private fun QuoteBox(id: String, people: Map<String, Person>, nav: Nav) {
     var open by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) { q = nav.social.fetchQuoted(id); looked = true; q?.let { People.want(listOf(it.pubkey)) } }
     val e = q ?: return if (looked) NotFound("https://marble.syb.lol/" + cc.aaro.qrst.core.Bech32.encode("note", id.hexToBytes())) else Unit
-    if (e.kind != 1) return OtherBox(e, e.pubkey, people, nav)
+    if (e.kind != 1 && e.kind != cc.aaro.cosign.COMMENT) return OtherBox(e, e.pubkey, people, nav)
     Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp))
         .clickable(onClickLabel = if (open) "Open it" else "Show it whole") { if (open) nav.thread(e.id) else open = true }.padding(horizontal = 12.dp, vertical = 9.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2147,7 +2152,7 @@ private fun OtherBox(e: Event?, author: String, people: Map<String, Person>, nav
         when {
             // An article: its card (picture, title, summary), as an article shows in the feed.
 
-            else -> Text(if (e == null) "Couldn't load this post" else if (e.kind == 1) cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown } else OtherApps.what(e),
+            else -> Text(if (e == null) "Couldn't load this post" else if (e.kind == 1 || e.kind == cc.aaro.cosign.COMMENT) cc.aaro.cosign.readable(e.content.trim()) { people[it]?.shown } else OtherApps.what(e),
                 color = if (inMarble) Vault.Text else Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp))
         }
@@ -2689,24 +2694,45 @@ private fun ThreadScreen(id: String, social: Social, nav: Nav, startReply: Boole
     val shown = thread
     var showAllReplies by remember(id) { mutableStateOf(false) }
     // Read so the replies fold again when the circle is known or changes.
-    social.circleAt.collectAsState().value
+    val circleAt = social.circleAt.collectAsState().value
     val articleBlocks = shown?.firstOrNull { it.second == 0 && it.first.kind == 30023 }?.first?.let { a -> remember(a.id) { a.id to Markdown.parse(a) } }
+    // Under your own post: replies from outside your circle (and what answers them) fold into one line.
+    val folded = remember(shown, showAllReplies, id, circleAt) {
+        val root = shown?.firstOrNull { it.second == 0 }?.first
+        if (shown == null || root?.pubkey != social.me || showAllReplies) emptySet() else {
+            val out = HashSet<String>(); var under = Int.MAX_VALUE
+            for ((e, depth) in shown) {
+                if (depth <= under) under = Int.MAX_VALUE
+                if (depth > 0 && under == Int.MAX_VALUE && e.id != id && !social.inCircle(e.pubkey)) under = depth
+                if (under != Int.MAX_VALUE) out += e.id
+            }
+            out
+        }
+    }
+    // A reply or comment you opened (from search, say) is what you see, not the top of its thread: the list goes to
+    // it as the thread comes in, until you move it yourself.
+    val listState = rememberLazyListState()
+    var moved by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(listState, id) {
+        listState.interactionSource.interactions.first { it is androidx.compose.foundation.interaction.DragInteraction.Start }
+        moved = true
+    }
+    LaunchedEffect(shown, loading, folded) {
+        val list = shown ?: return@LaunchedEffect
+        val at = list.indexOfFirst { it.first.id == id }
+        if (moved || at <= 0 || list[at].second == 0) return@LaunchedEffect
+        if (id in folded) { showAllReplies = true; return@LaunchedEffect }
+        // Rows below it are all ours to count (an article above adds rows of its own): its place is counted from the end.
+        val below = list.drop(at + 1).count { it.first.id !in folded } + (if (folded.isNotEmpty()) 1 else 0) + (if (loading) 1 else 0)
+        androidx.compose.runtime.withFrameNanos { }  // this thread's rows laid out, not the last one's
+        val total = androidx.compose.runtime.snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > below }
+        if (!moved) listState.scrollToItem(total - below - 1)
+    }
     Box(Modifier.weight(1f)) {
         when {
             shown == null -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             shown.isEmpty() -> Text("Couldn't find this post.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
-            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
-                // Under your own post: replies from outside your circle (and what answers them) fold into one line.
-                val root = shown.firstOrNull { it.second == 0 }?.first
-                val folded = if (root?.pubkey != social.me || showAllReplies) emptySet() else {
-                    val out = HashSet<String>(); var under = Int.MAX_VALUE
-                    for ((e, depth) in shown) {
-                        if (depth <= under) under = Int.MAX_VALUE
-                        if (depth > 0 && under == Int.MAX_VALUE && e.id != id && !social.inCircle(e.pubkey)) under = depth
-                        if (under != Int.MAX_VALUE) out += e.id
-                    }
-                    out
-                }
+            else -> LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 12.dp)) {
                 for ((e, depth) in shown) {
                     if (e.id in folded) continue
                     // An article: the reader (its Markdown, set for reading); then its replies, as under any post.
