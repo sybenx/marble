@@ -4074,7 +4074,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
         if (f == null) { item(key = "wait") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }; return@LazyColumn }
         // Still looking: a spinner while there's nothing yet, a thin bar once results are showing.
         if (f.loading) item(key = "loading") {
-            if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+            if (f.people.isEmpty() && f.notes.isEmpty() && f.archive.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         }
         // Someone you follow, named in the search: "Anarko · thailand", their posts (and anyone else it could mean). Their
@@ -4101,6 +4101,14 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                     modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp))
             }
         } }
+        // Your archive (your private relays): yours alone, first.
+        if (!peopleOnly && f.archive.isNotEmpty()) {
+            item(key = "yh") { Heading("From your archive") }
+            items(f.archive, key = { "y" + it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+        }
         val loose = f.split?.loose == true && !peopleOnly && f.notes.isNotEmpty()
         if (!loose) authorSection()
         if (showPeople && f.people.isNotEmpty()) {
@@ -4155,7 +4163,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 HorizontalDivider(color = Vault.Edge)
             }
         }
-        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty()) item(key = "none") {
+        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty() && f.archive.isEmpty()) item(key = "none") {
             Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
             // Only here: one row to try your engine instead.
             val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()

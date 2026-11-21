@@ -21,6 +21,10 @@ class PrivateRelays(private val prefs: android.content.SharedPreferences?) {
         const val TAG = "marble/private-relays"
         /** [url] for people: no scheme, no trailing slash. */
         fun label(url: String): String = SyncGuard.normRelay(url).substringAfter("://")
+        /** What's asked of your archive: NIP-50 search over posts, articles and profiles (a #tag: posts with it). */
+        fun searchFilter(text: String, tag: String?): Map<String, Any> =
+            if (tag != null) mapOf("kinds" to listOf(1, 30023), "#t" to listOf(tag), "limit" to 40)
+            else mapOf("kinds" to listOf(1, 30023, 0), "search" to text, "limit" to 40)
         /** A typed address as stored: wss:// added if missing; null if it isn't a relay address. */
         fun parse(input: String): String? {
             val t = input.trim().ifEmpty { return null }

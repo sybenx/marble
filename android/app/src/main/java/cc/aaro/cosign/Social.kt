@@ -392,7 +392,9 @@ data class Notices(val list: List<Notice> = emptyList(), val loading: Boolean = 
 
 /** A search's results; [split]: someone you follow named in it, and [byAuthor], their posts with the other words (first). */
 data class Found(val query: String, val people: List<String> = emptyList(), val notes: List<Event> = emptyList(), val loading: Boolean = true, val hits: Map<String, Hit> = emptyMap(),
-                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap())
+                 val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap(),
+                 /** Found on your private relays (your archive), shown apart as yours. */
+                 val archive: List<Event> = emptyList())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
 /** [level] 2: Yes goes on to the fingerprint. */
@@ -2131,6 +2133,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 if (author == null || author == s.author) s else s.copy(author = author, others = (listOf(s.author) + s.others).filter { it != author })
             }
             val byAuthor = java.util.Collections.synchronizedList(ArrayList<Event>())
+            val archive = java.util.Collections.synchronizedList(ArrayList<Event>())
             val caught = ConcurrentHashMap<String, cc.aaro.cosign.spam.Spam.Why>()
             var first: String? = null
             fun show(loading: Boolean) {
@@ -2139,7 +2142,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
                 val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
-                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught))
+                val yours = synchronized(archive) { archive.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
+                found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } && yours.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught), yours)
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
             fun add(p: Person, rank: Int = 9) { hits.putIfAbsent(p.pubkey, Hit(p.pubkey, p.name, rank * 1000 + order.getAndIncrement(), follow = p.pubkey in mine, bare = Hit.bare(p))) }
@@ -2199,6 +2203,17 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 relayJobs += launch {
                     theirs(Fetch.query((outboxOf(split.author) + bigRelays).map { it.trimEnd('/') }.distinct(), mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000), "latest")
                 }
+            }
+            // Your archive (private relays, logged in as you): only when you have one, and never anywhere else.
+            val privates = privateRelays.urls()
+            if (privates.isNotEmpty()) relayJobs += launch {
+                val f = PrivateRelays.searchFilter(text, tag)
+                val got = try { Fetch.query(privates, f, 8000) } catch (e: Exception) { if (debuggable) android.util.Log.w("CosignSearch", "archive: ${e.javaClass.simpleName}"); emptyList() }
+                People.add(got.filter { it.kind == 0 })
+                val posts = got.filter { it.kind == 1 || it.kind == 30023 }
+                remember(posts); archive += posts
+                People.want(posts.map { it.pubkey })
+                show(true); mark("archive: ${posts.size} posts from ${privates.size} relays")
             }
             // Posts: the fast relays together, the slow ones on their own.
             val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1, COMMENT), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, COMMENT, 30023), "search" to text, "limit" to 40)
