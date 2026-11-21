@@ -125,7 +125,7 @@ class Nip55Activity : ComponentActivity() {
         Spacer(Modifier.height(10.dp))
         Text("It's probably a better fit for a key of its own than your main profile. Switch it to a new key?", style = MaterialTheme.typography.titleMedium, color = Vault.Text)
         Spacer(Modifier.height(8.dp))
-        Text("It asked${whichKey()} to ${cc.aaro.cosign.ui.question(what).removeSuffix("?").replaceFirstChar { it.lowercase() }}.", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+        Text("It asked to ${cc.aaro.cosign.ui.question(what).removeSuffix("?").replaceFirstChar { it.lowercase() }}${whichKey()}.", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
         Spacer(Modifier.height(6.dp))
         Text("A plus: messages sent to your main account won't reach it, so it gets no spam meant for you.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
         Spacer(Modifier.height(20.dp))
