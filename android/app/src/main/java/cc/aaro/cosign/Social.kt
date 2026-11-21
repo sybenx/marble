@@ -807,15 +807,20 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = reader ?: return special.value
         val list = Fetch.query((writeRelays() + readRelays()).distinct().take(8), mapOf("kinds" to listOf(10010), "authors" to listOf(me), "limit" to 3), 6000)
             .maxByOrNull { it.createdAt } ?: return special.value
-        val public = list.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
-        val private = list.content.takeIf { it.isNotBlank() && me == this.me }?.let { c -> toSelf(c, encrypt = false) }?.let { j ->
-            try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.takeIf { it.size > 1 && it[0] == "p" }?.get(1) as? String } } catch (_: Exception) { null }
-        } ?: emptyList()
-        val all = (public + private).filter { it.length == 64 }.toSet()
+        val all = specialIn(list, me)
         specialAt = System.currentTimeMillis()
         special.value = all
         prefs.edit().putStringSet("special", all).apply()
         return all
+    }
+
+    /** Everyone on a Special Follow list: its public names, and its private ones when it's yours and this phone can read them. */
+    private suspend fun specialIn(list: Event, me: String): Set<String> {
+        val public = list.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
+        val private = list.content.takeIf { it.isNotBlank() && me == this.me }?.let { c -> toSelf(c, encrypt = false) }?.let { j ->
+            try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.takeIf { it.size > 1 && it[0] == "p" }?.get(1) as? String } } catch (_: Exception) { null }
+        } ?: emptyList()
+        return (public + private).filter { it.length == 64 }.toSet()
     }
 
     /** What your Special Follow people posted in the last two days (their own posts, not replies). */
@@ -3274,7 +3279,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
                     ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
                 val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
-                if (on == (public || inPrivate)) return@launch
+                // Already as asked (this phone's copy was behind, e.g. changed in Jumble): the button catches up, nothing is sent.
+                if (on == (public || inPrivate)) { setSpecial(pk, on); return@launch }
                 val sent = if (!on && inPrivate && !public) {
                     val next = private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
                     ListWrite.privateGuard(list!!.tags, list.tags, private, next)?.let { message.value = "Didn't change that list: it would have changed more than you asked."; return@launch }
@@ -3284,13 +3290,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
                     changeList(10010, null, change, expected = list != null || special.value.isNotEmpty(), have = list) is ListResult.Sent
                 }
-                if (sent) {
-                    special.update { if (on) it + pk else it - pk }
-                    specialAt = System.currentTimeMillis()
-                    prefs.edit().putStringSet("special", special.value).apply()
-                }
+                if (sent) setSpecial(pk, on)
             } finally { busy.update { it - pk } }
         }
+    }
+
+    private fun setSpecial(pk: String, on: Boolean) {
+        special.update { if (on) it + pk else it - pk }
+        specialAt = System.currentTimeMillis()
+        prefs.edit().putStringSet("special", special.value).apply()
     }
 
 
@@ -3517,6 +3525,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (signed.kind == 10000) mutes = signed
         val n = Fetch.publish(if (Sources.localOnly) Sources.extra.value else (relays ?: writeRelays()).distinct().take(10), signed)
         if (n == 0) message.value = "Couldn't send that right now. Try again later."
+        // A Special Follow list sent by any route (one you approved after it was held, too): the ★ buttons follow what was signed.
+        if (n > 0 && signed.kind == 10010) {
+            special.value = specialIn(signed, signed.pubkey)
+            specialAt = System.currentTimeMillis()
+            prefs.edit().putStringSet("special", special.value).apply()
+        }
         return signed.takeIf { n > 0 }
     }
 
