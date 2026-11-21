@@ -124,7 +124,7 @@ object Chip {
             }
             override fun onAuthenticationError(code: Int, msg: CharSequence) { ask.done.countDown(); a.finish() }
         }).also { p -> p.authenticate(
-            BiometricPrompt.PromptInfo.Builder().setTitle(ask.title).setSubtitle(ask.subtitle)
+            BiometricPrompt.PromptInfo.Builder().setTitle(ask.title).setSubtitle(ask.subtitle.ifEmpty { null })
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Cancel").build(),
             BiometricPrompt.CryptoObject(sig)) }
     }

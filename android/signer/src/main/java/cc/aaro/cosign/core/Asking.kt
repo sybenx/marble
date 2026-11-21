@@ -20,24 +20,23 @@ object Asking {
 
     /** The fingerprint prompt's second line for an account change (adding a device, a password, the whole key). */
     const val ACCOUNT_CHANGE = "Changes to your account need your fingerprint"
-    /** The fingerprint prompt's second line for a signature you said Yes to; its title is the same question. */
-    const val SIGNATURE = "Your fingerprint confirms it"
+    /** A signature you said Yes to has no second line: the prompt's title is the question, and the prompt says the rest. */
+    const val SIGNATURE = ""
     /** A fingerprint that could not come up by itself (the app was not on screen): the notification that opens it. */
-    const val FINISH = "Tap to finish with your fingerprint."
+    const val FINISH = "Tap to finish."
 
-    /** The line under the question on a card, a sheet or a dialog. */
-    fun cardLine(app: String, level: Int): String =
-        if (level >= 2) "$app asked. After you say yes, your fingerprint confirms it." else "$app asked. It doesn't happen unless you say yes."
+    /** The line under the question on a card, a sheet or a dialog. The same at both levels: the fingerprint prompt needs no announcing. */
+    @Suppress("UNUSED_PARAMETER")
+    fun cardLine(app: String, level: Int): String = "$app asked. It doesn't happen unless you say yes."
 
     /** A notification's short line and its long one, [appName] being this app's name. */
     fun noticeLines(app: String, level: Int, appName: String): Pair<String, String> =
-        if (level >= 2) "$app asked. Tap to answer in $appName." to "$app asked. Tap to answer in $appName. After you say yes, your fingerprint confirms it."
+        if (level >= 2) "$app asked. Tap to answer in $appName." to "$app asked. Tap to answer in $appName."
         else "$app asked" to "$app asked. It doesn't happen unless you say yes."
 
     /** The line in the app's own Yes or No dialog, for something you did in the app itself. */
-    fun ownLine(level: Int): String =
-        if (level >= 2) "Your account asks you first before anything like this. After you say yes, your fingerprint confirms it."
-        else "Your account asks you first before anything like this."
+    @Suppress("UNUSED_PARAMETER")
+    fun ownLine(level: Int): String = "Your account asks you first before anything like this."
 
     /**
      * What a box from before it gave its reasons asks about, said from the event itself. Such a box asked only about a

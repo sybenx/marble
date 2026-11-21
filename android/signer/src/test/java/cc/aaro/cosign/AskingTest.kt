@@ -11,8 +11,8 @@ import org.junit.Test
 
 /**
  * The words and buttons of asking you (Keykin SPEC 11.6, The tap). Level 2 is never done by accident: its notification
- * has no Approve (Android shows the fingerprint prompt only over a screen of this app), and every place that asks says
- * that the fingerprint comes after Yes.
+ * has no Approve (Android shows the fingerprint prompt only over a screen of this app), and no line anywhere announces
+ * the fingerprint: the prompt says that by being one.
  */
 class AskingTest {
     private val pk = "f".repeat(64)
@@ -23,21 +23,20 @@ class AskingTest {
         assertEquals(listOf(Action.DENY), Asking.actions(2))
     }
 
-    @Test fun level2SaysTheFingerprintComesNext() {
+    @Test fun theFingerprintIsNeverAnnounced() {
+        // (Aaron, 2026-11-20: the prompt is plainly a fingerprint prompt. Words that say so are noise.)
         assertEquals("TestSite asked. It doesn't happen unless you say yes.", Asking.cardLine("TestSite", 1))
-        assertEquals("TestSite asked. After you say yes, your fingerprint confirms it.", Asking.cardLine("TestSite", 2))
+        assertEquals(Asking.cardLine("TestSite", 1), Asking.cardLine("TestSite", 2))
         assertEquals("TestSite asked" to "TestSite asked. It doesn't happen unless you say yes.", Asking.noticeLines("TestSite", 1, "Marble"))
-        assertEquals("TestSite asked. Tap to answer in Marble." to "TestSite asked. Tap to answer in Marble. After you say yes, your fingerprint confirms it.",
-            Asking.noticeLines("TestSite", 2, "Marble"))
+        assertEquals("TestSite asked. Tap to answer in Marble." to "TestSite asked. Tap to answer in Marble.", Asking.noticeLines("TestSite", 2, "Marble"))
         assertEquals("Your account asks you first before anything like this.", Asking.ownLine(1))
-        assertEquals("Your account asks you first before anything like this. After you say yes, your fingerprint confirms it.", Asking.ownLine(2))
+        assertEquals(Asking.ownLine(1), Asking.ownLine(2))
     }
 
-    @Test fun aSignaturesPromptIsNotAnAccountChange() {
+    @Test fun aSignaturesPromptHasNoSecondLine() {
         assertEquals("Changes to your account need your fingerprint", Asking.ACCOUNT_CHANGE)
-        assertEquals("Your fingerprint confirms it", Asking.SIGNATURE)
-        assertNotEquals(Asking.ACCOUNT_CHANGE, Asking.SIGNATURE)
-        assertEquals("Tap to finish with your fingerprint.", Asking.FINISH)
+        assertEquals("", Asking.SIGNATURE)
+        assertEquals("Tap to finish.", Asking.FINISH)
     }
 
     /** The prompt's title is the card's question, so the two read as one thought. */

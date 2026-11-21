@@ -89,7 +89,7 @@ class Nip55Activity : ComponentActivity() {
                     ) { confirm(); request.allowDms() }
                     is Stage.Approve -> Ask(
                         cc.aaro.cosign.ui.question(s.what), "$label asked${whichKey()}.",
-                        if (s.level >= 2) "After you say yes, your fingerprint confirms it." else "It doesn't happen unless you say yes.",
+                        "It doesn't happen unless you say yes.",
                         no = "Don't", yes = "Yes", amber = true,
                     ) { confirm(); request.approve() }
                     is Stage.Working -> {
