@@ -1579,7 +1579,7 @@ class Signer(private val context: Context, val slot: String = "0") {
      */
     fun nip44Self(text: String, encrypt: Boolean): String = nip44With(accountHex() ?: error("$appName isn't set up yet"), text, encrypt)
 
-    // --- Vaults (~/nostr-sync-nip/vaults.md §3.6, §12.2) --------------------------------------------
+    // --- Vaults (~/vaults/vaults.md §3.6, §12.2) --------------------------------------------
     //
     // A vault's keyring entry is sealed to this account with a one-time key: opening it is one `ecdh` with the box,
     // between the account and that key. The ECDH output is used once and wiped, never kept (§3.2), and only a vault

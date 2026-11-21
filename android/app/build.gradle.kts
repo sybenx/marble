@@ -54,7 +54,7 @@ android {
 dependencies {
     val bom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(project(":signer"))
-    // Notes live in a vault (~/nostr-sync-nip/vaults.md).
+    // Notes live in a vault (~/vaults/vaults.md).
     implementation(project(":vaults"))
     implementation(bom)
     implementation("androidx.compose.material3:material3")

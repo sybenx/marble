@@ -11,7 +11,7 @@ import org.junit.Test
 import java.util.Base64
 
 /**
- * ~/nostr-sync-nip/vectors/verify.mjs, ported check for check (its 81), plus remakes: the same bytes made again
+ * ~/vaults/vectors/verify.mjs, ported check for check (its 81), plus remakes: the same bytes made again
  * by this core (ρ from the AUTH events, puts, Padmé, nv1 sizes, the shard, accepted contributions, commits).
  * vaults.json is a copy of the spec repo's; refresh it when the vectors change.
  */

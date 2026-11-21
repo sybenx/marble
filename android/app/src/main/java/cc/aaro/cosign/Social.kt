@@ -1358,7 +1358,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { pullLater() }
     }
 
-    // --- Notes in a vault (~/nostr-sync-nip/vaults.md, the notes profile) ------------------------------
+    // --- Notes in a vault (~/vaults/vaults.md, the notes profile) ------------------------------
     //
     // Your notes live in one vault of your account's: found from your keyring entries, or made by this phone on the
     // first run after the update, when it also brings in your v3 packs and marble/later once, as one batch (§17).

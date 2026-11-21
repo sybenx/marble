@@ -1,4 +1,4 @@
-// Vaults (~/nostr-sync-nip/vaults.md, draft 7.14): the formats. Pure functions over bytes and JSON, no network.
+// Vaults (~/vaults/vaults.md, draft 7.14): the formats. Pure functions over bytes and JSON, no network.
 // Section numbers are the spec's. The shared vectors (vectors/vaults.json) run against this file: test/vaults.test.mjs.
 import {
   hex, unhex, isHex, cat, u32, utf8, canon, parse, sha256, hkdf, TH, thHex, scalarOK, scalarFrom, pubHex, sign, verify,
