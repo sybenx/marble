@@ -73,12 +73,16 @@ import androidx.webkit.WebViewFeature
 import cc.aaro.cosign.Phone
 import cc.aaro.cosign.ui.Vault
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** A sign-in code a page's tap showed, waiting for SitePrompt. [site] is the WebView it came from. */
 data class SignInAsk(val site: WebSite, val code: String)
 
 /** A page's camera request, waiting for SitePrompt. */
 class CameraAsk(val site: WebSite, val request: PermissionRequest)
+
+/** A picture or video you long-pressed on a page, waiting for "Save". */
+class SaveAsk(val site: WebSite, val url: String, val kind: cc.aaro.cosign.ui.Saving.Kind)
 
 /**
  * The web pane's state: which site is showing, its WebViews (one per site, at most [MAX_ALIVE], least recently used
@@ -93,6 +97,10 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
     var blocked by mutableStateOf<String?>(null)
     var signIn by mutableStateOf<SignInAsk?>(null)
     var camera by mutableStateOf<CameraAsk?>(null)
+    var save by mutableStateOf<SaveAsk?>(null)
+    /** Saves outlive the prompt that started them. */
+    private val scope = kotlinx.coroutines.MainScope()
+    fun saveNow(context: Context, ask: SaveAsk) { save = null; scope.launch { cc.aaro.cosign.ui.Saving.save(context.applicationContext, ask.url, ask.kind) } }
     var loading by mutableStateOf(false)
     /** Set the first time the pane is headed for: until then no WebView is made, so opening Marble costs nothing. */
     var started by mutableStateOf(false)
@@ -249,6 +257,35 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         webViewClient = Client(s)
         webChromeClient = Chrome(s)
         setDownloadListener { url, _, disposition, mime, _ -> download(context, s, url, disposition, mime) }
+        // A long-press on a picture or a video offers to save it (a page like Jumble shows them with no download link).
+        val down = floatArrayOf(0f, 0f)
+        setOnTouchListener { _, e -> if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) { down[0] = e.x; down[1] = e.y }; false }
+        setOnLongClickListener { longPress(this, s, down[0], down[1]) }
+    }
+
+    /**
+     * What's under a long-press: a picture WebView can name itself; else the page is asked (a video, or a picture
+     * inside a link). True when the press is the save's, so no text selection starts under it.
+     */
+    private fun longPress(v: WebView, s: WebSite, x: Float, y: Float): Boolean {
+        if (s.origin != site.origin) return false
+        val h = v.hitTestResult
+        if (debug) android.util.Log.d("MarbleWeb", "${s.id}: long-press at $x,$y hit=${h.type} ${h.extra?.take(80)}")
+        if (h.type == WebView.HitTestResult.IMAGE_TYPE && !h.extra.isNullOrEmpty()) { offerSave(v.context, s, h.extra!!, cc.aaro.cosign.ui.Saving.Kind.Picture); return true }
+        v.evaluateJavascript(MediaAt.script(x, y)) { out ->
+            val m = MediaAt.parse(out) ?: return@evaluateJavascript
+            if (WebRules.originOf(v.url ?: "") == s.origin) offerSave(v.context, s, m.first, m.second)
+        }
+        return h.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+    }
+
+    private fun offerSave(context: Context, s: WebSite, url: String, kind: cc.aaro.cosign.ui.Saving.Kind) {
+        if (url.startsWith("blob:") || url.isEmpty()) {
+            android.widget.Toast.makeText(context, "This ${kind.word} plays from the page itself, so it can't be saved from here.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!url.startsWith("https:") && !url.startsWith("http:") && !url.startsWith("data:image/")) return
+        if (save == null && signIn == null && camera == null) save = SaveAsk(s, url, kind)
     }
 
     private inner class Client(val s: WebSite) : WebViewClient() {
@@ -337,24 +374,16 @@ class WebPaneState(private val prefs: android.content.SharedPreferences) {
         cc.aaro.cosign.Tabs.open(context, url, false, Vault.dark, Vault.Ground.toArgb())
     }
 
-    /** A picture the page offers to save (a long-press Save, a download link): into Pictures/Marble. Nothing else. */
+    /** A picture or video the page offers to save (a download link): into Pictures/Marble or Movies/Marble. Nothing else. */
     private fun download(context: Context, s: WebSite, url: String, disposition: String?, mime: String?) {
         val u = Uri.parse(url)
-        val image = mime?.startsWith("image/") == true
-        if (!image || (u.scheme != "https" && u.scheme != "http")) {
-            android.widget.Toast.makeText(context, "Marble only saves pictures from ${s.label}.", android.widget.Toast.LENGTH_SHORT).show()
+        val media = mime?.startsWith("image/") == true || mime?.startsWith("video/") == true
+        if (!media || (u.scheme != "https" && u.scheme != "http")) {
+            android.widget.Toast.makeText(context, "Marble only saves pictures and videos from ${s.label}.", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val name = android.webkit.URLUtil.guessFileName(url, disposition, mime)
-        try {
-            val r = android.app.DownloadManager.Request(u).setMimeType(mime)
-                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_PICTURES, "Marble/$name")
-            context.getSystemService(android.app.DownloadManager::class.java).enqueue(r)
-            android.widget.Toast.makeText(context, "Saving $name", android.widget.Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            android.widget.Toast.makeText(context, "Couldn't save that picture.", android.widget.Toast.LENGTH_SHORT).show()
-        }
+        val kind = if (mime!!.startsWith("video/")) cc.aaro.cosign.ui.Saving.Kind.Video else cc.aaro.cosign.ui.Saving.Kind.Picture
+        scope.launch { cc.aaro.cosign.ui.Saving.save(context.applicationContext, url, kind) }
     }
 
     private val debug by lazy { cc.aaro.cosign.CosignApp.instance.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
@@ -559,6 +588,13 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
             yes = "Remove", no = "Keep it", onYes = { state.removeAsk = null; state.remove(s, phone) }, onNo = { state.removeAsk = null })
     }
 
+
+    state.save?.let { ask ->
+        val context = LocalContext.current
+        SitePrompt("Save this ${ask.kind.word}?", "It goes in your gallery, under Marble.", yes = "Save", no = "Cancel",
+            onYes = { state.saveNow(context, ask) },
+            onNo = { state.save = null })
+    }
 
     state.camera?.let { ask ->
         SitePrompt("Let ${ask.site.label} use the camera?", "Only while this page is open.", yes = "Allow", no = "Don't allow",
