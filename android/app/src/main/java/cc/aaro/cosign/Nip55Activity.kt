@@ -89,7 +89,7 @@ class Nip55Activity : ComponentActivity() {
                     ) { confirm(); request.allowDms() }
                     is Stage.Approve -> Ask(
                         cc.aaro.cosign.ui.question(s.what), "$label asked${whichKey()}.",
-                        "It doesn't happen unless you say yes.",
+                        null,
                         no = "Don't", yes = "Yes", amber = true,
                     ) { confirm(); request.approve() }
                     is Stage.Working -> {

@@ -390,7 +390,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         AlertDialog(
             onDismissRequest = { social.decideHeld(false) },
             title = { Text(question(h.what)) },
-            text = { Text(cc.aaro.cosign.core.Asking.ownLine(h.level)) },
+            text = cc.aaro.cosign.core.Asking.ownLine(h.level).takeIf { it.isNotEmpty() }?.let { line -> { Text(line) } },
             confirmButton = { TextButton({ social.decideHeld(true) }) { Text("Yes", color = Vault.Amber) } },
             dismissButton = { TextButton({ social.decideHeld(false) }) { Text("Don't") } },
             containerColor = Vault.Surface,

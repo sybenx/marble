@@ -18,25 +18,27 @@ object Asking {
     /** Level 1: Deny and Approve. Level 2: Deny only; the Yes is given in the app, where the fingerprint can follow. */
     fun actions(level: Int): List<Action> = if (level >= 2) listOf(Action.DENY) else listOf(Action.DENY, Action.APPROVE)
 
-    /** The fingerprint prompt's second line for an account change (adding a device, a password, the whole key). */
-    const val ACCOUNT_CHANGE = "Changes to your account need your fingerprint"
-    /** A signature you said Yes to has no second line: the prompt's title is the question, and the prompt says the rest. */
+    /** The fingerprint prompt has no second line, for an account change or a signature: its title says what it is for. */
+    const val ACCOUNT_CHANGE = ""
     const val SIGNATURE = ""
     /** A fingerprint that could not come up by itself (the app was not on screen): the notification that opens it. */
     const val FINISH = "Tap to finish."
 
-    /** The line under the question on a card, a sheet or a dialog. The same at both levels: the fingerprint prompt needs no announcing. */
-    @Suppress("UNUSED_PARAMETER")
-    fun cardLine(app: String, level: Int): String = "$app asked. It doesn't happen unless you say yes."
+    // The words under a question say who asked, and stop. They do not explain how asking works
+    // (Aaron, 2026-11-20: let the app work, do not teach how it works).
 
-    /** A notification's short line and its long one, [appName] being this app's name. */
+    /** The line under the question on a card or a sheet. */
+    @Suppress("UNUSED_PARAMETER")
+    fun cardLine(app: String, level: Int): String = "$app asked."
+
+    /** A notification's short line and its long one, [appName] being this app's name. Level 2 has no Approve, so it says where to answer. */
     fun noticeLines(app: String, level: Int, appName: String): Pair<String, String> =
         if (level >= 2) "$app asked. Tap to answer in $appName." to "$app asked. Tap to answer in $appName."
-        else "$app asked" to "$app asked. It doesn't happen unless you say yes."
+        else "$app asked" to "$app asked"
 
-    /** The line in the app's own Yes or No dialog, for something you did in the app itself. */
+    /** The line in the app's own Yes or No dialog, for something you did in the app itself: none. The question is enough. */
     @Suppress("UNUSED_PARAMETER")
-    fun ownLine(level: Int): String = "Your account asks you first before anything like this."
+    fun ownLine(level: Int): String = ""
 
     /**
      * What a box from before it gave its reasons asks about, said from the event itself. Such a box asked only about a
