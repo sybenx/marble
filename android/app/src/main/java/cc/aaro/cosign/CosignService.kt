@@ -21,6 +21,8 @@ import androidx.core.content.ContextCompat
 class CosignService : Service() {
     private val accounts get() = CosignApp.instance.signers
     private var lastStatus = ""
+    /** Android refused the foreground start in [onCreate]: this instance only stops itself. */
+    private var refused = false
 
     /** One key's side: its notifications say which key they're for when there's more than one, and act on that key. */
     private inner class For(val p: Signer) : Signer.Listener {
@@ -47,15 +49,27 @@ class CosignService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(STATUS, "Connection", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
         nm.createNotificationChannel(NotificationChannel(ASKS, "Signing requests", NotificationManager.IMPORTANCE_HIGH))
-        if (Build.VERSION.SDK_INT >= 34) startForeground(STATUS_ID, statusNote(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(STATUS_ID, statusNote())
+        // Android can refuse this (ForegroundServiceStartNotAllowedException), most often when it restarts the
+        // service by itself in the background after killing the signer process. Throwing here crash-looped the
+        // signer. Instead the service steps aside and is not restarted; the signer still signs (push and the app
+        // start its keys), and opening Marble starts the service again.
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(STATUS_ID, statusNote(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(STATUS_ID, statusNote())
+        } catch (e: Exception) {
+            refused = true
+            Startup.mark("service refused: ${e.javaClass.simpleName}")
+            for (p in accounts.all) if (p.isMember) p.start()
+            stopSelf()
+            return
+        }
         listenAll()
         for (p in accounts.all) if (p.isMember) p.start()
         Startup.mark("service done")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (accounts.all.none { it.isMember }) { stopSelf(); return START_NOT_STICKY }
+        if (refused || accounts.all.none { it.isMember }) { stopSelf(); return START_NOT_STICKY }
         listenAll()
         for (p in accounts.all) if (p.isMember) p.start()
         return START_STICKY
