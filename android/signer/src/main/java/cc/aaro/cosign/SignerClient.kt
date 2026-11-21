@@ -162,6 +162,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
 
     // Approvals, deletions, sign-ins.
     fun decide(id: String, approve: Boolean) = act("decide", id, approve)
+    /** "Switch to a new key" on a question that offers it ([Ask.switch]). */
+    fun decideSwitch(id: String) = act("switch", id)
     fun decideBatch(batch: String, approve: Boolean) = act("decideBatch", batch, approve)
     fun cancelDeletion(batch: String) = act("cancelDeletion", batch)
     /** Yes to a site's sign-in. [pick] "new": a site new to this account gets an account of its own; otherwise the main account. */

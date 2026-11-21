@@ -92,10 +92,10 @@ class Nip55Activity : ComponentActivity() {
                         null,
                         no = "Don't", yes = "Yes", amber = true,
                     ) { confirm(); request.approve() }
-                    is Stage.Switched -> Told("Moved to a key of its own", s.text, "Done") { reject() }
+                    is Stage.Switched -> Told("It has its own account now", s.text, "Done") { reject() }
                     is Stage.Moved -> Ask(
                         "$label is signing in again", s.text, null,
-                        no = "Not now", yes = "Sign in with its own key",
+                        no = "Not now", yes = "Sign in with its own account",
                     ) { confirm(); request.signInMoved() }
                     is Stage.Working -> {
                         CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -123,14 +123,14 @@ class Nip55Activity : ComponentActivity() {
     private fun SwitchAsk(what: String) {
         Text("$label wants to control your relays", style = MaterialTheme.typography.titleLarge, color = Vault.Amber)
         Spacer(Modifier.height(10.dp))
-        Text("It's probably a better fit for a key of its own than your main profile. Switch it to a new key?", style = MaterialTheme.typography.titleMedium, color = Vault.Text)
+        Text("Give it its own account, so it can't change your main one?", style = MaterialTheme.typography.titleMedium, color = Vault.Text)
         Spacer(Modifier.height(8.dp))
         Text("It asked to ${cc.aaro.cosign.ui.question(what).removeSuffix("?").replaceFirstChar { it.lowercase() }}${whichKey()}.", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
         Spacer(Modifier.height(6.dp))
         Text("A plus: messages sent to your main account won't reach it, so it gets no spam meant for you.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
         Spacer(Modifier.height(20.dp))
         Button({ confirm(); request.switchKey() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
-            Text("Switch to a new key", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("Give it its own account", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton({ confirm(); request.approve() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) {

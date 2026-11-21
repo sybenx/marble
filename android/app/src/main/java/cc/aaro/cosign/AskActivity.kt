@@ -56,7 +56,7 @@ class AskActivity : ComponentActivity() {
                 val ask = ui.asks.firstOrNull { it.id == id }
                 BackHandler { if (ask != null && !said) s.decide(id, false); finish() }
                 when {
-                    !said && ask != null -> Sheet { AskCard(ask, now) { yes -> said = true; s.decide(id, yes); if (!yes) finish() } }
+                    !said && ask != null -> Sheet { AskCard(ask, now, onSwitch = { said = true; s.decideSwitch(id); finish() }) { yes -> said = true; s.decide(id, yes); if (!yes) finish() } }
                     // Your Yes is being carried out: the fingerprint prompt comes up over this.
                     said && (ask != null || id in answering) -> Sheet {
                         CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))

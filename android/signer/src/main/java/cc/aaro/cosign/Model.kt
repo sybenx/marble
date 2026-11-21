@@ -25,7 +25,8 @@ data class Offer(val box: String, val create: Boolean, val npub: String? = null,
  * Something destructive that an app or a site asked for, waiting for you. [level]: 1 asks Yes or No; 2 is never done by
  * accident, and a Yes goes on to the fingerprint (Keykin SPEC 11.6, The tap).
  */
-data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long, val level: Int = 1) : java.io.Serializable
+/** [switch]: a change to your relay list or DM relays by a site on the main account, which may be moved to a key of its own instead. */
+data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long, val level: Int = 1, val switch: Boolean = false) : java.io.Serializable
 /** A site or an app that can sign as you. [via] says how it got in. */
 data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
                 /** The site signed in with an account of its own (made for it), not the main account. */
@@ -52,6 +53,8 @@ data class Connect(val origin: String, val stage: Stage, val message: String? = 
                    val ask: Boolean = false,
                    /** The site already has an account of its own here, and signs in with it again. */
                    val own: Boolean = false,
+                   /** The site was moved to a key of its own after it tried to change your relays, and signs in again on it. */
+                   val moved: Boolean = false,
                    /** A Keykin account page: it gets the main account only (no choice), and the card says so. */
                    val accountPage: Boolean = false,
                    /** The site asked to decrypt at sign-in (NIP-46 perms): "Read your private lists" starts on. */

@@ -22,8 +22,8 @@ object SiteChoice {
         data object Main : Decision()
         /** A Keykin account page (marked `kk=account`): the main account only, and the card says why. */
         data object AccountPage : Decision()
-        /** No question: the account this site already has ([place]'s). */
-        data class Own(val place: String) : Decision()
+        /** No question: the account this site already has ([place]'s). [moved]: it was moved to it after it tried to change your relays. */
+        data class Own(val place: String, val moved: Boolean = false) : Decision()
     }
 
     /** A site's web origin as a child's label, or null when there is no web address to go by. */
@@ -46,12 +46,14 @@ object SiteChoice {
      * What a new sign-in from [origin] (a web origin, or null) gets. [sites] are this account's signed-in
      * sites; [accountPage]: the code was marked as a Keykin account page's ([marked]).
      */
-    fun decide(origin: String?, sites: List<SiteSigner.Site>, accountPage: Boolean = false): Decision {
+    fun decide(origin: String?, sites: List<SiteSigner.Site>, accountPage: Boolean = false, moved: Set<String> = emptySet()): Decision {
         if (accountPage) return Decision.AccountPage
         val o = origin(origin) ?: return Decision.Main
         if (o in ALWAYS_MAIN) return Decision.Main
         // Signed in before (and still on the list): what it got then. A site signed in before this existed stays on the main account.
         sites.firstOrNull { same(it.origin, o) }?.let { s -> return s.place?.let { Decision.Own(it) } ?: Decision.Main }
+        // Moved to a key of its own after it tried to change your relays, then signed out: it comes back on that key.
+        if (o in moved) return Decision.Own(o, moved = true)
         return Decision.Ask(o)
     }
 
@@ -71,12 +73,12 @@ object SiteChoice {
      * site is [from], else the code's `url`. A site signed in before keeps its remembered choice; otherwise
      * `as: "site"` is a new account of its own (the child for its origin), and `"main"` or nothing is the main account.
      */
-    fun forNote(url: String?, name: String?, from: String?, signAs: String?, sites: List<SiteSigner.Site>): NoteSignIn {
+    fun forNote(url: String?, name: String?, from: String?, signAs: String?, sites: List<SiteSigner.Site>, moved: Set<String> = emptySet()): NoteSignIn {
         val codeHost = urlHost(url)
         val matched = from != null && codeHost != null && urlHost(from) == codeHost
         val label = if (matched) origin(from) else null
         val named = label ?: codeHost ?: name?.take(40)?.trim()?.ifBlank { null } ?: "A site"
-        val place = when (val d = decide(if (matched) from else url, sites)) {
+        val place = when (val d = decide(if (matched) from else url, sites, moved = moved)) {
             is Decision.Own -> d.place
             is Decision.Ask -> if (signAs == "site") d.place else null
             Decision.Main, Decision.AccountPage -> null

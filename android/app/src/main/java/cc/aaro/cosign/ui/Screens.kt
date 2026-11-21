@@ -421,7 +421,8 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolea
                 } else {
                     Text("Use your account on ${c.origin}?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
                     // Signed in before with an account of its own: it gets that one again.
-                    if (c.own) Text("Its own account, as before", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                    if (c.moved) Text("Its own account now: you gave it one after it tried to change your relays. Messages to your main account won't reach it.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                    else if (c.own) Text("Its own account, as before", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                     // A Keykin account page: it is about the main account, so there is no other to choose.
                     if (c.accountPage) Text("This is an account page, so it uses your main account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                     which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Accent, style = MaterialTheme.typography.bodyMedium) }
@@ -551,7 +552,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         items(ui.future, key = { "future:" + it.id }) { f -> FutureCard(f) { phone.removeFuture(f) } }
         items(ui.deleting, key = { "deleting:" + it.batch }) { d -> DeletingCard(d, now) { phone.cancelDeletion(d.batch) } }
         items(ui.batchAsks, key = { "batch:" + it.batch }) { b -> BatchCard(b, now) { approve -> phone.decideBatch(b.batch, approve) } }
-        items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now) { approve -> phone.decide(ask.id, approve) } }
+        items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now, onSwitch = { phone.decideSwitch(ask.id) }) { approve -> phone.decide(ask.id, approve) } }
 
         // A quiet note, no banner: write relays that haven't answered in a week (with half or more silent, your
         // notes' and Reader's copies can't be written).
@@ -936,7 +937,7 @@ internal fun FutureCard(f: Future, onRemove: () -> Unit) = Card(Vault.AmberEdge,
 
 @Composable
 /** [quiet]: on home, no ticking seconds (home-rules.md: no counts). */
-internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
+internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onSwitch: (() -> Unit)? = null, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
     val left = ((ask.expiresAt - now) / 1000).coerceAtLeast(0)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(question(ask.hold), style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
@@ -946,7 +947,24 @@ internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onDecide: (Boo
     // Level 2 says that the fingerprint comes after Yes, so it never looks like an ordinary Yes or No.
     Text(cc.aaro.cosign.core.Asking.cardLine(ask.app, ask.level), style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     Spacer(Modifier.height(14.dp))
-    YesNo(onDecide)
+    if (ask.switch && onSwitch != null) SwitchChoices(ask.app, onSwitch, onDecide) else YesNo(onDecide)
+}
+
+/**
+ * A site changing your relay list or DM relays (Aaron, 2026-11-21): it is probably better on an account of its own.
+ * Give it its own account (the main button), let it change the main lists, or Don't.
+ */
+@Composable
+private fun SwitchChoices(who: String, onSwitch: () -> Unit, onDecide: (Boolean) -> Unit) = Column {
+    Text("$who wants to control your relays. Give it its own account, so it can't change your main one?", style = MaterialTheme.typography.bodyMedium, color = Vault.Text)
+    Spacer(Modifier.height(4.dp))
+    Text("A plus: messages sent to your main account won't reach it, so it gets no spam meant for you.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+    Spacer(Modifier.height(12.dp))
+    Button(onSwitch, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Give it its own account", fontWeight = FontWeight.SemiBold) }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton({ onDecide(true) }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Let it change my main lists", color = Vault.Text) }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton({ onDecide(false) }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't", color = Vault.Text) }
 }
 
 /** Yes or no to something that needs you. No is never the weaker button. */

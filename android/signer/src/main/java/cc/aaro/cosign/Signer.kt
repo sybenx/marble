@@ -310,7 +310,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val relays = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
                         if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
                         // Which key, and what to call it (SPEC 11.6): a site signed in before keeps its choice, else the card's.
-                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() })
+                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() }, movedSites())
                         val origin = pick.name
                         pick.place?.let { childFor(it) }
                         // The site's switches, as the person set them on the account page's card. From a box too old to
@@ -1251,8 +1251,8 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** What the sign-in being asked about gets, worked out when its code was read. */
     @Volatile private var choice: SiteChoice.Decision = SiteChoice.Decision.Main
-    private fun siteChoice(origin: String?, accountPage: Boolean) = SiteChoice.decide(origin, try { sites.sites() } catch (_: Exception) { emptyList() }, accountPage)
-    private fun confirmCard(origin: String, d: SiteChoice.Decision) = Connect(origin, Connect.Stage.CONFIRM, ask = d is SiteChoice.Decision.Ask, own = d is SiteChoice.Decision.Own, accountPage = d == SiteChoice.Decision.AccountPage)
+    private fun siteChoice(origin: String?, accountPage: Boolean) = SiteChoice.decide(origin, try { sites.sites() } catch (_: Exception) { emptyList() }, accountPage, movedSites())
+    private fun confirmCard(origin: String, d: SiteChoice.Decision) = Connect(origin, Connect.Stage.CONFIRM, ask = d is SiteChoice.Decision.Ask, own = d is SiteChoice.Decision.Own, moved = (d as? SiteChoice.Decision.Own)?.moved == true, accountPage = d == SiteChoice.Decision.AccountPage)
     private fun placeFor(d: SiteChoice.Decision, pick: String?): String? = when (d) {
         is SiteChoice.Decision.Ask -> if (pick == "new") d.place else null
         is SiteChoice.Decision.Own -> d.place
@@ -1404,7 +1404,11 @@ class Signer(private val context: Context, val slot: String = "0") {
             refuse(lacking)
         }
         return when (method) {
-            "sign_event" -> signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
+            "sign_event" -> {
+                // A change to your relay list or DM relays by a site on the main account: the question offers to give it its own account.
+                val switch = if (own == null && kind in Policy.REVIEWED && SiteChoice.origin(site.origin) != null) { { switchSite(site) } } else null
+                signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own, onSwitch = switch).toJson()
+            }
             "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant, own)
             "nip44_decrypt" -> nip44With(params[0], params[1], false, site.grant, own)
             "nip04_encrypt" -> nip04With(params[0], params[1], true, site.grant, own)
@@ -1483,7 +1487,7 @@ class Signer(private val context: Context, val slot: String = "0") {
      * signed, and anything destructive needs your yes. With [mayAsk] the question is put on screen and
      * waited for; without it the caller hears [NeedsApproval] and asks you itself.
      */
-    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null): Event {
+    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null, onSwitch: (() -> Unit)? = null): Event {
         Policy.refuse(ev)?.let { throw IllegalStateException(it) }
         // This phone's own rules first (against the last version of a list it saw), then the box's: it decides, and asks
         // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
@@ -1497,8 +1501,12 @@ class Signer(private val context: Context, val slot: String = "0") {
         val (signed, held) = try {
             boxSays { BoxAsk.sign(own, approved, Asking.unsaid(ev), { q ->
                 if (!mayAsk) throw NeedsApproval(q.says, q.level)
-                askAndWait(by, ev, q, yeses).also { if (!it) note("Said no to $by: ${q.says}", "denied") }
+                askAndWait(by, ev, q, yeses, onSwitch != null).also { if (!it) note("Said no to $by: ${q.says}", "denied") }
             }) { tapped, finger -> signNow(ev, grant, tapped, asChild, finger) } }
+        } catch (_: SwitchChosen) {
+            // Given its own account: this is not signed, and the site signs in again.
+            onSwitch?.invoke()
+            throw IllegalStateException("Moved to its own account: sign in again to use it")
         } finally { if (yeses.isNotEmpty()) answering.update { it - yeses.toSet() } }
         // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
         if (asChild == null) remember(signed, prev, by, held)
@@ -1514,17 +1522,27 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val answers = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
     /** Questions you said Yes to whose signing is still under way (the fingerprint, the box). */
     val answering = MutableStateFlow<Set<String>>(emptySet())
-    private fun askAndWait(by: String, ev: Event, q: BoxAsk.Question, yeses: MutableList<String>): Boolean {
-        val ask = Ask(env.random(8).toHex(), by, ev, q.says, System.currentTimeMillis() + ASK_LIFE, q.level)
+    /** "Give it its own account" was the answer to a question that offered it. */
+    private class SwitchChosen : Exception()
+    /** Questions answered with "Give it its own account", until their wait ends. */
+    private val switching: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private fun askAndWait(by: String, ev: Event, q: BoxAsk.Question, yeses: MutableList<String>, switch: Boolean = false): Boolean {
+        val ask = Ask(env.random(8).toHex(), by, ev, q.says, System.currentTimeMillis() + ASK_LIFE, q.level, switch)
         val f = CompletableFuture<Boolean>(); answers[ask.id] = f
         ui.update { it.copy(asks = it.asks + ask) }
         listener?.onAsk(ask)
         Cosign.host.joined(context)
-        return try { (try { f.get(ASK_LIFE, TimeUnit.MILLISECONDS) } catch (_: Exception) { false }).also { yes -> if (yes) { yeses += ask.id; answering.update { it + ask.id } } } }
-        finally { answers.remove(ask.id); ui.update { it.copy(asks = it.asks.filter { a -> a.id != ask.id }) }; listener?.onAskGone(ask.id) }
+        return try {
+            val yes = try { f.get(ASK_LIFE, TimeUnit.MILLISECONDS) } catch (_: Exception) { false }
+            if (!yes && switching.remove(ask.id)) throw SwitchChosen()
+            yes.also { if (it) { yeses += ask.id; answering.update { a -> a + ask.id } } }
+        }
+        finally { switching.remove(ask.id); answers.remove(ask.id); ui.update { it.copy(asks = it.asks.filter { a -> a.id != ask.id }) }; listener?.onAskGone(ask.id) }
     }
     /** Your answer to something that waited for you. */
     fun decide(id: String, approve: Boolean) { answers[id]?.complete(approve) }
+    /** "Give it its own account" to a question that offers it: the site is moved, and this is not signed. */
+    fun decideSwitch(id: String) { if (ui.value.asks.any { it.id == id && it.switch }) { switching += id; answers[id]?.complete(false) } }
 
     /** The latest version of one of your lists this phone has seen signed ("3": your follows). */
     fun latest(key: String): Event? = lists.latest(key)
@@ -1775,14 +1793,37 @@ class Signer(private val context: Context, val slot: String = "0") {
         held?.let { h -> try { synchronized(boxLock) { Device.revoke(me(), h, old, send(h)) } } catch (_: Exception) { } }
         sharedXs.forgetAll()
         grantsChanged()
-        // The oldest change it made to each relay list holds what the list was before it.
-        val rows = objects(readArray(history)).filter { it.optString("by") == g.label && !it.optBoolean("undone") && it.optString("key") in Policy.REVIEWED.map(Int::toString) }
+        val back = putBackRelays(g.label)
+        note("Gave ${g.label} its own account", "approved"); showSites()
+        return back
+    }
+    /** Undo what [by] did to your relay list and DM relays: the oldest change it made to each holds what it was before. How many lists. */
+    private fun putBackRelays(by: String): Int {
+        val rows = objects(readArray(history)).filter { it.optString("by") == by && !it.optBoolean("undone") && it.optString("key") in Policy.REVIEWED.map(Int::toString) }
         for (group in rows.groupBy { it.getString("key") }.values) {
             val r = group.last()
-            undo(Change(r.getString("id"), r.getString("text"), g.label, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
+            undo(Change(r.getString("id"), r.getString("text"), by, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
         }
-        note("Moved ${g.label} to a key of its own", "approved"); showSites()
         return rows.map { it.getString("key") }.distinct().size
+    }
+    /** Sites given their own account this way (their web origins): when one signs in again it gets that account, with no question. */
+    private fun movedSites(): Set<String> = secrets.load("movedSites")?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) }.toSet() } ?: emptySet()
+    /**
+     * Give a site (NIP-46) its own account, as [switchApp] does for an app: make its child (the one SiteChoice gives its
+     * origin), sign it out here and at the box, and put back what it did to your relay lists. When it signs in again it
+     * gets the child, and the sign-in card says why. Blocks.
+     */
+    private fun switchSite(site: SiteSigner.Site) {
+        val place = SiteChoice.origin(site.origin) ?: return
+        childFor(place)   // made first: if the box can't be asked, nothing has changed
+        synchronized(childLock) { secrets.save("movedSites", JSONArray((movedSites() + place).sorted()).toString()) }
+        sites.signOut(site.key)
+        rememberRevoked(listOf(site.grant))
+        held?.let { h -> try { synchronized(boxLock) { Device.revoke(me(), h, site.grant, send(h)) } } catch (_: Exception) { } }
+        sharedXs.forgetAll()
+        grantsChanged()
+        putBackRelays(site.label)
+        note("Gave ${site.label} its own account. It gets it when it signs in again.", "approved"); showSites()
     }
     /** Set while an app moved to a key of its own has not signed in again: when it was moved (seconds). */
     fun moved(pkg: String): Long? = appTimes.getLong(pkg + ":moved", 0).takeIf { it > 0 }

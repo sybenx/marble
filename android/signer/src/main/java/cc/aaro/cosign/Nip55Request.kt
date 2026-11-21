@@ -107,18 +107,18 @@ class Nip55Request(private val activity: Activity) {
      * to your relay lists are put back. This request is not signed: the app hears no, and signs in again.
      */
     fun switchKey() {
-        current.value = Stage.Working("Making $label a key of its own…")
+        current.value = Stage.Working("Making $label its own account…")
         val app = pkg; val name = label
         work.execute {
             try {
                 val back = phone.switchApp(app)
                 val restored = if (back > 0) " Your relay lists are being put back as they were before $name changed them." else ""
                 activity.runOnUiThread {
-                    current.value = Stage.Switched("$name now has a key of its own, and can no longer sign as your main account.$restored\n\n" +
+                    current.value = Stage.Switched("$name has its own account now, and can no longer use your main one.$restored\n\n" +
                         "To start using it, sign out in $name and sign in again with $appName.")
                 }
             } catch (e: Exception) {
-                activity.runOnUiThread { fail("Couldn't move $name to a key of its own: ${e.message ?: "no answer"}") }
+                activity.runOnUiThread { fail("Couldn't give $name its own account: ${e.message ?: "no answer"}") }
             }
         }
     }
@@ -132,10 +132,10 @@ class Nip55Request(private val activity: Activity) {
         val main = phone.ui.value.member!!.group.groupX
         // Moved to a key of its own and still signed in as the main account: it has to sign in again.
         if (g.place != null && type != "get_public_key" && (asUser == main || eventBy() == main))
-            return fail("$label is still signed in as your main account, but it has a key of its own now. Sign out in $label and sign in again with $appName.")
+            return fail("$label is still signed in as your main account, but it has its own account now. Sign out in $label and sign in again with $appName.")
         when (type) {
             "get_public_key" -> phone.moved(pkg)?.let { at ->
-                current.value = Stage.Moved("$label gets its own key now, not your main account: you moved it on ${java.text.DateFormat.getDateInstance().format(java.util.Date(at * 1000))} after it tried to change your relays. " +
+                current.value = Stage.Moved("$label has its own account now, not your main one: you moved it on ${java.text.DateFormat.getDateInstance().format(java.util.Date(at * 1000))} after it tried to change your relays. " +
                     "Messages to your main account won't reach it, so it gets no spam meant for you.")
             } ?: keyThen { answer("result" to it, "package" to activity.packageName) }
             "sign_event" -> {

@@ -170,6 +170,7 @@ class SignerService : Service() {
             "lockMissing" -> s.lockMissing()
             "leave" -> s.leave()
             "decide" -> s.decide(text ?: return, flag)
+            "switch" -> s.decideSwitch(text ?: return)
             // The app is in front: a fingerprint prompt that was blocked in the background comes up now.
             "surface" -> Chip.reshow(this@SignerService)
             "decideBatch" -> s.decideBatch(text ?: return, flag)
