@@ -3008,14 +3008,18 @@ private fun ProfileScreen(pk: String, social: Social, nav: Nav) = Column(Modifie
                     pk in busy || follows == null -> OutlinedButton({}, Modifier.height(44.dp), enabled = false, border = BorderStroke(1.dp, Vault.Line)) {
                         CircularProgressIndicator(Modifier.size(18.dp), color = Vault.Accent, strokeWidth = 2.dp)
                     }
-                    pk in follows!! -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton({ social.follow(pk, false) }, Modifier.height(44.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Following · Unfollow", color = Vault.Text) }
+                    // Two halves of the row, each with a little side padding: at the buttons' usual 24 dp a side the two
+                    // labels didn't fit together and "Special Follow" broke onto a second line.
+                    pk in follows!! -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton({ social.follow(pk, false) }, Modifier.weight(1f).height(44.dp), border = BorderStroke(1.dp, Vault.Line),
+                            contentPadding = PaddingValues(horizontal = 10.dp)) { Text("Following · Unfollow", color = Vault.Text, maxLines = 1, softWrap = false) }
                         // ★: on your Special Follow list (first in Following), or not; tapped again, off.
                         val special by social.special.collectAsState()
                         val on = pk in special
-                        OutlinedButton({ social.special(pk, !on) }, Modifier.height(44.dp), border = BorderStroke(1.dp, if (on) Vault.Accent else Vault.Line),
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (on) Vault.AccentGround else androidx.compose.ui.graphics.Color.Transparent)) {
-                            Text(if (on) "★ Special Follow" else "☆ Special Follow", color = if (on) Vault.Accent else Vault.Text)
+                        OutlinedButton({ social.special(pk, !on) }, Modifier.weight(1f).height(44.dp), border = BorderStroke(1.dp, if (on) Vault.Accent else Vault.Line),
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (on) Vault.AccentGround else androidx.compose.ui.graphics.Color.Transparent),
+                            contentPadding = PaddingValues(horizontal = 10.dp)) {
+                            Text(if (on) "★ Special Follow" else "☆ Special Follow", color = if (on) Vault.Accent else Vault.Text, maxLines = 1, softWrap = false)
                         }
                     }
                     else -> Button({ social.follow(pk, true) }, Modifier.height(44.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Follow") }
