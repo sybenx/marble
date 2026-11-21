@@ -88,7 +88,8 @@ data class Asking(val box: String, val note: String, val step: Int, val error: S
 data class SignInCode(val uri: String? = null, val digits: String? = null, val connected: Boolean = false, val open: String? = null) : java.io.Serializable
 /** Adding a device whose code was pasted: does [name] show these [digits]? */
 data class AddDigits(val name: String, val digits: String) : java.io.Serializable
-data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
+/** [place]: the child key this app signs as (Keykin SPEC 8k), named by the place it was made for; null: the main account. */
+data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean, val place: String? = null)
 /** [level]: 2 when a Yes to [what] goes on to the fingerprint. */
 class NeedsApproval(val what: String, val level: Int = 1) : Exception(what) {
     /**

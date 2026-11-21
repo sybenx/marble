@@ -21,8 +21,15 @@ class Nip55Request(private val activity: Activity) {
     sealed interface Stage {
         data object Connect : Stage
         data object Dms : Stage
-        /** [level] 2: Yes goes on to the fingerprint. */
-        data class Approve(val what: String, val level: Int = 1) : Stage
+        /**
+         * [level] 2: Yes goes on to the fingerprint. [switch]: a change to the relay list or DM relays by an app on the
+         * main account, where the first answer offered is to move the app to a key of its own ([switchKey]).
+         */
+        data class Approve(val what: String, val level: Int = 1, val switch: Boolean = false) : Stage
+        /** The app was moved to a key of its own; [text] says what happened and what to do in the app. */
+        data class Switched(val text: String) : Stage
+        /** An app moved to a key of its own signs in again: [text] says why it gets a different key now. */
+        data class Moved(val text: String) : Stage
         data class Working(val text: String) : Stage
         data class Failed(val text: String) : Stage
     }
@@ -35,6 +42,8 @@ class Nip55Request(private val activity: Activity) {
     private lateinit var type: String
     private lateinit var payload: String
     private var peer = ""
+    /** The key the app thinks it is signed in as (NIP-55's current_user), if it says. */
+    private var asUser: String? = null
     private var reqId: String? = null
     private var pkg = ""
     /** Who's asking: the app's name, or the page's host. */
@@ -60,6 +69,7 @@ class Nip55Request(private val activity: Activity) {
         payload = if (raw.startsWith("%7B", ignoreCase = true) || (type != "sign_event" && Regex("%[0-9A-Fa-f]{2}").containsMatchIn(raw)))
             URLDecoder.decode(raw, "UTF-8") else raw
         peer = intent.getStringExtra("pubkey") ?: query["pubkey"] ?: ""
+        asUser = (intent.getStringExtra("current_user") ?: query["current_user"])?.takeIf { it.length == 64 }
         reqId = intent.getStringExtra("id")
         val web = callback?.let { webOrigin(it) }
         if (callback != null) {
@@ -89,24 +99,67 @@ class Nip55Request(private val activity: Activity) {
     /** Yes to [Stage.Dms]. */
     fun allowDms() { phone.allowDms(phone.appGrant(pkg)!!); crypt() }
 
-    /** Yes to [Stage.Approve]. */
+    /** Yes to [Stage.Approve]: "Let it change my main lists". */
     fun approve() = sign(event!!, approved = true)
+
+    /**
+     * "Switch" on [Stage.Approve]: the app gets a key of its own, its access to the main account ends, and its changes
+     * to your relay lists are put back. This request is not signed: the app hears no, and signs in again.
+     */
+    fun switchKey() {
+        current.value = Stage.Working("Making $label a key of its own…")
+        val app = pkg; val name = label
+        work.execute {
+            try {
+                val back = phone.switchApp(app)
+                val restored = if (back > 0) " Your relay lists are being put back as they were before $name changed them." else ""
+                activity.runOnUiThread {
+                    current.value = Stage.Switched("$name now has a key of its own, and can no longer sign as your main account.$restored\n\n" +
+                        "To start using it, sign out in $name and sign in again with $appName.")
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread { fail("Couldn't move $name to a key of its own: ${e.message ?: "no answer"}") }
+            }
+        }
+    }
+
+    /** Continue on [Stage.Moved]: the app signs in on its own key from now on. */
+    fun signInMoved() { phone.signedInAgain(pkg); next() }
 
     /** With the app connected: answer, or ask you first. */
     private fun next() {
         val g = phone.appGrant(pkg) ?: return run { current.value = Stage.Connect }
+        val main = phone.ui.value.member!!.group.groupX
+        // Moved to a key of its own and still signed in as the main account: it has to sign in again.
+        if (g.place != null && type != "get_public_key" && (asUser == main || eventBy() == main))
+            return fail("$label is still signed in as your main account, but it has a key of its own now. Sign out in $label and sign in again with $appName.")
         when (type) {
-            "get_public_key" -> answer("result" to phone.ui.value.member!!.group.groupX, "package" to activity.packageName)
+            "get_public_key" -> phone.moved(pkg)?.let { at ->
+                current.value = Stage.Moved("$label gets its own key now, not your main account: you moved it on ${java.text.DateFormat.getDateInstance().format(java.util.Date(at * 1000))} after it tried to change your relays. " +
+                    "Messages to your main account won't reach it, so it gets no spam meant for you.")
+            } ?: keyThen { answer("result" to it, "package" to activity.packageName) }
             "sign_event" -> {
                 val ev = try { phone.appEvent(payload) } catch (e: Exception) { return fail("That isn't an event $appName can sign (${e.message}).") }
                 event = ev
                 cc.aaro.cosign.core.Policy.refuse(ev)?.let { return fail("$appName won't sign this: $it.") }
-                val q = phone.questionFor(ev)
-                if (q != null) current.value = Stage.Approve(q.says, q.level) else sign(ev, approved = false)
+                val q = if (g.place != null) cc.aaro.cosign.core.Policy.question(ev, null, child = true) else phone.questionFor(ev)
+                if (q != null) current.value = Stage.Approve(q.says, q.level, phone.offersSwitch(g, ev)) else sign(ev, approved = false)
             }
             "nip44_encrypt", "nip44_decrypt", "nip04_encrypt", "nip04_decrypt" ->
                 if (!g.dm) current.value = Stage.Dms else crypt()
             else -> fail("$appName doesn't do “$type” yet.")
+        }
+    }
+
+    /** The pubkey the app put in the event it sent, if any. */
+    private fun eventBy(): String? = if (type != "sign_event") null else try { ((cc.aaro.qrst.core.Json.parse(payload) as? Map<*, *>)?.get("pubkey") as? String)?.takeIf { it.length == 64 } } catch (_: Exception) { null }
+
+    /** The app's key (its own child may have to be made, with the box), then [then] with it. */
+    private fun keyThen(then: (String) -> Unit) {
+        val app = pkg
+        work.execute {
+            try { val k = phone.appKey(phone.appGrant(app)!!); activity.runOnUiThread { then(k) } }
+            catch (e: Exception) { activity.runOnUiThread { fail(e.message ?: "Couldn't find this app's key.") } }
         }
     }
 
@@ -121,7 +174,8 @@ class Nip55Request(private val activity: Activity) {
                 val signed = phone.signForApp(phone.appGrant(app)!!, ev, approved)
                 activity.runOnUiThread { answer("result" to signed.sig, "event" to signed.toJson()) }
             } catch (e: NeedsApproval) {
-                activity.runOnUiThread { current.value = Stage.Approve(e.what, e.level) } // your server saw what this phone missed
+                val g = phone.appGrant(app)
+                activity.runOnUiThread { current.value = Stage.Approve(e.what, e.level, g != null && phone.offersSwitch(g, ev)) } // your server saw what this phone missed
             } catch (_: Revoked) {
                 activity.runOnUiThread { current.value = Stage.Connect }
             } catch (e: Exception) {

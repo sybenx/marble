@@ -1721,10 +1721,10 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val appTimes = context.getSharedPreferences(named("app-times"), Context.MODE_PRIVATE)
     private fun usedApp(g: AppGrant) { if (Clock.now() - appTimes.getLong(g.pkg + ":used", 0) > 60) appTimes.edit().putLong(g.pkg + ":used", Clock.now()).apply() }
     fun appGrant(pkg: String): AppGrant? = apps.getString(pkg, null)?.let { j ->
-        (Json.parse(j) as? Map<*, *>)?.let { AppGrant(pkg, it["pk"] as String, it["label"] as String, it["dm"] == true) }
+        (Json.parse(j) as? Map<*, *>)?.let { AppGrant(pkg, it["pk"] as String, it["label"] as String, it["dm"] == true, it["place"] as? String) }
     }
     private fun appByPk(pk: String) = apps.all.keys.mapNotNull { appGrant(it) }.firstOrNull { it.pk == pk }
-    private fun store(g: AppGrant) = apps.edit().putString(g.pkg, Json.stringify(mapOf("pk" to g.pk, "label" to g.label, "dm" to g.dm))).apply()
+    private fun store(g: AppGrant) = apps.edit().putString(g.pkg, Json.stringify(mapOf("pk" to g.pk, "label" to g.label, "dm" to g.dm) + (g.place?.let { mapOf("place" to it) } ?: emptyMap()))).apply()
 
     fun connectApp(pkg: String, label: String): AppGrant {
         val had = appGrant(pkg)
@@ -1735,14 +1735,59 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     fun allowDms(g: AppGrant): AppGrant = g.copy(dm = true).also { store(it); note("${g.label} may read and send your messages", "approved") }
 
-    /** Sign for an app, with the box. Blocks for a moment; never call on the main thread. */
+    /** The key [g] signs as: its own child, or the main account. Blocks when the child has to be made. */
+    fun appKey(g: AppGrant): String = g.place?.let { childFor(it).npub } ?: accountHex() ?: error("$appName isn't set up yet")
+    /** The child [g] signs as, if it has one. */
+    private fun appChild(g: AppGrant): Child? = g.place?.let { childFor(it) }
+
+    /** Sign for an app, with the box, as the key it has (its own child, or the main account). Blocks for a moment; never call on the main thread. */
     fun signForApp(g: AppGrant, ev: Event, approved: Boolean): Event {
-        if (appGrant(g.pkg) == null) throw Revoked()
-        usedApp(g)
-        return signChecked(ev, g.label, approved, mayAsk = false, grant = grantOf(g))
+        val now = appGrant(g.pkg) ?: throw Revoked()
+        usedApp(now)
+        val child = appChild(now) ?: return signChecked(ev, now.label, approved, mayAsk = false, grant = grantOf(now))
+        return signChecked(Event(child.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId(), now.label, approved, mayAsk = false, grant = grantOf(now), asChild = child)
     }
-    fun nip44(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { if (appGrant(g.pkg) == null) throw Revoked(); usedApp(g); return nip44With(peer, text, encrypt, grantOf(g)) }
-    fun nip04(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { if (appGrant(g.pkg) == null) throw Revoked(); usedApp(g); return nip04With(peer, text, encrypt, grantOf(g)) }
+    fun nip44(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip44With(peer, text, encrypt, grantOf(now), appChild(now)) }
+    fun nip04(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip04With(peer, text, encrypt, grantOf(now), appChild(now)) }
+
+    /**
+     * Whether [ev] (signed for an app) is one whose question offers to move the app to a key of its own: a change to the
+     * relay list or the DM relays, by an app on the main account (Aaron, 2026-11-21).
+     */
+    fun offersSwitch(g: AppGrant, ev: Event): Boolean = g.place == null && g.pkg != context.packageName && ev.kind in Policy.REVIEWED
+
+    /**
+     * Move [pkg] to a key of its own (Keykin SPEC 8k): make its child, end its access to the main account here and at the
+     * box, and let it in again on the child, under a new grant. Its changes to the relay list and DM relays are put back
+     * as they were before it (Undo). The app still holds the main account's key as "you" until it signs in again: until
+     * then its requests are refused with a hint ([moved]). Blocks; never call on the main thread. How many lists it put back.
+     */
+    fun switchApp(pkg: String): Int {
+        val g = appGrant(pkg) ?: throw Revoked()
+        if (g.place != null) return 0
+        val place = pkg
+        childFor(place)   // made first: if the box can't be asked, nothing has changed
+        val old = grantOf(g)
+        val moved = AppGrant(pkg, env.random(32).toHex(), g.label, g.dm, place)
+        store(moved)
+        appTimes.edit().putLong(pkg + ":added", Clock.now()).putLong(pkg + ":moved", Clock.now()).apply()
+        rememberRevoked(listOf(old))
+        held?.let { h -> try { synchronized(boxLock) { Device.revoke(me(), h, old, send(h)) } } catch (_: Exception) { } }
+        sharedXs.forgetAll()
+        grantsChanged()
+        // The oldest change it made to each relay list holds what the list was before it.
+        val rows = objects(readArray(history)).filter { it.optString("by") == g.label && !it.optBoolean("undone") && it.optString("key") in Policy.REVIEWED.map(Int::toString) }
+        for (group in rows.groupBy { it.getString("key") }.values) {
+            val r = group.last()
+            undo(Change(r.getString("id"), r.getString("text"), g.label, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
+        }
+        note("Moved ${g.label} to a key of its own", "approved"); showSites()
+        return rows.map { it.getString("key") }.distinct().size
+    }
+    /** Set while an app moved to a key of its own has not signed in again: when it was moved (seconds). */
+    fun moved(pkg: String): Long? = appTimes.getLong(pkg + ":moved", 0).takeIf { it > 0 }
+    /** The app signed in again on its new key: no more hint. */
+    fun signedInAgain(pkg: String) = appTimes.edit().remove(pkg + ":moved").apply()
 
     // --- What changed, with Undo; what was deleted, with its copy ------------------------------------
     //
