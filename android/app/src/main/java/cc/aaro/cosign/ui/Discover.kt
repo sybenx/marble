@@ -713,13 +713,17 @@ private fun KeptLately(items: List<cc.aaro.cosign.LaterItem>, social: Social, na
     val context = LocalContext.current
     Column(Modifier.padding(horizontal = 24.dp).widthIn(max = 600.dp).fillMaxWidth()) {
         LaunchedEffect(open.take(max).map { it.id }) { open.take(max).forEach { cc.aaro.cosign.NotesTrial.shown(it.id, "home") } }
-        for (item in open.take(max)) Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.NotesTrial.opened(item.id, "home"); FeedLog.open("l:" + item.id, "kept"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
+        for (item in open.take(max)) androidx.compose.runtime.key(item.id) {
+        // (a screenshot's note opens its picture, never a search for its file name)
+        val pics = rememberNotePics(item, social, nav)
+        Row(Modifier.fillMaxWidth().clickable { cc.aaro.cosign.NotesTrial.opened(item.id, "home"); FeedLog.open("l:" + item.id, "kept"); if (pics != null) pics.open(0, nav) else item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(16.dp).border(1.5.dp, Vault.Line, CircleShape).clickable(onClickLabel = "Done") { social.later.done(item, true) })
             Spacer(Modifier.width(12.dp))
             item.url?.let { SiteIcon(it, 16); Spacer(Modifier.width(8.dp)) }
             Text(item.text, color = Vault.Text, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = if (item.url == null) androidx.compose.ui.text.font.FontFamily.Monospace else null),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
         }
     }
 }
@@ -3540,7 +3544,10 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     LaunchedEffect(item.id) { cc.aaro.cosign.NotesTrial.shown(item.id, "notes") }
-    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { cc.aaro.cosign.NotesTrial.opened(item.id, "notes"); FeedLog.open("l:" + item.id, "note"); item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
+    // a note with pictures (a screenshot: its words are only a file name) opens them; never a search for its name
+    val pics = rememberNotePics(item, social, nav)
+    Row(Modifier.fillMaxWidth().combinedClickable(onLongClick = { menu = true }) { cc.aaro.cosign.NotesTrial.opened(item.id, "notes"); FeedLog.open("l:" + item.id, "note")
+        if (pics != null) pics.open(0, nav) else item.url?.let { openInBrowser(context, it, "l:" + item.id) } ?: nav.results(item.text) }
         .padding(start = 12.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)) {
         IconButton({ social.later.done(item, item.done == null) }) {
             if (item.done != null) Icon(Icons.Filled.CheckCircle, "Not done", tint = Vault.Accent)
@@ -3558,7 +3565,7 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
                 textDecoration = if (item.done != null) androidx.compose.ui.text.style.TextDecoration.LineThrough else null)
             // Kept alongside: what was shared (two lines of it), and where from; a page's site.
             item.quote?.let { Text(cc.aaro.cosign.readable(it) { pk -> People.known.value[pk]?.name }, color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)) }
-            NotePictures(item, social, nav)
+            pics?.let { NotePictures(it, item, nav) }
             val site = item.url?.let { android.net.Uri.parse(it).host?.removePrefix("www.") ?: it } ?: item.from
             // (After the notes trial, no ages: only where it's from.)
             // No ages (home-rules.md: no counts, no ages).
@@ -3588,27 +3595,57 @@ private fun LaterRow(item: cc.aaro.cosign.LaterItem, filter: String, page: List<
 
 /**
  * A note's pictures (a screenshot kept on Marble Web, in your notes vault): opened from the vault into this app's own
- * cache the first time, then shown at their own shape; a tap shows them full screen.
+ * cache the first time (one opened before shows at once, the vault open or not). [open] shows them full screen: at
+ * once when they're here, else as soon as they've loaded, so a tap is never lost while they load.
  */
-@Composable
-private fun NotePictures(item: cc.aaro.cosign.LaterItem, social: Social, nav: Nav) {
-    val pics = item.extra["pics"] as? org.json.JSONArray ?: return
-    val context = LocalContext.current
-    val list = remember(pics.toString()) { (0 until pics.length()).mapNotNull { pics.optJSONObject(it) } }
-    val files by androidx.compose.runtime.produceState<List<String?>>(List(list.size) { null }, pics.toString(), social.vaultNotes) {
-        val dir = java.io.File(context.cacheDir, "notepics")
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { list.map { p ->
-            // (one opened before shows at once, the vault open or not)
-            (cc.aaro.cosign.notes.VaultNotes.pictureFile(p, dir)?.takeIf { it.length() > 0 } ?: social.vaultNotes?.picture(p, dir))?.let { "file://" + it.absolutePath } } }
+private class NotePics(val list: List<org.json.JSONObject>, private val app: android.content.Context) {
+    var files by mutableStateOf<List<String?>>(List(list.size) { null })
+    /** Every one tried at least once (a null file after that: it couldn't be had now). */
+    var tried by mutableStateOf(false)
+    /** Which picture a tap asked for while they were still loading. */
+    var want by mutableStateOf<Int?>(null)
+    fun open(i: Int, nav: Nav) {
+        val here = files.filterNotNull()
+        if (files.getOrNull(i) != null) nav.pictures(here, files.take(i).count { it != null })
+        else if (!tried) want = i
+        else if (here.isNotEmpty()) nav.pictures(here, 0)
+        else android.widget.Toast.makeText(app, "This picture hasn't loaded yet. Marble tries again when your notes sync.", android.widget.Toast.LENGTH_SHORT).show()
     }
+}
+
+@Composable
+private fun rememberNotePics(item: cc.aaro.cosign.LaterItem, social: Social, nav: Nav): NotePics? {
+    val pics = item.extra["pics"] as? org.json.JSONArray ?: return null
+    val context = LocalContext.current
+    val key = pics.toString()
+    val np = remember(key) { NotePics((0 until pics.length()).mapNotNull { pics.optJSONObject(it) }, context.applicationContext) }
+    val vn = social.vaultNotes
+    LaunchedEffect(key, vn) {
+        val dir = java.io.File(context.cacheDir, "notepics")
+        np.files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            np.list.map { p -> (cc.aaro.cosign.notes.VaultNotes.pictureFile(p, dir)?.takeIf { it.length() > 0 } ?: vn?.picture(p, dir))?.let { "file://" + it.absolutePath } }
+        }
+        np.tried = true
+        np.want?.let { i -> np.want = null; np.open(i, nav) }
+    }
+    return np
+}
+
+@Composable
+private fun NotePictures(np: NotePics, item: cc.aaro.cosign.LaterItem, nav: Nav) {
     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        list.forEachIndexed { i, p ->
+        np.list.forEachIndexed { i, p ->
             val ratio = if (p.optInt("w") > 0 && p.optInt("h") > 0) p.optInt("w").toFloat() / p.optInt("h") else 1.6f
             val shape = RoundedCornerShape(10.dp)
-            val url = files.getOrNull(i)
+            val url = np.files.getOrNull(i)
             Box(Modifier.widthIn(max = 300.dp).heightIn(max = 220.dp).aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f).clip(shape).border(1.dp, Vault.Line, shape)
-                .clickable(enabled = url != null) { nav.pictures(files.filterNotNull(), files.take(i).count { it != null }) }) {
-                NetImage(url, Modifier.fillMaxSize(), 1080, ContentScale.Crop, "Picture: " + cc.aaro.cosign.Later.wordsOf(item.text))
+                .clickable { np.open(i, nav) }) {
+                NetImage(url, Modifier.fillMaxSize(), 1080, ContentScale.Crop, "Picture: " + cc.aaro.cosign.Later.wordsOf(item.text)) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (url == null && np.tried) Text("Picture hasn't loaded yet", color = Vault.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(8.dp))
+                        else androidx.compose.material3.CircularProgressIndicator(Modifier.size(24.dp), color = Vault.Muted, strokeWidth = 2.dp)
+                    }
+                }
             }
         }
     }
