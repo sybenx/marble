@@ -53,16 +53,19 @@ object Fetch {
         val sockets = relays.mapNotNull { url ->
             val once = java.util.concurrent.atomic.AtomicBoolean(false)
             val finish = { ws: WebSocket -> if (once.compareAndSet(false, true)) { done.countDown(); ws.close(1000, null) } }
+            val auth = RelayAuth.session(url)
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(req) }
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val msg = Json.parse(text) as? List<*> ?: return
+                        val closed = { if (answered == null) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
+                        if (authStep(webSocket, auth, msg, { webSocket.send(req) }, { closed() })) return
                         if (msg.getOrNull(1) != sub) return
                         when (msg.getOrNull(0)) {
                             "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e -> if (!got.containsKey(e.id) && e.verify()) got[e.id] = e }
                             "EOSE" -> { answered?.add(url); if (answered == null || enough(synchronized(answered) { answered.toSet() })) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
-                            "CLOSED" -> { if (answered == null) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
+                            "CLOSED" -> if (RelayAuth.needsAuth(msg.getOrNull(2))) RelayAuth.run(webSocket, auth, auth.onAuthRequired(sub), { webSocket.send(req) }, { closed() }) else closed()
                         }
                     }
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { if (once.compareAndSet(false, true)) done.countDown() }
@@ -120,18 +123,36 @@ object Fetch {
         val sub = "l" + java.lang.Long.toString((Math.random() * 1e12).toLong(), 36)
         val req = Json.stringify(listOf("REQ", sub, filter))
         val sockets = relays.distinct().mapNotNull { url ->
+            val auth = RelayAuth.session(url)
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(req) }
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val msg = Json.parse(text) as? List<*> ?: return
+                        if (authStep(webSocket, auth, msg, { webSocket.send(req) }, {})) return
                         if (msg.getOrNull(0) == "EVENT" && msg.getOrNull(1) == sub)
                             Event.fromMap(msg.getOrNull(2))?.let { e -> if (e.verify() && seen.add(e.id)) onEvent(e) }
+                        else if (msg.getOrNull(0) == "CLOSED" && msg.getOrNull(1) == sub && RelayAuth.needsAuth(msg.getOrNull(2)))
+                            RelayAuth.run(webSocket, auth, auth.onAuthRequired(sub), { webSocket.send(req) }, {})
                     }
                 })
             } catch (_: Exception) { null }
         }
         return AutoCloseable { sockets.forEach { it.close(1000, null) } }
+    }
+
+    /**
+     * NIP-42 messages on a socket: a challenge (log in if the relay is one you chose) or the answer to our login (send
+     * what was waiting for it, once). True if [msg] was one of these.
+     */
+    private fun authStep(ws: WebSocket, auth: RelayAuth.Session, msg: List<*>, resend: () -> Unit, giveUp: () -> Unit): Boolean {
+        val acts = when (msg.getOrNull(0)) {
+            "AUTH" -> auth.onChallenge(msg.getOrNull(1) as? String ?: return true)
+            "OK" -> auth.onOk(msg.getOrNull(1) as? String, msg.getOrNull(2) == true).let { (ours, a) -> if (!ours) return false; a }
+            else -> return false
+        }
+        RelayAuth.run(ws, auth, acts, { resend() }, { giveUp() })
+        return true
     }
 
     /** Send [event] to [relays]; how many took it. */
@@ -145,11 +166,17 @@ object Fetch {
         val frame = "[\"EVENT\"," + event.toJson() + "]"
         val sockets = urls.mapNotNull { url ->
             val once = java.util.concurrent.atomic.AtomicBoolean(false)
+            val auth = RelayAuth.session(url)
+            val refused = { ws: WebSocket -> if (once.compareAndSet(false, true)) { done.countDown(); ws.close(1000, null) } }
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(frame) }
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val msg = Json.parse(text) as? List<*> ?: return
+                        if (authStep(webSocket, auth, msg, { webSocket.send(frame) }, { refused(webSocket) })) return
+                        if (msg.getOrNull(0) == "OK" && msg.getOrNull(1) == event.id && msg.getOrNull(2) != true && RelayAuth.needsAuth(msg.getOrNull(3)) && !once.get()) {
+                            RelayAuth.run(webSocket, auth, auth.onAuthRequired(event.id), { webSocket.send(frame) }, { refused(webSocket) }); return
+                        }
                         if (msg.getOrNull(0) == "OK" && msg.getOrNull(1) == event.id && once.compareAndSet(false, true)) {
                             if (msg.getOrNull(2) == true) ok.add(url)
                             done.countDown(); webSocket.close(1000, null)

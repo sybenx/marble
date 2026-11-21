@@ -926,7 +926,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { var was = FeedLog.on.value; FeedLog.on.collect { if (it && !was) logPosts("on", feed.value.posts); was = it } }
         // Once a start, whatever the feed does: what your other phones have seen (never before the first screen).
         scope.launch {
-            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); launch { try { knowRecents() } catch (_: Exception) {} }; pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged()
+            restored.await(); afterPaint(); try { loadTranslations() } catch (_: Exception) {}; knowCircle(); launch { try { knowRecents() } catch (_: Exception) {} }; pullSeen(); pullDeviceNames(); pullLater(); if (pullNews()) newsChanged(); if (pullPrivateRelays()) privateRelaysChanged()
             // Marbles kept on this phone before they were synced (0.12.16): taken in once, then the account's.
             // The phone-wide marbles of before go to one account only: the first that takes them.
             val legacy = CosignApp.instance.getSharedPreferences("marbles", Context.MODE_PRIVATE)
@@ -1284,6 +1284,51 @@ class Social private constructor(private val phone: Phone, context: Context) {
         // Another account was on screen: its pending Undos are cancelled (a post never goes out under a switch).
         onScreen?.takeIf { it !== this }?.pending?.cancelAll(); onScreen = this
         me?.let { NewsSources.load(CosignApp.instance, it, signedInAtStart) }; NewsSources.changed = { newsChanged() }; if (newsPending) newsChanged()
+        // NIP-42: this account logs in, and only to the relays it chose.
+        cc.aaro.cosign.net.RelayAuth.pubkey = me
+        cc.aaro.cosign.net.RelayAuth.signer = { e -> phone.signOwn(e) }
+        cc.aaro.cosign.net.RelayAuth.chosen = { loginRelays() }
+    }
+
+    // --- Private relays and NIP-42 login -----------------------------------------------------------
+
+    /** Your private relays (your archive): logged in to, and later searched, for you only. */
+    val privateRelays = PrivateRelays(prefs).also { it.changed = { privateRelaysChanged() } }
+    @Volatile private var loginCache: Pair<Long, List<String>>? = null
+    /** The relays this account chose (10002, 10050, private relays): the only ones Marble signs a login for. */
+    private fun loginRelays(): List<String> {
+        loginCache?.let { (at, l) -> if (System.currentTimeMillis() - at < 30_000) return l + privateRelays.urls() }
+        val lists = listOf("10002", "10050").mapNotNull { phone.latest(it) }.filter { it.pubkey == me }
+            .flatMap { e -> e.tags.filter { it.size > 1 && (it[0] == "r" || it[0] == "relay") }.map { it[1] } }
+        loginCache = System.currentTimeMillis() to lists
+        return lists + privateRelays.urls()
+    }
+    private var privateSending: kotlinx.coroutines.Job? = null
+    @Volatile private var privateWritable = false
+    private fun privateRelaysChanged() {
+        if (Sources.viewAs != null) return
+        privateSending?.cancel()
+        privateSending = scope.launch { delay(30_000); sendPrivateRelays() }
+    }
+    /** The account's copy, merged in. True if this phone has something it hasn't. */
+    private suspend fun pullPrivateRelays(): Boolean {
+        val me = me ?: return false
+        if (Sources.viewAs != null) { privateWritable = false; return false }
+        if (accountRelays == null || phone.latest("10002") != null) knowAccountRelays()
+        val (found, answered) = Fetch.queryAnswered((listTargets() + readRelays().take(3)).distinct(), mapOf("kinds" to listOf(30078), "authors" to listOf(me), "#d" to listOf(PrivateRelays.TAG), "limit" to 4), 6000) { cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), it) }
+        privateWritable = cc.aaro.cosign.reader.SyncGuard.complete(listTargets(), answered)
+        val got = found.filter { it.pubkey == me && it.verify() }.maxByOrNull { it.createdAt } ?: return privateRelays.all.value.isNotEmpty()
+        val plain = toSelf(got.content, encrypt = false) ?: run { privateWritable = false; return false }
+        if ((try { org.json.JSONObject(plain).optInt("v", 1) } catch (_: Exception) { 0 }) != 1) { privateWritable = false; return false }
+        return privateRelays.take(plain)
+    }
+    private suspend fun sendPrivateRelays() {
+        val me = me ?: return
+        if (!pullPrivateRelays() || !privateWritable) return
+        val text = toSelf(privateRelays.json(), encrypt = true) ?: return
+        val signed = try { phone.signOwn(Event(me, Clock.now(), 30078, listOf(listOf("d", PrivateRelays.TAG)), text).withId()) } catch (_: Exception) { return }
+        if (!cc.aaro.cosign.reader.SyncGuard.written(listTargets(), Fetch.publishOk(listTargets(), signed)))
+            privateSending = scope.launch { delay(60_000); sendPrivateRelays() }
     }
     /** Reader's Undo, held by this account (reader/PendingActions). */
     val pending = cc.aaro.cosign.reader.PendingActions(scope)
