@@ -1,4 +1,4 @@
-// Vaults (the encrypted-sync spec, ~/nostr-sync-nip/vaults.md draft 7.14): keys and generations, commits,
+// Vaults (the encrypted-sync spec, ~/vaults/vaults.md draft 7.14): keys and generations, commits,
 // versions, nv1 blobs, heads, checkpoints and sync. No screens; the app gives it relays, Blossom and the account.
 plugins {
     id("com.android.library")

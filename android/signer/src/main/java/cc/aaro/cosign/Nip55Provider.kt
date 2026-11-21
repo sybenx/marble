@@ -29,12 +29,15 @@ class Nip55Provider : ContentProvider() {
         val phone = accounts.all.firstOrNull { it.ui.value.member?.group?.groupX == current && it.appGrant(pkg) != null } ?: accounts.forApp(pkg) ?: return null
         val member = phone.ui.value.member ?: return null
         val grant = phone.appGrant(pkg) ?: return null
-        if (!current.isNullOrBlank() && current.length == 64 && current != member.group.groupX) return null
+        // The key it has: its own child, or the main account. An app moved to a key of its own that still names the main
+        // account has not signed in again yet: it opens the sheet, which says so.
+        val key = try { phone.appKey(grant) } catch (_: Exception) { return null }
+        if (!current.isNullOrBlank() && current.length == 64 && current != key) return null
         val payload = args.getOrNull(0) ?: ""
         val peer = args.getOrNull(1) ?: ""
         return try {
             when (type) {
-                "GET_PUBLIC_KEY" -> row("result" to member.group.groupX)
+                "GET_PUBLIC_KEY" -> if (phone.moved(pkg) != null) null else row("result" to key)
                 "SIGN_EVENT" -> phone.signForApp(grant, phone.appEvent(payload), approved = false).let { row("result" to it.sig, "signature" to it.sig, "event" to it.toJson()) }
                 "NIP44_ENCRYPT", "NIP44_DECRYPT", "NIP04_ENCRYPT", "NIP04_DECRYPT" -> {
                     if (!grant.dm) return null

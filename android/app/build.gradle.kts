@@ -20,8 +20,8 @@ android {
         applicationId = "cc.aaro.cosign"
         minSdk = 30
         targetSdk = 35
-        versionCode = 64
-        versionName = "0.16.1"
+        versionCode = 75
+        versionName = "0.16.12"
         // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -54,7 +54,7 @@ android {
 dependencies {
     val bom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(project(":signer"))
-    // Notes live in a vault (~/nostr-sync-nip/vaults.md).
+    // Notes live in a vault (~/vaults/vaults.md).
     implementation(project(":vaults"))
     implementation(bom)
     implementation("androidx.compose.material3:material3")

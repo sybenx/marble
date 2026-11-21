@@ -1,6 +1,6 @@
 # Notes in a vault
 
-Marble's notes live in a vault (`~/nostr-sync-nip/vaults.md`, draft 7.14, the `notes` profile). The engine is the
+Marble's notes live in a vault (`~/vaults/vaults.md`, draft 7.14, the `notes` profile). The engine is the
 `vaults` module (`cc.aaro.vaults`); the app's side is `app/…/notes/VaultNotes.kt` (Later's items to and from versions),
 `VaultNet.kt` (relays, Blossom, the signer) and `VaultStore.kt` (the vault's state on the phone, sealed by a Keystore
 key, not backed up).

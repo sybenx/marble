@@ -421,7 +421,8 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolea
                 } else {
                     Text("Use your account on ${c.origin}?", style = MaterialTheme.typography.titleLarge, color = Vault.Text)
                     // Signed in before with an account of its own: it gets that one again.
-                    if (c.own) Text("Its own account, as before", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                    if (c.moved) Text("Its own account now: you gave it one after it tried to change your relays. Messages to your main account won't reach it.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                    else if (c.own) Text("Its own account, as before", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                     // A Keykin account page: it is about the main account, so there is no other to choose.
                     if (c.accountPage) Text("This is an account page, so it uses your main account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                     which?.let { Text("as $it", fontFamily = PlexMono, color = Vault.Accent, style = MaterialTheme.typography.bodyMedium) }
@@ -551,7 +552,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         items(ui.future, key = { "future:" + it.id }) { f -> FutureCard(f) { phone.removeFuture(f) } }
         items(ui.deleting, key = { "deleting:" + it.batch }) { d -> DeletingCard(d, now) { phone.cancelDeletion(d.batch) } }
         items(ui.batchAsks, key = { "batch:" + it.batch }) { b -> BatchCard(b, now) { approve -> phone.decideBatch(b.batch, approve) } }
-        items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now) { approve -> phone.decide(ask.id, approve) } }
+        items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now, onSwitch = { phone.decideSwitch(ask.id) }) { approve -> phone.decide(ask.id, approve) } }
 
         // A quiet note, no banner: write relays that haven't answered in a week (with half or more silent, your
         // notes' and Reader's copies can't be written).
@@ -600,7 +601,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
-            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes)
+            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes,
+                changes = ui.changes.filter { it.by == origin && !it.undone }, onUndoOne = { phone.undo(it) })
         }
 
         // Following: your Special Follow list and where the news comes from.
@@ -935,16 +937,34 @@ internal fun FutureCard(f: Future, onRemove: () -> Unit) = Card(Vault.AmberEdge,
 
 @Composable
 /** [quiet]: on home, no ticking seconds (home-rules.md: no counts). */
-internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
+internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onSwitch: (() -> Unit)? = null, onDecide: (Boolean) -> Unit) = Card(Vault.AmberEdge, Vault.AmberGround) {
     val left = ((ask.expiresAt - now) / 1000).coerceAtLeast(0)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(question(ask.hold), style = MaterialTheme.typography.titleMedium, color = Vault.Text, modifier = Modifier.weight(1f))
         if (!quiet) Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
     }
     Spacer(Modifier.height(6.dp))
-    Text("${ask.app} asked. It doesn't happen unless you say yes.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+    // Level 2 says that the fingerprint comes after Yes, so it never looks like an ordinary Yes or No.
+    Text(cc.aaro.cosign.core.Asking.cardLine(ask.app, ask.level), style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     Spacer(Modifier.height(14.dp))
-    YesNo(onDecide)
+    if (ask.switch && onSwitch != null) SwitchChoices(ask.app, onSwitch, onDecide) else YesNo(onDecide)
+}
+
+/**
+ * A site changing your relay list or DM relays (Aaron, 2026-11-21): it is probably better on an account of its own.
+ * Give it its own account (the main button), let it change the main lists, or Don't.
+ */
+@Composable
+private fun SwitchChoices(who: String, onSwitch: () -> Unit, onDecide: (Boolean) -> Unit) = Column {
+    Text("$who wants to control your relays. Give it its own account, so it can't change your main one?", style = MaterialTheme.typography.bodyMedium, color = Vault.Text)
+    Spacer(Modifier.height(4.dp))
+    Text("A plus: messages sent to your main account won't reach it, so it gets no spam meant for you.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+    Spacer(Modifier.height(12.dp))
+    Button(onSwitch, Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text("Give it its own account", fontWeight = FontWeight.SemiBold) }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton({ onDecide(true) }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Let it change my main lists", color = Vault.Text) }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton({ onDecide(false) }, Modifier.fillMaxWidth().height(48.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't", color = Vault.Text) }
 }
 
 /** Yes or no to something that needs you. No is never the weaker button. */
@@ -954,29 +974,12 @@ private fun YesNo(onDecide: (Boolean) -> Unit) = Row(horizontalArrangement = Arr
     Button({ onDecide(true) }, Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Amber, Vault.OnAmber)) { Text("Yes", fontWeight = FontWeight.SemiBold) }
 }
 
-/**
- * What needs you, as a question about what would happen: "Remove 212 of your 230 follows"
- * becomes "Unfollow 212 people?". The words come from the policy (here and on your servers).
- */
-internal fun question(what: String): String {
-    val s = what.trim().removeSuffix(".").removeSuffix("?")
-    fun people(n: String) = if (n == "1") "1 person" else "$n people"
-    Regex("^Remove (\\d+) of your \\d+ follows?(?: \\(and add (\\d+)\\))?$").matchEntire(s)?.let {
-        val add = it.groupValues[2]
-        return "Unfollow ${people(it.groupValues[1])}" + (if (add.isEmpty()) "" else " and follow ${people(add)} instead") + "?"
-    }
-    Regex("^Empty your follow list \\(it has (\\d+) follows?\\)$").matchEntire(s)?.let { return "Unfollow all ${people(it.groupValues[1])}?" }
-    Regex("^Empty your (.+) \\(it has (\\d+) (.+)\\)$").matchEntire(s)?.let { return "Remove all ${it.groupValues[2]} ${it.groupValues[3].replace("persons", "people")} from your ${it.groupValues[1]}?" }
-    Regex("^(.+) dated in the future \\((.+)\\)$").matchEntire(s)?.let { return "Allow a ${it.groupValues[1].lowercase()} dated ${it.groupValues[2]}?" }
-    Regex("^Delete (\\d+) (?:of your )?events?(?: for .*)?$").matchEntire(s)?.let { val n = it.groupValues[1]; return "Delete $n post${if (n == "1") "" else "s"}?" }
-    Regex("^Delete (?:several|some) events?(?: for .*)?$").matchEntire(s)?.let { return "Delete several posts?" }
-    Regex("^Wipe your profile: (.+)$").matchEntire(s)?.let { return "Clear your profile (${it.groupValues[1]})?" }
-    if (s.startsWith("Ask relays to erase everything")) return "Erase everything you've ever posted?"
-    return "$s?"
-}
+/** What needs you, as a question about what would happen ([cc.aaro.cosign.core.Asking.question]). */
+internal fun question(what: String): String = cc.aaro.cosign.core.Asking.question(what)
 
 @Composable
-private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> }) = Column(
+private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> },
+                      changes: List<Change> = emptyList(), onUndoOne: (Change) -> Unit = {}) = Column(
     Modifier.fillMaxWidth().background(Vault.Surface, RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp)).padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1003,6 +1006,13 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
         }
         // A site's switches (an app on this phone has none of these).
         if (g.scoped) SiteScopeSwitches(g.lists, g.dms, { onScopes(g, it, g.dms) }, { onScopes(g, g.lists, it) }, Modifier.padding(end = 8.dp))
+    }
+    // What it changed in your lists, each with its own Undo (the same rows as Recent changes).
+    for (c in changes.take(5)) Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Accent, CircleShape))
+        Spacer(Modifier.width(10.dp))
+        Text(c.text, style = MaterialTheme.typography.bodySmall, color = Vault.Text, modifier = Modifier.weight(1f))
+        TextButton({ onUndoOne(c) }) { Text("Undo", color = Vault.Accent) }
     }
 }
 

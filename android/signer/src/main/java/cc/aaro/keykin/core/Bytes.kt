@@ -9,7 +9,8 @@ import java.math.BigInteger
 import java.security.MessageDigest
 import java.security.SecureRandom
 
-class KeykinException(val code: String, detail: String? = null) : Exception(if (detail != null) "$code: $detail" else code)
+/** [why] is the box's reason in plain words, for a person to read (`needs_tap`, `dated_ahead`); it is also the message's detail. */
+class KeykinException(val code: String, detail: String? = null, val why: String? = null) : Exception(if (detail != null) "$code: $detail" else code)
 fun refuse(code: String, detail: String? = null): Nothing = throw KeykinException(code, detail)
 
 private val HEX = "0123456789abcdef".toCharArray()

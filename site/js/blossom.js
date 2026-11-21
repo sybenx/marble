@@ -1,7 +1,7 @@
 // Blossom links (BUD-10): "blossom:<sha256>.<ext>?xs=server&as=<pubkey>&sz=<bytes>", a file named by its hash, found on
 // the servers it names (xs), then its authors' server lists (as: kind 10063, BUD-03), then a few well-known ones; a copy
 // counts only if its size is sz, when given (content-rules.md §4). The blossom: text itself never shows.
-import { req, relays, FAST, INDEXERS } from "./pool.js";
+import { req, relays, FAST, INDEXERS } from "./signin/pool.js";
 
 export const BLOSSOM = /blossom:[0-9a-f]{64}\.[a-z0-9]{1,8}(?:\?[^\s<>"']*[^\s<>"'.,;:!?)\]}])?/gi;
 const WELL_KNOWN = ["https://blossom.primal.net", "https://cdn.satellite.earth", "https://blossom.band"];

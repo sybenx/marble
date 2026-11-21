@@ -68,7 +68,7 @@ object Curate {
 
     /** One post on its own: a root (not a reply), something in it, not a test, not heavy. */
     fun keep(e: Event): Boolean {
-        if (parentOf(e) != null) return false
+        if (isReply(e)) return false
         val words = substance(e.content)
         if (TEST.matches(words) || TEST.matches(e.content.trim())) return false
         if (words.length < 15 && !media(e)) return false

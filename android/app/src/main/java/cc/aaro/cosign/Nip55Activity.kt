@@ -87,10 +87,16 @@ class Nip55Activity : ComponentActivity() {
                         "It asked to encrypt or decrypt a message. Allow it once and it can do that from now on, until you remove it.",
                         null, no = "Not now", yes = "Allow",
                     ) { confirm(); request.allowDms() }
-                    is Stage.Approve -> Ask(
-                        cc.aaro.cosign.ui.question(s.what), "$label asked${whichKey()}.", "It doesn't happen unless you say yes.",
+                    is Stage.Approve -> if (s.switch) SwitchAsk(s.what) else Ask(
+                        cc.aaro.cosign.ui.question(s.what), "$label asked${whichKey()}.",
+                        null,
                         no = "Don't", yes = "Yes", amber = true,
                     ) { confirm(); request.approve() }
+                    is Stage.Switched -> Told("It has its own account now", s.text, "Done") { reject() }
+                    is Stage.Moved -> Ask(
+                        "$label is signing in again", s.text, null,
+                        no = "Not now", yes = "Sign in with its own account",
+                    ) { confirm(); request.signInMoved() }
                     is Stage.Working -> {
                         CircularProgressIndicator(color = Vault.Accent, modifier = Modifier.align(Alignment.CenterHorizontally))
                         Spacer(Modifier.height(14.dp))
@@ -106,6 +112,41 @@ class Nip55Activity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * An app on the main account changing your relay list or DM relays (Aaron, 2026-11-21): it is probably better on a
+     * key of its own. Switch (the main button), let it change the main lists, or Don't (this change is refused, the app
+     * stays connected).
+     */
+    @Composable
+    private fun SwitchAsk(what: String) {
+        Text("$label wants to control your relays", style = MaterialTheme.typography.titleLarge, color = Vault.Amber)
+        Spacer(Modifier.height(10.dp))
+        Text("Give it its own account, so it can't change your main one?", style = MaterialTheme.typography.titleMedium, color = Vault.Text)
+        Spacer(Modifier.height(8.dp))
+        Text("It asked to ${cc.aaro.cosign.ui.question(what).removeSuffix("?").replaceFirstChar { it.lowercase() }}${whichKey()}.", style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+        Spacer(Modifier.height(6.dp))
+        Text("A plus: messages sent to your main account won't reach it, so it gets no spam meant for you.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+        Spacer(Modifier.height(20.dp))
+        Button({ confirm(); request.switchKey() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+            Text("Give it its own account", maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton({ confirm(); request.approve() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) {
+            Text("Let it change my main lists", color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton({ reject() }, Modifier.fillMaxWidth().height(52.dp), border = BorderStroke(1.dp, Vault.Line)) { Text("Don't", color = Vault.Text) }
+    }
+
+    @Composable
+    private fun Told(title: String, body: String, button: String, onDone: () -> Unit) {
+        Text(title, style = MaterialTheme.typography.titleLarge, color = Vault.Text)
+        Spacer(Modifier.height(10.dp))
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
+        Spacer(Modifier.height(20.dp))
+        Button(onDone, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) { Text(button) }
     }
 
     @Composable

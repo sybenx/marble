@@ -3,6 +3,8 @@ package cc.aaro.cosign
 import cc.aaro.qrst.core.Event
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /** What the home screen's search box opens, and how it reads a reply's place in a thread. */
@@ -116,6 +118,19 @@ class SocialTest {
         assertEquals(true, SearchRank.exact("Alex  Gleason 🦊", "alex gleason"))
     }
 
+    @Test fun bareLookAlikesDontPassSomeoneStillBeingCounted() {
+        // "florian", 2026-11-20: relay.ditto.pub answers first with dozens of bare "Florian"s and their counts (1–3) come in
+        // before the real one's (23,910); while his is on the way he stays on top.
+        val bare = (0 until 30).map { Hit(('a' + it % 20).toString().repeat(64), "Florian", 1000 + it, followers = (it % 4).toLong(), bare = true) }
+        val real = Hit("f".repeat(63) + "0", "florian", 0, followers = null)
+        assertEquals(real.pubkey, SearchRank.sort(bare + real, "florian").first().pubkey)
+        assertEquals(real.pubkey, SearchRank.sort(bare + real.copy(followers = 23_910), "florian").first().pubkey)
+        // Bare is a profile with nothing but a name (a picture doesn't count); an address or an about says more.
+        assertEquals(true, Hit.bare(Person("a".repeat(64), "Florian", "https://x/p.jpg", "", null, 0)))
+        assertEquals(false, Hit.bare(Person("a".repeat(64), "florian", null, null, "florian@slidestr.net", 0)))
+        assertEquals(false, Hit.bare(Person("a".repeat(64), "Florian", null, "builds things", null, 0)))
+    }
+
     @Test fun linksThatCarryAnIdentifierOpenIt() {
         assertEquals(Ref.Profile(fiatjaf), Ref.parse("https://njump.me/npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6"))
         assertEquals(Ref.Note(note), Ref.parse("https://primal.net/e/nevent1qqsfwwdfzmpmdt9jj533a5tx2n73ucmelcs5ah0vxcxy2995jhe9njgpz3mhxue69uhhyetvv9ujuerpd46hxtnfduy3kz48"))
@@ -152,6 +167,37 @@ class SocialTest {
         // A note that only mentions another is no reply.
         assertNull(parentOf(ev(listOf("e", quoted, "", "mention"))))
         assertNull(parentOf(ev(listOf("p", fiatjaf))))
+    }
+
+    // A real comment (NIP-22) answering another comment: lowercase e is the parent (pubkey in the 4th place), uppercase E the root.
+    private val commentRoot = "000000b61b2835c10790f2af8be8e276a937e089b82bcba8537c785071c398cf"
+    private val commentParent = "000000da7fa206aa3fc03d13d3e6aa1a0ed69c6cdee45a495de871d92887c30a"
+    private val adam = "eb7bb10fbb531c5b7b914486d160ff85e3305d5bc88a34b501cdbd3efa9ed505"
+    private val comment = Event(fiatjaf, 0, COMMENT, listOf(listOf("p", fiatjaf), listOf("E", commentRoot, "wss://garden.adamiskandar.com/", adam), listOf("P", adam),
+        listOf("e", commentParent, "wss://relay.primal.net/", adam), listOf("p", adam), listOf("k", "1111")), "bothy relay runs on cloudflare workers today, partway there.").withId()
+
+    @Test fun commentsFindTheirPlace() {
+        assertEquals(commentParent, parentOf(comment)); assertEquals(commentRoot, rootOf(comment))
+        assertTrue(isReply(comment))
+        // A first comment on a web page answers no note, but is still a reply, never an original post.
+        val onPage = Event(fiatjaf, 0, COMMENT, listOf(listOf("I", "https://www.example.com/a"), listOf("K", "web"), listOf("i", "https://www.example.com/a"), listOf("k", "web")), "nice")
+        assertNull(parentOf(onPage)); assertNull(rootOf(onPage)); assertTrue(isReply(onPage))
+        assertEquals("example.com", commentedOn(onPage))
+        assertEquals("an article", commentedOn(Event(fiatjaf, 0, COMMENT, listOf(listOf("A", "30023:$adam:x"), listOf("K", "30023")), "")))
+        // A plain note is a reply only when it answers one.
+        assertFalse(isReply(ev(listOf("p", fiatjaf))))
+        assertTrue(isReply(ev(listOf("e", commentRoot, "", "root"))))
+    }
+
+    @Test fun aReplyToACommentIsAComment() {
+        val tags = commentReplyTags(comment, listOf(fiatjaf, adam))
+        val reply = Event(note, 0, COMMENT, tags, "yes")
+        // Same thread root as the comment it answers, and that comment as its parent.
+        assertEquals(64, comment.id.length)
+        assertEquals(commentRoot, rootOf(reply)); assertEquals(comment.id, parentOf(reply))
+        assertEquals(listOf("k", "1111"), tags.first { it[0] == "k" })
+        assertEquals(listOf("E", "P"), tags.filter { it[0] in setOf("E", "A", "I", "K", "P") }.map { it[0] })
+        assertEquals(listOf(fiatjaf, adam), tags.filter { it[0] == "p" }.map { it[1] })
     }
 
     @Test fun marblesOwnGrantIsNotListed() {

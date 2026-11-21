@@ -127,6 +127,40 @@ fun marbleRef(url: String): Ref? = refIn(url, setOf("marble.syb.lol"))
  */
 fun inAppRef(url: String): Ref? = if (url.startsWith("nostr:", ignoreCase = true)) Ref.parse(url) else refIn(url, VIEWERS)
 
+/**
+ * The post, article or person a web page is showing, from its address alone: any https (or http) page whose path has
+ * a segment that is a note1, nevent1, naddr1, npub1 or nprofile1 (Jumble's /notes/nevent1…, /users/npub1…; any
+ * site's), or a known viewer's link (inAppRef). For the web pane's "Open in Marble". A query or fragment doesn't count,
+ * and neither does a bare hex anywhere but a viewer's /e/… or /p/….
+ */
+fun pageRef(url: String?): Ref? {
+    if (url.isNullOrBlank()) return null
+    val u = try { java.net.URI(url.trim()) } catch (_: Exception) { return null }
+    if (u.scheme?.lowercase() !in setOf("https", "http")) return null
+    inAppRef(url)?.let { return it }
+    return u.path.orEmpty().split('/').filter { PAGE_ENTITY.matches(it.lowercase()) }.asReversed().firstNotNullOfOrNull { Ref.parse(it) }
+}
+private val PAGE_ENTITY = Regex("(npub1|nprofile1|note1|nevent1|naddr1)[02-9ac-hj-np-z]+")
+
+/**
+ * What a nostr: link (NIP-21) names, as Android hands it over: nostr:nevent1…, nostr:npub1…, and the nostr://… some
+ * apps write. Null for nsec (never taken from a link) and anything else Marble can't read.
+ */
+fun nostrLinkRef(link: String): Ref? {
+    val s = link.trim()
+    if (!s.startsWith("nostr:", ignoreCase = true)) return null
+    val id = s.substring(6).removePrefix("//").substringBefore('?').substringBefore('#').trimEnd('/')
+    if (id.isEmpty() || id.contains('/') || !PAGE_ENTITY.matches(id.lowercase())) return null
+    return Ref.parse(id.lowercase())
+}
+
+/** Shared text that is nothing but a post, article or someone: nostr:…, a bare note1/nevent1/naddr1/npub1/nprofile1, or a viewer's link (inAppRef). */
+fun sharedRef(text: String): Ref? {
+    val t = text.trim()
+    if (t.isEmpty() || t.any { it.isWhitespace() }) return null
+    return nostrLinkRef(t) ?: (if (PAGE_ENTITY.matches(t.lowercase())) Ref.parse(t.lowercase()) else null) ?: inAppRef(t)
+}
+
 /** Sites that show a post or a person by its reference: their links open it in Marble instead. */
 private val VIEWERS = setOf("marble.syb.lol", "njump.me", "njump.to", "primal.net", "nostr.at", "nostr.com", "snort.social", "iris.to", "coracle.social",
     "nostrudel.ninja", "yakihonne.com", "habla.news", "highlighter.com", "jumble.social", "nostter.app")
@@ -303,16 +337,47 @@ sealed class Ref {
     }
 }
 
-/** What a note replies to: the note right above it, and the thread's first note. */
+/**
+ * What a note replies to: the note right above it, and the thread's first note. A comment (NIP-22, kind 1111)
+ * names its parent with a lowercase `e` and its root with an uppercase `E`; one on an article or a web page has
+ * no parent note at all (see [isReply]).
+ */
 fun parentOf(e: Event): String? {
+    if (e.kind == COMMENT) return e.tags.firstOrNull { it.size > 1 && it[0] == "e" }?.get(1)
     val es = e.tags.filter { it.size > 1 && it[0] == "e" }
     return es.firstOrNull { it.getOrNull(3) == "reply" }?.get(1) ?: es.firstOrNull { it.getOrNull(3) == "root" }?.get(1)
         ?: es.lastOrNull { it.getOrNull(3).isNullOrEmpty() || it[3] !in setOf("mention") }?.get(1)
 }
 fun rootOf(e: Event): String? {
+    if (e.kind == COMMENT) return e.tags.firstOrNull { it.size > 1 && it[0] == "E" }?.get(1)
     val es = e.tags.filter { it.size > 1 && it[0] == "e" }
     return es.firstOrNull { it.getOrNull(3) == "root" }?.get(1) ?: es.firstOrNull { it.getOrNull(3).isNullOrEmpty() }?.get(1)
 }
+
+/** NIP-22: a comment, on a note, an article, a video or a web page. */
+const val COMMENT = 1111
+
+/**
+ * The tags of a comment answering [parent], itself a comment (NIP-22: a reply to a comment is a comment). The
+ * thread's root (uppercase E/A/I/K/P) is kept as the parent has it; the parent is named in lowercase.
+ */
+fun commentReplyTags(parent: Event, people: List<String>): List<List<String>> = buildList {
+    parent.tags.filter { it.size > 1 && it[0] in setOf("E", "A", "I", "K", "P") }.forEach { add(it) }
+    add(listOf("e", parent.id, "", parent.pubkey))
+    add(listOf("k", COMMENT.toString()))
+    people.forEach { add(listOf("p", it)) }
+}
+
+/** What a comment with no parent note is on, in a few words: a web page's site, else "an article" or "a post". */
+fun commentedOn(e: Event): String {
+    val i = e.tags.firstOrNull { it.size > 1 && it[0] == "I" }?.get(1)
+    if (i != null && (i.startsWith("http://") || i.startsWith("https://"))) return try { java.net.URI(i).host?.removePrefix("www.") } catch (_: Exception) { null } ?: "a web page"
+    val k = e.tags.firstOrNull { it.size > 1 && it[0] == "K" }?.get(1)
+    return if (k == "30023") "an article" else "a post"
+}
+
+/** Answers something: a reply to a note, or any comment (even one on a web page, which has no parent note). */
+fun isReply(e: Event) = e.kind == COMMENT || parentOf(e) != null
 
 /** The home feed: today's stories for the box at the top, and the posts from people. It ends. */
 data class Feed(val stories: List<TopicCard> = emptyList(), val posts: List<Pick> = emptyList(), val loading: Boolean = false, val failed: Boolean = false, val at: Long = 0) {
@@ -330,7 +395,8 @@ data class Found(val query: String, val people: List<String> = emptyList(), val 
                  val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
-data class Held(val what: String, val event: Event)
+/** [level] 2: Yes goes on to the fingerprint. */
+data class Held(val what: String, val event: Event, val level: Int = 1)
 
 /** The home screen's state for one key. */
 class Social private constructor(private val phone: Phone, context: Context) {
@@ -807,15 +873,20 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = reader ?: return special.value
         val list = Fetch.query((writeRelays() + readRelays()).distinct().take(8), mapOf("kinds" to listOf(10010), "authors" to listOf(me), "limit" to 3), 6000)
             .maxByOrNull { it.createdAt } ?: return special.value
-        val public = list.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
-        val private = list.content.takeIf { it.isNotBlank() && me == this.me }?.let { c -> toSelf(c, encrypt = false) }?.let { j ->
-            try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.takeIf { it.size > 1 && it[0] == "p" }?.get(1) as? String } } catch (_: Exception) { null }
-        } ?: emptyList()
-        val all = (public + private).filter { it.length == 64 }.toSet()
+        val all = specialIn(list, me)
         specialAt = System.currentTimeMillis()
         special.value = all
         prefs.edit().putStringSet("special", all).apply()
         return all
+    }
+
+    /** Everyone on a Special Follow list: its public names, and its private ones when it's yours and this phone can read them. */
+    private suspend fun specialIn(list: Event, me: String): Set<String> {
+        val public = list.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }
+        val private = list.content.takeIf { it.isNotBlank() && me == this.me }?.let { c -> toSelf(c, encrypt = false) }?.let { j ->
+            try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.takeIf { it.size > 1 && it[0] == "p" }?.get(1) as? String } } catch (_: Exception) { null }
+        } ?: emptyList()
+        return (public + private).filter { it.length == 64 }.toSet()
     }
 
     /** What your Special Follow people posted in the last two days (their own posts, not replies). */
@@ -1358,7 +1429,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
         scope.launch { pullLater() }
     }
 
-    // --- Notes in a vault (~/nostr-sync-nip/vaults.md, the notes profile) ------------------------------
+    // --- Notes in a vault (~/vaults/vaults.md, the notes profile) ------------------------------
     //
     // Your notes live in one vault of your account's: found from your keyring entries, or made by this phone on the
     // first run after the update, when it also brings in your v3 packs and marble/later once, as one batch (§17).
@@ -2025,24 +2096,30 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught))
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
-            fun add(pk: String, name: String?, rank: Int = 9) { hits.putIfAbsent(pk, Hit(pk, name, rank * 1000 + order.getAndIncrement(), follow = pk in mine)) }
+            fun add(p: Person, rank: Int = 9) { hits.putIfAbsent(p.pubkey, Hit(p.pubkey, p.name, rank * 1000 + order.getAndIncrement(), follow = p.pubkey in mine, bare = Hit.bare(p))) }
 
             val relayJobs = ArrayList<kotlinx.coroutines.Job>()
             // What arrives (a count, a checked address) only marks the list changed; it's redrawn at most five times a second.
             val dirty = java.util.concurrent.atomic.AtomicBoolean(false)
             val redraw = launch { while (true) { delay(200); if (dirty.getAndSet(false)) show(true) } }
-            // Trust is looked up one batch after another, so each relay sees one counting connection at a time.
-            val toEnrich = kotlinx.coroutines.channels.Channel<List<Person>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-            val enricher = launch { for (batch in toEnrich) enrich(batch, text, hits) { dirty.set(true) } }
+            // Follower counts: each counting relay takes the batches one after another (one counting connection
+            // each), on its own, so a slow one never holds up what the other has to say.
+            val toCount = SearchRelays.COUNTS.associateWith { kotlinx.coroutines.channels.Channel<List<Person>>(kotlinx.coroutines.channels.Channel.UNLIMITED) }
+            val checks = java.util.Collections.synchronizedList(ArrayList<kotlinx.coroutines.Job>())
+            val counters = toCount.map { (url, queue) -> launch { for (batch in queue) count(url, batch, hits) { dirty.set(true) } } }
+            fun enrich(batch: List<Person>) {
+                toCount.values.forEach { it.trySend(batch) }
+                checks += launch { checkAddresses(batch, text, hits) { dirty.set(true) } }
+            }
             if (tag == null) {
                 // Your follows, from what this phone knows: no waiting.
-                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, text) }.forEach { add(it.pubkey, it.name) }
+                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, text) }.forEach { add(it) }
                 show(true); mark("follows: ${hits.size}")
                 // name@domain: whoever it names, at the top.
                 if (Nip05.isAddress(text)) relayJobs += launch {
                     val pk = Nip05.lookup(text)?.takeIf { isHex32(it) } ?: return@launch
                     People.want(listOf(pk))
-                    hits[pk] = Hit(pk, People.known.value[pk]?.name, -1, follow = pk in mine, nip05 = Nip05.Check.OK)
+                    hits[pk] = Hit(pk, People.known.value[pk]?.name, -1, follow = pk in mine, nip05 = Nip05.Check.OK)  // an address: never bare
                     show(true); mark("address found")
                 }
                 val relays = SearchRelays.FAST.map { it to 8000L } + SearchRelays.SLOW.map { it to 3500L } + Sources.extra.value.map { it to 3000L }
@@ -2051,11 +2128,11 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val evs = Fetch.query(listOf(url), mapOf("kinds" to listOf(0), "search" to text, "limit" to 50), wait).filter { it.kind == 0 }
                     People.add(evs)
                     val fresh = evs.mapNotNull { e -> Person.of(e)?.takeIf { !hits.containsKey(it.pubkey) } }
-                    fresh.forEach { add(it.pubkey, it.name, i) }
+                    fresh.forEach { add(it, i) }
                     show(true); mark("${url.removePrefix("wss://")}: ${evs.size} people")
                     // Trust for the ones whose names match: those are the ones whose order matters.
                     val named = fresh.filter { SearchRank.matches(it.name, text) }
-                    if (named.isNotEmpty()) toEnrich.send(named.take(30))
+                    if (named.isNotEmpty()) enrich(named.take(30))
                 }
             }
             if (split != null) {
@@ -2078,10 +2155,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 }
             }
             // Posts: the fast relays together, the slow ones on their own.
-            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, 30023), "search" to text, "limit" to 40)
+            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1, COMMENT), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, COMMENT, 30023), "search" to text, "limit" to 40)
             for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
-                // Posts and long-form articles (an article counts once, as its newest version).
-                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == 30023 }
+                // Posts, comments and long-form articles (an article counts once, as its newest version).
+                val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == COMMENT || it.kind == 30023 }
                     .sortedByDescending { it.createdAt }.distinctBy { if (it.kind == 30023) "a:" + it.pubkey + ":" + (it.firstTag("d") ?: it.id) else it.id }
                 remember(got)
                 notes += got.filter { safe(it) }
@@ -2098,7 +2175,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
             relayJobs.joinAll()
             // Likely spam out of the ranking (strangers only): manufactured likes, or an author who writes like spam.
             if (!notes.isEmpty()) kotlinx.coroutines.withTimeoutOrNull(6000) { searchSpam(synchronized(notes) { notes.distinctBy { it.id }.toList() }, mine, caught) { show(true) } }
-            toEnrich.close(); enricher.join(); redraw.cancel()
+            // Every batch is queued by now (the relay jobs queue them).
+            synchronized(checks) { checks.toList() }.joinAll()
+            toCount.values.forEach { it.close() }; counters.joinAll(); redraw.cancel()
             People.want(hits.keys.toList())
             show(false); mark("done")
         }
@@ -2127,15 +2206,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (caught.isNotEmpty()) publish()
     }
 
-    /** Follower counts and NIP-05 checks for people a search just found, filled into [hits] as they come. */
-    private suspend fun enrich(people: List<Person>, query: String, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) = kotlinx.coroutines.withTimeoutOrNull(6500) { kotlinx.coroutines.coroutineScope {
-        // Each count and each check counts as soon as it's in: no waiting for the slowest.
-        for (url in SearchRelays.COUNTS) launch {
-            Fetch.counts(url, people.associate { it.pubkey to mapOf("kinds" to listOf(3), "#p" to listOf(it.pubkey)) }, 6000, inFlight = 15) { pk, c ->
-                hits.computeIfPresent(pk) { _, h -> if ((h.followers ?: -1) >= c) h else h.copy(followers = c) }; changed()
-            }
+    /** Follower counts from one relay for people a search just found, filled into [hits] as they come; the higher count wins. */
+    private suspend fun count(url: String, people: List<Person>, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) {
+        Fetch.counts(url, people.associate { it.pubkey to mapOf("kinds" to listOf(3), "#p" to listOf(it.pubkey)) }, 6000, inFlight = 15) { pk, c ->
+            hits.computeIfPresent(pk) { _, h -> if ((h.followers ?: -1) >= c) h else h.copy(followers = c) }; changed()
         }
-        // Addresses checked for the exact names only (the order among those is what they decide), within a few seconds.
+    }
+
+    /** NIP-05 checks for the exact names only (the order among those is what they decide), within a few seconds. */
+    private suspend fun checkAddresses(people: List<Person>, query: String, hits: ConcurrentHashMap<String, Hit>, changed: () -> Unit) = kotlinx.coroutines.withTimeoutOrNull(6500) { kotlinx.coroutines.coroutineScope {
         val gate = kotlinx.coroutines.sync.Semaphore(8)
         people.filter { it.nip05 != null && SearchRank.exact(it.name, query) }.take(12).map { p ->
             async { gate.withPermit { Nip05.check(p.pubkey, p.nip05) }.also { c -> hits.computeIfPresent(p.pubkey) { _, h -> h.copy(nip05 = c) }; changed() } }
@@ -2385,10 +2464,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
      * [until]: older than this, for the next page. Returns when every relay has answered or given up.
      */
     suspend fun notesBy(pk: String, until: Long? = null, onSome: (List<Event>) -> Unit) = kotlinx.coroutines.coroutineScope {
-        val filter = buildMap<String, Any> { put("kinds", listOf(1, 6, 21, 22)); put("authors", listOf(pk)); put("limit", 30); until?.let { put("until", it - 1) } }
+        val filter = buildMap<String, Any> { put("kinds", listOf(1, 6, 21, 22, COMMENT)); put("authors", listOf(pk)); put("limit", 30); until?.let { put("until", it - 1) } }
         val lock = Any()
         fun deliver(got: List<Event>) {
-            val mine = got.filter { it.pubkey == pk && it.kind in listOf(1, 6, 21, 22) }
+            val mine = got.filter { it.pubkey == pk && it.kind in listOf(1, 6, 21, 22, COMMENT) }
             if (mine.isEmpty()) return
             val inner = mine.filter { it.kind == 6 }.mapNotNull { reposted(it) }
             remember(mine.filter { it.kind != 6 } + inner)
@@ -2523,13 +2602,14 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val me = me ?: return null
         val body = text.trim().ifEmpty { return null }
         val root = rootOf(parent) ?: parent.id
-        val tags = buildList {
+        val people = (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
+        val kind = if (parent.kind == COMMENT) COMMENT else 1
+        val tags = if (kind == COMMENT) commentReplyTags(parent, people) else buildList {
             add(listOf("e", root, "", "root"))
             if (root != parent.id) add(listOf("e", parent.id, "", "reply"))
-            (listOf(parent.pubkey) + parent.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] }).distinct().filter { it != me && cc.aaro.qrst.core.isHex32(it) }
-                .forEach { add(listOf("p", it)) }
+            people.forEach { add(listOf("p", it)) }
         }
-        val signed = actEvent(Event(me, Clock.now(), 1, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
+        val signed = actEvent(Event(me, Clock.now(), kind, tags, body).withId(), relays = writeRelays() + inboxOf(parent.pubkey)) ?: return null
         FeedLog.act(parent.id, "reply", "root" to root.takeIf { it != parent.id })
         remember(listOf(signed))
         // In the thread it was written in, under the post it answers, at once.
@@ -2566,15 +2646,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
         notices.update { it.copy(loading = true) }
         scope.launch {
             afterPaint()
-            val evs = Fetch.query(readRelays(), mapOf("kinds" to listOf(1, 6, 7), "#p" to listOf(me), "limit" to 80), 7000).filter { it.pubkey != me && it.pubkey !in muted.value }
+            val evs = Fetch.query(readRelays(), mapOf("kinds" to listOf(1, COMMENT, 6, 7), "#p" to listOf(me), "limit" to 80), 7000).filter { it.pubkey != me && it.pubkey !in muted.value }
             val list = evs.sortedByDescending { it.createdAt }.map { e ->
                 when (e.kind) {
                     7 -> Notice(e, Notice.Type.REACTION, e.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1))
                     6 -> Notice(e, Notice.Type.REPOST, e.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1))
-                    else -> if (parentOf(e) != null) Notice(e, Notice.Type.REPLY, e.id) else Notice(e, Notice.Type.MENTION, e.id)
+                    else -> if (isReply(e)) Notice(e, Notice.Type.REPLY, e.id) else Notice(e, Notice.Type.MENTION, e.id)
                 }
             }
-            remember(evs.filter { it.kind == 1 })
+            remember(evs.filter { it.kind == 1 || it.kind == COMMENT })
             // What the likes were on: your notes.
             val about = list.filter { it.type == Notice.Type.REACTION || it.type == Notice.Type.REPOST }.mapNotNull { it.about }.distinct().filter { note(it) == null }
             if (about.isNotEmpty()) remember(Fetch.query(readRelays(), mapOf("ids" to about.take(60)), 5000))
@@ -2712,10 +2792,10 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val ids = synchronized(wantCounts) { wantCounts.toList().also { wantCounts.clear() } }.filter { counted.add(it) }
             if (ids.isEmpty()) return@launch
             val got = ids.chunked(100).map { part -> async { Fetch.query(listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"),
-                mapOf("kinds" to listOf(1, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
+                mapOf("kinds" to listOf(1, COMMENT, 6, 7, 16), "#e" to part, "limit" to 4000), 5000) } }.awaitAll().flatten().distinctBy { it.id }
             val byTarget = HashMap<String, MutableList<Event>>()
             for (r in got) {
-                val target = if (r.kind == 1) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
+                val target = if (r.kind == 1 || r.kind == COMMENT) parentOf(r) else r.tags.lastOrNull { it.size > 1 && it[0] == "e" }?.get(1)
                 if (target != null && target in ids) byTarget.getOrPut(target) { ArrayList() } += r
             }
             engagement.update { m ->
@@ -2724,7 +2804,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val likes = rs.filter { it.kind == 7 && it.content != "-" }.distinctBy { it.pubkey }
                     val emojis = likes.groupingBy { it.content.ifBlank { "+" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key to it.value }
                     val had = m[id] ?: Engagement()
-                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 }), likes = maxOf(had.likes, likes.size),
+                    had.copy(replies = maxOf(had.replies, rs.count { it.kind == 1 || it.kind == COMMENT }), likes = maxOf(had.likes, likes.size),
                         reposts = maxOf(had.reposts, rs.count { it.kind == 6 || it.kind == 16 }), emojis = if (likes.size >= had.likes) emojis else had.emojis)
                 }
             }
@@ -3266,7 +3346,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val private = list?.content?.takeIf { it.isNotBlank() }?.let { toSelf(it, encrypt = false) }
                     ?.let { j -> try { (Json.parse(j) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } } } catch (_: Exception) { null } }
                 val inPrivate = private?.any { it.size > 1 && it[0] == "p" && it[1] == pk } == true
-                if (on == (public || inPrivate)) return@launch
+                // Already as asked (this phone's copy was behind, e.g. changed in Jumble): the button catches up, nothing is sent.
+                if (on == (public || inPrivate)) { setSpecial(pk, on); return@launch }
                 val sent = if (!on && inPrivate && !public) {
                     val next = private!!.filterNot { it.size > 1 && it[0] == "p" && it[1] == pk }
                     ListWrite.privateGuard(list!!.tags, list.tags, private, next)?.let { message.value = "Didn't change that list: it would have changed more than you asked."; return@launch }
@@ -3276,13 +3357,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
                     val change = if (on) ListWrite.Change(add = listOf("p", pk)) else ListWrite.Change(remove = listOf("p", pk))
                     changeList(10010, null, change, expected = list != null || special.value.isNotEmpty(), have = list) is ListResult.Sent
                 }
-                if (sent) {
-                    special.update { if (on) it + pk else it - pk }
-                    specialAt = System.currentTimeMillis()
-                    prefs.edit().putStringSet("special", special.value).apply()
-                }
+                if (sent) setSpecial(pk, on)
             } finally { busy.update { it - pk } }
         }
+    }
+
+    private fun setSpecial(pk: String, on: Boolean) {
+        special.update { if (on) it + pk else it - pk }
+        specialAt = System.currentTimeMillis()
+        prefs.edit().putStringSet("special", special.value).apply()
     }
 
 
@@ -3501,7 +3584,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun actEvent(ev: Event, approved: Boolean = false, relays: List<String>? = null): Event? {
         if (Sources.viewAs != null) { message.value = "Looking as another account: nothing is signed or sent."; return null }
         val signed = try { phone.signOwn(ev, approved) } catch (e: NeedsApproval) {
-            held.value = Held(e.what, ev); return null
+            held.value = Held(e.what, ev, e.level); return null
         } catch (e: Exception) {
             message.value = "Couldn't do that right now: ${e.message ?: "no answer"}"; return null
         }
@@ -3509,6 +3592,12 @@ class Social private constructor(private val phone: Phone, context: Context) {
         if (signed.kind == 10000) mutes = signed
         val n = Fetch.publish(if (Sources.localOnly) Sources.extra.value else (relays ?: writeRelays()).distinct().take(10), signed)
         if (n == 0) message.value = "Couldn't send that right now. Try again later."
+        // A Special Follow list sent by any route (one you approved after it was held, too): the ★ buttons follow what was signed.
+        if (n > 0 && signed.kind == 10010) {
+            special.value = specialIn(signed, signed.pubkey)
+            specialAt = System.currentTimeMillis()
+            prefs.edit().putStringSet("special", special.value).apply()
+        }
         return signed.takeIf { n > 0 }
     }
 

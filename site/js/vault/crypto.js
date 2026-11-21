@@ -1,4 +1,4 @@
-// Vaults (~/nostr-sync-nip/vaults.md, draft 7.14): the primitives. Bytes are Uint8Array; hex is lowercase.
+// Vaults (~/vaults/vaults.md, draft 7.14): the primitives. Bytes are Uint8Array; hex is lowercase.
 // secp256k1, BIP-340, SHA-256, HMAC, HKDF and ChaCha20 come from the vendored noble bundle (vendor/sign.js);
 // AES-256-GCM from WebCrypto. Everything here is synchronous except AES (nv1, blob.js).
 import { secp256k1, schnorr, sha256 as nsha, hmac as nhmac, hkdfExtract, hkdfExpand, chacha20 } from "../vendor/sign.js";

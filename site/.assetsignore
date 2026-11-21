@@ -1,0 +1,8 @@
+.assetsignore
+js/signin/demo
+js/signin/vectors
+js/signin/README.md
+js/signin/SOURCE
+js/signin/pure.d.ts
+js/signin/pointer.d.ts
+js/vault/SOURCE

@@ -162,6 +162,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
 
     // Approvals, deletions, sign-ins.
     fun decide(id: String, approve: Boolean) = act("decide", id, approve)
+    /** "Switch to a new key" on a question that offers it ([Ask.switch]). */
+    fun decideSwitch(id: String) = act("switch", id)
     fun decideBatch(batch: String, approve: Boolean) = act("decideBatch", batch, approve)
     fun cancelDeletion(batch: String) = act("cancelDeletion", batch)
     /** Yes to a site's sign-in. [pick] "new": a site new to this account gets an account of its own; otherwise the main account. */
@@ -226,6 +228,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun closeTakeOut() = act("closeTakeOut")
     /** The whole key or a bunker link is ready ([ui] says so, without it): the signer shows it, over this app. */
     fun reveal() = act("reveal")
+    /** The app has come to the front: what waits on the person (a blocked fingerprint prompt) comes up over it. */
+    fun surface() = act("surface")
 
     // Cosign's own actions (a like, a follow).
 
@@ -233,7 +237,7 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun signOwn(ev: Event, approved: Boolean = false): Event {
         val s = signer() ?: throw IllegalStateException("$appName's signer isn't running")
         val r = s.signOwn(slot, ev.toJson(), approved)
-        r.getString("approval")?.let { throw NeedsApproval(it) }
+        NeedsApproval.Wire.read(r::getString, r::getInt)?.let { throw it }
         r.getString("event")?.let { j -> return Event.fromMap(Json.parse(j)) ?: throw IllegalStateException("bad event from the signer") }
         throw IllegalStateException(r.getString("error") ?: "no answer")
     }

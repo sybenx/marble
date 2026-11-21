@@ -90,32 +90,8 @@ object Videos {
     fun player(context: android.content.Context): ExoPlayer = ExoPlayer.Builder(context)
         .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(Fetch.http))).build()
 
-    /** Into Downloads, as Wisp saves it. */
-    suspend fun save(context: android.content.Context, url: String) {
-        val types = mapOf("mp4" to "video/mp4", "mov" to "video/quicktime", "webm" to "video/webm", "m4v" to "video/mp4")
-        try {
-            withContext(Dispatchers.IO) {
-                Fetch.http.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
-                    if (!r.isSuccessful) error("it answered ${r.code}")
-                    val raw = url.substringAfterLast('/').substringBefore('?').ifEmpty { "video" }
-                    val ext = raw.substringAfterLast('.', "").lowercase()
-                    val type = types[ext] ?: r.header("Content-Type")?.substringBefore(';')?.trim() ?: "video/mp4"
-                    val name = if (ext.isEmpty() || ext == raw) "$raw.${types.entries.firstOrNull { it.value == type }?.key ?: "mp4"}" else raw
-                    val values = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, name); put(MediaStore.MediaColumns.MIME_TYPE, type)
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS); put(MediaStore.MediaColumns.IS_PENDING, 1)
-                    }
-                    val uri = context.contentResolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values) ?: error("no room")
-                    context.contentResolver.openOutputStream(uri)?.use { out -> r.body!!.byteStream().use { it.copyTo(out) } } ?: error("can't write")
-                    values.clear(); values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    context.contentResolver.update(uri, values, null, null)
-                }
-            }
-            Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, "Couldn't save it: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
+    /** Into Movies/Marble (see [Saving]). */
+    suspend fun save(context: android.content.Context, url: String) = Saving.save(context, url, Saving.Kind.Video)
 }
 
 /**

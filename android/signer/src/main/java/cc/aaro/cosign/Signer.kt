@@ -2,10 +2,13 @@ package cc.aaro.cosign
 
 import android.content.Context
 import android.net.Uri
+import cc.aaro.cosign.core.Asking
+import cc.aaro.cosign.core.BoxAsk
 import cc.aaro.cosign.core.Clock
 import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
+import cc.aaro.cosign.core.Undoing
 import cc.aaro.cosign.core.SiteScopes
 import cc.aaro.keykin.core.Child
 import cc.aaro.keykin.core.Children
@@ -133,7 +136,7 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun helpers(): List<String> = secrets.load("helpers")?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
     /** The box, then devices that listen when it is off (Keykin SPEC §8g): those only sign and make message keys. */
     private fun send(h: Held): Send = Device.withHelpers(Device.http(h.addr), helpers().map { Device.http(it) })
-    private fun fp(title: String): Fingerprint = { bytes -> Chip.sign(context, slot, title, bytes) }
+    private fun fp(title: String, subtitle: String = Asking.ACCOUNT_CHANGE): Fingerprint = { bytes -> Chip.sign(context, slot, title, bytes, subtitle) }
 
     private fun membersFrom(a: JSONArray) = List(a.length()) { a.getJSONObject(it).let { m -> Member(m.getInt("i"), m.getString("name"), m.getString("kind"), m.getString("key"), m.optBoolean("blocked"), m.optBoolean("chip"), m.optLong("added")) } }
     /** Tier 1: just this phone, no box. */
@@ -147,10 +150,16 @@ class Signer(private val context: Context, val slot: String = "0") {
         return Membership(h.piece.i, sites.pubkey, Group(h.npub, Nip19.npub(h.npub), 2, sites.sites().flatMap { it.relays }.distinct(), list), h.epoch, h.addr, h.boxKey, mine.chip != null)
     }
 
+    /** Something never done by accident (level 2) that the box did not sign: [w] is its question. */
+    private fun fingerprintWords(code: String, w: String) = if (code == "no_chip_key")
+        "${w.trimEnd('.', ' ')}: this needs your fingerprint, and this phone has none set up. Add one in the phone's settings, then add this phone again."
+        else "${w.trimEnd('.', ' ')}: your box didn't take this phone's fingerprint, so nothing was signed."
+
     private fun why(e: Throwable): String = when ((e as? KeykinException)?.code) {
         "blocked" -> "This phone is blocked from your account. Unblock it from another of your devices, or from your box's page."
         "no_box" -> "Couldn't reach your box. Is this phone on the same network as it?"
-        "needs_fingerprint", "no_chip_key" -> "This phone has no fingerprint set up, so it can't change your account. Add one in the phone's settings, then add this phone again."
+        "needs_fingerprint", "no_chip_key" -> (e as KeykinException).why?.let { w -> fingerprintWords(e.code, w) }
+            ?: "This phone has no fingerprint set up, so it can't change your account. Add one in the phone's settings, then add this phone again."
         "cancelled" -> "Cancelled. Nothing changed."
         "fingerprint_changed" -> "The fingerprints on this phone changed, so it can no longer approve changes. Block this phone from another device and add it again."
         "pending_welcome" -> "A device you added hasn't finished joining. Finish that first, then try again."
@@ -159,6 +168,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         "wrong_account" -> "That code is for a different account."
         "no_account" -> "$appName isn't set up yet."
         "denied" -> "You said no."
+        "needs_tap", "dated_ahead" -> (e as KeykinException).let { k -> k.why ?: if (k.code == "needs_tap") "Your box asks for your Yes before signing this." else "Your box won't sign something dated ahead." }
         "site_silent" -> "The site didn't answer. Ask it for a new code."
         "digits_differ" -> "The digits were different, so nothing was sent."
         "site_declined" -> "The site cancelled."
@@ -300,10 +310,13 @@ class Signer(private val context: Context, val slot: String = "0") {
                         val relays = uri.getQueryParameters("relay").filter { it.startsWith("wss://") || (debuggable && it.startsWith("ws://")) }
                         if (!isHex32(client) || relays.isEmpty() || secret.isNullOrBlank()) throw KeykinException("bad_qr")
                         // Which key, and what to call it (SPEC 11.6): a site signed in before keeps its choice, else the card's.
-                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() })
+                        val pick = SiteChoice.forNote(uri.getQueryParameter("url"), uri.getQueryParameter("name"), n.from, n.signAs, try { sites.sites() } catch (_: Exception) { emptyList() }, movedSites())
                         val origin = pick.name
                         pick.place?.let { childFor(it) }
-                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place, how = if (n.from != null) "login" else "paste", device = uri.getQueryParameter("device"))
+                        // The site's switches, as the person set them on the account page's card. From a box too old to
+                        // carry them: "Read your private lists" on when the code asks to decrypt, as a scan has it (SPEC 11.6).
+                        val lists = if (n.scoped) n.lists else SiteScopes.asksLists(uri.getQueryParameter("perms"))
+                        sites.acceptNostrConnect(client!!, relays, secret, origin, pick.place, lists, n.dms, how = if (n.from != null) "login" else "paste", device = uri.getQueryParameter("device"))
                         pointerCheck(h)
                         Device.noteDone(me(), h, n.id, "ok", send(h))
                         note(if (pick.place != null) "Connected $origin with a new account, from your account page" else "Connected $origin, from your account page", "approved")
@@ -1238,8 +1251,8 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** What the sign-in being asked about gets, worked out when its code was read. */
     @Volatile private var choice: SiteChoice.Decision = SiteChoice.Decision.Main
-    private fun siteChoice(origin: String?, accountPage: Boolean) = SiteChoice.decide(origin, try { sites.sites() } catch (_: Exception) { emptyList() }, accountPage)
-    private fun confirmCard(origin: String, d: SiteChoice.Decision) = Connect(origin, Connect.Stage.CONFIRM, ask = d is SiteChoice.Decision.Ask, own = d is SiteChoice.Decision.Own, accountPage = d == SiteChoice.Decision.AccountPage)
+    private fun siteChoice(origin: String?, accountPage: Boolean) = SiteChoice.decide(origin, try { sites.sites() } catch (_: Exception) { emptyList() }, accountPage, movedSites())
+    private fun confirmCard(origin: String, d: SiteChoice.Decision) = Connect(origin, Connect.Stage.CONFIRM, ask = d is SiteChoice.Decision.Ask, own = d is SiteChoice.Decision.Own, moved = (d as? SiteChoice.Decision.Own)?.moved == true, accountPage = d == SiteChoice.Decision.AccountPage)
     private fun placeFor(d: SiteChoice.Decision, pick: String?): String? = when (d) {
         is SiteChoice.Decision.Ask -> if (pick == "new") d.place else null
         is SiteChoice.Decision.Own -> d.place
@@ -1306,8 +1319,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 nostrConnect = Triple(client, relayList, secret); nostrConnectDevice = uri.getQueryParameter("device"); connecting = null; pendingLogin = null
                 choice = siteChoice(uri.getQueryParameter("url"), accountPage || SiteChoice.marked(text))
                 // "Read your private lists" starts on when the site asks for decrypting (NIP-46 perms); DMs never do.
-                val perms = uri.getQueryParameter("perms")?.split(',')?.map { it.trim().substringBefore(':') }.orEmpty()
-                val wants = perms.any { it == "nip44_decrypt" || it == "nip04_decrypt" }
+                val wants = SiteScopes.asksLists(uri.getQueryParameter("perms"))
                 ui.update { it.copy(error = null, connect = confirmCard(site, choice).copy(wantsLists = wants)) }
             }
         }
@@ -1392,7 +1404,11 @@ class Signer(private val context: Context, val slot: String = "0") {
             refuse(lacking)
         }
         return when (method) {
-            "sign_event" -> signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own).toJson()
+            "sign_event" -> {
+                // A change to your relay list or DM relays by a site on the main account: the question offers to give it its own account.
+                val switch = if (own == null && kind in Policy.REVIEWED && SiteChoice.origin(site.origin) != null) { { switchSite(site) } } else null
+                signChecked(labelled(appEvent(params[0], own?.npub), site.grant, own), by, approved = false, mayAsk = true, grant = site.grant, asChild = own, onSwitch = switch).toJson()
+            }
             "nip44_encrypt" -> nip44With(params[0], params[1], true, site.grant, own)
             "nip44_decrypt" -> nip44With(params[0], params[1], false, site.grant, own)
             "nip04_encrypt" -> nip04With(params[0], params[1], true, site.grant, own)
@@ -1417,7 +1433,9 @@ class Signer(private val context: Context, val slot: String = "0") {
     // --- Signing -----------------------------------------------------------------------------------
 
     /** What would be destroyed, if this needs you to approve it; else null. */
-    fun holdFor(ev: Event): String? = Policy.hold(ev, lists.latest(Policy.keyOf(ev)))
+    fun holdFor(ev: Event): String? = questionFor(ev)?.says
+    /** The same, with how you are asked: level 2 is Yes behind the fingerprint (Keykin SPEC 11.6, The tap). */
+    fun questionFor(ev: Event): BoxAsk.Question? = Policy.question(ev, lists.latest(Policy.keyOf(ev)))
 
     /** The event an app or a site sent, as it will be signed: under your key, with its id. */
     fun appEvent(json: String, asKey: String? = null): Event {
@@ -1427,9 +1445,15 @@ class Signer(private val context: Context, val slot: String = "0") {
         return Event(pub, raw["created_at"] as? Long ?: env.now(), (raw["kind"] as Long).toInt(), tags, raw["content"] as? String ?: "").withId()
     }
 
-    /** The signature itself: this phone's piece and the box's (or a helper's when the box is off). */
-    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null): Event {
+    /**
+     * The signature itself: this phone's piece and the box's (or a helper's when the box is off). [fingerprint]: the
+     * words of the fingerprint prompt, for something never done by accident (level 2). With a box the chip key signs the
+     * request and the box checks it, as for an account change. With no box it is the phone's own prompt, the plain kind
+     * (Keykin SPEC §4, fallback), as before showing the whole key; a phone with no fingerprint set up has none to show.
+     */
+    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null, fingerprint: String? = null): Event {
         if (held == null) {
+            if (fingerprint != null && me().chip != null) try { Chip.sign(context, slot, Asking.question(fingerprint), env.random(32), Asking.SIGNATURE) } catch (e: KeykinException) { throw IllegalStateException(why(e)) }
             val k = localKey() ?: error("$appName isn't set up yet")
             if (asChild != null) {
                 // Tier 1 as a child: the key moved by the tweak, for this one signature, then wiped. Never kept or shown.
@@ -1442,12 +1466,16 @@ class Signer(private val context: Context, val slot: String = "0") {
             try { return Event.sign(cc.aaro.qrst.core.publicKeyHex(k), ev.createdAt, ev.kind, ev.tags, ev.content, k, env) } finally { k.fill(0) }
         }
         val h = held ?: error("$appName isn't set up yet")
-        // The box wants to hear that you said Yes to the few things it calls hard to undo. What this phone itself
-        // signs to put something back (an undo, a repost) or at your own word is always that.
-        val yes = tapped && Device.destructive(ev.kind, ev.tags, ev.content) != null
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, yes, asChild) } }
+        // The box decides what is hard to undo and wants to hear that you said Yes (`tapped`). What this phone itself
+        // signs to put something back (an undo, a repost) or at your own word is always that. Its `needs_tap`, with the
+        // question in its own words, goes up to [BoxAsk], which asks you and sends this again; so does its
+        // `needs_fingerprint` with words (level 2), sent again with the fingerprint. A phone with no chip key sends
+        // none; the box then says `no_chip_key`, said below in plain words.
+        // The prompt asks the same question as the card before it, with a line of its own for a signature.
+        val finger = fingerprint?.takeIf { me().chip != null }?.let { fp(Asking.question(it), Asking.SIGNATURE) }
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild, finger) } }
             catch (e: KeykinException) {
-                if (e.code == "needs_tap") throw NeedsApproval(boxHold(ev))
+                if (e.code == "needs_tap" || (e.code == "needs_fingerprint" && e.why != null)) throw e
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
                 blockedHere(e); if (e.code == "no_box") ui.update { it.copy(relaysUp = 0) }; throw IllegalStateException(why(e))
             }
@@ -1459,18 +1487,27 @@ class Signer(private val context: Context, val slot: String = "0") {
      * signed, and anything destructive needs your yes. With [mayAsk] the question is put on screen and
      * waited for; without it the caller hears [NeedsApproval] and asks you itself.
      */
-    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null): Event {
+    private fun signChecked(ev: Event, by: String, approved: Boolean, mayAsk: Boolean, grant: String? = null, asChild: Child? = null, onSwitch: (() -> Unit)? = null): Event {
         Policy.refuse(ev)?.let { throw IllegalStateException(it) }
-        var held = approved
-        // This phone's own rules (against the last version of a list it saw), and the box's shorter list. A site's own
-        // account has no lists kept here: its change is judged on its own, never against the main account's lists.
-        if (!approved) ((if (asChild == null) holdFor(ev) else Policy.hold(ev, null)) ?: Device.destructive(ev.kind, ev.tags, ev.content)?.let { boxHold(ev) })?.let { hold ->
-            if (!mayAsk) throw NeedsApproval(hold)
-            if (!askAndWait(by, ev, hold)) { note("Said no to $by: $hold", "denied"); throw KeykinException("denied") }
-            held = true
-        }
+        // This phone's own rules first (against the last version of a list it saw), then the box's: it decides, and asks
+        // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
+        // judged on its own, never against the main account's lists.
+        // Its level goes with it even when you already said Yes: at level 2 the fingerprint is still to come.
+        val own = if (asChild == null) questionFor(ev) else Policy.question(ev, null, child = true)
         val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
-        val signed = signNow(ev, grant, held, asChild)
+        // The questions you said Yes to here stay in [answering] until this ends, so a screen that asked can stay up
+        // for the fingerprint (Android opens it only over a screen of this app).
+        val yeses = mutableListOf<String>()
+        val (signed, held) = try {
+            boxSays { BoxAsk.sign(own, approved, Asking.unsaid(ev), { q ->
+                if (!mayAsk) throw NeedsApproval(q.says, q.level)
+                askAndWait(by, ev, q, yeses, onSwitch != null).also { if (!it) note("Said no to $by: ${q.says}", "denied") }
+            }) { tapped, finger -> signNow(ev, grant, tapped, asChild, finger) } }
+        } catch (_: SwitchChosen) {
+            // Given its own account: this is not signed, and the site signs in again.
+            onSwitch?.invoke()
+            throw IllegalStateException("Moved to its own account: sign in again to use it")
+        } finally { if (yeses.isNotEmpty()) answering.update { it - yeses.toSet() } }
         // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
         if (asChild == null) remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
@@ -1478,26 +1515,34 @@ class Signer(private val context: Context, val slot: String = "0") {
         return signed
     }
 
-    /** What the box calls hard to undo, said the way this phone's own holds are. */
-    private fun boxHold(ev: Event) = when (Device.destructive(ev.kind, ev.tags, ev.content)) {
-        "asks every relay to erase the whole account" -> "Ask relays to erase everything you have ever published"
-        "deletes five or more posts at once" -> "Delete ${ev.tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") }} of your events"
-        "empties the follow list" -> "Empty your follow list"
-        "empties the profile" -> "Wipe your profile: everything"
-        else -> "Something that is hard to undo"
+    /** What the box still said after [BoxAsk] did what it could, in plain words. */
+    private fun <T> boxSays(f: () -> T): T = try { f() } catch (e: KeykinException) {
+        if (e.code == "needs_tap" || e.code == "needs_fingerprint") throw IllegalStateException(why(e)) else throw e
     }
     private val answers = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
-    private fun askAndWait(by: String, ev: Event, hold: String): Boolean {
-        val ask = Ask(env.random(8).toHex(), by, ev, hold, System.currentTimeMillis() + ASK_LIFE)
+    /** Questions you said Yes to whose signing is still under way (the fingerprint, the box). */
+    val answering = MutableStateFlow<Set<String>>(emptySet())
+    /** "Give it its own account" was the answer to a question that offered it. */
+    private class SwitchChosen : Exception()
+    /** Questions answered with "Give it its own account", until their wait ends. */
+    private val switching: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private fun askAndWait(by: String, ev: Event, q: BoxAsk.Question, yeses: MutableList<String>, switch: Boolean = false): Boolean {
+        val ask = Ask(env.random(8).toHex(), by, ev, q.says, System.currentTimeMillis() + ASK_LIFE, q.level, switch)
         val f = CompletableFuture<Boolean>(); answers[ask.id] = f
         ui.update { it.copy(asks = it.asks + ask) }
         listener?.onAsk(ask)
         Cosign.host.joined(context)
-        return try { f.get(ASK_LIFE, TimeUnit.MILLISECONDS) } catch (_: Exception) { false }
-        finally { answers.remove(ask.id); ui.update { it.copy(asks = it.asks.filter { a -> a.id != ask.id }) }; listener?.onAskGone(ask.id) }
+        return try {
+            val yes = try { f.get(ASK_LIFE, TimeUnit.MILLISECONDS) } catch (_: Exception) { false }
+            if (!yes && switching.remove(ask.id)) throw SwitchChosen()
+            yes.also { if (it) { yeses += ask.id; answering.update { a -> a + ask.id } } }
+        }
+        finally { switching.remove(ask.id); answers.remove(ask.id); ui.update { it.copy(asks = it.asks.filter { a -> a.id != ask.id }) }; listener?.onAskGone(ask.id) }
     }
     /** Your answer to something that waited for you. */
     fun decide(id: String, approve: Boolean) { answers[id]?.complete(approve) }
+    /** "Give it its own account" to a question that offers it: the site is moved, and this is not signed. */
+    fun decideSwitch(id: String) { if (ui.value.asks.any { it.id == id && it.switch }) { switching += id; answers[id]?.complete(false) } }
 
     /** The latest version of one of your lists this phone has seen signed ("3": your follows). */
     fun latest(key: String): Event? = lists.latest(key)
@@ -1577,7 +1622,7 @@ class Signer(private val context: Context, val slot: String = "0") {
      */
     fun nip44Self(text: String, encrypt: Boolean): String = nip44With(accountHex() ?: error("$appName isn't set up yet"), text, encrypt)
 
-    // --- Vaults (~/nostr-sync-nip/vaults.md §3.6, §12.2) --------------------------------------------
+    // --- Vaults (~/vaults/vaults.md §3.6, §12.2) --------------------------------------------
     //
     // A vault's keyring entry is sealed to this account with a one-time key: opening it is one `ecdh` with the box,
     // between the account and that key. The ECDH output is used once and wiped, never kept (§3.2), and only a vault
@@ -1658,8 +1703,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val c = childFor(place)
         val e = Event(c.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId()
         Policy.refuse(e)?.let { throw IllegalStateException(it) }
-        if (!approved) (Policy.hold(e, null) ?: Device.destructive(e.kind, e.tags, e.content)?.let { boxHold(e) })?.let { throw NeedsApproval(it) }
-        return signNow(e, grant, approved, c)
+        return boxSays { BoxAsk.sign(Policy.question(e, null, child = true), approved, Asking.unsaid(e), { throw NeedsApproval(it.says, it.level) }) { tapped, finger -> signNow(e, grant, tapped, c, finger) }.value }
     }
     /** NIP-44 as [place]'s child, with [peer]. */
     fun nip44As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip44With(peer, text, encrypt, grant, childFor(place))
@@ -1695,10 +1739,10 @@ class Signer(private val context: Context, val slot: String = "0") {
     private val appTimes = context.getSharedPreferences(named("app-times"), Context.MODE_PRIVATE)
     private fun usedApp(g: AppGrant) { if (Clock.now() - appTimes.getLong(g.pkg + ":used", 0) > 60) appTimes.edit().putLong(g.pkg + ":used", Clock.now()).apply() }
     fun appGrant(pkg: String): AppGrant? = apps.getString(pkg, null)?.let { j ->
-        (Json.parse(j) as? Map<*, *>)?.let { AppGrant(pkg, it["pk"] as String, it["label"] as String, it["dm"] == true) }
+        (Json.parse(j) as? Map<*, *>)?.let { AppGrant(pkg, it["pk"] as String, it["label"] as String, it["dm"] == true, it["place"] as? String) }
     }
     private fun appByPk(pk: String) = apps.all.keys.mapNotNull { appGrant(it) }.firstOrNull { it.pk == pk }
-    private fun store(g: AppGrant) = apps.edit().putString(g.pkg, Json.stringify(mapOf("pk" to g.pk, "label" to g.label, "dm" to g.dm))).apply()
+    private fun store(g: AppGrant) = apps.edit().putString(g.pkg, Json.stringify(mapOf("pk" to g.pk, "label" to g.label, "dm" to g.dm) + (g.place?.let { mapOf("place" to it) } ?: emptyMap()))).apply()
 
     fun connectApp(pkg: String, label: String): AppGrant {
         val had = appGrant(pkg)
@@ -1709,14 +1753,82 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     fun allowDms(g: AppGrant): AppGrant = g.copy(dm = true).also { store(it); note("${g.label} may read and send your messages", "approved") }
 
-    /** Sign for an app, with the box. Blocks for a moment; never call on the main thread. */
+    /** The key [g] signs as: its own child, or the main account. Blocks when the child has to be made. */
+    fun appKey(g: AppGrant): String = g.place?.let { childFor(it).npub } ?: accountHex() ?: error("$appName isn't set up yet")
+    /** The child [g] signs as, if it has one. */
+    private fun appChild(g: AppGrant): Child? = g.place?.let { childFor(it) }
+
+    /** Sign for an app, with the box, as the key it has (its own child, or the main account). Blocks for a moment; never call on the main thread. */
     fun signForApp(g: AppGrant, ev: Event, approved: Boolean): Event {
-        if (appGrant(g.pkg) == null) throw Revoked()
-        usedApp(g)
-        return signChecked(ev, g.label, approved, mayAsk = false, grant = grantOf(g))
+        val now = appGrant(g.pkg) ?: throw Revoked()
+        usedApp(now)
+        val child = appChild(now) ?: return signChecked(ev, now.label, approved, mayAsk = false, grant = grantOf(now))
+        return signChecked(Event(child.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId(), now.label, approved, mayAsk = false, grant = grantOf(now), asChild = child)
     }
-    fun nip44(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { if (appGrant(g.pkg) == null) throw Revoked(); usedApp(g); return nip44With(peer, text, encrypt, grantOf(g)) }
-    fun nip04(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { if (appGrant(g.pkg) == null) throw Revoked(); usedApp(g); return nip04With(peer, text, encrypt, grantOf(g)) }
+    fun nip44(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip44With(peer, text, encrypt, grantOf(now), appChild(now)) }
+    fun nip04(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip04With(peer, text, encrypt, grantOf(now), appChild(now)) }
+
+    /**
+     * Whether [ev] (signed for an app) is one whose question offers to move the app to a key of its own: a change to the
+     * relay list or the DM relays, by an app on the main account (Aaron, 2026-11-21).
+     */
+    fun offersSwitch(g: AppGrant, ev: Event): Boolean = g.place == null && g.pkg != context.packageName && ev.kind in Policy.REVIEWED
+
+    /**
+     * Move [pkg] to a key of its own (Keykin SPEC 8k): make its child, end its access to the main account here and at the
+     * box, and let it in again on the child, under a new grant. Its changes to the relay list and DM relays are put back
+     * as they were before it (Undo). The app still holds the main account's key as "you" until it signs in again: until
+     * then its requests are refused with a hint ([moved]). Blocks; never call on the main thread. How many lists it put back.
+     */
+    fun switchApp(pkg: String): Int {
+        val g = appGrant(pkg) ?: throw Revoked()
+        if (g.place != null) return 0
+        val place = pkg
+        childFor(place)   // made first: if the box can't be asked, nothing has changed
+        val old = grantOf(g)
+        val moved = AppGrant(pkg, env.random(32).toHex(), g.label, g.dm, place)
+        store(moved)
+        appTimes.edit().putLong(pkg + ":added", Clock.now()).putLong(pkg + ":moved", Clock.now()).apply()
+        rememberRevoked(listOf(old))
+        held?.let { h -> try { synchronized(boxLock) { Device.revoke(me(), h, old, send(h)) } } catch (_: Exception) { } }
+        sharedXs.forgetAll()
+        grantsChanged()
+        val back = putBackRelays(g.label)
+        note("Gave ${g.label} its own account", "approved"); showSites()
+        return back
+    }
+    /** Undo what [by] did to your relay list and DM relays: the oldest change it made to each holds what it was before. How many lists. */
+    private fun putBackRelays(by: String): Int {
+        val rows = objects(readArray(history)).filter { it.optString("by") == by && !it.optBoolean("undone") && it.optString("key") in Policy.REVIEWED.map(Int::toString) }
+        for (group in rows.groupBy { it.getString("key") }.values) {
+            val r = group.last()
+            undo(Change(r.getString("id"), r.getString("text"), by, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
+        }
+        return rows.map { it.getString("key") }.distinct().size
+    }
+    /** Sites given their own account this way (their web origins): when one signs in again it gets that account, with no question. */
+    private fun movedSites(): Set<String> = secrets.load("movedSites")?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) }.toSet() } ?: emptySet()
+    /**
+     * Give a site (NIP-46) its own account, as [switchApp] does for an app: make its child (the one SiteChoice gives its
+     * origin), sign it out here and at the box, and put back what it did to your relay lists. When it signs in again it
+     * gets the child, and the sign-in card says why. Blocks.
+     */
+    private fun switchSite(site: SiteSigner.Site) {
+        val place = SiteChoice.origin(site.origin) ?: return
+        childFor(place)   // made first: if the box can't be asked, nothing has changed
+        synchronized(childLock) { secrets.save("movedSites", JSONArray((movedSites() + place).sorted()).toString()) }
+        sites.signOut(site.key)
+        rememberRevoked(listOf(site.grant))
+        held?.let { h -> try { synchronized(boxLock) { Device.revoke(me(), h, site.grant, send(h)) } } catch (_: Exception) { } }
+        sharedXs.forgetAll()
+        grantsChanged()
+        putBackRelays(site.label)
+        note("Gave ${site.label} its own account. It gets it when it signs in again.", "approved"); showSites()
+    }
+    /** Set while an app moved to a key of its own has not signed in again: when it was moved (seconds). */
+    fun moved(pkg: String): Long? = appTimes.getLong(pkg + ":moved", 0).takeIf { it > 0 }
+    /** The app signed in again on its new key: no more hint. */
+    fun signedInAgain(pkg: String) = appTimes.edit().remove(pkg + ":moved").apply()
 
     // --- What changed, with Undo; what was deleted, with its copy ------------------------------------
     //
@@ -1733,13 +1845,22 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     @Synchronized private fun remember(signed: Event, prev: Event?, by: String, held: Boolean) {
         val pub = accountHex() ?: return
-        if (lists.record(signed, pub) && prev != null && prev.id != signed.id) {
-            val all = objects(readArray(history))
-            val row = JSONObject().put("id", signed.id).put("text", changeText(prev, signed)).put("by", by).put("at", System.currentTimeMillis()).put("held", held).put("undone", false)
-                .put("key", Policy.keyOf(signed)).put("prev", prev.toJson())
-            history.writeText(JSONArray((listOf(row) + all).take(40)).toString())
+        val recorded = lists.record(signed, pub)
+        // A list's change gets a row with Undo: with the version it replaced when this phone had seen one, else (an app
+        // or a site writing a list this phone had not seen yet) with the change alone, and Undo finds the version before
+        // on your relays. Marble's own first version of a list is no change.
+        val row = when {
+            recorded && prev != null && prev.id != signed.id -> JSONObject().put("text", changeText(prev, signed)).put("prev", prev.toJson())
+            Undoing.replaceable(signed.kind) && prev == null && by != appName -> JSONObject().put("text", Policy.replacedText(signed))
+            else -> null
         }
-        if (signed.kind !in Policy.ARCHIVED && signed.kind !in 20000 until 30000 && signed.kind != 22242 && signed.kind != 5) {
+        if (row != null) {
+            row.put("id", signed.id).put("by", by).put("at", System.currentTimeMillis()).put("held", held).put("undone", false).put("key", Policy.keyOf(signed)).put("event", signed.toJson())
+            history.writeText(JSONArray((listOf(row) + objects(readArray(history))).take(40)).toString())
+        }
+        // Copies of what was signed, so a deletion can be put back. Never a list: only its newest version counts, and a
+        // list is put back by Undo, never deleted by id.
+        if (!Undoing.replaceable(signed.kind) && signed.kind !in 20000 until 30000 && signed.kind != 22242 && signed.kind != 5) {
             val all = objects(readArray(kept))
             kept.writeText(JSONArray((listOf(JSONObject().put("by", by).put("event", signed.toJson())) + all).take(300)).toString())
         }
@@ -1755,9 +1876,27 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun changeText(prev: Event, now: Event): String {
         val name = Describe.kind(now.kind).replaceFirstChar { it.uppercase() }
         if (now.kind == 0) return "$name changed"
+        Policy.relayChange(prev, now)?.let { return "$name: ${if (it.startsWith("from ")) "changed $it" else it}" }
         val before = prev.tags.map { Json.stringify(it) }.toSet(); val after = now.tags.map { Json.stringify(it) }.toSet()
         val added = (after - before).size; val removed = (before - after).size
         return "$name: " + listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 }).joinToString(", ").ifEmpty { "changed" }
+    }
+    /**
+     * Before 2026-11-21 a list this phone did not keep (the DM relays, say) that an app signed went among the copies of
+     * posts, and Undo all deleted it by id, which most relays ignore for a list. Each such list signed by an app or a
+     * site becomes a row in Recent changes, with Undo, even one already "deleted" that way.
+     */
+    @Synchronized private fun listsOutOfKept() {
+        val all = objects(readArray(kept))
+        val (moving, staying) = all.partition { o -> o.optString("by") != appName && Event.fromMap(Json.parse(o.getString("event")))?.kind?.let(Undoing::replaceable) == true }
+        if (moving.isEmpty()) return
+        val have = objects(readArray(history)).map { it.getString("id") }.toSet()
+        val rows = moving.mapNotNull { o -> Event.fromMap(Json.parse(o.getString("event")))?.takeIf { it.id !in have }?.let { e ->
+            JSONObject().put("id", e.id).put("text", Policy.replacedText(e)).put("by", o.getString("by")).put("at", e.createdAt * 1000).put("held", false).put("undone", false)
+                .put("key", Policy.keyOf(e)).put("event", e.toJson())
+        } }
+        history.writeText(JSONArray((rows + objects(readArray(history))).sortedByDescending { it.getLong("at") }.take(40)).toString())
+        kept.writeText(JSONArray(staying).toString())
     }
     private fun showHistory() {
         val changes = objects(readArray(history)).map { Change(it.getString("id"), it.getString("text"), it.getString("by"), it.getLong("at"), it.optBoolean("held"), it.optBoolean("undone"), it.optBoolean("outside"), it.optLong("since")) }
@@ -1811,8 +1950,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (System.currentTimeMillis() - checkedAt < 60_000 || !checking.compareAndSet(false, true)) return
         try {
             checkedAt = System.currentTimeMillis()
-            val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
-            val relays = (writeRelays().map { it.trimEnd('/') } + if (testing) emptyList() else INDEX_RELAYS).distinct()
+            val relays = (writeRelays().map { it.trimEnd('/') } + if (testingRelays()) emptyList() else INDEX_RELAYS).distinct()
             val filter = Json.stringify(mapOf("kinds" to Policy.ARCHIVED.sorted(), "authors" to listOf(pub), "limit" to 200))
             val found = query(relays, filter).filter { it.pubkey == pub && it.kind in Policy.ARCHIVED && it.verify() }
             for (newest in found.groupBy { Policy.keyOf(it) }.values.map { l -> l.maxBy { it.createdAt } }) seen(newest)
@@ -1856,6 +1994,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         return got.values.toList()
     }
 
+    /** Debug builds pointed at a test's own relays: nothing goes to or comes from the public ones. */
+    private fun testingRelays() = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
     /** Where this account's own events go: its write relays if this phone has seen its relay list, else a few well-known ones. */
     private fun writeRelays(): List<String> = (if (debuggable) context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } else null) ?: lists.latest("10002")?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }?.take(6)?.ifEmpty { null } ?: DEFAULT_RELAYS
     private fun publish(e: Event, relays: List<String> = writeRelays()) {
@@ -1871,17 +2011,44 @@ class Signer(private val context: Context, val slot: String = "0") {
         timer.schedule({ http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }, 10, TimeUnit.SECONDS)
     }
 
-    /** Put a list back as it was before a change: the version it replaced, signed again as the newest. */
-    fun undo(change: Change) {
+    /**
+     * Put a list back as it was before a change: the version it replaced, signed again as the newest (a list keeps only
+     * its newest version, so sending the old one as it was, or deleting the change, would lose to the change). When this
+     * phone never saw the version before (an app wrote a list this phone had not read yet), it is found on your relays,
+     * and Undo stops if the list changed again since. [together]: later changes to the same list undone with this one
+     * (Undo all), whose rows are marked undone with it.
+     */
+    fun undo(change: Change, together: Set<String> = emptySet()) {
         val pub = accountHex() ?: return
         work.execute {
             try {
                 val row = objects(readArray(history)).firstOrNull { it.getString("id") == change.id } ?: return@execute
-                val prev = Event.fromMap(Json.parse(row.getString("prev"))) ?: return@execute
-                val signed = signNow(Event(pub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId(), tapped = true)
+                val replaced = row.optString("event").ifEmpty { null }?.let { Event.fromMap(Json.parse(it)) }
+                val name = Describe.kind(replaced?.kind ?: 0)
+                var also = emptyList<String>()
+                val prev = row.optString("prev").ifEmpty { null }?.let { Event.fromMap(Json.parse(it)) } ?: run {
+                    replaced ?: return@execute
+                    val d = replaced.firstTag("d")
+                    val filter = Json.stringify(mapOf("kinds" to listOf(replaced.kind), "authors" to listOf(pub), "limit" to 100) + (if (d != null) mapOf("#d" to listOf(d)) else emptyMap()))
+                    val per = queryEach((writeRelays().map { it.trimEnd('/') } + if (testingRelays()) emptyList() else INDEX_RELAYS + KEEP_OLD).distinct(), filter)
+                    // Put back on the relays that hold the change too, so the copy replaces it there.
+                    also = per.filterValues { l -> l.any { it.id == replaced.id } }.keys.toList()
+                    when (val b = Undoing.before(per.values.flatten(), replaced, together)) {
+                        is Undoing.Before.Found -> b.version
+                        is Undoing.Before.ChangedSince -> throw IllegalStateException("your $name changed again after this, so it was left as it is")
+                        Undoing.Before.NotFound -> throw IllegalStateException("your $name from before this change isn't on your relays")
+                    }
+                }
+                val at = Undoing.at(Clock.now(), lists.latest(Policy.keyOf(prev))?.createdAt, replaced?.createdAt, prev.createdAt)
+                val signed = signNow(Event(pub, at, prev.kind, prev.tags, prev.content).withId(), tapped = true)
                 lists.record(signed, pub)
-                publish(signed)
-                synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") == change.id) it.put("undone", true) else it }).toString()) }
+                // A relay list put back goes where the change went too: the relays both versions name (an app writes its own
+                // defaults and then reads them from its own relays) and the big general ones, or the app keeps seeing its version.
+                val wide = if (testingRelays() || !Policy.isRelayList(prev.kind)) emptyList()
+                    else Policy.relaysIn(prev) + (replaced?.let(Policy::relaysIn) ?: emptyList()) + WIDE_RELAYS
+                publish(signed, (writeRelays() + (if (testingRelays()) emptyList() else INDEX_RELAYS) + also + wide).map { it.trimEnd('/') }.distinct())
+                val done = together + change.id
+                synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") in done) it.put("undone", true) else it }).toString()) }
                 note("Undid: ${change.text}", "approved"); showHistory()
             } catch (e: Exception) { ui.update { it.copy(error = "Couldn't undo that: ${e.message}") } }
         }
@@ -1893,7 +2060,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         work.execute {
             try {
                 val old = objects(readArray(kept)).mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }.firstOrNull { it.id == d.id } ?: return@execute
-                val signed = signNow(Event(pub, Clock.now(), old.kind, old.tags, old.content).withId())
+                val signed = signNow(Event(pub, Clock.now(), old.kind, old.tags, old.content).withId(), tapped = true)
                 publish(signed)
                 synchronized(this) { kept.writeText(JSONArray(objects(readArray(kept)).filter { Event.fromMap(Json.parse(it.getString("event")))?.id != d.id }).toString()) }
                 remember(signed, null, appName, true)
@@ -1915,6 +2082,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val s = ui.value.summary ?: return
         val pub = accountHex() ?: return
         ui.update { it.copy(summary = null) }
+        sharedXs.forgetAll()
         work.execute {
             try {
                 val events = objects(readArray(kept)).filter { it.optString("by") == s.origin && !it.has("deleted") }.mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }
@@ -1924,9 +2092,11 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 // The oldest change it made to each list holds what the list was before it.
                 val rows = objects(readArray(history)).filter { it.optString("by") == s.origin && !it.optBoolean("undone") }
-                for (r in rows.groupBy { it.getString("key") }.values.map { it.last() }) undo(Change(r.getString("id"), r.getString("text"), s.origin, r.getLong("at"), false, false))
+                for (group in rows.groupBy { it.getString("key") }.values) {
+                    val r = group.last()
+                    undo(Change(r.getString("id"), r.getString("text"), s.origin, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
+                }
                 ui.value.sites.firstOrNull { it.pk == s.pk }?.let(::removeSite)
-                sharedXs.forgetAll()
                 note("Took back what ${s.origin} did", "approved")
             } catch (e: Exception) { ui.update { it.copy(error = "Couldn't take that back: ${e.message}") } }
         }
@@ -1955,6 +2125,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         secrets.loadLog()?.let { Json.parse(it) as? List<*> }?.let { lines ->
             ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
         }
+        listsOutOfKept()
         if (held != null) { showSites(); showHistory() }
         localKey()?.let { k -> localPub = cc.aaro.qrst.core.publicKeyHex(k); k.fill(0) }
         if (localPub != null) ui.update { it.copy(keptKey = true) }
@@ -1978,5 +2149,9 @@ class Signer(private val context: Context, val slot: String = "0") {
         val INDEX_RELAYS = listOf("wss://purplepag.es", "wss://user.kindpag.es")
         /** Who made a change found on your relays, for its row: any app with your key, or another device with your box. */
         const val ELSEWHERE = "another app or device"
+        /** Relays that keep every version of a list, not only the newest: where Undo finds the version before a change. */
+        val KEEP_OLD = listOf("wss://relay.ditto.pub", "wss://relay.mostr.pub")
+        /** Big general relays many apps read a person's lists from. */
+        val WIDE_RELAYS = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
     }
 }

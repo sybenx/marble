@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 /**
  * A note's pictures, full screen: swipe between them, pinch or double-tap to zoom, swipe down
@@ -62,7 +63,14 @@ fun ImageViewer(urls: List<String>, start: Int, onClose: () -> Unit) {
         HorizontalPager(pager, Modifier.fillMaxSize().graphicsLayer { translationY = drop }, userScrollEnabled = !zoomed, key = { urls[it] + it }) { page ->
             Zoomable(urls[page], px, onZoom = { if (page == pager.currentPage) zoomed = it })
         }
-        IconButton(onClose, Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp)) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        androidx.compose.foundation.layout.Row(Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp)) {
+            IconButton({ urls.getOrNull(pager.currentPage)?.let { u -> scope.launch { Saving.save(context, u, Saving.Kind.Picture) } } }) {
+                Icon(Glyphs.download, "Save to the phone", tint = Color.White)
+            }
+            IconButton(onClose) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+        }
         if (urls.size > 1) Text("${pager.currentPage + 1} / ${urls.size}", color = Color.White, style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(16.dp).background(Color(0x99000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
     }

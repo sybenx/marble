@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="application-name" content="Sign-in demo">
+<title>Sign-in demo</title>
+<!-- The bare page: the package with its own default hooks, nothing else. Serve the folder above this one and open /demo/. -->
+<link rel="stylesheet" href="../signin.css">
+<style>
+  /* Marble Web's colors, which signin.css reads */
+  :root {
+    --bg: #F7F3EC; --ink: #1F1B16; --muted: #6B6257; --accent: #2E4CB8; --accent-soft: #E3E8F9;
+    --on-accent: #F7F3EC; --card: #FFFDF9; --line: #E6DFD4; --field: #FFFDF9; --field-line: #D6CDBF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13110F; --ink: #EDE6DA; --muted: #A69D90; --accent: #8DA2F0; --accent-soft: #232A42;
+      --on-accent: #10172E; --card: #1E1B18; --line: #2A2622; --field: #1E1B18; --field-line: #34302B;
+    }
+  }
+  body { margin: 0; padding: 32px 16px; background: var(--bg); color: var(--ink); font: 16px/1.4 system-ui, sans-serif; }
+  button { font: inherit; color: inherit; }
+  p { margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign-in demo</h1>
+  <p id="who">Not signed in.</p>
+  <button type="button" class="si-button" data-sign-in>Sign in</button>
+  <button type="button" class="link" data-sign-out hidden>Sign out</button>
+</main>
+<script type="module">
+  import { openSignIn } from "../dialog.js";
+  import { openAccountPage } from "../account-page.js";
+  import { current, onMe, signOut } from "../me.js";
+  import { npub } from "../ids.js";
+
+  const who = document.getElementById("who"), out = document.querySelector("[data-sign-out]");
+  const show = () => {
+    const pk = current();
+    who.textContent = pk ? `Signed in as ${npub(pk)}` : "Not signed in.";
+    out.hidden = !pk;
+  };
+  onMe(show);
+  show();
+  document.addEventListener("click", (ev) => {
+    if (ev.target.closest("[data-sign-in]")) openSignIn();
+    else if (ev.target.closest("[data-sign-out]")) signOut();
+    // the dialog's "Your account page" (Marble Web's app.js does this)
+    else if (ev.target.closest("[data-account-visitor]")) { document.getElementById("signin")?.close(); openAccountPage(null); }
+  });
+</script>
+</body>
+</html>

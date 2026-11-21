@@ -1,5 +1,8 @@
 package cc.aaro.cosign
 
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import android.Manifest
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -125,6 +128,38 @@ class MainActivity : ComponentActivity() {
         })
     }
 
+    override fun onResume() {
+        super.onResume()
+        surfaceWaiting()
+    }
+
+    /** When it was last put in front, so a question just answered (and still on its way out) is not opened again. */
+    private var surfaced: Pair<String, Long>? = null
+
+    /**
+     * Marble has come to the front (from the launcher, a notification, a tap on a group of notifications, Recents):
+     * whatever waits on you is put in front, whatever screen this opens on. A fingerprint prompt that Android blocked in
+     * the background comes up now; a waiting question opens in its sheet (AskActivity).
+     */
+    private fun surfaceWaiting() {
+        val accounts = CosignApp.instance.accounts
+        lifecycleScope.launch {
+            // Just started: the signer may not have sent its state yet.
+            kotlinx.coroutines.withTimeoutOrNull(4_000) { accounts.active.heard.first { it } }
+            // Still in front (onResume runs before the lifecycle says RESUMED, so STARTED is the test).
+            if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return@launch
+            accounts.active.surface()
+            val shown = accounts.active
+            val waiting = (listOf(shown) + accounts.all.filter { it.slot != shown.slot }).map { it to it.ui.value.asks }
+            cc.aaro.cosign.core.Asking.firstWaiting(waiting)?.let { (p, ask) ->
+                val now = android.os.SystemClock.uptimeMillis()
+                if (surfaced?.let { it.first == ask.id && now - it.second < 2_000 } == true) return@let
+                surfaced = ask.id to now
+                startActivity(AskActivity.intent(this@MainActivity, p.slot, ask.id))
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         opened(intent, fresh = true)
@@ -165,6 +200,13 @@ class MainActivity : ComponentActivity() {
         // A marble.syb.lol/relay/… link: that relay, read here.
         if (intent.action == Intent.ACTION_VIEW) intent.dataString?.let(cc.aaro.cosign.RelayFeeds::fromLink)?.let { r ->
             cc.aaro.cosign.ui.DebugOpen.screen.value = "relay:" + r.address
+            return
+        }
+        // A nostr: link (NIP-21) from anywhere on the phone: that post, article or person, in Marble's viewer; one it can't read, said so.
+        if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme.equals("nostr", ignoreCase = true)) {
+            val r = intent.dataString?.let { cc.aaro.cosign.nostrLinkRef(it) }
+            if (r != null) cc.aaro.cosign.ui.OpenPost.ref.value = r
+            else cc.aaro.cosign.Social.of(CosignApp.instance.phone).message.value = "Marble can't open that nostr: link."
             return
         }
         // A marble.syb.lol link to a post or someone (an app link): that post or profile, in Marble.
@@ -209,7 +251,11 @@ class MainActivity : ComponentActivity() {
             "checkLists" -> p.checkLists()
             // Hand the signer a version of one of your lists as if the reader had found it (--es arg '<signed event JSON>').
             "seen" -> intent.getStringExtra("arg")?.let { j -> cc.aaro.qrst.core.Event.fromMap(cc.aaro.qrst.core.Json.parse(j))?.let(p::seen) }
-            "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
+            // Tags as JSON (--es tags '[["relay","wss://a"]]'), and --ez approved true for a Yes already given.
+            "sign" -> Thread { try {
+                val tags = intent.getStringExtra("tags")?.let { j -> (cc.aaro.qrst.core.Json.parse(j) as List<*>).map { t -> (t as List<*>).map { it.toString() } } } ?: emptyList()
+                android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), tags, intent.getStringExtra("arg") ?: "test").withId(), intent.getBooleanExtra("approved", false)).let { it.toJson() + " verifies=" + it.verify() })
+            } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
             "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
             "tapYes" -> p.tap(true); "tapNo" -> p.tap(false)
             "loginSwitch" -> p.answerLoginSwitch(true); "loginKeep" -> p.answerLoginSwitch(false)

@@ -1,7 +1,7 @@
 // Reader's shared rules (marble-content-fixtures/reader.md, fixtures/reader/): what a person's post is in Reader, its
 // digest key, whether an item is read, and how two seen lists or two Reader lists merge. The same as Marble Android.
 // No page, no network, so the fixtures can run it as it is.
-import { sha256 } from "./vendor/noble.js";
+import { sha256 } from "./signin/vendor/noble.js";
 
 const MEDIA = /\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v)(\?\S*)?$/i;
 const URLS = /https?:\/\/[^\s<>"']+/gi;

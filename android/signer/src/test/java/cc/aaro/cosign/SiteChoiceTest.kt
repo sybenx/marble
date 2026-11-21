@@ -27,6 +27,19 @@ class SiteChoiceTest {
         assertEquals(SiteChoice.Decision.Ask("https://a.example"), SiteChoice.decide("https://a.example", listOf(site("https://b.example", "https://b.example"))))
     }
 
+    @Test fun aSiteGivenItsOwnAccountForChangingYourRelaysComesBackOnIt() {
+        val moved = setOf("https://a.example")
+        // Signed out when it was moved: its next sign-in gets its own account, with no question, and the card says why.
+        assertEquals(SiteChoice.Decision.Own("https://a.example", moved = true), SiteChoice.decide("https://a.example/app", emptyList(), moved = moved))
+        // Once it is signed in again, its record decides, as for any site.
+        assertEquals(SiteChoice.Decision.Own("https://a.example"), SiteChoice.decide("https://a.example", listOf(site("https://a.example", "https://a.example")), moved = moved))
+        // Another site is not affected, and an account page is always the main account.
+        assertEquals(SiteChoice.Decision.Ask("https://b.example"), SiteChoice.decide("https://b.example", emptyList(), moved = moved))
+        assertEquals(SiteChoice.Decision.AccountPage, SiteChoice.decide("https://a.example", emptyList(), accountPage = true, moved = moved))
+        // A login-page note from it signs in on that account too.
+        assertEquals("https://a.example", SiteChoice.forNote("https://a.example", null, "https://a.example", "main", emptyList(), moved).place)
+    }
+
     @Test fun theChoiceIsRememberedPerSite() {
         // Signed in with its own account: every later sign-in from it gets that one, with no question.
         val own = listOf(site("https://a.example", "https://a.example"))

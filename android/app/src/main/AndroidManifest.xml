@@ -103,6 +103,14 @@
                 <action android:name="android.intent.action.SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- A nostr: link anywhere on the phone (nostr:nevent1…, nostr:npub1…, NIP-21): that post or
+                 person in Marble's own viewer. Another Nostr app may claim it too; Android then asks which. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostr" />
+            </intent-filter>
             <!-- A site's nostrconnect:// code, from the camera app or a link on this phone.
                  Another signer app may claim it too; Android then asks which. -->
             <intent-filter>
@@ -125,6 +133,16 @@
             android:exported="false"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
+            android:theme="@style/Theme.Cosign.Sheet" />
+
+        <!-- One question that waits for you, opened from its notification. A level 2 question is answered only here:
+             Android shows the fingerprint prompt only over a screen of this app. -->
+        <activity
+            android:name=".AskActivity"
+            android:process=":signer"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.Cosign.Sheet" />
 
         <!-- Android signer (NIP-55): apps on this phone sign through Cosign. The activity asks

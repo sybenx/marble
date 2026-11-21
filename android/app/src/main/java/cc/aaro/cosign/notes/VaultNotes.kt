@@ -14,7 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Marble's notes in a vault (~/nostr-sync-nip/vaults.md, the `notes` profile, §11.1), between Later's items and the
+ * Marble's notes in a vault (~/vaults/vaults.md, the `notes` profile, §11.1), between Later's items and the
  * engine. The mapping is the one agreed with Marble Web (side-session notes, vaults-android.md):
  *
  *  meta `{"kind":"note","created","title":"","tags":[],"done","pinned":false,"id","updated"}` plus `done_at`, `url`,

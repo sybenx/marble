@@ -1,6 +1,6 @@
 // A relay to read here: "wss://pyramid.fiatjaf.com/popular" typed as it is, or an address ("pyramid.fiatjaf.com/popular")
 // that says it's a relay when asked (NIP-11: its information document, over https with Accept: application/nostr+json).
-import { testRelay } from "./pool.js";
+import { testRelay } from "./signin/pool.js";
 
 const local = (host) => /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
 

@@ -12,6 +12,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import cc.aaro.cosign.core.Asking
 
 /**
  * Keeps the phone reachable: the relay connections its signed-in sites use stay open, so a site
@@ -21,6 +22,8 @@ import androidx.core.content.ContextCompat
 class CosignService : Service() {
     private val accounts get() = CosignApp.instance.signers
     private var lastStatus = ""
+    /** Android refused the foreground start in [onCreate]: this instance only stops itself. */
+    private var refused = false
 
     /** One key's side: its notifications say which key they're for when there's more than one, and act on that key. */
     private inner class For(val p: Signer) : Signer.Listener {
@@ -47,26 +50,65 @@ class CosignService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(STATUS, "Connection", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
         nm.createNotificationChannel(NotificationChannel(ASKS, "Signing requests", NotificationManager.IMPORTANCE_HIGH))
-        if (Build.VERSION.SDK_INT >= 34) startForeground(STATUS_ID, statusNote(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(STATUS_ID, statusNote())
+        // Android can refuse this (ForegroundServiceStartNotAllowedException), most often when it restarts the
+        // service by itself in the background after killing the signer process. Throwing here crash-looped the
+        // signer. Instead the service steps aside and is not restarted; the signer still signs (push and the app
+        // start its keys), and opening Marble starts the service again.
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(STATUS_ID, statusNote(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(STATUS_ID, statusNote())
+        } catch (e: Exception) {
+            refused = true
+            Startup.mark("service refused: ${e.javaClass.simpleName}")
+            for (p in accounts.all) if (p.isMember) p.start()
+            stopSelf()
+            return
+        }
         listenAll()
         for (p in accounts.all) if (p.isMember) p.start()
+        Chip.elsewhere = fingerprints
         Startup.mark("service done")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (accounts.all.none { it.isMember }) { stopSelf(); return START_NOT_STICKY }
+        if (refused || accounts.all.none { it.isMember }) { stopSelf(); return START_NOT_STICKY }
         listenAll()
         for (p in accounts.all) if (p.isMember) p.start()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        if (Chip.elsewhere === fingerprints) Chip.elsewhere = null
         for (p in accounts.all) { if (p.listener is For) p.listener = null; if (!p.isMember) p.stop() }
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * A fingerprint prompt that could not come up by itself (the app was not on screen, say after an Approve in a
+     * notification): a notification whose tap opens it. It goes when the prompt comes up or its request ends.
+     */
+    private val fingerprints = object : Chip.Elsewhere {
+        override fun show(id: String, title: String, open: Intent) {
+            if (!canNotify()) return
+            NotificationManagerCompat.from(this@CosignService).notify(("fp" + id).hashCode(), NotificationCompat.Builder(this@CosignService, ASKS)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle(title)
+                .setContentText(Asking.FINISH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setGroup(Asking.group("fp", id))
+                .setContentIntent(PendingIntent.getActivity(this@CosignService, ("fp" + id).hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                // Swiped away: the fingerprint is not coming, so the request ends now, not after two minutes.
+                .setDeleteIntent(PendingIntent.getBroadcast(this@CosignService, ("fpgone" + id).hashCode(),
+                    Intent(this@CosignService, DecisionReceiver::class.java).putExtra("fpDismissed", id),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                .build())
+        }
+        override fun gone(id: String) = NotificationManagerCompat.from(this@CosignService).cancel(("fp" + id).hashCode())
+    }
 
     private fun openApp() = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
 
@@ -101,22 +143,34 @@ class CosignService : Service() {
             Intent(this, DecisionReceiver::class.java).putExtra("id", ask.id).putExtra("approve", approve).putExtra("slot", p.slot),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val lines = Asking.noticeLines(ask.app, ask.level, appName)
         val n = NotificationCompat.Builder(this, ASKS)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(cc.aaro.cosign.ui.question(ask.hold) + forKey(p))
-            .setContentText("${ask.app} asked")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("${ask.app} asked. It doesn't happen unless you say yes."))
+            .setContentText(lines.first)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(lines.second))
             .setSubText(ask.app)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(ask.expiresAt - System.currentTimeMillis())
             .setAutoCancel(true)
-            .setContentIntent(openApp())
-            .addAction(NotificationCompat.Action.Builder(0, "Deny", decision(false)).build())
+            // A group of its own, so a tap always lands on this notification's own target (Asking.group).
+            .setGroup(Asking.group("ask", ask.id))
+            // Swiped away (or cleared) without an answer: that is a No, at once, rather than a question nobody can see
+            // waiting out its two minutes. A tap that opens it is not a dismissal.
+            .setDeleteIntent(PendingIntent.getBroadcast(this, ("gone" + ask.id).hashCode(),
+                Intent(this, DecisionReceiver::class.java).putExtra("dismissed", ask.id).putExtra("slot", p.slot),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            // Level 2 is answered in the app's own screen for it, where the fingerprint can follow (Android shows the
+            // prompt only over a screen of this app, never after a button in a notification).
+            .setContentIntent(if (ask.level >= 2) PendingIntent.getActivity(this, ("ask" + ask.id).hashCode(), AskActivity.intent(this, p.slot, ask.id),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) else openApp())
+        for (a in Asking.actions(ask.level)) when (a) {
+            Asking.Action.DENY -> n.addAction(NotificationCompat.Action.Builder(0, "Deny", decision(false)).build())
             // Approving from a locked phone needs the phone unlocked first.
-            .addAction(NotificationCompat.Action.Builder(0, "Approve", decision(true)).setAuthenticationRequired(true).build())
-            .build()
-        NotificationManagerCompat.from(this).notify(ask.id.hashCode(), n)
+            Asking.Action.APPROVE -> n.addAction(NotificationCompat.Action.Builder(0, "Approve", decision(true)).setAuthenticationRequired(true).build())
+        }
+        NotificationManagerCompat.from(this).notify(ask.id.hashCode(), n.build())
     }
 
 
@@ -172,6 +226,7 @@ class CosignService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(10 * 60_000L)
             .setAutoCancel(true)
+            .setGroup(Asking.group("tap", t.id))
             .setContentIntent(openApp())
             .addAction(NotificationCompat.Action.Builder(0, "No", action(p, "tap", t.id, false)).build())
             .addAction(NotificationCompat.Action.Builder(0, "Yes", action(p, "tap", t.id, true)).setAuthenticationRequired(true).build())

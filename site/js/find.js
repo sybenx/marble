@@ -1,7 +1,7 @@
 // The one search box's sections other than People, as in the approved search mock (igloo/feed-mock/search.mjs):
 // posts that match and are worth reading, posts with a #tag, today's stories that match, and your own
 // saved, liked and written posts. Everything is worked out here in the browser.
-import { req, relays, FAST, INDEXERS } from "./pool.js";
+import { req, relays, FAST, INDEXERS } from "./signin/pool.js";
 import { keep, profiles, outbox } from "./data.js";
 import { followerCounts, SEARCH_RELAYS } from "./search.js";
 

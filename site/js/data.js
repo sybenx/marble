@@ -1,6 +1,6 @@
 // What the pages read: posts by id, people's profiles (asked for in batches), where each person posts
 // (their NIP-65 list), replies. Everything found is kept for the visit, so going back is instant.
-import { req, count, relays, FAST, INDEXERS, MORE } from "./pool.js";
+import { req, count, relays, FAST, INDEXERS, MORE } from "./signin/pool.js";
 import { parseProfile, verifyNip05 } from "./search-rank.js";
 
 export const events = new Map(); // id → event

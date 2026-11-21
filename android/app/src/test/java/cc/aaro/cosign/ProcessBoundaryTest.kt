@@ -27,7 +27,7 @@ class ProcessBoundaryTest {
     /** Runs in both: the Application that sets each one up. */
     private val either = listOf("CosignApp.kt")
     /** Runs only in the signer process. */
-    private val signerOnly = listOf("SignerActivity.kt", "CosignService.kt", "Nip55Activity.kt", "Push.kt", "DecisionReceiver.kt", "BootReceiver.kt")
+    private val signerOnly = listOf("SignerActivity.kt", "AskActivity.kt", "CosignService.kt", "Nip55Activity.kt", "Push.kt", "DecisionReceiver.kt", "BootReceiver.kt")
 
     /** Everything else runs in the main process (a new screen too, without being listed here): the UI, the feed, what both draw. */
     private val mainSide get() = src.walk().filter { it.isFile && it.name.endsWith(".kt") }.map { it.relativeTo(src).path }
@@ -52,7 +52,7 @@ class ProcessBoundaryTest {
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val components = Regex("""<(activity|service|provider|receiver)\b([^>]*)>""").findAll(manifest)
             .associate { m -> Regex("""android:name="([^"]+)"""").find(m.groupValues[2])!!.groupValues[1] to Regex("""android:process="([^"]+)"""").find(m.groupValues[2])?.groupValues?.get(1) }
-        for (c in listOf(".SignerActivity", ".Nip55Activity", ".CosignService", ".DecisionReceiver", ".Push", ".BootReceiver"))
+        for (c in listOf(".SignerActivity", ".AskActivity", ".Nip55Activity", ".CosignService", ".DecisionReceiver", ".Push", ".BootReceiver"))
             assertEquals(c, ":signer", components[c])
         assertEquals("the UI", null, components[".MainActivity"])
     }

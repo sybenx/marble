@@ -6,10 +6,10 @@
 // On your account (only the old browser extension could, as Notes; now in this browser): your sources and folders (kind 30078 d=marble/reader) and
 // what you've read (the seen list, d=discover/seen, with its upto and unread), each NIP-44 to yourself, merged with
 // what's there before every write; as Marble Android keeps them (reader.md, agreed 2026-11-04).
-import { req, relays, publish, FAST, INDEXERS, normalize, foundOn, testRelay } from "./pool.js";
+import { req, relays, publish, FAST, INDEXERS, normalize, foundOn, testRelay } from "./signin/pool.js";
 import { keep, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { esc, name, postPath, personPath, content, inApp } from "./render.js";
-import { decode, naddr, nevent } from "./ids.js";
+import { decode, naddr, nevent } from "./signin/ids.js";
 import { current, method, myFollows, nip44Self, sign, myWriteRelays, onMe } from "./me.js";
 import { loadStories } from "./find.js";
 import * as notes from "./later.js";

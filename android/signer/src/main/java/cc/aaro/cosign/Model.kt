@@ -21,8 +21,12 @@ data class Membership(val idx: Int, val signer: String, val group: Group, val ep
 data class Offer(val box: String, val create: Boolean, val npub: String? = null,
                  /** The account is one you already have: its key was pasted and waits, in the signer, to be split with this box. */
                  val bringing: Boolean = false) : java.io.Serializable
-/** Something destructive that an app or a site asked for, waiting for you. */
-data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long) : java.io.Serializable
+/**
+ * Something destructive that an app or a site asked for, waiting for you. [level]: 1 asks Yes or No; 2 is never done by
+ * accident, and a Yes goes on to the fingerprint (Keykin SPEC 11.6, The tap).
+ */
+/** [switch]: a change to your relay list or DM relays by a site on the main account, which may be moved to a key of its own instead. */
+data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long, val level: Int = 1, val switch: Boolean = false) : java.io.Serializable
 /** A site or an app that can sign as you. [via] says how it got in. */
 data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
                 /** The site signed in with an account of its own (made for it), not the main account. */
@@ -49,6 +53,8 @@ data class Connect(val origin: String, val stage: Stage, val message: String? = 
                    val ask: Boolean = false,
                    /** The site already has an account of its own here, and signs in with it again. */
                    val own: Boolean = false,
+                   /** The site was moved to a key of its own after it tried to change your relays, and signs in again on it. */
+                   val moved: Boolean = false,
                    /** A Keykin account page: it gets the main account only (no choice), and the card says so. */
                    val accountPage: Boolean = false,
                    /** The site asked to decrypt at sign-in (NIP-46 perms): "Read your private lists" starts on. */
@@ -85,8 +91,23 @@ data class Asking(val box: String, val note: String, val step: Int, val error: S
 data class SignInCode(val uri: String? = null, val digits: String? = null, val connected: Boolean = false, val open: String? = null) : java.io.Serializable
 /** Adding a device whose code was pasted: does [name] show these [digits]? */
 data class AddDigits(val name: String, val digits: String) : java.io.Serializable
-data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
-class NeedsApproval(val what: String) : Exception(what)
+/** [place]: the child key this app signs as (Keykin SPEC 8k), named by the place it was made for; null: the main account. */
+data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean, val place: String? = null)
+/** [level]: 2 when a Yes to [what] goes on to the fingerprint. */
+class NeedsApproval(val what: String, val level: Int = 1) : Exception(what) {
+    /**
+     * Across the line between the app and the signer process (SignerService answers a Bundle): the words and the level,
+     * so the app's own dialog knows that a Yes goes on to the fingerprint.
+     */
+    object Wire {
+        const val WHAT = "approval"
+        const val LEVEL = "approvalLevel"
+        fun write(e: NeedsApproval, putString: (String, String) -> Unit, putInt: (String, Int) -> Unit) { putString(WHAT, e.what); putInt(LEVEL, e.level) }
+        /** The answer's NeedsApproval, or null when it has none. An answer without a level is level 1. */
+        fun read(getString: (String) -> String?, getInt: (String, Int) -> Int): NeedsApproval? =
+            getString(WHAT)?.let { NeedsApproval(it, getInt(LEVEL, 1).coerceIn(1, 2)) }
+    }
+}
 class Revoked : Exception("revoked")
 
 data class Ui(
@@ -151,5 +172,5 @@ object Describe {
         13 to "DM", 14 to "DM", 16 to "repost", 62 to "request to vanish", 1111 to "comment", 9734 to "zap request", 10000 to "mute list",
         10002 to "relay list", 10003 to "bookmarks", 22242 to "relay login", 24242 to "upload login", 27235 to "web login", 30023 to "article", 30078 to "app data", 10046 to "login page",
     )
-    fun kind(k: Int) = names[k] ?: "kind $k event"
+    fun kind(k: Int) = names[k] ?: cc.aaro.cosign.core.Policy.nameOf(k) ?: "kind $k event"
 }

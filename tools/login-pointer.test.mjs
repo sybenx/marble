@@ -1,9 +1,9 @@
 // The login-page pointer (Keykin SPEC §11.1): kind 10046 and its nostrconnect_url template, the old kind 30078 only when
 // there's no 10046 at all, removal, and the link built from it.   node tools/login-pointer.test.mjs
-import { schnorr, sha256 } from "../site/js/vendor/noble.js";
-import { toHex, fromHex } from "../site/js/ids.js";
-import { loginTemplate, legacyTemplate, loginLink } from "../site/js/connect.js";
-import { pointerOf, POINTER } from "../site/js/account-page.js";
+import { schnorr, sha256 } from "../site/js/signin/vendor/noble.js";
+import { toHex, fromHex } from "../site/js/signin/ids.js";
+import { loginTemplate, legacyTemplate, loginLink } from "../site/js/signin/connect.js";
+import { pointerOf, POINTER } from "../site/js/signin/pointer.js";
 
 let n = 0;
 const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); n++; };

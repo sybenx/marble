@@ -34,7 +34,13 @@ data class Hit(
     val fof: Int = 0,
     val followers: Long? = null,
     val nip05: Nip05.Check = Nip05.Check.NONE,
-)
+    /** A name and maybe a picture, nothing else: no address, no about. Look-alike accounts come this way by the dozen. */
+    val bare: Boolean = false,
+) {
+    companion object {
+        fun bare(p: Person?) = p != null && p.nip05.isNullOrBlank() && p.about.isNullOrBlank()
+    }
+}
 
 object SearchRank {
     /** A name as typed: lower case, the emoji and signs around it gone, spaces single. */
@@ -47,11 +53,13 @@ object SearchRank {
      * How much to trust someone, for the order among the same kind of match: a NIP-05 that checks out
      * counts for a lot and one that names another key counts against; the people you follow following
      * them; then everyone's follows, on a log scale (174,000 followers against 19,000 is less than one step).
+     * A bare profile starts a step down: "florian" brings back fifty bare Florians with a follower or
+     * three each, and their counts come in before the real one's; they mustn't pass him while his is on the way.
      */
     fun trust(h: Hit): Double {
         val n = when (h.nip05) { Nip05.Check.OK -> 1.5; Nip05.Check.WRONG -> -2.0; else -> 0.0 }
         val friends = if (h.fof > 0) 2.0 + 2 * log10(h.fof + 1.0) else 0.0
-        return n + friends + log10((h.followers ?: 0) + 1.0)
+        return n + friends + log10((h.followers ?: 0) + 1.0) - (if (h.bare) 1.0 else 0.0)
     }
 
     /** Your follows first, then exact names, then the rest; within each, the most trusted first, then the relays' order. */

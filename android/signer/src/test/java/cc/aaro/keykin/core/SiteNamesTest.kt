@@ -86,4 +86,14 @@ class SiteNamesTest {
         val old = Device.Note.of(JSONObject().put("id", "n").put("kind", "bunker").put("text", "").put("at", 1).put("tap", false))
         assertFalse(old.lists || old.dms)
     }
+
+    @Test fun aSignInNoteCarriesTheSwitchesTheAccountPageSet() {
+        val n = Device.Note.of(JSONObject().put("id", "n").put("kind", "nostrconnect").put("text", "nostrconnect://x").put("at", 1).put("tap", false).put("lists", true).put("dms", false))
+        assertTrue(n.scoped); assertTrue(n.lists); assertFalse(n.dms)
+        val off = Device.Note.of(JSONObject().put("id", "n").put("kind", "nostrconnect").put("text", "nostrconnect://x").put("at", 1).put("tap", false).put("lists", false).put("dms", false))
+        assertTrue("both off is a choice, not a missing field", off.scoped); assertFalse(off.lists)
+        // An older box sends none: the phone falls back to the code's perms.
+        val old = Device.Note.of(JSONObject().put("id", "n").put("kind", "nostrconnect").put("text", "nostrconnect://x").put("at", 1).put("tap", false))
+        assertFalse(old.scoped)
+    }
 }

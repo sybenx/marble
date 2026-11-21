@@ -8,6 +8,13 @@ package cc.aaro.cosign.core
  * Anything else is refused outright, never asked.
  */
 object SiteScopes {
+    /**
+     * Whether a nostrconnect code's NIP-46 [perms] ("sign_event:1,nip44_decrypt,…") ask to decrypt, so "Read your private
+     * lists" starts on for it. A scan's card does this, and so does a code from an account page whose box sends no switches.
+     */
+    fun asksLists(perms: String?): Boolean =
+        perms.orEmpty().split(',').map { it.trim().substringBefore(':') }.any { it == "nip44_decrypt" || it == "nip04_decrypt" }
+
     /** Direct messages: NIP-04 (4), NIP-17's seal (13), chat message (14) and file message (15), and gift wraps (1059). */
     val DM_KINDS = setOf(4, 13, 14, 15, 1059)
 

@@ -6,7 +6,7 @@
 // Tabs: pages opened from Marble, in this browser. Notes, Searches and Tabs belong to the account signed in (and those
 // from while nobody was, to nobody): another account never sees them or gets them merged in, and signing out leaves
 // none of them on the page (~/igloo/signin-signout-audit.md, fix 3).
-import { req, relays, publish, FAST, testRelay } from "./pool.js";
+import { req, relays, publish, FAST, testRelay } from "./signin/pool.js";
 import { outbox } from "./data.js";
 import { current, method, sign, nip44Self, onMe } from "./me.js";
 // Notes on vaults (notes-vault.js): once your account has a notes vault (your phone makes it), Notes are read from and

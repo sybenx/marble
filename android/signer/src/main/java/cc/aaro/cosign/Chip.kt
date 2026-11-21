@@ -17,6 +17,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import cc.aaro.cosign.core.Asking
 import cc.aaro.keykin.core.Der
 import cc.aaro.keykin.core.KeykinException
 import java.security.KeyPairGenerator
@@ -61,57 +62,103 @@ object Chip {
     fun forget(c: Context, slot: String) { try { ks().deleteEntry(alias(slot)) } catch (_: Exception) { }; prefs(c).edit().remove(alias(slot)).apply() }
 
     private val waiting = ConcurrentHashMap<String, Ask>()
-    internal class Ask(val slot: String, val title: String, val message: ByteArray) { val done = CountDownLatch(1); @Volatile var out: String? = null; @Volatile var why = "cancelled" }
+    internal class Ask(val slot: String, val title: String, val subtitle: String, val message: ByteArray) {
+        val done = CountDownLatch(1)
+        /** Counted down when the prompt's screen came up. */
+        val shown = CountDownLatch(1)
+        @Volatile var out: String? = null
+        @Volatile var why = "cancelled"
+        /** The screen showing the prompt, so it can be closed when the request ends without an answer. */
+        @Volatile var host: FingerprintActivity? = null
+    }
     internal fun take(id: String) = waiting[id]
 
     /**
-     * Signs `message` after showing the fingerprint prompt over whatever is on screen. Blocks until the
-     * person answers; never call it on the main thread. Throws `cancelled` if they back out and
-     * `fingerprint_changed` if a new finger was enrolled since the key was made.
+     * Where a prompt that could not come up by itself is offered instead: Android opens an app's screen only while that
+     * app is on screen, so a prompt asked for from the background (a Yes given in a notification, say) is blocked
+     * without a word. The app's service shows a notification whose tap opens [open]; [gone] takes it away.
      */
-    fun sign(c: Context, slot: String, title: String, message: ByteArray): String {
+    interface Elsewhere { fun show(id: String, title: String, open: Intent); fun gone(id: String) }
+    @Volatile var elsewhere: Elsewhere? = null
+    /** How long the prompt's screen may take to come up before it is offered as a notification instead. */
+    private const val SHOW_WAIT_MS = 2000L
+    private const val ANSWER_WAIT_MINUTES = 2L
+
+    /** Its notification was swiped away: a prompt that is not up yet will not be asked for, so the request ends now. */
+    fun dismiss(id: String) { waiting[id]?.takeIf { it.host == null }?.done?.countDown() }
+
+    /**
+     * The app has come to the front: every prompt that could not come up by itself (Android blocked it in the
+     * background) comes up now, over the app.
+     */
+    fun reshow(c: Context) { for ((id, a) in waiting) if (a.host == null && a.done.count > 0) c.startActivity(opening(c, id)) }
+
+    private fun opening(c: Context, id: String) = Intent(c, FingerprintActivity::class.java).putExtra("ask", id)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+
+    /**
+     * Signs `message` after showing the fingerprint prompt over whatever is on screen, titled [title], with [subtitle]
+     * under it. Blocks until the person answers; never call it on the main thread. Throws `cancelled` if they back out
+     * or do not answer in two minutes, and `fingerprint_changed` if a new finger was enrolled since the key was made.
+     * When the app is not on screen the prompt cannot come up by itself; it is then offered as a notification.
+     */
+    fun sign(c: Context, slot: String, title: String, message: ByteArray, subtitle: String = Asking.ACCOUNT_CHANGE): String {
         val sig = try { Signature.getInstance("SHA256withECDSA").apply { initSign(ks().getKey(alias(slot), null) as PrivateKey) } }
             catch (_: android.security.keystore.KeyPermanentlyInvalidatedException) { throw KeykinException("fingerprint_changed") }
             catch (_: NullPointerException) { throw KeykinException("no_chip_key") }
         if (!asksFingerprint(c, slot)) return Der.toCompact(sig.apply { update(message) }.sign())
         val id = java.util.UUID.randomUUID().toString()
-        val ask = Ask(slot, title, message)
+        val ask = Ask(slot, title, subtitle, message)
         waiting[id] = ask
         try {
-            c.startActivity(Intent(c, FingerprintActivity::class.java).putExtra("ask", id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
-            if (!ask.done.await(2, TimeUnit.MINUTES)) throw KeykinException("cancelled")
+            c.startActivity(opening(c, id))
+            if (!ask.shown.await(SHOW_WAIT_MS, TimeUnit.MILLISECONDS) && ask.done.count > 0) elsewhere?.show(id, title, opening(c, id))
+            if (!ask.done.await(ANSWER_WAIT_MINUTES, TimeUnit.MINUTES)) throw KeykinException("cancelled")
             return ask.out ?: throw KeykinException(ask.why)
-        } finally { waiting.remove(id) }
+        } finally {
+            waiting.remove(id)
+            elsewhere?.gone(id)
+            // Ended without an answer (it ran out): the prompt goes too, rather than stay up for nothing.
+            ask.host?.let { a -> a.runOnUiThread { a.close() } }
+        }
     }
 
-    internal fun prompt(a: FragmentActivity, ask: Ask) {
+    internal fun prompt(a: FingerprintActivity, ask: Ask): BiometricPrompt? {
         val sig = try { Signature.getInstance("SHA256withECDSA").apply { initSign(ks().getKey(alias(ask.slot), null) as PrivateKey) } }
-            catch (_: android.security.keystore.KeyPermanentlyInvalidatedException) { ask.why = "fingerprint_changed"; ask.done.countDown(); a.finish(); return }
-        BiometricPrompt(a, ContextCompat.getMainExecutor(a), object : BiometricPrompt.AuthenticationCallback() {
+            catch (_: android.security.keystore.KeyPermanentlyInvalidatedException) { ask.why = "fingerprint_changed"; ask.done.countDown(); a.finish(); return null }
+        return BiometricPrompt(a, ContextCompat.getMainExecutor(a), object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) {
                 try { ask.out = Der.toCompact(r.cryptoObject!!.signature!!.apply { update(ask.message) }.sign()) } catch (_: Exception) { ask.why = "failed" }
                 ask.done.countDown(); a.finish()
             }
             override fun onAuthenticationError(code: Int, msg: CharSequence) { ask.done.countDown(); a.finish() }
-        }).authenticate(
-            BiometricPrompt.PromptInfo.Builder().setTitle(ask.title).setSubtitle("Changes to your account need your fingerprint")
+        }).also { p -> p.authenticate(
+            BiometricPrompt.PromptInfo.Builder().setTitle(ask.title).setSubtitle(ask.subtitle.ifEmpty { null })
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Cancel").build(),
-            BiometricPrompt.CryptoObject(sig))
+            BiometricPrompt.CryptoObject(sig)) }
     }
 }
 
 /** Nothing but the system's fingerprint prompt, over the app. Signer process. */
 class FingerprintActivity : FragmentActivity() {
     private var ask: Chip.Ask? = null
+    private var prompt: BiometricPrompt? = null
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         Proc.signerOnly("FingerprintActivity")
         val a = intent.getStringExtra("ask")?.let(Chip::take) ?: return finish()
+        // Already up (opened by itself and again from the notification): one prompt is enough.
+        if (a.host != null && a.host !== this) return finish()
         ask = a
-        if (b == null) Chip.prompt(this, a)
+        a.host = this
+        a.shown.countDown()
+        Chip.elsewhere?.gone(intent.getStringExtra("ask")!!)
+        if (b == null) prompt = Chip.prompt(this, a)
     }
+    /** The request ended without an answer: the prompt and this screen go. */
+    internal fun close() { try { prompt?.cancelAuthentication() } catch (_: Exception) { }; if (!isFinishing) finish() }
     // Sent to the background (Home, another app on top): the system cancels the prompt without a word, so the
     // change it was for is cancelled too, at once, and nothing waits on a prompt that is no longer there.
     override fun onStop() { super.onStop(); if (!isChangingConfigurations) { ask?.done?.countDown(); finish() } }
-    override fun onDestroy() { if (isFinishing) ask?.done?.countDown(); super.onDestroy() }
+    override fun onDestroy() { if (isFinishing) ask?.done?.countDown(); if (ask?.host === this) ask?.host = null; super.onDestroy() }
 }

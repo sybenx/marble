@@ -21,7 +21,9 @@ class CosignApp : Application() {
             override fun joined(context: Context) { try { CosignService.start(context) } catch (_: Exception) { } }
         })
         // After the app's first screen is drawn. Signing never waits on this (it connects by itself); boot and push start it directly.
-        if (Proc.isSigner && signers.all.any { it.isMember }) android.os.Handler(mainLooper).postDelayed({ CosignService.start(this) }, 1500)
+        // Android refuses this start when the signer was woken in the background (ForegroundServiceStartNotAllowedException):
+        // that must not take the signer down. It signs without the service, and opening Marble starts it.
+        if (Proc.isSigner && signers.all.any { it.isMember }) android.os.Handler(mainLooper).postDelayed({ try { CosignService.start(this) } catch (_: Exception) { } }, 1500)
         // The feed log (off unless you turned it on): the app's process only.
         if (!Proc.isSigner) FeedLog.load(this)
         Startup.mark("app done")

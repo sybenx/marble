@@ -4,7 +4,7 @@
 // their .well-known, people you follow first. Ranking is search-rank.js, unchanged. One difference: the
 // first people found show at once, not 150 ms later (later updates are still batched).
 import { rankProfiles, matchesQuery, verifyNip05, parseProfile, isBridged } from "./search-rank.js";
-import { req, relays, FAST } from "./pool.js";
+import { req, relays, FAST } from "./signin/pool.js";
 
 // Ditto's (relay.ditto.pub, syb.lol) and two more search relays, as the phone asks (results show as they arrive)
 export const SEARCH_RELAYS = ["wss://relay.ditto.pub", "wss://syb.lol", "wss://search.nos.today", "wss://search.nostrarchives.com"];
