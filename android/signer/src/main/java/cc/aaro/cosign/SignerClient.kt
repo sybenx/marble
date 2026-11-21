@@ -233,7 +233,7 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun signOwn(ev: Event, approved: Boolean = false): Event {
         val s = signer() ?: throw IllegalStateException("$appName's signer isn't running")
         val r = s.signOwn(slot, ev.toJson(), approved)
-        r.getString("approval")?.let { throw NeedsApproval(it) }
+        NeedsApproval.Wire.read(r::getString, r::getInt)?.let { throw it }
         r.getString("event")?.let { j -> return Event.fromMap(Json.parse(j)) ?: throw IllegalStateException("bad event from the signer") }
         throw IllegalStateException(r.getString("error") ?: "no answer")
     }

@@ -90,7 +90,20 @@ data class SignInCode(val uri: String? = null, val digits: String? = null, val c
 data class AddDigits(val name: String, val digits: String) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
 /** [level]: 2 when a Yes to [what] goes on to the fingerprint. */
-class NeedsApproval(val what: String, val level: Int = 1) : Exception(what)
+class NeedsApproval(val what: String, val level: Int = 1) : Exception(what) {
+    /**
+     * Across the line between the app and the signer process (SignerService answers a Bundle): the words and the level,
+     * so the app's own dialog knows that a Yes goes on to the fingerprint.
+     */
+    object Wire {
+        const val WHAT = "approval"
+        const val LEVEL = "approvalLevel"
+        fun write(e: NeedsApproval, putString: (String, String) -> Unit, putInt: (String, Int) -> Unit) { putString(WHAT, e.what); putInt(LEVEL, e.level) }
+        /** The answer's NeedsApproval, or null when it has none. An answer without a level is level 1. */
+        fun read(getString: (String) -> String?, getInt: (String, Int) -> Int): NeedsApproval? =
+            getString(WHAT)?.let { NeedsApproval(it, getInt(LEVEL, 1).coerceIn(1, 2)) }
+    }
+}
 class Revoked : Exception("revoked")
 
 data class Ui(

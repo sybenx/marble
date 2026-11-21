@@ -21,7 +21,8 @@ class Nip55Request(private val activity: Activity) {
     sealed interface Stage {
         data object Connect : Stage
         data object Dms : Stage
-        data class Approve(val what: String) : Stage
+        /** [level] 2: Yes goes on to the fingerprint. */
+        data class Approve(val what: String, val level: Int = 1) : Stage
         data class Working(val text: String) : Stage
         data class Failed(val text: String) : Stage
     }
@@ -100,8 +101,8 @@ class Nip55Request(private val activity: Activity) {
                 val ev = try { phone.appEvent(payload) } catch (e: Exception) { return fail("That isn't an event $appName can sign (${e.message}).") }
                 event = ev
                 cc.aaro.cosign.core.Policy.refuse(ev)?.let { return fail("$appName won't sign this: $it.") }
-                val hold = phone.holdFor(ev)
-                if (hold != null) current.value = Stage.Approve(hold) else sign(ev, approved = false)
+                val q = phone.questionFor(ev)
+                if (q != null) current.value = Stage.Approve(q.says, q.level) else sign(ev, approved = false)
             }
             "nip44_encrypt", "nip44_decrypt", "nip04_encrypt", "nip04_decrypt" ->
                 if (!g.dm) current.value = Stage.Dms else crypt()
@@ -120,7 +121,7 @@ class Nip55Request(private val activity: Activity) {
                 val signed = phone.signForApp(phone.appGrant(app)!!, ev, approved)
                 activity.runOnUiThread { answer("result" to signed.sig, "event" to signed.toJson()) }
             } catch (e: NeedsApproval) {
-                activity.runOnUiThread { current.value = Stage.Approve(e.what) } // your server saw what this phone missed
+                activity.runOnUiThread { current.value = Stage.Approve(e.what, e.level) } // your server saw what this phone missed
             } catch (_: Revoked) {
                 activity.runOnUiThread { current.value = Stage.Connect }
             } catch (e: Exception) {

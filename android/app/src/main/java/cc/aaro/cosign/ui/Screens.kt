@@ -942,7 +942,8 @@ internal fun AskCard(ask: Ask, now: Long, quiet: Boolean = false, onDecide: (Boo
         if (!quiet) Text("${left}s", fontFamily = PlexMono, color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
     }
     Spacer(Modifier.height(6.dp))
-    Text("${ask.app} asked. It doesn't happen unless you say yes.", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+    // Level 2 says that the fingerprint comes after Yes, so it never looks like an ordinary Yes or No.
+    Text(cc.aaro.cosign.core.Asking.cardLine(ask.app, ask.level), style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     Spacer(Modifier.height(14.dp))
     YesNo(onDecide)
 }
@@ -954,26 +955,8 @@ private fun YesNo(onDecide: (Boolean) -> Unit) = Row(horizontalArrangement = Arr
     Button({ onDecide(true) }, Modifier.weight(1f).height(48.dp), colors = ButtonDefaults.buttonColors(Vault.Amber, Vault.OnAmber)) { Text("Yes", fontWeight = FontWeight.SemiBold) }
 }
 
-/**
- * What needs you, as a question about what would happen: "Remove 212 of your 230 follows"
- * becomes "Unfollow 212 people?". The words come from the policy (here and on your servers).
- */
-internal fun question(what: String): String {
-    val s = what.trim().removeSuffix(".").removeSuffix("?")
-    fun people(n: String) = if (n == "1") "1 person" else "$n people"
-    Regex("^Remove (\\d+) of your \\d+ follows?(?: \\(and add (\\d+)\\))?$").matchEntire(s)?.let {
-        val add = it.groupValues[2]
-        return "Unfollow ${people(it.groupValues[1])}" + (if (add.isEmpty()) "" else " and follow ${people(add)} instead") + "?"
-    }
-    Regex("^Empty your follow list \\(it has (\\d+) follows?\\)$").matchEntire(s)?.let { return "Unfollow all ${people(it.groupValues[1])}?" }
-    Regex("^Empty your (.+) \\(it has (\\d+) (.+)\\)$").matchEntire(s)?.let { return "Remove all ${it.groupValues[2]} ${it.groupValues[3].replace("persons", "people")} from your ${it.groupValues[1]}?" }
-    Regex("^(.+) dated in the future \\((.+)\\)$").matchEntire(s)?.let { return "Allow a ${it.groupValues[1].lowercase()} dated ${it.groupValues[2]}?" }
-    Regex("^Delete (\\d+) (?:of your )?events?(?: for .*)?$").matchEntire(s)?.let { val n = it.groupValues[1]; return "Delete $n post${if (n == "1") "" else "s"}?" }
-    Regex("^Delete (?:several|some) events?(?: for .*)?$").matchEntire(s)?.let { return "Delete several posts?" }
-    Regex("^Wipe your profile: (.+)$").matchEntire(s)?.let { return "Clear your profile (${it.groupValues[1]})?" }
-    if (s.startsWith("Ask relays to erase everything")) return "Erase everything you've ever posted?"
-    return "$s?"
-}
+/** What needs you, as a question about what would happen ([cc.aaro.cosign.core.Asking.question]). */
+internal fun question(what: String): String = cc.aaro.cosign.core.Asking.question(what)
 
 @Composable
 private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> }) = Column(

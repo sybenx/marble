@@ -108,7 +108,7 @@ class SignerService : Service() {
                 // Rebuilt here as it will be signed: under this account's key, with its own id.
                 putString("event", s.signOwn(s.appEvent(event), approved).toJson())
             } catch (e: NeedsApproval) {
-                putString("approval", e.what)
+                NeedsApproval.Wire.write(e, this::putString, this::putInt)
             } catch (e: Exception) {
                 putString("error", e.message ?: e.javaClass.simpleName)
             }

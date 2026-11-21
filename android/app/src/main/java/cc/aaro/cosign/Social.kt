@@ -330,7 +330,8 @@ data class Found(val query: String, val people: List<String> = emptyList(), val 
                  val split: AuthorQuery.Split? = null, val byAuthor: List<Event> = emptyList(), val spam: Map<String, cc.aaro.cosign.spam.Spam.Why> = emptyMap())
 
 /** One of your actions in Cosign that your servers want you to approve first. */
-data class Held(val what: String, val event: Event)
+/** [level] 2: Yes goes on to the fingerprint. */
+data class Held(val what: String, val event: Event, val level: Int = 1)
 
 /** The home screen's state for one key. */
 class Social private constructor(private val phone: Phone, context: Context) {
@@ -3509,7 +3510,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
     private suspend fun actEvent(ev: Event, approved: Boolean = false, relays: List<String>? = null): Event? {
         if (Sources.viewAs != null) { message.value = "Looking as another account: nothing is signed or sent."; return null }
         val signed = try { phone.signOwn(ev, approved) } catch (e: NeedsApproval) {
-            held.value = Held(e.what, ev); return null
+            held.value = Held(e.what, ev, e.level); return null
         } catch (e: Exception) {
             message.value = "Couldn't do that right now: ${e.message ?: "no answer"}"; return null
         }

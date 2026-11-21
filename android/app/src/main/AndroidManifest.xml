@@ -127,6 +127,16 @@
             android:excludeFromRecents="true"
             android:theme="@style/Theme.Cosign.Sheet" />
 
+        <!-- One question that waits for you, opened from its notification. A level 2 question is answered only here:
+             Android shows the fingerprint prompt only over a screen of this app. -->
+        <activity
+            android:name=".AskActivity"
+            android:process=":signer"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Cosign.Sheet" />
+
         <!-- Android signer (NIP-55): apps on this phone sign through Cosign. The activity asks
              you when it must (connecting, something destructive, first use of messages);
              the library's provider answers everything else in the background. -->

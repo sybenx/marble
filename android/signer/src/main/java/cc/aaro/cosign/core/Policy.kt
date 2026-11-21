@@ -44,6 +44,8 @@ object Policy {
         1111 to "comment", 9734 to "zap request", 22242 to "relay login", 24242 to "upload login", 27235 to "web login", 30023 to "article", 30078 to "app data", 10046 to "login page",
     )
     private fun kindName(k: Int) = NAMES[k]?.first ?: EVENT_NAMES[k] ?: "kind $k event"
+    /** A kind's name in plain words ("follow list", "note"), or null when it has none. */
+    fun nameOf(k: Int): String? = NAMES[k]?.first ?: EVENT_NAMES[k]
     private fun itemName(k: Int) = NAMES[k]?.second ?: "item"
     private fun plural(n: Int, k: Int) = "$n ${itemName(k)}${if (n == 1) "" else "s"}"
 

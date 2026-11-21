@@ -12,6 +12,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import cc.aaro.cosign.core.Asking
 
 /**
  * Keeps the phone reachable: the relay connections its signed-in sites use stay open, so a site
@@ -65,6 +66,7 @@ class CosignService : Service() {
         }
         listenAll()
         for (p in accounts.all) if (p.isMember) p.start()
+        Chip.elsewhere = fingerprints
         Startup.mark("service done")
     }
 
@@ -76,11 +78,32 @@ class CosignService : Service() {
     }
 
     override fun onDestroy() {
+        if (Chip.elsewhere === fingerprints) Chip.elsewhere = null
         for (p in accounts.all) { if (p.listener is For) p.listener = null; if (!p.isMember) p.stop() }
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * A fingerprint prompt that could not come up by itself (the app was not on screen, say after an Approve in a
+     * notification): a notification whose tap opens it. It goes when the prompt comes up or its request ends.
+     */
+    private val fingerprints = object : Chip.Elsewhere {
+        override fun show(id: String, title: String, open: Intent) {
+            if (!canNotify()) return
+            NotificationManagerCompat.from(this@CosignService).notify(("fp" + id).hashCode(), NotificationCompat.Builder(this@CosignService, ASKS)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle(title)
+                .setContentText(Asking.FINISH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(PendingIntent.getActivity(this@CosignService, ("fp" + id).hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                .build())
+        }
+        override fun gone(id: String) = NotificationManagerCompat.from(this@CosignService).cancel(("fp" + id).hashCode())
+    }
 
     private fun openApp() = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
 
@@ -115,22 +138,27 @@ class CosignService : Service() {
             Intent(this, DecisionReceiver::class.java).putExtra("id", ask.id).putExtra("approve", approve).putExtra("slot", p.slot),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val lines = Asking.noticeLines(ask.app, ask.level, appName)
         val n = NotificationCompat.Builder(this, ASKS)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(cc.aaro.cosign.ui.question(ask.hold) + forKey(p))
-            .setContentText("${ask.app} asked")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("${ask.app} asked. It doesn't happen unless you say yes."))
+            .setContentText(lines.first)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(lines.second))
             .setSubText(ask.app)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(ask.expiresAt - System.currentTimeMillis())
             .setAutoCancel(true)
-            .setContentIntent(openApp())
-            .addAction(NotificationCompat.Action.Builder(0, "Deny", decision(false)).build())
+            // Level 2 is answered in the app's own screen for it, where the fingerprint can follow (Android shows the
+            // prompt only over a screen of this app, never after a button in a notification).
+            .setContentIntent(if (ask.level >= 2) PendingIntent.getActivity(this, ("ask" + ask.id).hashCode(), AskActivity.intent(this, p.slot, ask.id),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) else openApp())
+        for (a in Asking.actions(ask.level)) when (a) {
+            Asking.Action.DENY -> n.addAction(NotificationCompat.Action.Builder(0, "Deny", decision(false)).build())
             // Approving from a locked phone needs the phone unlocked first.
-            .addAction(NotificationCompat.Action.Builder(0, "Approve", decision(true)).setAuthenticationRequired(true).build())
-            .build()
-        NotificationManagerCompat.from(this).notify(ask.id.hashCode(), n)
+            Asking.Action.APPROVE -> n.addAction(NotificationCompat.Action.Builder(0, "Approve", decision(true)).setAuthenticationRequired(true).build())
+        }
+        NotificationManagerCompat.from(this).notify(ask.id.hashCode(), n.build())
     }
 
 
