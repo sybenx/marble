@@ -131,6 +131,12 @@ class OutsideTest {
         assertNull(Policy.question(vector, null, T, child = true))
     }
 
+    @Test fun aRelayListPutBackGoesToTheRelaysBothVersionsName() {
+        assertTrue(Policy.isRelayList(10050)); assertTrue(Policy.isRelayList(10002)); assertFalse(Policy.isRelayList(3))
+        assertEquals(listOf("wss://jskitty.com/nostr", "wss://asia.vectorapp.io/nostr", "wss://nostr.computingcache.com", "wss://relay.ditto.pub"), Policy.relaysIn(vector))
+        assertEquals(listOf("wss://a"), Policy.relaysIn(dm("wss://a/", "wss://a", "ws://local")))
+    }
+
     @Test fun severalLossesInOneRow() {
         val prev = list(10003, (1..12).map { e(it) }, "c2VhbGVk")
         val o = Policy.outside(prev, list(10003, emptyList()))!!

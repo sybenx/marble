@@ -2042,7 +2042,11 @@ class Signer(private val context: Context, val slot: String = "0") {
                 val at = Undoing.at(Clock.now(), lists.latest(Policy.keyOf(prev))?.createdAt, replaced?.createdAt, prev.createdAt)
                 val signed = signNow(Event(pub, at, prev.kind, prev.tags, prev.content).withId(), tapped = true)
                 lists.record(signed, pub)
-                publish(signed, (writeRelays() + (if (testingRelays()) emptyList() else INDEX_RELAYS) + also).map { it.trimEnd('/') }.distinct())
+                // A relay list put back goes where the change went too: the relays both versions name (an app writes its own
+                // defaults and then reads them from its own relays) and the big general ones, or the app keeps seeing its version.
+                val wide = if (testingRelays() || !Policy.isRelayList(prev.kind)) emptyList()
+                    else Policy.relaysIn(prev) + (replaced?.let(Policy::relaysIn) ?: emptyList()) + WIDE_RELAYS
+                publish(signed, (writeRelays() + (if (testingRelays()) emptyList() else INDEX_RELAYS) + also + wide).map { it.trimEnd('/') }.distinct())
                 val done = together + change.id
                 synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") in done) it.put("undone", true) else it }).toString()) }
                 note("Undid: ${change.text}", "approved"); showHistory()
@@ -2147,5 +2151,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         const val ELSEWHERE = "another app or device"
         /** Relays that keep every version of a list, not only the newest: where Undo finds the version before a change. */
         val KEEP_OLD = listOf("wss://relay.ditto.pub", "wss://relay.mostr.pub")
+        /** Big general relays many apps read a person's lists from. */
+        val WIDE_RELAYS = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
     }
 }

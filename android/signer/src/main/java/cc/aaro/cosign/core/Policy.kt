@@ -39,6 +39,10 @@ object Policy {
         val kept = after.toSet(); val removed = before.count { it !in kept }
         return before.isNotEmpty() && removed >= before.size * 0.5 && (removed >= 2 || removed == before.size)
     }
+    /** Whether [kind] is a list of relays (the relay list, DM relays, search relays and the like). */
+    fun isRelayList(kind: Int) = kind in RELAYISH
+    /** The relays a relay list names, as wss:// addresses (r and relay tags, at most 20). */
+    fun relaysIn(e: Event): List<String> = relaysOf(e).filter { it.startsWith("wss://") }.take(20)
     /** The relay lists whose every change is asked about: the relay list and the DM relays (Aaron, 2026-11-21). */
     val REVIEWED = setOf(10002, 10050)
     /** The set of relays a list names, as compared: r and relay tags, a trailing / not counted. */
