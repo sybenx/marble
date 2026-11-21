@@ -1451,7 +1451,24 @@ class Signer(private val context: Context, val slot: String = "0") {
      * request and the box checks it, as for an account change. With no box it is the phone's own prompt, the plain kind
      * (Keykin SPEC §4, fallback), as before showing the whole key; a phone with no fingerprint set up has none to show.
      */
-    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null, fingerprint: String? = null): Event {
+    /**
+     * The private part of a kept list rewritten with entries missing (Aaron, 2026-11-21: "having a way for noticing this
+     * kind of stuff should be in scope"): read both versions to yourself and compare. Null when either cannot be read
+     * (another way of sealing, the box out of reach): then the rest of the rules still apply.
+     */
+    private fun privateQuestion(ev: Event, prev: Event?): BoxAsk.Question? {
+        if (prev == null || ev.kind !in Policy.ARCHIVED || !Policy.hasPrivate(prev) || !Policy.hasPrivate(ev) || prev.content == ev.content) return null
+        val self = accountHex() ?: return null
+        fun read(c: String): List<List<String>>? = try {
+            val text = if ("?iv=" in c) nip04With(self, c, false) else nip44With(self, c, false)
+            (Json.parse(text) as? List<*>)?.mapNotNull { t -> (t as? List<*>)?.map { it.toString() } }
+        } catch (_: Exception) { null }
+        val before = read(prev.content) ?: return null
+        val after = read(ev.content) ?: return null
+        return Policy.privateQuestion(ev.kind, before, after)
+    }
+
+    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null, fingerprint: String? = null, prev: Event? = null): Event {
         if (held == null) {
             if (fingerprint != null && me().chip != null) try { Chip.sign(context, slot, Asking.question(fingerprint), env.random(32), Asking.SIGNATURE) } catch (e: KeykinException) { throw IllegalStateException(why(e)) }
             val k = localKey() ?: error("$appName isn't set up yet")
@@ -1473,7 +1490,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         // none; the box then says `no_chip_key`, said below in plain words.
         // The prompt asks the same question as the card before it, with a line of its own for a signature.
         val finger = fingerprint?.takeIf { me().chip != null }?.let { fp(Asking.question(it), Asking.SIGNATURE) }
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild, finger) } }
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild, finger, prev?.takeIf { asChild == null && it.sig.isNotEmpty() }?.let { JSONObject(it.toJson()) }) } }
             catch (e: KeykinException) {
                 if (e.code == "needs_tap" || (e.code == "needs_fingerprint" && e.why != null)) throw e
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
@@ -1493,8 +1510,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
         // judged on its own, never against the main account's lists.
         // Its level goes with it even when you already said Yes: at level 2 the fingerprint is still to come.
-        val own = if (asChild == null) questionFor(ev) else Policy.question(ev, null, child = true)
         val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
+        val own = if (asChild == null) questionFor(ev) ?: privateQuestion(ev, prev) else Policy.question(ev, null, child = true)
         // The questions you said Yes to here stay in [answering] until this ends, so a screen that asked can stay up
         // for the fingerprint (Android opens it only over a screen of this app).
         val yeses = mutableListOf<String>()
@@ -1502,7 +1519,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             boxSays { BoxAsk.sign(own, approved, Asking.unsaid(ev), { q ->
                 if (!mayAsk) throw NeedsApproval(q.says, q.level)
                 askAndWait(by, ev, q, yeses, onSwitch != null).also { if (!it) note("Said no to $by: ${q.says}", "denied") }
-            }) { tapped, finger -> signNow(ev, grant, tapped, asChild, finger) } }
+            }) { tapped, finger -> signNow(ev, grant, tapped, asChild, finger, prev) } }
         } catch (_: SwitchChosen) {
             // Given its own account: this is not signed, and the site signs in again.
             onSwitch?.invoke()

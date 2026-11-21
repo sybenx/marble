@@ -137,6 +137,23 @@ class OutsideTest {
         assertEquals(listOf("wss://a"), Policy.relaysIn(dm("wss://a/", "wss://a", "ws://local")))
     }
 
+    @Test fun privateEntriesLostAreAskedAboutOnlyByADeviceThatCanReadThem() {
+        val bm = { n: Int -> (1..n).map { listOf("e", "%064x".format(it)) } }
+        // Some of a short private list gone: asked.
+        assertEquals("Remove 2 of your 3 private bookmarks", Policy.privateQuestion(10003, bm(3), bm(1))!!.says)
+        assertEquals(1, Policy.privateQuestion(10003, bm(4), bm(2))!!.level)
+        // One of three, or one of two kept: everyday.
+        assertNull(Policy.privateQuestion(10003, bm(3), bm(2)))
+        assertNull(Policy.privateQuestion(10003, bm(2), bm(2) + listOf(listOf("e", "f".repeat(64)))))
+        // A long list: 10 and a fifth, as for the public entries.
+        assertEquals("Remove 10 of your 40 private bookmarks", Policy.privateQuestion(10003, bm(40), bm(30))!!.says)
+        assertNull(Policy.privateQuestion(10003, bm(60), bm(51)))
+        // Which part counts as private: encrypted content, not blank and not an old follow list's relays.
+        assertTrue(Policy.hasPrivate(list(10003, emptyList(), "c2VhbGVk")))
+        assertFalse(Policy.hasPrivate(list(10003, emptyList(), "")))
+        assertFalse(Policy.hasPrivate(list(3, emptyList(), "{\"wss://a\":{}}")))
+    }
+
     @Test fun severalLossesInOneRow() {
         val prev = list(10003, (1..12).map { e(it) }, "c2VhbGVk")
         val o = Policy.outside(prev, list(10003, emptyList()))!!

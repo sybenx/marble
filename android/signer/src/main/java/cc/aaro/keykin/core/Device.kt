@@ -160,13 +160,13 @@ object Device {
      * event `needs_fingerprint` with its why, whatever `tapped` says, and the same request with the fingerprint signs it.
      * It is checked as for an account change (SPEC §4).
      */
-    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false, child: Child? = null, fp: Fingerprint? = null): JSONObject {
+    fun sign(me: Me, h: Held, kind: Int, content: String, tags: List<List<String>> = emptyList(), createdAt: Long = now(), send: Send = http(h.addr), grant: String? = null, tapped: Boolean = false, child: Child? = null, fp: Fingerprint? = null, prev: JSONObject? = null): JSONObject {
         // As a child (SPEC 8k): the event is the child's, and both pieces move by its tweak. Read after any catch-up.
         val pubkey = child?.npub ?: h.npub
         val id = eventId(pubkey, createdAt, kind, tags, content)
         val ev = JSONObject().put("pubkey", pubkey).put("created_at", createdAt).put("kind", kind).put("tags", JSONArray(tags.map { JSONArray(it) })).put("content", content)
         lateinit var mine: Frost.Asked
-        val r = current(me, h, send, fp) { mine = Frost.ask(pieceFor(h, child), id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant); if (tapped) put("tapped", true); if (child != null) put("child", child.t) } }
+        val r = current(me, h, send, fp) { mine = Frost.ask(pieceFor(h, child), id); JSONObject().put("op", "sign").put("event", ev).put("commit", mine.commit.json()).apply { if (grant != null) put("grant", grant); if (tapped) put("tapped", true); if (child != null) put("child", child.t); if (prev != null) put("prev", prev) } }
         if (r.getString("id") != id) refuse("wrong_id")
         val c = r.getJSONObject("commit")
         return ev.put("id", id).put("sig", Frost.finish(pieceFor(h, child), id, mine, Commit(c.getInt("i"), c.getString("D"), c.getString("E")), r.getString("z")))

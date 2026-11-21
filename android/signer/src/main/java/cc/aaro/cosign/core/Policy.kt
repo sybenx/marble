@@ -139,6 +139,20 @@ object Policy {
      * The private part (encrypted, in the content) was there and is gone. Old follow lists kept your relays in the
      * content as plain JSON: that is no private part, and apps drop it all the time.
      */
+    /** A list's private part, encrypted in the content: not blank, and not the old follow list's relays in plain JSON. */
+    fun hasPrivate(e: Event) = e.kind != 0 && e.content.isNotBlank() && !e.content.trimStart().startsWith("{")
+    /**
+     * The private part rewritten with entries missing, which only a device that can read it can see (the box cannot):
+     * [before] and [after] are the decrypted tags of the earlier and the new version. Asked (level 1) when 10 or more and
+     * a fifth go, as for the public entries, or when 2 or more and at least half of them go, since private lists are short.
+     */
+    fun privateQuestion(kind: Int, before: List<List<String>>, after: List<List<String>>): BoxAsk.Question? {
+        val key = { t: List<String> -> Json.stringify(t.take(2)) }
+        val had = before.filter { it.size > 1 }.map(key).distinct(); val kept = after.filter { it.size > 1 }.map(key).toSet()
+        val removed = had.count { it !in kept }
+        val big = (removed >= 10 && removed * 5 >= had.size) || (removed >= 2 && removed * 2 >= had.size)
+        return if (big) BoxAsk.Question("Remove $removed of your ${had.size} private ${itemName(kind)}s", 1) else null
+    }
     private fun emptied(prev: Event, now: Event) = now.kind != 0 && prev.content.isNotBlank() && !prev.content.trimStart().startsWith("{") && now.content.isBlank()
 
     /**
