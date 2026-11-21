@@ -99,7 +99,12 @@ class CosignService : Service() {
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                .setGroup(Asking.group("fp", id))
                 .setContentIntent(PendingIntent.getActivity(this@CosignService, ("fp" + id).hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                // Swiped away: the fingerprint is not coming, so the request ends now, not after two minutes.
+                .setDeleteIntent(PendingIntent.getBroadcast(this@CosignService, ("fpgone" + id).hashCode(),
+                    Intent(this@CosignService, DecisionReceiver::class.java).putExtra("fpDismissed", id),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
                 .build())
         }
         override fun gone(id: String) = NotificationManagerCompat.from(this@CosignService).cancel(("fp" + id).hashCode())
@@ -149,6 +154,13 @@ class CosignService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(ask.expiresAt - System.currentTimeMillis())
             .setAutoCancel(true)
+            // A group of its own, so a tap always lands on this notification's own target (Asking.group).
+            .setGroup(Asking.group("ask", ask.id))
+            // Swiped away (or cleared) without an answer: that is a No, at once, rather than a question nobody can see
+            // waiting out its two minutes. A tap that opens it is not a dismissal.
+            .setDeleteIntent(PendingIntent.getBroadcast(this, ("gone" + ask.id).hashCode(),
+                Intent(this, DecisionReceiver::class.java).putExtra("dismissed", ask.id).putExtra("slot", p.slot),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             // Level 2 is answered in the app's own screen for it, where the fingerprint can follow (Android shows the
             // prompt only over a screen of this app, never after a button in a notification).
             .setContentIntent(if (ask.level >= 2) PendingIntent.getActivity(this, ("ask" + ask.id).hashCode(), AskActivity.intent(this, p.slot, ask.id),
@@ -214,6 +226,7 @@ class CosignService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(10 * 60_000L)
             .setAutoCancel(true)
+            .setGroup(Asking.group("tap", t.id))
             .setContentIntent(openApp())
             .addAction(NotificationCompat.Action.Builder(0, "No", action(p, "tap", t.id, false)).build())
             .addAction(NotificationCompat.Action.Builder(0, "Yes", action(p, "tap", t.id, true)).setAuthenticationRequired(true).build())

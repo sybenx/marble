@@ -84,6 +84,15 @@ object Chip {
     private const val SHOW_WAIT_MS = 2000L
     private const val ANSWER_WAIT_MINUTES = 2L
 
+    /** Its notification was swiped away: a prompt that is not up yet will not be asked for, so the request ends now. */
+    fun dismiss(id: String) { waiting[id]?.takeIf { it.host == null }?.done?.countDown() }
+
+    /**
+     * The app has come to the front: every prompt that could not come up by itself (Android blocked it in the
+     * background) comes up now, over the app.
+     */
+    fun reshow(c: Context) { for ((id, a) in waiting) if (a.host == null && a.done.count > 0) c.startActivity(opening(c, id)) }
+
     private fun opening(c: Context, id: String) = Intent(c, FingerprintActivity::class.java).putExtra("ask", id)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
 

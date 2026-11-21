@@ -170,6 +170,8 @@ class SignerService : Service() {
             "lockMissing" -> s.lockMissing()
             "leave" -> s.leave()
             "decide" -> s.decide(text ?: return, flag)
+            // The app is in front: a fingerprint prompt that was blocked in the background comes up now.
+            "surface" -> Chip.reshow(this@SignerService)
             "decideBatch" -> s.decideBatch(text ?: return, flag)
             "cancelDeletion" -> s.cancelDeletion(text ?: return)
             "connectScopes" -> (text ?: "").split(',').let { s.setConnectScopes("lists" in it, "dms" in it) }

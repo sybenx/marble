@@ -18,6 +18,21 @@ object Asking {
     /** Level 1: Deny and Approve. Level 2: Deny only; the Yes is given in the app, where the fingerprint can follow. */
     fun actions(level: Int): List<Action> = if (level >= 2) listOf(Action.DENY) else listOf(Action.DENY, Action.APPROVE)
 
+    /**
+     * The notification group of one question ([what] "ask"), one waiting fingerprint ("fp") or one tap from the account
+     * page ("tap"), its own and no other's. Android folds an app's notifications that name no group into one group of
+     * its own making, and a tap on that group opens the app's main screen, not the notification's own target. A
+     * notification that names a group is left out of that folding.
+     */
+    fun group(what: String, id: String) = "marble.$what.$id"
+
+    /**
+     * The first question waiting on you, the shown account's first: Marble puts it in front whenever it comes to the
+     * front, whatever screen it opens on. [accounts]: each account with its waiting questions, the shown one first.
+     */
+    fun <A, Q> firstWaiting(accounts: List<Pair<A, List<Q>>>): Pair<A, Q>? =
+        accounts.firstNotNullOfOrNull { (a, qs) -> qs.firstOrNull()?.let { a to it } }
+
     /** The fingerprint prompt has no second line, for an account change or a signature: its title says what it is for. */
     const val ACCOUNT_CHANGE = ""
     const val SIGNATURE = ""

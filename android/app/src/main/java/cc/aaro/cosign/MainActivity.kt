@@ -1,5 +1,8 @@
 package cc.aaro.cosign
 
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import android.Manifest
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -123,6 +126,38 @@ class MainActivity : ComponentActivity() {
                 return true
             }
         })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        surfaceWaiting()
+    }
+
+    /** When it was last put in front, so a question just answered (and still on its way out) is not opened again. */
+    private var surfaced: Pair<String, Long>? = null
+
+    /**
+     * Marble has come to the front (from the launcher, a notification, a tap on a group of notifications, Recents):
+     * whatever waits on you is put in front, whatever screen this opens on. A fingerprint prompt that Android blocked in
+     * the background comes up now; a waiting question opens in its sheet (AskActivity).
+     */
+    private fun surfaceWaiting() {
+        val accounts = CosignApp.instance.accounts
+        lifecycleScope.launch {
+            // Just started: the signer may not have sent its state yet.
+            kotlinx.coroutines.withTimeoutOrNull(4_000) { accounts.active.heard.first { it } }
+            // Still in front (onResume runs before the lifecycle says RESUMED, so STARTED is the test).
+            if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return@launch
+            accounts.active.surface()
+            val shown = accounts.active
+            val waiting = (listOf(shown) + accounts.all.filter { it.slot != shown.slot }).map { it to it.ui.value.asks }
+            cc.aaro.cosign.core.Asking.firstWaiting(waiting)?.let { (p, ask) ->
+                val now = android.os.SystemClock.uptimeMillis()
+                if (surfaced?.let { it.first == ask.id && now - it.second < 2_000 } == true) return@let
+                surfaced = ask.id to now
+                startActivity(AskActivity.intent(this@MainActivity, p.slot, ask.id))
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

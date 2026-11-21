@@ -226,6 +226,8 @@ class Phone internal constructor(val slot: String, private val signer: () -> ISi
     fun closeTakeOut() = act("closeTakeOut")
     /** The whole key or a bunker link is ready ([ui] says so, without it): the signer shows it, over this app. */
     fun reveal() = act("reveal")
+    /** The app has come to the front: what waits on the person (a blocked fingerprint prompt) comes up over it. */
+    fun surface() = act("surface")
 
     // Cosign's own actions (a like, a follow).
 

@@ -5,6 +5,7 @@ import cc.aaro.cosign.core.Asking.Action
 import cc.aaro.qrst.core.Event
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -76,5 +77,20 @@ class AskingTest {
         // An answer with no level is level 1; one with no question is none.
         assertEquals(1, NeedsApproval.Wire.read({ if (it == NeedsApproval.Wire.WHAT) "Delete 5 of your events" else null }, { _, d -> d })!!.level)
         assertNull(NeedsApproval.Wire.read({ null }, { _, d -> d }))
+    }
+
+    /** Each question and each waiting fingerprint is a group of its own, so Android never folds it into another. */
+    @Test fun everyNotificationIsAGroupOfItsOwn() {
+        assertEquals("marble.ask.a1", Asking.group("ask", "a1"))
+        assertNotEquals(Asking.group("ask", "a1"), Asking.group("ask", "a2"))
+        assertNotEquals(Asking.group("ask", "a1"), Asking.group("fp", "a1"))
+        assertNotEquals(Asking.group("tap", "a1"), Asking.group("fp", "a1"))
+    }
+
+    /** Whatever screen Marble opens on, the first waiting question is put in front: the shown account's first. */
+    @Test fun theShownAccountsQuestionComesFirst() {
+        assertEquals("main" to "q1", Asking.firstWaiting(listOf("main" to listOf("q1", "q2"), "other" to listOf("q3"))))
+        assertEquals("other" to "q3", Asking.firstWaiting(listOf("main" to emptyList(), "other" to listOf("q3"))))
+        assertNull(Asking.firstWaiting(listOf("main" to emptyList<String>(), "other" to emptyList())))
     }
 }
