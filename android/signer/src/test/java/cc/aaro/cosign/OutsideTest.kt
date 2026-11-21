@@ -83,10 +83,45 @@ class OutsideTest {
         assertNotNull(o.alarm)
         assertNull("9 is not most", Policy.outside(prev, list(3, (1..31).map { p(it) }))!!.alarm)
         assertEquals("Follow list: all 40 follows removed", Policy.outside(prev, list(3, emptyList()))!!.text)
-        // Relays: two or more and half.
+        // Relays: two or more and half, or all of them; said as old against new.
         val relays = list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"), listOf("r", "wss://d")))
-        assertEquals("Relay list: 2 of 4 relays removed", Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a/"), listOf("r", "wss://b"))))!!.text)
-        assertNull(Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"))))!!.alarm)
+        val half = Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a/"), listOf("r", "wss://b"))))!!
+        assertEquals("Relay list: changed from a, b, c and d to a and b", half.text)
+        assertEquals("Changed from a, b, c and d to a and b.", half.alarm)
+        val one = Policy.outside(relays, list(10002, listOf(listOf("r", "wss://a"), listOf("r", "wss://b"), listOf("r", "wss://c"))))!!
+        assertNull(one.alarm)
+        assertEquals("Relay list: changed from a, b, c and d to a, b and c", one.text)
+    }
+
+    /** 2026-11-21 01:44:57 UTC: Vector wrote its own DM relays (kind 10050) over Aaron's from 2026-10-25. */
+    private val T = 1_800_000_000L
+    private fun dm(vararg urls: String) = list(10050, urls.map { listOf("relay", it) })
+    private val oct25 = dm("wss://haven.aaro.cc/inbox", "wss://herbstmeister.com/inbox", "wss://relay.vantis.ninja", "wss://herbstmeister.com", "wss://bothy-relay.sybenx.workers.dev")
+    private val vector = dm("wss://jskitty.com/nostr", "wss://asia.vectorapp.io/nostr", "wss://nostr.computingcache.com", "wss://relay.ditto.pub")
+
+    @Test fun dmRelaysAreKeptAndTheirOverwriteIsAmberWithTheRelaysNamed() {
+        assertTrue(10050 in Policy.ARCHIVED); assertTrue(10051 in Policy.ARCHIVED)
+        val o = Policy.outside(oct25, vector)!!
+        assertEquals("Your DM relays were changed in another app or device", o.title)
+        assertEquals("Changed from haven.aaro.cc/inbox, herbstmeister.com/inbox, relay.vantis.ninja, herbstmeister.com and bothy-relay.sybenx.workers.dev " +
+            "to jskitty.com/nostr, asia.vectorapp.io/nostr, nostr.computingcache.com and relay.ditto.pub.", o.alarm)
+        assertTrue(o.text, o.text.startsWith("DM relays: changed from haven.aaro.cc/inbox"))
+        assertEquals("Remove every relay from your DM relays: a and b", Policy.question(dm(), dm("wss://a", "wss://b"), T)!!.says)
+        assertEquals("DM relays: every relay removed (a and b)", Policy.outside(dm("wss://a", "wss://b"), dm())!!.text)
+    }
+
+    @Test fun signingAnOverwriteOfTheDmRelaysAsksAtLevel1WithOldAndNew() {
+        val q = Policy.question(vector, oct25, T)!!
+        assertEquals(1, q.level)
+        assertEquals("Change your DM relays from haven.aaro.cc/inbox, herbstmeister.com/inbox, relay.vantis.ninja, herbstmeister.com and bothy-relay.sybenx.workers.dev " +
+            "to jskitty.com/nostr, asia.vectorapp.io/nostr, nostr.computingcache.com and relay.ditto.pub", q.says)
+        // Adding one, or dropping one of several, is everyday: no question.
+        assertNull(Policy.question(dm("wss://haven.aaro.cc/inbox", "wss://x"), dm("wss://haven.aaro.cc/inbox"), T))
+        assertNull(Policy.question(dm("wss://a", "wss://b"), dm("wss://a", "wss://b", "wss://c"), T))
+        // Its only relay swapped for another: asked.
+        assertEquals("Change your group invite relays from a to x", Policy.question(list(10051, listOf(listOf("relay", "wss://x"))), list(10051, listOf(listOf("relay", "wss://a"))), T)!!.says)
+        // An earlier version is needed: the first one seen is the baseline.
+        assertNull(Policy.question(vector, null, T))
     }
 
     @Test fun severalLossesInOneRow() {

@@ -2118,7 +2118,7 @@
       "content": "",
       "created_at": 1800000000
     },
-    "hold": "Remove 2 of your 3 relays",
+    "hold": "Change your relay list from a, b and c to a",
     "refuse": null
   },
   {

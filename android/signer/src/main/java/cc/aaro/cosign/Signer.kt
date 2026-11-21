@@ -8,6 +8,7 @@ import cc.aaro.cosign.core.Clock
 import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
+import cc.aaro.cosign.core.Undoing
 import cc.aaro.cosign.core.SiteScopes
 import cc.aaro.keykin.core.Child
 import cc.aaro.keykin.core.Children
@@ -1758,13 +1759,22 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     @Synchronized private fun remember(signed: Event, prev: Event?, by: String, held: Boolean) {
         val pub = accountHex() ?: return
-        if (lists.record(signed, pub) && prev != null && prev.id != signed.id) {
-            val all = objects(readArray(history))
-            val row = JSONObject().put("id", signed.id).put("text", changeText(prev, signed)).put("by", by).put("at", System.currentTimeMillis()).put("held", held).put("undone", false)
-                .put("key", Policy.keyOf(signed)).put("prev", prev.toJson())
-            history.writeText(JSONArray((listOf(row) + all).take(40)).toString())
+        val recorded = lists.record(signed, pub)
+        // A list's change gets a row with Undo: with the version it replaced when this phone had seen one, else (an app
+        // or a site writing a list this phone had not seen yet) with the change alone, and Undo finds the version before
+        // on your relays. Marble's own first version of a list is no change.
+        val row = when {
+            recorded && prev != null && prev.id != signed.id -> JSONObject().put("text", changeText(prev, signed)).put("prev", prev.toJson())
+            Undoing.replaceable(signed.kind) && prev == null && by != appName -> JSONObject().put("text", Policy.replacedText(signed))
+            else -> null
         }
-        if (signed.kind !in Policy.ARCHIVED && signed.kind !in 20000 until 30000 && signed.kind != 22242 && signed.kind != 5) {
+        if (row != null) {
+            row.put("id", signed.id).put("by", by).put("at", System.currentTimeMillis()).put("held", held).put("undone", false).put("key", Policy.keyOf(signed)).put("event", signed.toJson())
+            history.writeText(JSONArray((listOf(row) + objects(readArray(history))).take(40)).toString())
+        }
+        // Copies of what was signed, so a deletion can be put back. Never a list: only its newest version counts, and a
+        // list is put back by Undo, never deleted by id.
+        if (!Undoing.replaceable(signed.kind) && signed.kind !in 20000 until 30000 && signed.kind != 22242 && signed.kind != 5) {
             val all = objects(readArray(kept))
             kept.writeText(JSONArray((listOf(JSONObject().put("by", by).put("event", signed.toJson())) + all).take(300)).toString())
         }
@@ -1780,9 +1790,27 @@ class Signer(private val context: Context, val slot: String = "0") {
     private fun changeText(prev: Event, now: Event): String {
         val name = Describe.kind(now.kind).replaceFirstChar { it.uppercase() }
         if (now.kind == 0) return "$name changed"
+        Policy.relayChange(prev, now)?.let { return "$name: ${if (it.startsWith("from ")) "changed $it" else it}" }
         val before = prev.tags.map { Json.stringify(it) }.toSet(); val after = now.tags.map { Json.stringify(it) }.toSet()
         val added = (after - before).size; val removed = (before - after).size
         return "$name: " + listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 }).joinToString(", ").ifEmpty { "changed" }
+    }
+    /**
+     * Before 2026-11-21 a list this phone did not keep (the DM relays, say) that an app signed went among the copies of
+     * posts, and Undo all deleted it by id, which most relays ignore for a list. Each such list signed by an app or a
+     * site becomes a row in Recent changes, with Undo, even one already "deleted" that way.
+     */
+    @Synchronized private fun listsOutOfKept() {
+        val all = objects(readArray(kept))
+        val (moving, staying) = all.partition { o -> o.optString("by") != appName && Event.fromMap(Json.parse(o.getString("event")))?.kind?.let(Undoing::replaceable) == true }
+        if (moving.isEmpty()) return
+        val have = objects(readArray(history)).map { it.getString("id") }.toSet()
+        val rows = moving.mapNotNull { o -> Event.fromMap(Json.parse(o.getString("event")))?.takeIf { it.id !in have }?.let { e ->
+            JSONObject().put("id", e.id).put("text", Policy.replacedText(e)).put("by", o.getString("by")).put("at", e.createdAt * 1000).put("held", false).put("undone", false)
+                .put("key", Policy.keyOf(e)).put("event", e.toJson())
+        } }
+        history.writeText(JSONArray((rows + objects(readArray(history))).sortedByDescending { it.getLong("at") }.take(40)).toString())
+        kept.writeText(JSONArray(staying).toString())
     }
     private fun showHistory() {
         val changes = objects(readArray(history)).map { Change(it.getString("id"), it.getString("text"), it.getString("by"), it.getLong("at"), it.optBoolean("held"), it.optBoolean("undone"), it.optBoolean("outside"), it.optLong("since")) }
@@ -1836,8 +1864,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         if (System.currentTimeMillis() - checkedAt < 60_000 || !checking.compareAndSet(false, true)) return
         try {
             checkedAt = System.currentTimeMillis()
-            val testing = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
-            val relays = (writeRelays().map { it.trimEnd('/') } + if (testing) emptyList() else INDEX_RELAYS).distinct()
+            val relays = (writeRelays().map { it.trimEnd('/') } + if (testingRelays()) emptyList() else INDEX_RELAYS).distinct()
             val filter = Json.stringify(mapOf("kinds" to Policy.ARCHIVED.sorted(), "authors" to listOf(pub), "limit" to 200))
             val found = query(relays, filter).filter { it.pubkey == pub && it.kind in Policy.ARCHIVED && it.verify() }
             for (newest in found.groupBy { Policy.keyOf(it) }.values.map { l -> l.maxBy { it.createdAt } }) seen(newest)
@@ -1881,6 +1908,8 @@ class Signer(private val context: Context, val slot: String = "0") {
         return got.values.toList()
     }
 
+    /** Debug builds pointed at a test's own relays: nothing goes to or comes from the public ones. */
+    private fun testingRelays() = debuggable && context.getSharedPreferences("keykin", 0).getString("signer-relays", null) != null
     /** Where this account's own events go: its write relays if this phone has seen its relay list, else a few well-known ones. */
     private fun writeRelays(): List<String> = (if (debuggable) context.getSharedPreferences("keykin", 0).getString("signer-relays", null)?.split(',')?.filter { it.isNotBlank() } else null) ?: lists.latest("10002")?.tags?.filter { it.size > 1 && it[0] == "r" && (it.size < 3 || it[2] == "write") }?.map { it[1] }?.take(6)?.ifEmpty { null } ?: DEFAULT_RELAYS
     private fun publish(e: Event, relays: List<String> = writeRelays()) {
@@ -1896,17 +1925,40 @@ class Signer(private val context: Context, val slot: String = "0") {
         timer.schedule({ http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }, 10, TimeUnit.SECONDS)
     }
 
-    /** Put a list back as it was before a change: the version it replaced, signed again as the newest. */
-    fun undo(change: Change) {
+    /**
+     * Put a list back as it was before a change: the version it replaced, signed again as the newest (a list keeps only
+     * its newest version, so sending the old one as it was, or deleting the change, would lose to the change). When this
+     * phone never saw the version before (an app wrote a list this phone had not read yet), it is found on your relays,
+     * and Undo stops if the list changed again since. [together]: later changes to the same list undone with this one
+     * (Undo all), whose rows are marked undone with it.
+     */
+    fun undo(change: Change, together: Set<String> = emptySet()) {
         val pub = accountHex() ?: return
         work.execute {
             try {
                 val row = objects(readArray(history)).firstOrNull { it.getString("id") == change.id } ?: return@execute
-                val prev = Event.fromMap(Json.parse(row.getString("prev"))) ?: return@execute
-                val signed = signNow(Event(pub, maxOf(Clock.now(), (lists.latest(Policy.keyOf(prev))?.createdAt ?: 0) + 1), prev.kind, prev.tags, prev.content).withId(), tapped = true)
+                val replaced = row.optString("event").ifEmpty { null }?.let { Event.fromMap(Json.parse(it)) }
+                val name = Describe.kind(replaced?.kind ?: 0)
+                var also = emptyList<String>()
+                val prev = row.optString("prev").ifEmpty { null }?.let { Event.fromMap(Json.parse(it)) } ?: run {
+                    replaced ?: return@execute
+                    val d = replaced.firstTag("d")
+                    val filter = Json.stringify(mapOf("kinds" to listOf(replaced.kind), "authors" to listOf(pub), "limit" to 100) + (if (d != null) mapOf("#d" to listOf(d)) else emptyMap()))
+                    val per = queryEach((writeRelays().map { it.trimEnd('/') } + if (testingRelays()) emptyList() else INDEX_RELAYS + KEEP_OLD).distinct(), filter)
+                    // Put back on the relays that hold the change too, so the copy replaces it there.
+                    also = per.filterValues { l -> l.any { it.id == replaced.id } }.keys.toList()
+                    when (val b = Undoing.before(per.values.flatten(), replaced, together)) {
+                        is Undoing.Before.Found -> b.version
+                        is Undoing.Before.ChangedSince -> throw IllegalStateException("your $name changed again after this, so it was left as it is")
+                        Undoing.Before.NotFound -> throw IllegalStateException("your $name from before this change isn't on your relays")
+                    }
+                }
+                val at = Undoing.at(Clock.now(), lists.latest(Policy.keyOf(prev))?.createdAt, replaced?.createdAt, prev.createdAt)
+                val signed = signNow(Event(pub, at, prev.kind, prev.tags, prev.content).withId(), tapped = true)
                 lists.record(signed, pub)
-                publish(signed)
-                synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") == change.id) it.put("undone", true) else it }).toString()) }
+                publish(signed, (writeRelays() + (if (testingRelays()) emptyList() else INDEX_RELAYS) + also).map { it.trimEnd('/') }.distinct())
+                val done = together + change.id
+                synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") in done) it.put("undone", true) else it }).toString()) }
                 note("Undid: ${change.text}", "approved"); showHistory()
             } catch (e: Exception) { ui.update { it.copy(error = "Couldn't undo that: ${e.message}") } }
         }
@@ -1940,6 +1992,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val s = ui.value.summary ?: return
         val pub = accountHex() ?: return
         ui.update { it.copy(summary = null) }
+        sharedXs.forgetAll()
         work.execute {
             try {
                 val events = objects(readArray(kept)).filter { it.optString("by") == s.origin && !it.has("deleted") }.mapNotNull { Event.fromMap(Json.parse(it.getString("event"))) }
@@ -1949,9 +2002,11 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 // The oldest change it made to each list holds what the list was before it.
                 val rows = objects(readArray(history)).filter { it.optString("by") == s.origin && !it.optBoolean("undone") }
-                for (r in rows.groupBy { it.getString("key") }.values.map { it.last() }) undo(Change(r.getString("id"), r.getString("text"), s.origin, r.getLong("at"), false, false))
+                for (group in rows.groupBy { it.getString("key") }.values) {
+                    val r = group.last()
+                    undo(Change(r.getString("id"), r.getString("text"), s.origin, r.getLong("at"), false, false), group.map { it.getString("id") }.toSet() - r.getString("id"))
+                }
                 ui.value.sites.firstOrNull { it.pk == s.pk }?.let(::removeSite)
-                sharedXs.forgetAll()
                 note("Took back what ${s.origin} did", "approved")
             } catch (e: Exception) { ui.update { it.copy(error = "Couldn't take that back: ${e.message}") } }
         }
@@ -1980,6 +2035,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         secrets.loadLog()?.let { Json.parse(it) as? List<*> }?.let { lines ->
             ui.update { u -> u.copy(log = lines.mapNotNull { (it as? Map<*, *>)?.let { m -> Line(m["ts"] as Long, m["text"] as String, m["kind"] as? String ?: "info") } }) }
         }
+        listsOutOfKept()
         if (held != null) { showSites(); showHistory() }
         localKey()?.let { k -> localPub = cc.aaro.qrst.core.publicKeyHex(k); k.fill(0) }
         if (localPub != null) ui.update { it.copy(keptKey = true) }
@@ -2003,5 +2059,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val INDEX_RELAYS = listOf("wss://purplepag.es", "wss://user.kindpag.es")
         /** Who made a change found on your relays, for its row: any app with your key, or another device with your box. */
         const val ELSEWHERE = "another app or device"
+        /** Relays that keep every version of a list, not only the newest: where Undo finds the version before a change. */
+        val KEEP_OLD = listOf("wss://relay.ditto.pub", "wss://relay.mostr.pub")
     }
 }

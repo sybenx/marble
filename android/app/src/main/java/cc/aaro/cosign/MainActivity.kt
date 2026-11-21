@@ -244,7 +244,11 @@ class MainActivity : ComponentActivity() {
             "checkLists" -> p.checkLists()
             // Hand the signer a version of one of your lists as if the reader had found it (--es arg '<signed event JSON>').
             "seen" -> intent.getStringExtra("arg")?.let { j -> cc.aaro.qrst.core.Event.fromMap(cc.aaro.qrst.core.Json.parse(j))?.let(p::seen) }
-            "sign" -> Thread { try { android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), emptyList(), intent.getStringExtra("arg") ?: "test").withId()).let { it.toJson() + " verifies=" + it.verify() }) } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
+            // Tags as JSON (--es tags '[["relay","wss://a"]]'), and --ez approved true for a Yes already given.
+            "sign" -> Thread { try {
+                val tags = intent.getStringExtra("tags")?.let { j -> (cc.aaro.qrst.core.Json.parse(j) as List<*>).map { t -> (t as List<*>).map { it.toString() } } } ?: emptyList()
+                android.util.Log.i("MarbleState", "signed " + p.signOwn(cc.aaro.qrst.core.Event(p.ui.value.member!!.group.groupX, System.currentTimeMillis() / 1000, intent.getIntExtra("kind", 1), tags, intent.getStringExtra("arg") ?: "test").withId(), intent.getBooleanExtra("approved", false)).let { it.toJson() + " verifies=" + it.verify() })
+            } catch (e: Exception) { android.util.Log.i("MarbleState", "sign failed: $e") } }.start()
             "nip44" -> Thread { try { val c = p.nip44Self(intent.getStringExtra("arg") ?: "hello", true); android.util.Log.i("MarbleState", "nip44 self: ${c?.take(24)}… -> ${c?.let { p.nip44Self(it, false) }}") } catch (e: Exception) { android.util.Log.i("MarbleState", "nip44 failed: $e") } }.start()
             "tapYes" -> p.tap(true); "tapNo" -> p.tap(false)
             "loginSwitch" -> p.answerLoginSwitch(true); "loginKeep" -> p.answerLoginSwitch(false)

@@ -12,7 +12,7 @@ import cc.aaro.qrst.core.Json
  */
 object Policy {
     val ARCHIVED = setOf(
-        0, 3, 10000, 10001, 10002, 10003, 10004, 10006, 10007, 10015, 10030,
+        0, 3, 10000, 10001, 10002, 10003, 10004, 10006, 10007, 10015, 10030, 10050, 10051,
         30000, 30001, 30002, 30003, 30004, 30015, 30030,
     )
 
@@ -20,10 +20,25 @@ object Policy {
         0 to ("profile" to "profile field"), 3 to ("follow list" to "follow"), 10000 to ("mute list" to "mute"), 10001 to ("pinned notes" to "pin"),
         10002 to ("relay list" to "relay"), 10003 to ("bookmarks" to "bookmark"), 10004 to ("communities" to "community"),
         10006 to ("blocked relays" to "relay"), 10007 to ("search relays" to "relay"), 10015 to ("interests" to "interest"), 10030 to ("emoji list" to "emoji"),
+        10050 to ("DM relays" to "relay"), 10051 to ("group invite relays" to "relay"),
         30000 to ("follow set" to "person"), 30001 to ("list" to "item"), 30002 to ("relay set" to "relay"), 30003 to ("bookmark set" to "bookmark"),
         30004 to ("curation set" to "item"), 30015 to ("interest set" to "interest"), 30030 to ("emoji set" to "emoji"),
     )
-    private val RELAYISH = setOf(10002, 10006, 10007, 30002)
+    private val RELAYISH = setOf(10002, 10006, 10007, 10050, 10051, 30002)
+    /** Relays as a person reads them: no wss://, each once, at most six named. */
+    private fun relayWords(urls: List<String>): String {
+        val names = urls.map { it.replace(Regex("^wss://", RegexOption.IGNORE_CASE), "") }.distinct()
+        val shown = if (names.size > 6) names.take(6) + "${names.size - 6} more" else names
+        return if (shown.size < 2) shown.joinToString("") else shown.dropLast(1).joinToString(", ") + " and " + shown.last()
+    }
+    /**
+     * A relay list that loses most of what it had: 2 or more relays removed and at least half, or none of them kept (an
+     * app writing its own defaults over yours, as Vector did to the DM relays on 2026-11-21). A trailing / does not count.
+     */
+    private fun relaysCut(before: List<String>, after: List<String>): Boolean {
+        val kept = after.toSet(); val removed = before.count { it !in kept }
+        return before.isNotEmpty() && removed >= before.size * 0.5 && (removed >= 2 || removed == before.size)
+    }
     /** How far ahead of now a clock may be; past this, an event is dated in the future. */
     const val AHEAD = 600L
     private fun replaceable(k: Int) = k == 0 || k == 3 || k in 10000 until 20000 || k in 30000 until 40000
@@ -58,6 +73,32 @@ object Policy {
         3 -> e.tags.filter { it.size > 1 && it[0] == "p" }.map { it[1] to it }
         in RELAYISH -> e.tags.filter { it.size > 1 && (it[0] == "r" || it[0] == "relay") }.map { it[1].trimEnd('/') to it }
         else -> e.tags.filter { it.isNotEmpty() && it[0] != "d" && it[0] != "title" && it[0] != "description" }.map { Json.stringify(it.take(2)) to it }
+    }
+
+    /**
+     * A relay list's change in plain words, old against new ("from a and b to x"), for Recent changes and its
+     * notification; null for any other kind, or when the relays are the same.
+     */
+    fun relayChange(prev: Event, now: Event): String? {
+        if (now.kind !in RELAYISH) return null
+        val before = items(prev); val after = items(now)
+        if (before.toSet() == after.toSet()) return null
+        return when {
+            after.isEmpty() -> "every relay removed (${relayWords(before)})"
+            before.isEmpty() -> "set to ${relayWords(after)}"
+            else -> "from ${relayWords(before)} to ${relayWords(after)}"
+        }
+    }
+
+    /**
+     * A list's change when the version before it is not known here (an app wrote a list this phone had not read yet),
+     * for Recent changes: "DM relays: replaced with a and b", "Bookmarks: replaced".
+     */
+    fun replacedText(e: Event): String {
+        val name = upper(kindName(e.kind))
+        if (e.kind !in RELAYISH) return "$name: replaced"
+        val now = items(e)
+        return if (now.isEmpty()) "$name: emptied" else "$name: replaced with ${relayWords(now)}"
     }
 
     /** Of these, one must be left filled, or the whole profile goes (Keykin's rule, and level 2). */
@@ -111,9 +152,14 @@ object Policy {
         val kept = after.toSet(); val had = before.toSet()
         val removed = before.count { it !in kept }
         val added = after.count { it !in had }
+        // A relay list says where you are found and where messages to you go: say which relays go and which come in.
+        if (e.kind in RELAYISH) {
+            if (!relaysCut(before, after)) return null
+            return BoxAsk.Question(if (after.isNotEmpty()) "Change your ${kindName(e.kind)} from ${relayWords(before)} to ${relayWords(after)}" else "Remove every relay from your ${kindName(e.kind)}: ${relayWords(before)}", 1)
+        }
         // Of the lists emptied, only the follow list is level 2.
         if (after.isEmpty() && before.size >= 3) return BoxAsk.Question("Empty your ${kindName(e.kind)} (it has ${plural(before.size, e.kind)})", if (e.kind == 3) 2 else 1)
-        val big = if (e.kind in RELAYISH) removed >= 2 && removed >= before.size * 0.5 else removed >= 10 && removed >= before.size * 0.2
+        val big = removed >= 10 && removed >= before.size * 0.2
         return if (big) BoxAsk.Question("Remove $removed of your ${before.size} ${itemName(e.kind)}s" + (if (added > 0) " (and add $added)" else ""), 1) else null
     }
 
@@ -172,16 +218,19 @@ object Policy {
         val before = old.map { it.first }; val after = new.map { it.first }
         val had = before.toSet(); val kept = after.toSet()
         val removed = before.count { it !in kept }; val added = after.count { it !in had }
-        val big = (after.isEmpty() && before.size >= 3) ||
-            (if (now.kind in RELAYISH) removed >= 2 && removed >= before.size * 0.5 else removed >= 10 && removed >= before.size * 0.2)
-        if (big) alarms += if (after.isEmpty()) "all ${plural(before.size, now.kind)} removed"
+        val big = if (now.kind in RELAYISH) relaysCut(before, after)
+            else (after.isEmpty() && before.size >= 3) || (removed >= 10 && removed >= before.size * 0.2)
+        // A relay list: which relays went and which came in (the title already says which list).
+        val relays = relayChange(prev, now)?.let { if (it.startsWith("from ")) "changed $it" else it }
+        if (big && relays != null) alarms += relays
+        else if (big) alarms += if (after.isEmpty()) "all ${plural(before.size, now.kind)} removed"
             else "$removed of ${before.size} ${itemName(now.kind)}s removed" + (if (added > 0) ", $added added" else "")
         // Still there, but not as it was: a client that drops what it doesn't know (hints, petnames) can do this to every entry.
         val a = old.reversed().toMap(); val b = new.reversed().toMap()
         val rewritten = a.count { (k, t) -> b[k]?.let { it != t } ?: false }
         val stayed = a.keys.count { it in b }
         if (rewritten >= 3 && rewritten * 2 > stayed) alarms += "$rewritten of ${before.size} entries rewritten"
-        val counts = if (big) emptyList() else listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 })
+        val counts = if (big) emptyList() else if (relays != null) listOf(relays) else listOfNotNull("$added added".takeIf { added > 0 }, "$removed removed".takeIf { removed > 0 })
         val private = { c: String -> c.isNotBlank() && !c.trimStart().startsWith("{") }
         val parts = alarms + counts + listOfNotNull("your private $name changed".takeIf { alarms.isEmpty() && counts.isEmpty() && private(prev.content) && private(now.content) && prev.content != now.content })
         val text = if (parts.isEmpty()) "${upper(name)} changed" else "${upper(name)}: ${parts.joinToString(", ")}"

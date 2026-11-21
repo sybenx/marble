@@ -600,7 +600,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
         // One entry per website, with each way it's connected inside.
         items(sites.groupBy { it.origin }.toList(), key = { "site:" + it.first }) { (origin, grants) ->
-            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes)
+            SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes,
+                changes = ui.changes.filter { it.by == origin && !it.undone }, onUndoOne = { phone.undo(it) })
         }
 
         // Following: your Special Follow list and where the news comes from.
@@ -959,7 +960,8 @@ private fun YesNo(onDecide: (Boolean) -> Unit) = Row(horizontalArrangement = Arr
 internal fun question(what: String): String = cc.aaro.cosign.core.Asking.question(what)
 
 @Composable
-private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> }) = Column(
+private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Unit, onUndo: (Site) -> Unit, onScopes: (Site, Boolean, Boolean) -> Unit = { _, _, _ -> },
+                      changes: List<Change> = emptyList(), onUndoOne: (Change) -> Unit = {}) = Column(
     Modifier.fillMaxWidth().background(Vault.Surface, RoundedCornerShape(12.dp)).border(1.dp, Vault.Edge, RoundedCornerShape(12.dp)).padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -986,6 +988,13 @@ private fun SiteGroup(origin: String, grants: List<Site>, onRemove: (Site) -> Un
         }
         // A site's switches (an app on this phone has none of these).
         if (g.scoped) SiteScopeSwitches(g.lists, g.dms, { onScopes(g, it, g.dms) }, { onScopes(g, g.lists, it) }, Modifier.padding(end = 8.dp))
+    }
+    // What it changed in your lists, each with its own Undo (the same rows as Recent changes).
+    for (c in changes.take(5)) Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).background(if (c.held) Vault.Amber else Vault.Accent, CircleShape))
+        Spacer(Modifier.width(10.dp))
+        Text(c.text, style = MaterialTheme.typography.bodySmall, color = Vault.Text, modifier = Modifier.weight(1f))
+        TextButton({ onUndoOne(c) }) { Text("Undo", color = Vault.Accent) }
     }
 }
 
