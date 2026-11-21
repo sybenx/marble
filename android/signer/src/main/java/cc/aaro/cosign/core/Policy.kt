@@ -58,6 +58,9 @@ object Policy {
         else -> e.tags.filter { it.isNotEmpty() && it[0] != "d" && it[0] != "title" && it[0] != "description" }.map { Json.stringify(it.take(2)) to it }
     }
 
+    /** Of these, one must be left filled, or the whole profile goes (Keykin's rule, and level 2). */
+    private val IDENTITY = listOf("name", "display_name", "about", "picture", "nip05", "lud16")
+
     private fun profile(e: Event?): Map<*, *> = try { Json.parse(e?.content ?: "{}") as? Map<*, *> ?: emptyMap<String, Any>() } catch (_: Exception) { emptyMap<String, Any>() }
     private fun filled(v: Any?) = if (v is String) v.isNotBlank() else v != null
 
@@ -73,29 +76,47 @@ object Policy {
      */
     private fun emptied(prev: Event, now: Event) = now.kind != 0 && prev.content.isNotBlank() && !prev.content.trimStart().startsWith("{") && now.content.isBlank()
 
-    /** Set when you have to approve: what would be destroyed, in plain words. */
-    fun hold(e: Event, prev: Event?, now: Long = Clock.now()): String? {
-        if (e.createdAt > now + AHEAD) return if (refuse(e, now) != null) null else "${upper(kindName(e.kind))} dated in the future (${day(e.createdAt)})"
-        if (e.kind == 62) return "Ask relays to erase everything you have ever published"
+    /**
+     * Set when you have to approve: what would be destroyed, in plain words, and how you are asked (Keykin SPEC 11.6, The
+     * tap; Aaron, 2026-11-20). Level 1, "Are you sure?": Yes or No. Level 2, never by accident: erasing the account,
+     * wiping the profile, emptying the follow list, deleting a whole kept list, a list's private part emptied. Yes only
+     * on this phone, behind the fingerprint.
+     */
+    fun question(e: Event, prev: Event?, now: Long = Clock.now()): BoxAsk.Question? {
+        if (e.createdAt > now + AHEAD) {
+            if (refuse(e, now) != null) return null
+            // Level 1, unless the same event dated now would be level 2 (a request to vanish, a list's deletion by k).
+            val level = question(e.copy(createdAt = now), prev, now)?.level ?: 1
+            return BoxAsk.Question("${upper(kindName(e.kind))} dated in the future (${day(e.createdAt)})", level)
+        }
+        if (e.kind == 62) return BoxAsk.Question("Ask relays to erase everything you have ever published", 2)
         if (e.kind == 5) {
             val targets = e.tags.count { it.isNotEmpty() && (it[0] == "e" || it[0] == "a") }
             val core = e.tags.filter { it.size > 1 && (it[0] == "a" || it[0] == "k") }.mapNotNull { it[1].substringBefore(':').toIntOrNull() }.filter { it in ARCHIVED }
-            if (core.isNotEmpty()) return "Delete your ${kindName(core[0])}"
-            if (targets >= 5) return "Delete $targets of your events"
+            if (core.isNotEmpty()) return BoxAsk.Question("Delete your ${kindName(core[0])}", 2)
+            if (targets >= 5) return BoxAsk.Question("Delete $targets of your events", 1)
             return null
         }
         if (e.kind !in ARCHIVED || prev == null) return null
-        if (e.kind == 0) return wiped(prev, e)?.let { "Wipe your profile: ${it.joinToString(", ").ifEmpty { "everything" }}" }
+        if (e.kind == 0) return wiped(prev, e)?.let { gone ->
+            // Nothing left that says who this is: the whole profile goes.
+            val after = profile(e)
+            BoxAsk.Question("Wipe your profile: ${gone.joinToString(", ").ifEmpty { "everything" }}", if (IDENTITY.none { filled(after[it]) }) 2 else 1)
+        }
         // The encrypted private part (private bookmarks, private mutes): an app that can't read it may write the list back without it.
-        if (emptied(prev, e)) return "Empty your private ${kindName(e.kind)}"
+        if (emptied(prev, e)) return BoxAsk.Question("Empty your private ${kindName(e.kind)}", 2)
         val before = items(prev); val after = items(e)
         val kept = after.toSet(); val had = before.toSet()
         val removed = before.count { it !in kept }
         val added = after.count { it !in had }
-        if (after.isEmpty() && before.size >= 3) return "Empty your ${kindName(e.kind)} (it has ${plural(before.size, e.kind)})"
+        // Of the lists emptied, only the follow list is level 2.
+        if (after.isEmpty() && before.size >= 3) return BoxAsk.Question("Empty your ${kindName(e.kind)} (it has ${plural(before.size, e.kind)})", if (e.kind == 3) 2 else 1)
         val big = if (e.kind in RELAYISH) removed >= 2 && removed >= before.size * 0.5 else removed >= 10 && removed >= before.size * 0.2
-        return if (big) "Remove $removed of your ${before.size} ${itemName(e.kind)}s" + (if (added > 0) " (and add $added)" else "") else null
+        return if (big) BoxAsk.Question("Remove $removed of your ${before.size} ${itemName(e.kind)}s" + (if (added > 0) " (and add $added)" else ""), 1) else null
     }
+
+    /** The question's words alone. */
+    fun hold(e: Event, prev: Event?, now: Long = Clock.now()): String? = question(e, prev, now)?.says
 
     // --- Changes made somewhere else ---------------------------------------------------------------
 

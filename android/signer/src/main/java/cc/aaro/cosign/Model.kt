@@ -21,8 +21,11 @@ data class Membership(val idx: Int, val signer: String, val group: Group, val ep
 data class Offer(val box: String, val create: Boolean, val npub: String? = null,
                  /** The account is one you already have: its key was pasted and waits, in the signer, to be split with this box. */
                  val bringing: Boolean = false) : java.io.Serializable
-/** Something destructive that an app or a site asked for, waiting for you. */
-data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long) : java.io.Serializable
+/**
+ * Something destructive that an app or a site asked for, waiting for you. [level]: 1 asks Yes or No; 2 is never done by
+ * accident, and a Yes goes on to the fingerprint (Keykin SPEC 11.6, The tap).
+ */
+data class Ask(val id: String, val app: String, val event: Event, val hold: String, val expiresAt: Long, val level: Int = 1) : java.io.Serializable
 /** A site or an app that can sign as you. [via] says how it got in. */
 data class Site(val pk: String, val origin: String, val added: Long, val lastUsed: Long, val parent: String? = null, val via: String? = null,
                 /** The site signed in with an account of its own (made for it), not the main account. */
@@ -86,7 +89,8 @@ data class SignInCode(val uri: String? = null, val digits: String? = null, val c
 /** Adding a device whose code was pasted: does [name] show these [digits]? */
 data class AddDigits(val name: String, val digits: String) : java.io.Serializable
 data class AppGrant(val pkg: String, val pk: String, val label: String, val dm: Boolean)
-class NeedsApproval(val what: String) : Exception(what)
+/** [level]: 2 when a Yes to [what] goes on to the fingerprint. */
+class NeedsApproval(val what: String, val level: Int = 1) : Exception(what)
 class Revoked : Exception("revoked")
 
 data class Ui(

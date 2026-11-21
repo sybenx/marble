@@ -1,14 +1,15 @@
 {
- "about": "Shared cases for \"is this event hard to undo?\" Made by tools/hard-to-undo-vectors.mjs; run by test/hard-to-undo-vectors.test.ts (Keykin) and HardToUndoVectorsTest (Marble). `answers` is what each implementation answers today; `expect` is the box's decision, since the box is the authority (Marble may ask more on top). `prev` is the last version of that list or profile the signer saw (null: none). `now` is the signer's clock. Events are unsigned; their pubkey is a stand-in.",
+ "about": "Shared cases for \"is this event hard to undo?\" Made by tools/hard-to-undo-vectors.mjs; run by test/hard-to-undo-vectors.test.ts (Keykin) and HardToUndoVectorsTest (Marble). `answers` is what each implementation answers today, with `level` (1: Are you sure?, 2: never by accident; null when nobody is asked); `expect` is the box's decision and `level` its level, since the box is the authority (Marble may ask more on top). `prev` is the last version of that list or profile the signer saw (null: none). `now` is the signer's clock. Events are unsigned; their pubkey is a stand-in.",
  "now": 1800000000,
  "implementations": {
-  "box": "Keykin box/box.ts #sign with src/destructive.ts judge(event, prev, now). ask: the box answers needs_tap unless the request says tapped: true. refuse: it answers dated_ahead. Both carry says as why",
-  "marble": "Marble android/signer/src/main/java/cc/aaro/cosign/core/Policy.kt, refuse(e, now) then hold(e, prev, now): its own check on top of the box"
+  "box": "Keykin box/box.ts #sign with src/destructive.ts judge(event, prev, now). ask, level 1: the box answers needs_tap unless the request says tapped: true. ask, level 2: it answers needs_fingerprint (no_chip_key to a device with no chip key) unless the request carries a valid fp by the asking device's chip key, as for an account change; tapped alone never signs it. refuse: it answers dated_ahead. All carry says as why",
+  "marble": "Marble android/signer/src/main/java/cc/aaro/cosign/core/Policy.kt, refuse(e, now) then question(e, prev, now): its own check on top of the box, and its only one with no box in the signature"
  },
  "outcomes": {
-  "marble": "Marble Android with a box. signs: nobody is asked. asks: the phone asks once (in its own words when its rules ask, else in the box's), and Yes signs with tapped. refuses: never signed.",
-  "mac": "Marble for the Mac. signs: nobody is asked. asks: the box answers needs_tap, the Mac asks with the box's words, and Yes sends it again with tapped. refuses: never signed.",
-  "keykinDevices": "Devices that cannot ask a person (the NIP-46 bunker in src/nip46.ts, the command-line device). needs_tap or dated_ahead: refused, and the error carries the box's words. signs: signed."
+  "marble": "Marble Android with a box. signs: nobody is asked. asks: the phone asks once (in its own words when its rules ask, else in the box's), and Yes signs with tapped. fingerprint: the same question, and Yes goes on to the fingerprint, sent as fp for the box to check (level 2 on either side). refuses: never signed.",
+  "marbleAlone": "Marble Android with no box in the signature (the whole key on the phone, or another device helping while the box is off): its own rules only. asks: Yes or No. fingerprint: Yes, then the phone's fingerprint prompt (none on a phone with no fingerprint set up). refuses: never signed.",
+  "mac": "Marble for the Mac. signs: nobody is asked. asks: the box answers needs_tap, the Mac asks with the box's words, and Yes sends it again with tapped. phone: the box answers needs_fingerprint; the Mac shows the box's words and that this is done from the phone, with no Yes, and sends nothing more. refuses: never signed.",
+  "keykinDevices": "Devices that cannot ask a person (the NIP-46 bunker in src/nip46.ts, the command-line device). needs_tap, needs_fingerprint or dated_ahead: refused, and the error carries the box's words (for needs_fingerprint, also that it is done from the phone). signs: signed."
  },
  "rules": [
   {
@@ -41,6 +42,7 @@
    ],
    "kinds": "any other",
    "then": "ask",
+   "level": "1, or 2 when the same event dated now would be level 2",
    "when": "created_at more than 600 s after now",
    "says": "\"<Kind> dated in the future (<day>)\""
   },
@@ -52,6 +54,7 @@
    ],
    "kinds": "62",
    "then": "ask",
+   "level": 2,
    "when": "always",
    "says": "\"Ask relays to erase everything you have ever published\""
   },
@@ -63,6 +66,7 @@
    ],
    "kinds": "5",
    "then": "ask",
+   "level": 2,
    "when": "an a tag (kind:pubkey:d) or k tag naming a kind Marble keeps (0, 3, 10000-10004, 10006, 10007, 10015, 10030, 30000-30004, 30015, 30030)",
    "says": "\"Delete your <name of the first such kind>\""
   },
@@ -74,6 +78,7 @@
    ],
    "kinds": "5",
    "then": "ask",
+   "level": 1,
    "when": "5 or more e and a tags (after marble-delete-list)",
    "says": "\"Delete <n> of your events\""
   },
@@ -85,6 +90,7 @@
    ],
    "kinds": "0",
    "then": "ask",
+   "level": "2 when none of name, display_name, about, picture, nip05, lud16 is filled after (the whole profile goes); else 1",
    "when": "with a previous version: 2 or more of name, display_name, picture, about, nip05, lud16, banner, website go from filled to empty, or the new content is no JSON object (or an empty one) and the old one had keys. The box reads both with its one strict reading (see box-profile-empty), so a field is filled only when it is a string with something in it",
    "says": "\"Wipe your profile: <fields>\" (\"everything\" when none of the eight were filled)"
   },
@@ -96,6 +102,7 @@
    ],
    "kinds": "the kept kinds except 0",
    "then": "ask",
+   "level": 2,
    "when": "with a previous version whose content was not blank and did not start with \"{\" (a private part), the new content is blank",
    "says": "\"Empty your private <name>\""
   },
@@ -107,6 +114,7 @@
    ],
    "kinds": "the kept kinds except 0",
    "then": "ask",
+   "level": "2 for the follow list (kind 3), 1 for the rest",
    "when": "with a previous version of 3 or more entries, none left (kind 3 counts p tags with a value; relay kinds r and relay tags; the rest every tag but d, title, description)",
    "says": "\"Empty your <name> (it has <n> <items>)\""
   },
@@ -118,6 +126,7 @@
    ],
    "kinds": "10002, 10006, 10007, 30002",
    "then": "ask",
+   "level": 1,
    "when": "with a previous version: 2 or more relays removed, and at least half (a trailing / does not count)",
    "says": "\"Remove <r> of your <n> relays\" (+ \" (and add <a>)\")"
   },
@@ -129,6 +138,7 @@
    ],
    "kinds": "the other kept kinds except 0",
    "then": "ask",
+   "level": 1,
    "when": "with a previous version: 10 or more entries removed, and at least a fifth",
    "says": "\"Remove <r> of your <n> <items>s\" (+ \" (and add <a>)\")"
   },
@@ -139,6 +149,7 @@
    ],
    "kinds": "62",
    "then": "ask",
+   "level": 2,
    "when": "always (the same as marble-vanish)",
    "says": "\"Ask relays to erase everything you have ever published\""
   },
@@ -149,6 +160,7 @@
    ],
    "kinds": "5",
    "then": "ask",
+   "level": 1,
    "when": "5 or more e and a tags (the same as marble-delete-5)",
    "says": "\"Delete <n> of your events\""
   },
@@ -159,6 +171,7 @@
    ],
    "kinds": "3",
    "then": "ask",
+   "level": 2,
    "when": "no tag named p, whatever came before (after the marble rules)",
    "says": "\"Empty your follow list\""
   },
@@ -169,6 +182,7 @@
    ],
    "kinds": "0",
    "then": "ask",
+   "level": 2,
    "when": "none of name, display_name, about, picture, nip05, lud16 is filled, whatever came before. One strict reading: the content is exactly one JSON object as Keykin reads kind 0 (src/bytes.ts parseJson, numbers by grammar); a key named twice, a control character in a string, a lone surrogate, a byte order mark, loose JSON or text after it make it no profile, which counts as empty. A field is filled when it is a string with a character that is not white space, a control character or a format character",
    "says": "\"Wipe your profile: <fields that were filled before>\" (\"everything\" when none were, or there is no earlier version)"
   }
@@ -188,16 +202,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -225,16 +243,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -261,18 +283,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Ask relays to erase everything you have ever published"
+     "says": "Ask relays to erase everything you have ever published",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Ask relays to erase everything you have ever published"
+     "says": "Ask relays to erase everything you have ever published",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -297,18 +323,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Ask relays to erase everything you have ever published"
+     "says": "Ask relays to erase everything you have ever published",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Ask relays to erase everything you have ever published"
+     "says": "Ask relays to erase everything you have ever published",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -345,16 +375,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -397,16 +431,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -449,16 +487,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -501,16 +543,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Delete 5 of your events"
+     "says": "Delete 5 of your events",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -553,16 +599,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -588,18 +638,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete your follow list"
+     "says": "Delete your follow list",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Delete your follow list"
+     "says": "Delete your follow list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -627,18 +681,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete your relay list"
+     "says": "Delete your relay list",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Delete your relay list"
+     "says": "Delete your relay list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -666,18 +724,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete your bookmarks"
+     "says": "Delete your bookmarks",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Delete your bookmarks"
+     "says": "Delete your bookmarks",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -701,18 +763,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete your bookmark set"
+     "says": "Delete your bookmark set",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Delete your bookmark set"
+     "says": "Delete your bookmark set",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -753,18 +819,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Delete your follow list"
+     "says": "Delete your follow list",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Delete your follow list"
+     "says": "Delete your follow list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -786,16 +856,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -936,16 +1010,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -1216,16 +1294,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -1458,16 +1540,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -1697,16 +1783,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 10 of your 30 follows"
+     "says": "Remove 10 of your 30 follows",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 10 of your 30 follows"
+     "says": "Remove 10 of your 30 follows",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -2095,16 +2185,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 10 of your 50 follows"
+     "says": "Remove 10 of your 50 follows",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 10 of your 50 follows"
+     "says": "Remove 10 of your 50 follows",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -2501,16 +2595,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -2779,16 +2877,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 30 of your 30 follows (and add 30)"
+     "says": "Remove 30 of your 30 follows (and add 30)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 30 of your 30 follows (and add 30)"
+     "says": "Remove 30 of your 30 follows (and add 30)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -3622,16 +3724,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 199 of your 200 follows"
+     "says": "Remove 199 of your 200 follows",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 199 of your 200 follows"
+     "says": "Remove 199 of your 200 follows",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -3672,18 +3778,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -3718,18 +3828,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow list"
+     "says": "Empty your follow list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -3748,18 +3862,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow list"
+     "says": "Empty your follow list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -3807,18 +3925,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -3864,18 +3986,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow list (it has 3 follows)"
+     "says": "Empty your follow list (it has 3 follows)",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4142,16 +4268,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -4176,16 +4306,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -4204,16 +4338,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -4234,18 +4372,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4271,18 +4413,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4307,16 +4453,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -4344,16 +4494,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: picture, about"
+     "says": "Wipe your profile: picture, about",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: picture, about"
+     "says": "Wipe your profile: picture, about",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -4380,16 +4534,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: banner, website"
+     "says": "Wipe your profile: banner, website",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: banner, website"
+     "says": "Wipe your profile: banner, website",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -4417,18 +4575,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: name, about"
+     "says": "Wipe your profile: name, about",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name, about"
+     "says": "Wipe your profile: name, about",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4447,18 +4609,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4477,18 +4643,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4514,18 +4684,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4551,18 +4725,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4581,18 +4759,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4618,18 +4800,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4654,18 +4840,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4691,18 +4881,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: name"
+     "says": "Wipe your profile: name",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4721,18 +4915,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4751,18 +4949,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4781,18 +4983,22 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "ask",
-     "says": "Wipe your profile: everything"
+     "says": "Wipe your profile: everything",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "signs",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -4834,16 +5040,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your bookmarks (it has 4 bookmarks)"
+     "says": "Empty your bookmarks (it has 4 bookmarks)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your bookmarks (it has 4 bookmarks)"
+     "says": "Empty your bookmarks (it has 4 bookmarks)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -4879,16 +5089,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -4950,18 +5164,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -5020,18 +5238,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -5074,18 +5296,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your private bookmarks"
+     "says": "Empty your private bookmarks",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -5142,16 +5368,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -5188,16 +5418,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -5261,16 +5495,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -5307,18 +5545,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your private mute list"
+     "says": "Empty your private mute list",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your private mute list"
+     "says": "Empty your private mute list",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -5356,16 +5598,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your mute list (it has 3 mutes)"
+     "says": "Empty your mute list (it has 3 mutes)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your mute list (it has 3 mutes)"
+     "says": "Empty your mute list (it has 3 mutes)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -5401,16 +5647,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -5468,16 +5718,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your follow set (it has 5 persons)"
+     "says": "Empty your follow set (it has 5 persons)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your follow set (it has 5 persons)"
+     "says": "Empty your follow set (it has 5 persons)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -5530,18 +5784,22 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your private bookmark set"
+     "says": "Empty your private bookmark set",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your private bookmark set"
+     "says": "Empty your private bookmark set",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   },
   {
@@ -5610,16 +5868,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -5664,16 +5926,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 2 of your 3 relays"
+     "says": "Remove 2 of your 3 relays",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 2 of your 3 relays"
+     "says": "Remove 2 of your 3 relays",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -5722,16 +5988,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -5784,16 +6054,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 2 of your 4 relays"
+     "says": "Remove 2 of your 4 relays",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 2 of your 4 relays"
+     "says": "Remove 2 of your 4 relays",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -5854,16 +6128,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -5908,16 +6186,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -5970,16 +6252,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 3 of your 3 relays (and add 3)"
+     "says": "Remove 3 of your 3 relays (and add 3)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 3 of your 3 relays (and add 3)"
+     "says": "Remove 3 of your 3 relays (and add 3)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6019,16 +6305,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Empty your relay list (it has 3 relays)"
+     "says": "Empty your relay list (it has 3 relays)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Empty your relay list (it has 3 relays)"
+     "says": "Empty your relay list (it has 3 relays)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6064,16 +6354,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 2 of your 2 relays"
+     "says": "Remove 2 of your 2 relays",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 2 of your 2 relays"
+     "says": "Remove 2 of your 2 relays",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6103,16 +6397,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -6158,16 +6456,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Remove 2 of your 3 relays"
+     "says": "Remove 2 of your 3 relays",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Remove 2 of your 3 relays"
+     "says": "Remove 2 of your 3 relays",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6201,16 +6503,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -6245,16 +6551,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -6290,16 +6600,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    },
@@ -6321,16 +6635,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Note dated in the future (2099-01-01)"
+     "says": "Note dated in the future (2099-01-01)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Note dated in the future (2099-01-01)"
+     "says": "Note dated in the future (2099-01-01)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6351,16 +6669,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -6381,16 +6703,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Note dated in the future (2027-01-15)"
+     "says": "Note dated in the future (2027-01-15)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Note dated in the future (2027-01-15)"
+     "says": "Note dated in the future (2027-01-15)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6447,16 +6773,20 @@
    "answers": {
     "marble": {
      "decision": "refuse",
-     "says": "Follow list dated 2027-01-15: a version dated ahead would block every later change"
+     "says": "Follow list dated 2027-01-15: a version dated ahead would block every later change",
+     "level": null
     },
     "box": {
      "decision": "refuse",
-     "says": "Follow list dated 2027-01-15: a version dated ahead would block every later change"
+     "says": "Follow list dated 2027-01-15: a version dated ahead would block every later change",
+     "level": null
     }
    },
    "expect": "refuse",
+   "level": null,
    "outcome": {
     "marble": "refuses",
+    "marbleAlone": "refuses",
     "mac": "refuses",
     "keykinDevices": "dated_ahead"
    }
@@ -6513,16 +6843,20 @@
    "answers": {
     "marble": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     },
     "box": {
      "decision": "sign",
-     "says": null
+     "says": null,
+     "level": null
     }
    },
    "expect": "sign",
+   "level": null,
    "outcome": {
     "marble": "signs",
+    "marbleAlone": "signs",
     "mac": "signs",
     "keykinDevices": "signs"
    }
@@ -6544,16 +6878,20 @@
    "answers": {
     "marble": {
      "decision": "refuse",
-     "says": "Profile dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Profile dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     },
     "box": {
      "decision": "refuse",
-     "says": "Profile dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Profile dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     }
    },
    "expect": "refuse",
+   "level": null,
    "outcome": {
     "marble": "refuses",
+    "marbleAlone": "refuses",
     "mac": "refuses",
     "keykinDevices": "dated_ahead"
    }
@@ -6587,16 +6925,20 @@
    "answers": {
     "marble": {
      "decision": "refuse",
-     "says": "Follow set dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Follow set dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     },
     "box": {
      "decision": "refuse",
-     "says": "Follow set dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Follow set dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     }
    },
    "expect": "refuse",
+   "level": null,
    "outcome": {
     "marble": "refuses",
+    "marbleAlone": "refuses",
     "mac": "refuses",
     "keykinDevices": "dated_ahead"
    }
@@ -6622,16 +6964,20 @@
    "answers": {
     "marble": {
      "decision": "refuse",
-     "says": "Kind 10050 event dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Kind 10050 event dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     },
     "box": {
      "decision": "refuse",
-     "says": "Kind 10050 event dated 2099-01-01: a version dated ahead would block every later change"
+     "says": "Kind 10050 event dated 2099-01-01: a version dated ahead would block every later change",
+     "level": null
     }
    },
    "expect": "refuse",
+   "level": null,
    "outcome": {
     "marble": "refuses",
+    "marbleAlone": "refuses",
     "mac": "refuses",
     "keykinDevices": "dated_ahead"
    }
@@ -6657,16 +7003,20 @@
    "answers": {
     "marble": {
      "decision": "refuse",
-     "says": "Deletion dated 2099-01-01: it would delete every version until then"
+     "says": "Deletion dated 2099-01-01: it would delete every version until then",
+     "level": null
     },
     "box": {
      "decision": "refuse",
-     "says": "Deletion dated 2099-01-01: it would delete every version until then"
+     "says": "Deletion dated 2099-01-01: it would delete every version until then",
+     "level": null
     }
    },
    "expect": "refuse",
+   "level": null,
    "outcome": {
     "marble": "refuses",
+    "marbleAlone": "refuses",
     "mac": "refuses",
     "keykinDevices": "dated_ahead"
    }
@@ -6692,16 +7042,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Deletion dated in the future (2099-01-01)"
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Deletion dated in the future (2099-01-01)"
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6744,16 +7098,20 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Deletion dated in the future (2099-01-01)"
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 1
     },
     "box": {
      "decision": "ask",
-     "says": "Deletion dated in the future (2099-01-01)"
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 1
     }
    },
    "expect": "ask",
+   "level": 1,
    "outcome": {
     "marble": "asks",
+    "marbleAlone": "asks",
     "mac": "asks",
     "keykinDevices": "needs_tap"
    }
@@ -6780,18 +7138,66 @@
    "answers": {
     "marble": {
      "decision": "ask",
-     "says": "Request to vanish dated in the future (2099-01-01)"
+     "says": "Request to vanish dated in the future (2099-01-01)",
+     "level": 2
     },
     "box": {
      "decision": "ask",
-     "says": "Request to vanish dated in the future (2099-01-01)"
+     "says": "Request to vanish dated in the future (2099-01-01)",
+     "level": 2
     }
    },
    "expect": "ask",
+   "level": 2,
    "outcome": {
-    "marble": "asks",
-    "mac": "asks",
-    "keykinDevices": "needs_tap"
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
+   }
+  },
+  {
+   "why": "deleting the bookmarks by k, dated 2099: dated ahead, and level 2 as it would be dated now",
+   "rules": [
+    "marble-ahead",
+    "marble-delete-list"
+   ],
+   "event": {
+    "pubkey": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+    "created_at": 4070908800,
+    "kind": 5,
+    "tags": [
+     [
+      "e",
+      "0000000000000000000000000000000000000000000000000000000000000001"
+     ],
+     [
+      "k",
+      "10003"
+     ]
+    ],
+    "content": ""
+   },
+   "prev": null,
+   "answers": {
+    "marble": {
+     "decision": "ask",
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 2
+    },
+    "box": {
+     "decision": "ask",
+     "says": "Deletion dated in the future (2099-01-01)",
+     "level": 2
+    }
+   },
+   "expect": "ask",
+   "level": 2,
+   "outcome": {
+    "marble": "fingerprint",
+    "marbleAlone": "fingerprint",
+    "mac": "phone",
+    "keykinDevices": "needs_fingerprint"
    }
   }
  ]

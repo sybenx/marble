@@ -148,10 +148,16 @@ class Signer(private val context: Context, val slot: String = "0") {
         return Membership(h.piece.i, sites.pubkey, Group(h.npub, Nip19.npub(h.npub), 2, sites.sites().flatMap { it.relays }.distinct(), list), h.epoch, h.addr, h.boxKey, mine.chip != null)
     }
 
+    /** Something never done by accident (level 2) that the box did not sign: [w] is its question. */
+    private fun fingerprintWords(code: String, w: String) = if (code == "no_chip_key")
+        "${w.trimEnd('.', ' ')}: this needs your fingerprint, and this phone has none set up. Add one in the phone's settings, then add this phone again."
+        else "${w.trimEnd('.', ' ')}: your box didn't take this phone's fingerprint, so nothing was signed."
+
     private fun why(e: Throwable): String = when ((e as? KeykinException)?.code) {
         "blocked" -> "This phone is blocked from your account. Unblock it from another of your devices, or from your box's page."
         "no_box" -> "Couldn't reach your box. Is this phone on the same network as it?"
-        "needs_fingerprint", "no_chip_key" -> "This phone has no fingerprint set up, so it can't change your account. Add one in the phone's settings, then add this phone again."
+        "needs_fingerprint", "no_chip_key" -> (e as KeykinException).why?.let { w -> fingerprintWords(e.code, w) }
+            ?: "This phone has no fingerprint set up, so it can't change your account. Add one in the phone's settings, then add this phone again."
         "cancelled" -> "Cancelled. Nothing changed."
         "fingerprint_changed" -> "The fingerprints on this phone changed, so it can no longer approve changes. Block this phone from another device and add it again."
         "pending_welcome" -> "A device you added hasn't finished joining. Finish that first, then try again."
@@ -1421,7 +1427,9 @@ class Signer(private val context: Context, val slot: String = "0") {
     // --- Signing -----------------------------------------------------------------------------------
 
     /** What would be destroyed, if this needs you to approve it; else null. */
-    fun holdFor(ev: Event): String? = Policy.hold(ev, lists.latest(Policy.keyOf(ev)))
+    fun holdFor(ev: Event): String? = questionFor(ev)?.says
+    /** The same, with how you are asked: level 2 is Yes behind the fingerprint (Keykin SPEC 11.6, The tap). */
+    fun questionFor(ev: Event): BoxAsk.Question? = Policy.question(ev, lists.latest(Policy.keyOf(ev)))
 
     /** The event an app or a site sent, as it will be signed: under your key, with its id. */
     fun appEvent(json: String, asKey: String? = null): Event {
@@ -1431,9 +1439,15 @@ class Signer(private val context: Context, val slot: String = "0") {
         return Event(pub, raw["created_at"] as? Long ?: env.now(), (raw["kind"] as Long).toInt(), tags, raw["content"] as? String ?: "").withId()
     }
 
-    /** The signature itself: this phone's piece and the box's (or a helper's when the box is off). */
-    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null): Event {
+    /**
+     * The signature itself: this phone's piece and the box's (or a helper's when the box is off). [fingerprint]: the
+     * words of the fingerprint prompt, for something never done by accident (level 2). With a box the chip key signs the
+     * request and the box checks it, as for an account change. With no box it is the phone's own prompt, the plain kind
+     * (Keykin SPEC §4, fallback), as before showing the whole key; a phone with no fingerprint set up has none to show.
+     */
+    private fun signNow(ev: Event, grant: String? = null, tapped: Boolean = false, asChild: Child? = null, fingerprint: String? = null): Event {
         if (held == null) {
+            if (fingerprint != null && me().chip != null) try { Chip.sign(context, slot, fingerprint, env.random(32)) } catch (e: KeykinException) { throw IllegalStateException(why(e)) }
             val k = localKey() ?: error("$appName isn't set up yet")
             if (asChild != null) {
                 // Tier 1 as a child: the key moved by the tweak, for this one signature, then wiped. Never kept or shown.
@@ -1448,10 +1462,13 @@ class Signer(private val context: Context, val slot: String = "0") {
         val h = held ?: error("$appName isn't set up yet")
         // The box decides what is hard to undo and wants to hear that you said Yes (`tapped`). What this phone itself
         // signs to put something back (an undo, a repost) or at your own word is always that. Its `needs_tap`, with the
-        // question in its own words, goes up to [BoxAsk], which asks you and sends this again.
-        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild) } }
+        // question in its own words, goes up to [BoxAsk], which asks you and sends this again; so does its
+        // `needs_fingerprint` with words (level 2), sent again with the fingerprint. A phone with no chip key sends
+        // none; the box then says `no_chip_key`, said below in plain words.
+        val finger = fingerprint?.takeIf { me().chip != null }?.let { fp(it) }
+        val j = try { synchronized(boxLock) { Device.sign(me(), h, ev.kind, ev.content, ev.tags, ev.createdAt, send(h), grant, tapped, asChild, finger) } }
             catch (e: KeykinException) {
-                if (e.code == "needs_tap") throw e
+                if (e.code == "needs_tap" || (e.code == "needs_fingerprint" && e.why != null)) throw e
                 if (e.code == "revoked" && grant != null) { dropRevoked(setOf(grant)); throw Revoked() }
                 blockedHere(e); if (e.code == "no_box") ui.update { it.copy(relaysUp = 0) }; throw IllegalStateException(why(e))
             }
@@ -1468,12 +1485,13 @@ class Signer(private val context: Context, val slot: String = "0") {
         // This phone's own rules first (against the last version of a list it saw), then the box's: it decides, and asks
         // through `needs_tap`. Either way you are asked once. A site's own account has no lists kept here: its change is
         // judged on its own, never against the main account's lists.
-        val own = if (approved) null else if (asChild == null) holdFor(ev) else Policy.hold(ev, null)
+        // Its level goes with it even when you already said Yes: at level 2 the fingerprint is still to come.
+        val own = if (asChild == null) questionFor(ev) else Policy.question(ev, null)
         val prev = if (asChild == null) lists.latest(Policy.keyOf(ev)) else null
-        val (signed, held) = BoxAsk.sign(own, approved, BOX_ASKS, { hold ->
-            if (!mayAsk) throw NeedsApproval(hold)
-            askAndWait(by, ev, hold).also { if (!it) note("Said no to $by: $hold", "denied") }
-        }) { tapped -> signNow(ev, grant, tapped, asChild) }
+        val (signed, held) = boxSays { BoxAsk.sign(own, approved, BOX_ASKS, { q ->
+            if (!mayAsk) throw NeedsApproval(q.says, q.level)
+            askAndWait(by, ev, q).also { if (!it) note("Said no to $by: ${q.says}", "denied") }
+        }) { tapped, finger -> signNow(ev, grant, tapped, asChild, finger) } }
         // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
         if (asChild == null) remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
@@ -1483,9 +1501,13 @@ class Signer(private val context: Context, val slot: String = "0") {
 
     /** The question when a box from before it gave its reason asks for your Yes. */
     private val BOX_ASKS = "Your box asks for your Yes before signing this"
+    /** What the box still said after [BoxAsk] did what it could, in plain words. */
+    private fun <T> boxSays(f: () -> T): T = try { f() } catch (e: KeykinException) {
+        if (e.code == "needs_tap" || e.code == "needs_fingerprint") throw IllegalStateException(why(e)) else throw e
+    }
     private val answers = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
-    private fun askAndWait(by: String, ev: Event, hold: String): Boolean {
-        val ask = Ask(env.random(8).toHex(), by, ev, hold, System.currentTimeMillis() + ASK_LIFE)
+    private fun askAndWait(by: String, ev: Event, q: BoxAsk.Question): Boolean {
+        val ask = Ask(env.random(8).toHex(), by, ev, q.says, System.currentTimeMillis() + ASK_LIFE, q.level)
         val f = CompletableFuture<Boolean>(); answers[ask.id] = f
         ui.update { it.copy(asks = it.asks + ask) }
         listener?.onAsk(ask)
@@ -1655,7 +1677,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         val c = childFor(place)
         val e = Event(c.npub, ev.createdAt, ev.kind, ev.tags, ev.content).withId()
         Policy.refuse(e)?.let { throw IllegalStateException(it) }
-        return BoxAsk.sign(if (approved) null else Policy.hold(e, null), approved, BOX_ASKS, { throw NeedsApproval(it) }) { tapped -> signNow(e, grant, tapped, c) }.value
+        return boxSays { BoxAsk.sign(Policy.question(e, null), approved, BOX_ASKS, { throw NeedsApproval(it.says, it.level) }) { tapped, finger -> signNow(e, grant, tapped, c, finger) }.value }
     }
     /** NIP-44 as [place]'s child, with [peer]. */
     fun nip44As(place: String, peer: String, text: String, encrypt: Boolean, grant: String? = null): String = nip44With(peer, text, encrypt, grant, childFor(place))
