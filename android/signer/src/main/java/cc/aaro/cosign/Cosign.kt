@@ -35,6 +35,14 @@ object Cosign {
     lateinit var signers: Signers
         private set
 
+    private val started = java.util.concurrent.CountDownLatch(1)
+    /**
+     * Waits (up to [ms]) for [init]. Android starts content providers, and can hand them an app's query, before the
+     * Application's onCreate has run: Nip55Provider waits here instead of failing (2026-11-21, Amethyst waking the
+     * signer process got "signers has not been initialized" and fell back to the sheet).
+     */
+    fun awaitInit(ms: Long = 10_000): Boolean = started.await(ms, java.util.concurrent.TimeUnit.MILLISECONDS)
+
     fun init(app: Application, host: Host) {
         context = app
         this.host = host
@@ -45,6 +53,7 @@ object Cosign {
             accounts = Accounts(app).also { it.bind() }
             Startup.mark("accounts")
         }
+        started.countDown()
     }
 }
 

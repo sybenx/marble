@@ -47,7 +47,8 @@ object Saving {
         } catch (e: NotMedia) {
             "Marble only saves pictures and videos."
         } catch (e: Exception) {
-            "Couldn't save it: ${e.message ?: "something went wrong"}"
+            cc.aaro.cosign.ErrorLog.record("save", e)
+            "Couldn't save it. Try again in a moment."
         }
         Toast.makeText(context, said, Toast.LENGTH_SHORT).show()
     }

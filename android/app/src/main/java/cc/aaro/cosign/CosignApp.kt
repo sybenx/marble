@@ -15,6 +15,8 @@ class CosignApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Errors and crashes in either process, kept for troubleshooting (ErrorLog).
+        ErrorLog.init(this); ErrorLog.catchCrashes()
         Startup.mark("app")
         Cosign.init(this, object : Cosign.Host {
             override fun reveal(context: Context, slot: String) = SignerActivity.open(context, slot)

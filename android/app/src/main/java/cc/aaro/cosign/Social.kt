@@ -3587,7 +3587,9 @@ class Social private constructor(private val phone: Phone, context: Context) {
         val signed = try { phone.signOwn(ev, approved) } catch (e: NeedsApproval) {
             held.value = Held(e.what, ev, e.level); return null
         } catch (e: Exception) {
-            message.value = "Couldn't do that right now: ${e.message ?: "no answer"}"; return null
+            // The signer's words (SignerService puts plain words in); anything else is only in ErrorLog.
+            ErrorLog.record("social", e)
+            message.value = "Couldn't do that right now: ${e.message?.takeIf { e is IllegalStateException && it != "no answer" } ?: "Marble's signer didn't answer. Try again in a moment."}"; return null
         }
         if (signed.kind == 3) { contacts = signed; follows.value = followsIn(signed) }
         if (signed.kind == 10000) mutes = signed

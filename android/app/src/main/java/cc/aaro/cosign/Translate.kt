@@ -58,7 +58,7 @@ object Translate {
                 android.util.Log.i("CosignTranslate", "translated ${texts.size}")
                 out.mapIndexed { i, t -> t to langs?.getOrNull(i) }
             }
-        } catch (e: Exception) { fail(e.message ?: "no answer") }
+        } catch (e: Exception) { ErrorLog.record("translate", e); fail("no answer") }
     }
 
     /** One text from [from] into [target] through your server; null when it's off, resting, down or wrong. */
@@ -84,7 +84,7 @@ object Translate {
             Fetch.http.newBuilder().callTimeout(4, TimeUnit.SECONDS).build().newCall(Request.Builder().url(url.value + "/languages").build()).execute().use { r ->
                 (r.isSuccessful).also { ok -> status.value = if (ok) "Working" else "Not working: answered ${r.code}"; if (ok) waitUntil = 0 }
             }
-        } catch (e: Exception) { status.value = "Not working: ${e.message ?: "no answer"}"; false }
+        } catch (e: Exception) { ErrorLog.record("translate", e); status.value = "Not working: no answer"; false }
     }
 
     private fun fail(why: String): List<Pair<String, String?>>? {

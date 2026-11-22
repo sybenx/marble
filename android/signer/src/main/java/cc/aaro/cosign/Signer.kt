@@ -155,7 +155,14 @@ class Signer(private val context: Context, val slot: String = "0") {
         "${w.trimEnd('.', ' ')}: this needs your fingerprint, and this phone has none set up. Add one in the phone's settings, then add this phone again."
         else "${w.trimEnd('.', ' ')}: your box didn't take this phone's fingerprint, so nothing was signed."
 
-    private fun why(e: Throwable): String = when ((e as? KeykinException)?.code) {
+    /** What to tell you about [e], in plain words. Every error that gets here is also recorded in [ErrorLog], codes and all. */
+    internal fun why(e: Throwable): String {
+        val code = (e as? KeykinException)?.code
+        if (code != "cancelled" && code != "denied") ErrorLog.record("signer", e, "slot" to slot)
+        return words(e)
+    }
+    /** [e] in plain words, not recorded (see [why]). */
+    internal fun words(e: Throwable): String = when ((e as? KeykinException)?.code) {
         "blocked" -> "This phone is blocked from your account. Unblock it from another of your devices, or from your box's page."
         "no_box" -> "Couldn't reach your box. Is this phone on the same network as it?"
         "needs_fingerprint", "no_chip_key" -> (e as KeykinException).why?.let { w -> fingerprintWords(e.code, w) }
@@ -173,8 +180,11 @@ class Signer(private val context: Context, val slot: String = "0") {
         "digits_differ" -> "The digits were different, so nothing was sent."
         "site_declined" -> "The site cancelled."
         "no_relay" -> "Couldn't reach the site's relay."
-        null -> e.message ?: "That didn't work."
-        else -> "That didn't work (${(e as KeykinException).code})."
+        // Marble's own sentences (error(…), check(…), or why() thrown on) say what to do; any other exception's text doesn't.
+        null -> e.message?.takeIf { e is IllegalStateException && it.isNotBlank() }
+            ?: if (e is java.io.IOException) "Couldn't connect. Check this phone's connection, then try again." else "That didn't work. Try again in a moment."
+        // A code means nothing to you (it's in ErrorLog).
+        else -> "That didn't work. Try again in a moment."
     }
     /** Marble talks https only (its network rules). A box at a plain http address can't be reached, so say that and not "no box". */
     private fun plainHttp(addr: String): String? {
@@ -396,7 +406,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 prefs.edit().putString("login-page", origin).apply()
                 ui.update { it.copy(loginPage = origin.ifEmpty { null }) }
                 note(if (origin.isEmpty()) "Removed your login page's address" else "Your login page is $origin", "approved")
-            } catch (e: Exception) { ui.update { it.copy(error = e.message ?: "That didn't work.") } }
+            } catch (e: Exception) { ui.update { it.copy(error = why(e)) } }
             finally { ui.update { it.copy(working = null) } }
         }
     }
@@ -1784,6 +1794,16 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     fun nip44(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip44With(peer, text, encrypt, grantOf(now), appChild(now)) }
     fun nip04(g: AppGrant, peer: String, text: String, encrypt: Boolean): String { val now = appGrant(g.pkg) ?: throw Revoked(); usedApp(now); return nip04With(peer, text, encrypt, grantOf(now), appChild(now)) }
+    /**
+     * NIP-55's decrypt_zap_event: the zap inside a private zap request to the app's key (who zapped, and their note), as
+     * JSON; null when it can't be opened here: not to you, or sent by you (see [PrivateZap]), or damaged.
+     */
+    fun decryptZap(g: AppGrant, json: String): String? {
+        val ev = try { cc.aaro.qrst.core.Json.parse(json) as? Map<*, *> } catch (_: Exception) { null } ?: return null
+        val (payload, from) = PrivateZap.forMe(ev, appKey(g)) ?: return null
+        val text = try { nip04(g, from, payload, false) } catch (e: Exception) { if (unreadable(e)) return null else throw e }
+        return text.takeIf { it.trimStart().startsWith("{") }
+    }
 
     /**
      * Whether [ev] (signed for an app) is one whose question offers to move the app to a key of its own: a change to the
@@ -2067,7 +2087,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 val done = together + change.id
                 synchronized(this) { history.writeText(JSONArray(objects(readArray(history)).map { if (it.getString("id") in done) it.put("undone", true) else it }).toString()) }
                 note("Undid: ${change.text}", "approved"); showHistory()
-            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't undo that: ${e.message}") } }
+            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't undo that: ${why(e)}") } }
         }
     }
 
@@ -2082,7 +2102,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 synchronized(this) { kept.writeText(JSONArray(objects(readArray(kept)).filter { Event.fromMap(Json.parse(it.getString("event")))?.id != d.id }).toString()) }
                 remember(signed, null, appName, true)
                 note("Posted a deleted ${d.kind} again", "approved")
-            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't post that again: ${e.message}") } }
+            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't post that again: ${why(e)}") } }
         }
     }
 
@@ -2115,7 +2135,7 @@ class Signer(private val context: Context, val slot: String = "0") {
                 }
                 ui.value.sites.firstOrNull { it.pk == s.pk }?.let(::removeSite)
                 note("Took back what ${s.origin} did", "approved")
-            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't take that back: ${e.message}") } }
+            } catch (e: Exception) { ui.update { it.copy(error = "Couldn't take that back: ${why(e)}") } }
         }
     }
 

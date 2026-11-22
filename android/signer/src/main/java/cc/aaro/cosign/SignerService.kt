@@ -110,7 +110,8 @@ class SignerService : Service() {
             } catch (e: NeedsApproval) {
                 NeedsApproval.Wire.write(e, this::putString, this::putInt)
             } catch (e: Exception) {
-                putString("error", e.message ?: e.javaClass.simpleName)
+                // Plain words for the screen; the detail goes to ErrorLog.
+                putString("error", signers.signer(slot)?.why(e) ?: run { ErrorLog.record("service", e, "slot" to slot); "That didn't work. Try again in a moment." })
             }
         }
 

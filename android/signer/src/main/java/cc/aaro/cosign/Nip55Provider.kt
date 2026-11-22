@@ -20,6 +20,7 @@ class Nip55Provider : ContentProvider() {
 
     override fun query(uri: Uri, projection: Array<String>?, selection: String?, selectionArgs: Array<String>?, sortOrder: String?): Cursor? {
         val type = uri.authority?.substringAfterLast('.') ?: return null
+        if (!Cosign.awaitInit()) return null.also { ErrorLog.record("provider", null, "type" to type, "why" to "Marble didn't finish starting") }
         // NIP-55 puts [payload, pubkey, current_user] in the projection; some apps use selectionArgs.
         val args = projection?.takeIf { it.isNotEmpty() } ?: selectionArgs ?: return null
         val current = args.getOrNull(2)
@@ -34,13 +35,17 @@ class Nip55Provider : ContentProvider() {
         val key = try { phone.appKey(grant) } catch (_: Exception) { return null }
         if (!current.isNullOrBlank() && current.length == 64 && current != key) return null
         val payload = args.getOrNull(0) ?: ""
-        val peer = args.getOrNull(1) ?: ""
+        val rawPeer = args.getOrNull(1) ?: ""
         return try {
             when (type) {
                 "GET_PUBLIC_KEY" -> if (phone.moved(pkg) != null) null else row("result" to key)
                 "SIGN_EVENT" -> phone.signForApp(grant, phone.appEvent(payload), approved = false).let { row("result" to it.sig, "signature" to it.sig, "event" to it.toJson()) }
                 "NIP44_ENCRYPT", "NIP44_DECRYPT", "NIP04_ENCRYPT", "NIP04_DECRYPT" -> {
                     if (!grant.dm) return null
+                    // No one to write to (or read from) that Marble can make out: the app's mistake, so a quiet no, not the sheet.
+                    val peer = peerKey(rawPeer) ?: return row("rejected" to "true").also {
+                        ErrorLog.record("provider", null, "app" to pkg, "type" to type, "why" to "bad peer", "peer" to peerShape(rawPeer))
+                    }
                     val encrypt = type.endsWith("ENCRYPT")
                     try {
                         row("result" to if (type.startsWith("NIP44")) phone.nip44(grant, peer, payload, encrypt) else phone.nip04(grant, peer, payload, encrypt))
@@ -48,9 +53,18 @@ class Nip55Provider : ContentProvider() {
                         if (!encrypt && unreadable(e)) row("rejected" to "true") else throw e
                     }
                 }
+                // Amethyst asks this for every private zap it shows, dozens at a time: answered here, never with the sheet.
+                // Only with messages allowed (it reads what someone wrote to you); a no is quiet (see Signer.decryptZap).
+                "DECRYPT_ZAP_EVENT" -> {
+                    val out = if (!grant.dm) null else try { phone.decryptZap(grant, payload) } catch (e: Exception) {
+                        ErrorLog.record("provider", e, "app" to pkg, "type" to type); null
+                    }
+                    if (out != null) row("result" to out) else row("rejected" to "true")
+                }
                 else -> null
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e !is NeedsApproval) ErrorLog.record("provider", e, "app" to pkg, "type" to type)
             null // NeedsApproval, a removed app, or servers out of reach: the app opens Cosign, which says which
         }
     }
@@ -71,3 +85,14 @@ class Nip55Provider : ContentProvider() {
 internal fun unreadable(e: Throwable): Boolean =
     (e is cc.aaro.keykin.core.KeykinException && e.code == "bad_message") ||
         e is java.security.GeneralSecurityException || e is IllegalArgumentException
+
+/** The other side's key as NIP-55 hands it over: 64 hex (any case) or an npub, as lowercase hex; null if neither. */
+internal fun peerKey(s: String): String? {
+    val t = s.trim()
+    if (Regex("^[0-9a-fA-F]{64}$").matches(t)) return t.lowercase()
+    if (!t.startsWith("npub1")) return null
+    return try { cc.aaro.qrst.core.Bech32.decode(t).takeIf { it.first == "npub" && it.second.size == 32 }?.second?.joinToString("") { "%02x".format(it) } } catch (_: Exception) { null }
+}
+
+/** What a peer that didn't read looked like, for ErrorLog: its length and first few characters, never more. */
+internal fun peerShape(s: String) = "len=${s.length} start=${s.take(6)}"
