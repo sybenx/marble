@@ -79,7 +79,7 @@ class Nip55Activity : ComponentActivity() {
                     Stage.Connect -> Ask(
                         "Let $label use your account?" + (if (request.several) " (${phone.label})" else ""),
                         "It can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
-                        "Remove it under Your account in $appName any time.",
+                        "Remove it under Apps and sites in $appName any time.",
                         no = "Don't connect", yes = "Use it with $label",
                     ) { confirm(); request.connect() }
                     Stage.Dms -> Ask(

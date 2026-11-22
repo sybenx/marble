@@ -569,7 +569,7 @@ fun WebPrompts(state: WebPaneState, phone: Phone) {
         val label = ask.site.label
         val replacing = PaneGrants.of(LocalContext.current).toReplace(phone.slot, label, ui.sites, WebRules.clientOf(ask.code))
         val note = listOfNotNull(siteNote(ask.site),
-            if (replacing.isNotEmpty()) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Your account any time.").joinToString(" ")
+            if (replacing.isNotEmpty()) "This replaces the sign-in this pane made for $label before. Your other sign-ins stay." else "Remove it under Apps and sites any time.").joinToString(" ")
         // Its switches: private lists start on for a site that reads them right after sign-in (Jumble); DMs start off.
         var lists by remember(ask) { mutableStateOf(ask.site.asksLists) }
         var dms by remember(ask) { mutableStateOf(false) }

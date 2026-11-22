@@ -1046,7 +1046,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             ui.update { it.copy(username = username, hasPassword = true) }
             note("Set a username and password for your account page", "approved")
         } catch (e: Exception) {
-            ui.update { it.copy(hasPassword = false, error = "Your account is made, but its password was not saved: ${why(e)} Set it under Your account.") }
+            ui.update { it.copy(hasPassword = false, error = "Your account is made, but its password was not saved: ${why(e)} Set it under Devices and backup, Your account page.") }
         }
     }
     fun decline() { pendingQr = null; pendingJoin = null; ui.update { it.copy(offer = null, joining = null) } }
@@ -1282,7 +1282,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             Outcome.DELIVERED, Outcome.SENT_UNCONFIRMED -> {
                 note(if (own) "Connected $origin with a new account" else "Connected $origin", "approved")
                 connectInBackground = false; connecting = null
-                ui.update { it.copy(connect = Connect(origin, Connect.Stage.DONE, if (own) "$origin has its own account now. Remove it under Your account any time." else "$origin can sign as you now. Remove it under Your account any time.")) }
+                ui.update { it.copy(connect = Connect(origin, Connect.Stage.DONE, if (own) "$origin has its own account now. Remove it under Apps and sites any time." else "$origin can sign as you now. Remove it under Apps and sites any time.")) }
                 // A success needs no tap to dismiss, and mustn't sit over an approval that arrives next.
                 timer.schedule({ ui.update { u -> if (u.connect?.stage == Connect.Stage.DONE) u.copy(connect = null) else u } }, 2500, TimeUnit.MILLISECONDS)
                 Cosign.host.joined(context)

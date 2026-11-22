@@ -353,7 +353,7 @@ private fun MakeKeyPrompt(box: String, bringing: Boolean, onJoin: (String, Strin
         Text("This phone splits your key with your box at $box. From then on the two sign together, and each of your other devices gets a piece of its own. Your account and its npub stay the same.",
             color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(12.dp))
-        Text("The whole key stays on this phone too, sealed, as your backup. You can forget it later under Your account.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+        Text("The whole key stays on this phone too, sealed, as your backup. You can forget it later under Devices and backup.", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
     } else {
         Text("This phone and your box at $box make it together. Nobody holds all of it, not even this phone, so a lost phone or a hacked site can't post as you.",
             color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
@@ -405,7 +405,7 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolea
                     Text("A new account is made just for this site, empty to start. Nothing from your main account goes with it.",
                         style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
                     Spacer(Modifier.height(6.dp))
-                    Text("Anything destructive comes to this phone first. Remove it under Your account any time.",
+                    Text("Anything destructive comes to this phone first. Remove it under Apps and sites any time.",
                         style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
                     Spacer(Modifier.height(12.dp))
                     SiteScopeSwitches(lists, dms, { lists = it }, { dms = it })
@@ -430,7 +430,7 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolea
                     Text("It can post, like and follow as you. Anything destructive, like unfollowing everyone or deleting posts, comes to this phone first.",
                         style = MaterialTheme.typography.bodyMedium, color = Vault.Muted)
                     Spacer(Modifier.height(6.dp))
-                    Text("Remove it under Your account any time. That stops it from then on; it doesn't undo what it already did.",
+                    Text("Remove it under Apps and sites any time. That stops it from then on; it doesn't undo what it already did.",
                         style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
                     Spacer(Modifier.height(12.dp))
                     SiteScopeSwitches(lists, dms, { lists = it }, { dms = it })
@@ -482,35 +482,27 @@ private fun ConnectSheet(c: Connect, which: String?, onConnect: (String?, Boolea
 internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone" && s.origin in setOf("Marble", "Cosign")
 
 /**
- * Your account, behind your picture on the home screen: your profile, devices, connected
- * apps and sites, keeping it safe, and what changed. How it works (servers, relays) is under Advanced.
+ * One page of your account, opened straight from your picture's menu at [start] (AccountPages): apps and sites,
+ * recent changes, devices and backup, how your account works, search settings, languages, trials and version.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit,
-                           onSpecial: () -> Unit = {}, onNews: () -> Unit = {}, onArchive: () -> Unit = {}) {
+internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, start: String, onBack: () -> Unit) {
     val m = ui.member!!
     var leaving by remember { mutableStateOf(false) }
-    // Which page of the account: null is the short list; a row opens its page (AccountPages). Kept while Special Follow is open.
-    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(enabled = page != null) { page = AccountPages.up(page) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-    val people by cc.aaro.cosign.People.known.collectAsState()
-    val me = people[m.group.groupX]
+    // Which page: the picture menu's row opened it ([start]); a site's page opens from Apps and sites (AccountPages).
+    var page by androidx.compose.runtime.saveable.rememberSaveable(key = "accountPage") { mutableStateOf(start) }
+    if (!AccountPages.known(page)) page = start
+    BackHandler(enabled = AccountPages.up(page) != null) { AccountPages.up(page)?.let { page = it } }
     val social = remember(phone) { cc.aaro.cosign.Social.of(phone) }
     val names by social.deviceNames.collectAsState()
     var renaming by remember { mutableStateOf<cc.aaro.cosign.Member?>(null) }
     var bunkerAsk by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (DebugOpen.renameThis) { DebugOpen.renameThis = false; renaming = m.group.members.firstOrNull { it.idx == m.idx } } }
-    // Opened for Recent changes (a notification's tap): straight to its page.
-    LaunchedEffect(Unit) {
-        DebugOpen.changes.collect { asked -> if (asked) { DebugOpen.changes.value = false; page = AccountPages.CHANGES } }
-    }
     // Marble's own way in (its likes, follows and saved interests) isn't one of them: removing it would break Marble.
     val sites = ui.sites.filterNot { ownGrant(it) }
     val tier1 = m.box.isEmpty()
-    // A site page whose last way in was removed has nothing left to show: back to the list.
+    // A site page whose last way in was removed has nothing left to show: back to Apps and sites.
     LaunchedEffect(page, sites) { AccountPages.origin(page)?.let { o -> if (sites.none { it.origin == o }) page = AccountPages.SITES } }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(page) { list.scrollToItem(0) }
@@ -518,56 +510,12 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
     LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton({ if (page == null) onBack() else page = AccountPages.up(page) }, Modifier.padding(end = 8.dp).size(32.dp)) {
+                IconButton({ AccountPages.up(page)?.let { page = it } ?: onBack() }, Modifier.padding(end = 8.dp).size(32.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Vault.Text)
                 }
                 Text(AccountPages.title(page), style = MaterialTheme.typography.titleLarge, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (page == null) item {
-            Spacer(Modifier.height(2.dp))
-            var switching by remember { mutableStateOf(false) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).clickable(onClick = onProfile), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(me, m.group.groupX, 52)
-                    Spacer(Modifier.width(14.dp))
-                    Column {
-                        Text(me?.name ?: "Your profile", style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (me?.name == null) Text("No name or picture yet", style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
-                        Text(short(m.group.npub), fontFamily = PlexMono, style = MaterialTheme.typography.labelSmall, color = Vault.Muted)
-                    }
-                }
-                TextButton({ switching = true }) { Text("Switch ▾", color = Vault.Accent) }
-            }
-            if (switching) KeysSheet(phone) { switching = false }
-            // Another account of yours with something waiting: say so here too, not only in notifications.
-            val waiting = CosignApp.instance.accounts.all.filter { it !== phone }.map { it to it.ui.collectAsState().value }
-                .filter { (_, u) -> u.asks.isNotEmpty() || u.batchAsks.isNotEmpty() }
-            for ((p, u) in waiting) TextButton({ CosignApp.instance.accounts.show(p.slot) }, contentPadding = PaddingValues(0.dp)) {
-                Text("${accountName(p)}: ${u.asks.size + u.batchAsks.size} waiting for you. Switch", color = Vault.AmberText, style = MaterialTheme.typography.bodySmall)
-            }
-            ui.error?.let { Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
-        }
-        // What needs you stays on top of the short list.
-        if (page == null) {
-        items(ui.future, key = { "future:" + it.id }) { f -> FutureCard(f) { phone.removeFuture(f) } }
-        items(ui.deleting, key = { "deleting:" + it.batch }) { d -> DeletingCard(d, now) { phone.cancelDeletion(d.batch) } }
-        items(ui.batchAsks, key = { "batch:" + it.batch }) { b -> BatchCard(b, now) { approve -> phone.decideBatch(b.batch, approve) } }
-        items(ui.asks, key = { "ask:" + it.id }) { ask -> AskCard(ask, now, onSwitch = { phone.decideSwitch(ask.id) }) { approve -> phone.decide(ask.id, approve) } }
-
-        // A quiet note, no banner: write relays that haven't answered in a week (with half or more silent, your
-        // notes' and Reader's copies can't be written).
-        cc.aaro.cosign.Social.of(phone).silentWriteRelays()?.let { (silent, of) ->
-            item { Text("$silent of your $of write relays haven't answered in a week", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 6.dp)) }
-        }
-        item {
-            Column {
-                for (row in AccountPages.rows(sites, m.group.members.count { !it.isBox })) MenuRow(row.label, row.count) { page = row.page }
-            }
-        }
-        }
-
         if (page == AccountPages.DEVICES) {
         items(m.group.members.filter { !it.isBox }, key = { "member:" + it.idx }) { d ->
             // What you've called it (on any of your devices), else the name it joined with. A long press renames it.
@@ -595,6 +543,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         // Your account page (Keykin Login): where it is, and the username and password that can look and block there.
         if (!tier1) item { Heading("Your account page") }
         if (!tier1) item { AccountPageRows(ui, phone) }
+        // A box is optional for a key kept whole on this phone: signing in to one splits it, so a lost phone can be blocked.
+        if (tier1) item { TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Sign in to a Keykin box", color = Vault.Accent) } }
         }
 
         if (page == AccountPages.SITES) {
@@ -604,11 +554,14 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             }
         }
         item { TextButton({ bunkerAsk = true }, contentPadding = PaddingValues(0.dp)) { Text("Get a bunker link to paste into a site", color = Vault.Accent) } }
-        if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a nostrconnect code works too).") }
+        if (sites.isEmpty()) item { Muted("None yet. To use your account on a website, tap Sign in to a site and scan the code it shows (a code copied from the site works too).") }
         // One row per website, newest used first; its page has what it changed and its Undo.
         items(AccountPages.siteRows(sites), key = { "site:" + it.first }) { (origin, used) ->
             MenuRow(origin.removePrefix("https://"), "used ${ago(used)}") { page = AccountPages.site(origin) }
         }
+        // What happened on this phone (mostly what signed as you), newest first.
+        if (ui.log.isNotEmpty()) item { Heading("Recent activity on this phone") }
+        items(ui.log.take(20)) { LogLine(it) }
         }
 
         // One site: what it changed, each with Undo, then its ways in (Undo all, Remove, switches).
@@ -619,37 +572,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
             val grants = sites.filter { it.origin == origin }
             if (grants.isNotEmpty()) item(key = "grants:$origin") {
                 SiteGroup(origin, grants, onRemove = phone::removeSite, onUndo = phone::askUndoSite, onScopes = phone::setSiteScopes)
-            }
-        }
-
-        // Following: your Special Follow list and where the news comes from.
-        if (page == AccountPages.FOLLOWING) item {
-            val special by social.special.collectAsState()
-            Column {
-                Row(Modifier.fillMaxWidth().clickable(onClick = onSpecial).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Special Follow", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Text(if (special.isEmpty()) "›" else "${special.size} ›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
-                }
-                val circle by social.circleOn.collectAsState()
-                Row(Modifier.fillMaxWidth().clickable { social.setCircleOn(!circle) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Only your circle", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
-                        Text("People you follow, and people at least two of them follow. Others stay out of Following, come after them in search, and fold under your posts. Worked out on this phone.",
-                            color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    androidx.compose.material3.Switch(circle, { social.setCircleOn(it) })
-                }
-                Row(Modifier.fillMaxWidth().clickable(onClick = onNews).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("News sources", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
-                }
-                Row(Modifier.fillMaxWidth().clickable(onClick = onArchive).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Your archive", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
-                        Text("Search your own conversations too. Only you can see them.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
-                }
             }
         }
 
@@ -741,10 +663,11 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
         if (!ui.keptKey) item {
             val devices = m.group.members.count { !it.isBox && !it.blocked }
-            Muted(if (devices <= 1) "Your account is on this phone and your box only. If you lose this phone, you can't get it back: add a second device, or keep your secret key somewhere safe (Advanced, Take my account out)."
+            Muted(if (devices <= 1) "Your account is on this phone and your box only. If you lose this phone, you can't get it back: add a second device, or keep your secret key somewhere safe (Take my account out, below)."
                 else "Your account is on $devices devices and your box. Any one device with the box can sign, so losing one loses nothing: block it from another.")
         }
-
+        item { TakeOutEntry(phone, onScan) }
+        item { TextButton({ leaving = true }, contentPadding = PaddingValues(0.dp)) { Text("Remove this phone from your account", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) } }
         }
 
         if (page == AccountPages.CHANGES) {
@@ -757,22 +680,33 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         }
         }
 
+        // How your account works: what your key is, where its pieces are, and whether they can be reached.
         if (page == AccountPages.ADVANCED) {
+            // A quiet note, no banner: write places that haven't answered in a week (with half or more silent, your
+            // notes' and Reader's copies can't be written).
+            social.silentWriteRelays()?.let { (silent, of) ->
+                item { Text("$silent of the $of places your notes are copied to haven't answered in a week", color = Vault.AmberText, style = MaterialTheme.typography.bodySmall) }
+            }
             item {
-                if (tier1) Muted("Your account is a Nostr key, kept on this phone. A Keykin box is optional: signing in to one splits the key between this phone and the box, so a lost phone can be blocked. This phone keeps the whole key either way.")
-                if (tier1) TextButton(onScan, contentPadding = PaddingValues(0.dp)) { Text("Sign in to a Keykin box", color = Vault.Accent) }
-                if (!tier1) Muted("Your account is a Nostr key in pieces: each of your devices holds one and your box holds one. Any two pieces sign; one alone can do nothing.")
+                if (tier1) Muted("Your account is a key, kept on this phone. A Keykin box is optional: signing in to one splits the key between this phone and the box, so a lost phone can be blocked. This phone keeps the whole key either way. Sign in to one under Devices and backup.")
+                if (!tier1) Muted("Your account is a key in pieces: each of your devices holds one and your box holds one. Any two pieces sign; one alone can do nothing.")
                 Spacer(Modifier.height(10.dp))
                 val context = androidx.compose.ui.platform.LocalContext.current
                 Text(short(m.group.npub), fontFamily = PlexMono, color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.clickable {
                     context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("npub", m.group.npub))
                 })
+                Muted("Your account's address. Tap to copy it.")
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (mem in m.group.members) Chip(if (mem.idx == m.idx) "This phone" else mem.name, ui.online[mem.idx] == true, Modifier.weight(1f))
                 }
                 if (ui.relaysUp == 0) Text("Can't reach your box. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                if (!tier1) Muted("Your box: ${m.box} · " + (if (ui.relaysUp == 0) "not reachable" else "reachable") + (if (m.group.relays.isEmpty()) "" else " · sites reach this phone through ${m.group.relays.size} server${if (m.group.relays.size == 1) "" else "s"}"))
             }
+        }
+
+        // Trials and version: Marble's version (seven taps unlock the feed trial's switches) and the notes trial's summary.
+        if (page == AccountPages.TRIALS) {
             // The notes trial's summary, to send on at its end (from this phone's log; nothing in it is shown in Marble).
             item {
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -780,14 +714,6 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                     val text = cc.aaro.cosign.NotesTrial.summary(social.later.items.value)
                     context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text), null))
                 }, contentPadding = PaddingValues(0.dp)) { Text("Share the notes trial summary", color = Vault.Accent) }
-            }
-            item { TakeOutEntry(phone, onScan) }
-            item { Heading("On this phone") }
-            items(ui.log.take(20)) { LogLine(it) }
-            item {
-                Spacer(Modifier.height(12.dp))
-                if (!tier1) Muted("Your box: ${m.box} · " + (if (ui.relaysUp == 0) "not reachable" else "reachable") + (if (m.group.relays.isEmpty()) "" else " · sites reach this phone on ${m.group.relays.size} relay${if (m.group.relays.size == 1) "" else "s"}"))
-                TextButton({ leaving = true }, contentPadding = PaddingValues(0.dp)) { Text("Remove this phone from your account", color = Vault.Danger, style = MaterialTheme.typography.bodySmall) }
             }
             item { FeedLogSetting() }
         }
@@ -832,7 +758,7 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
         onDismissRequest = { leaving = false },
         title = { Text("Remove this phone?") },
         text = { Text("This blocks this phone at your box and deletes its piece of your account. Sites and apps signed in through this phone stop working. Your other devices keep working; cycle your keys from one of them afterwards." +
-            if (ui.keptKey) " The whole key kept on this phone as your backup is deleted too: copy it out first (Advanced, Take my account out) if you have it nowhere else." else "") },
+            if (ui.keptKey) " The whole key kept on this phone as your backup is deleted too: copy it out first (Take my account out, on this page) if you have it nowhere else." else "") },
         confirmButton = { TextButton({ leaving = false; phone.leave() }) { Text("Remove this phone", color = Vault.Danger) } },
         dismissButton = { TextButton({ leaving = false }) { Text("Keep it") } },
         containerColor = Vault.Surface,
@@ -1195,7 +1121,7 @@ private fun qrBitmap(text: String, size: Int): android.graphics.Bitmap {
 
 /** Your keys on this phone: switch between them, or add another. */
 @Composable
-private fun KeysSheet(current: Phone, onClose: () -> Unit) {
+internal fun KeysSheet(current: Phone, onClose: () -> Unit) {
     val accounts = CosignApp.instance.accounts
     BackHandler { onClose() }
     androidx.compose.ui.window.Dialog(onClose) {
@@ -1220,7 +1146,7 @@ private fun KeysSheet(current: Phone, onClose: () -> Unit) {
 internal fun PaperCard(phone: Phone) = Card(Vault.AmberEdge, Vault.AmberGround) {
     Text("Add a second device", style = MaterialTheme.typography.titleMedium, color = Vault.AmberText)
     Spacer(Modifier.height(4.dp))
-    Text("Your account is on this phone and your box only. If you lose this phone, you can't get it back. Add another device under Your account.", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+    Text("Your account is on this phone and your box only. If you lose this phone, you can't get it back. Add another device under Devices and backup.", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
 }
 
 /** Copy a secret, marked sensitive so the keyboard and clipboard preview don't show it. */
@@ -1418,7 +1344,7 @@ internal fun BunkerSheet(link: String, onClose: () -> Unit) {
         ) {
             Text("Your bunker link", style = MaterialTheme.typography.titleLarge, color = Kk.Text)
             Spacer(Modifier.height(10.dp))
-            Text("Paste it into a site that asks for a bunker or remote signer. It works once, for 15 minutes. The site then signs as you through this phone, until you remove it under Your account.",
+            Text("Paste it into a site that asks for a bunker or remote signer. It works once, for 15 minutes. The site then signs as you through this phone, until you remove it under Apps and sites.",
                 style = MaterialTheme.typography.bodyMedium, color = Kk.Muted)
             Spacer(Modifier.height(12.dp))
             Text(link, fontFamily = PlexMono, color = Kk.Text, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
