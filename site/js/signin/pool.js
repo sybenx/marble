@@ -69,6 +69,15 @@ if (typeof document !== "undefined") {
 }
 let nextId = 0;
 
+// NIP-42 login, for a site that wants it (Marble Web: relay-auth.js, archive.js). With none set, a relay that asks
+// gets nothing, as before. hook: {session(url) → a relay-auth.js Session or null, sign(url, challenge) → signed
+// kind 22242 or null}.
+let authHook = null;
+export function setAuth(hook) { authHook = hook; for (const r of sockets.values()) r.auth ||= hook?.session(r.url) || null; }
+/** After a change of account: sockets logged in (or logging in) as the last one are closed, so none stays logged in. */
+export function dropLogins() { for (const r of [...sockets.values()]) if (r.auth?.authed || r.auth?.authId || r.auth?.sentFor) r.fail(); }
+const AUTH_REQUIRED = /^auth-required:/;
+
 class Relay {
   constructor(url) {
     this.url = url;
@@ -78,6 +87,8 @@ class Relay {
     this.open = false;
     this.dead = false;
     this.openedAt = 0;
+    this.auth = authHook?.session(url) || null;
+    this.sent = new Map(); // subscription or event id → what was sent, for sending once more after a login
     const t0 = performance.now();
     // index.html starts connecting to the fast ones before this script has loaded, for links opened cold.
     const early = (globalThis.marbleWarm || []).find((w) => normalize(w.url) === url && w.readyState < 2);
@@ -109,6 +120,11 @@ class Relay {
     this.oks.clear();
   }
   send(msg) {
+    if (this.auth) {
+      if (msg[0] === "REQ" || msg[0] === "COUNT") this.sent.set(msg[1], msg);
+      else if (msg[0] === "EVENT") this.sent.set(msg[1]?.id, msg);
+      else if (msg[0] === "CLOSE") this.sent.delete(msg[1]);
+    }
     const m = JSON.stringify(msg);
     if (this.open) this.ws.send(m);
     else this.queue.push(m);
@@ -117,12 +133,41 @@ class Relay {
     let m;
     try { m = JSON.parse(data); } catch { return; }
     if (!Array.isArray(m)) return;
+    if (m[0] === "AUTH") { if (this.auth) this.act(this.auth.onChallenge(m[1])); return; }
+    if (m[0] === "OK" && this.auth) {
+      const r = this.auth.onOk(m[1], m[2] === true);
+      if (r.ours) return this.act(r.actions);
+      if (m[2] !== true && AUTH_REQUIRED.test(m[3] || "") && this.oks.has(m[1])) return this.act(this.auth.onAuthRequired(m[1]), m[3]);
+      this.sent.delete(m[1]);
+    }
+    if (m[0] === "CLOSED" && this.auth && AUTH_REQUIRED.test(m[2] || "") && this.subs.has(m[1])) return this.act(this.auth.onAuthRequired(m[1]), m[2]);
     if (m[0] === "OK") { const ok = this.oks.get(m[1]); this.oks.delete(m[1]); ok?.(m[2] === true, m[3] || ""); return; }
     const sub = this.subs.get(m[1]);
     if (!sub) return;
     if (m[0] === "EVENT") sub.event(m[2], this.url);
     else if (m[0] === "COUNT") { this.subs.delete(m[1]); sub.count?.(m[2]?.count, this.url); sub.done(this.url); }
-    else if (m[0] === "CLOSED" || (m[0] === "EOSE" && !sub.live)) { this.subs.delete(m[1]); sub.done(this.url, m[0] === "EOSE"); }
+    else if (m[0] === "CLOSED" || (m[0] === "EOSE" && !sub.live)) { this.subs.delete(m[1]); this.sent.delete(m[1]); sub.done(this.url, m[0] === "EOSE"); }
+  }
+  /** What the login says to do: log in, send a request once more, or let it stay refused. */
+  act(actions, why = "auth-required:") {
+    for (const a of actions || []) {
+      if (a.send) this.login(a.send);
+      else if (a.resend) { const msg = this.sent.get(a.resend); if (msg && (this.subs.has(a.resend) || this.oks.has(a.resend))) this.send(msg); }
+      else if (a.giveUp) {
+        const k = a.giveUp, sub = this.subs.get(k), ok = this.oks.get(k);
+        this.sent.delete(k);
+        if (sub) { this.subs.delete(k); sub.done(this.url, false); }
+        if (ok) { this.oks.delete(k); ok(false, why); }
+      }
+    }
+  }
+  async login(challenge) {
+    let e = null;
+    try { e = await authHook?.sign(this.url, challenge); } catch (err) { console.log("relay login not signed", this.url, err); }
+    if (this.dead) return;
+    if (!e?.id) return this.act(this.auth.authSent(null));
+    this.act(this.auth.authSent(e.id));
+    this.send(["AUTH", e]);
   }
 }
 

@@ -12,6 +12,7 @@ import { current as currentMe, onMe, signOut, myFollows, phoneSecret } from "./m
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
 import { openAccountPage } from "./signin/account-page.js";
 import * as notes from "./later.js";
+import * as archive from "./archive.js";
 import * as vault from "./notes-vault.js";
 import { showReader, keepUrlOf, plainText } from "./reader.js";
 import { follow, following } from "./follow.js";
@@ -956,7 +957,7 @@ async function showSearch(q, signal) {
   const words = bareName ? plain.slice(1) : plain;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(words) ? words : null;
   const root = pageEl;
-  const got = { apps: [], people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const got = { archive: [], apps: [], people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
   const opened = new Set(); // lists "See all" has opened, kept across redraws
   const wideQuery = matchMedia("(min-width: 1000px)");
   // #top: what the box adds above the results (a site to go to, what a handle confirms, your own searches and notes)
@@ -1023,7 +1024,10 @@ async function showSearch(q, signal) {
   }
 
   function drawMain() {
-    const theirs = new Set((got.byPosts || []).map((x) => x.e.id)), notTheirs = (l) => (l || []).filter((x) => !theirs.has(x.e.id));
+    // from your archive: first, and not again below
+    const mine0 = got.archive.filter((x) => x.e.kind !== 0), inArchive = new Set(mine0.map((x) => x.e.id));
+    const theirs = new Set([...(got.byPosts || []).map((x) => x.e.id), ...inArchive]), notTheirs = (l) => (l || []).filter((x) => !theirs.has(x.e.id));
+    const archiveBlock = (draw) => section("archive", "From your archive", mine0, draw);
     // likely spam (strangers' only): out of the ranking, at the end behind a quiet line
     const seen = new Set(), spammy = [...notTheirs(got.posts), ...notTheirs(got.tagged)].filter((x) => spamOf(x.e) && !seen.has(x.e.id) && seen.add(x.e.id));
     const clean = (l) => l.filter((x) => !seen.has(x.e.id));
@@ -1034,14 +1038,14 @@ async function showSearch(q, signal) {
     const strong = got.by && !got.by.loose, loose = got.by?.loose;
     if (!wideQuery.matches) {
       const shown = new Set(posts.slice(0, 3).map((x) => x.e.id));
-      main.innerHTML = (strong ? fromBlock(postItem) : "") + waiting()
+      main.innerHTML = archiveBlock(postItem) + (strong ? fromBlock(postItem) : "") + waiting()
         + section("posts", tagOnly ? esc(q) : "Posts", posts, postItem)
         + (loose ? fromBlock(postItem) : "")
         + section("tag", `#${esc(oneWord || "")}`, tagged.filter((x) => !shown.has(x.e.id)), postItem)
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
         + spamLine(postItem)
-        + (got.posts !== null && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+        + (got.posts !== null && !mine0.length && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
       fillLater(main);
       return;
     }
@@ -1065,12 +1069,12 @@ async function showSearch(q, signal) {
     const count = got.posts === null || !list.length ? "" : `<p class="count">${found} for “${esc(q)}”. Showing the best ${list.length}.</p>`;
     const mine = yours.length ? `<div class="yours-box"><h3>From your things</h3>${yours.slice(0, 3).map(yourLine).join("")}</div>` : "";
     const from = got.by ? fromBlock(postResult) : "";
-    main.innerHTML = (strong ? from : "") + count + waiting()
+    main.innerHTML = archiveBlock(postResult) + (strong ? from : "") + count + waiting()
       + list.map((r, i) => (i === 3 ? (loose ? from : "") + mine : "") + (r.type === "post" ? postResult(r.x) : storyResult(r.i))).join("")
       + (list.length <= 3 ? (loose ? from : "") + mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
       + spamLine(postResult)
-      + (got.posts !== null && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+      + (got.posts !== null && !mine0.length && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
     fillLater(main);
   }
   redraw();
@@ -1127,6 +1131,13 @@ async function showSearch(q, signal) {
     if (list.length) mark("stories");
   });
   if (me) yours(words, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
+  // your archive (only when you have one): profiles found there join People, the rest goes first
+  if (me && archive.urls().length) archive.searchArchive(tagOnly ? `#${tagOnly}` : words, { signal }).then((list) => {
+    if (signal.aborted || !list.length) return;
+    for (const e of list) keep(e);
+    got.archive = list.map((e) => ({ e, why: "", score: 1 }));
+    soon(drawMain);
+  });
 }
 
 const agoLong = (ts) => {
@@ -1842,6 +1853,7 @@ function drawAccount() {
         <a href="${personPath(me)}" class="who-row-me" role="menuitem">${avatar(me, 32)}<span><b data-name="${me}">${esc(name(me))}</b><small>Your profile</small></span></a>
         <button type="button" data-account-page role="menuitem">Your account page</button>
         <a href="/notes" role="menuitem">Notes and searches</a>
+        <button type="button" data-archive role="menuitem">Your archive</button>
         <a href="/about" role="menuitem">About Marble</a>
         <p class="sheet-note" role="note" hidden></p>
         <p class="sheet-note" data-browser-key role="note" hidden></p>
@@ -1866,10 +1878,39 @@ account.addEventListener("click", async (ev) => {
   } else if (ev.target.closest("[data-sign-out]")) signOut();
   // where your account is managed: its own page, which your account names (account-page.js); Marble only points there
   else if (ev.target.closest("[data-account-page]")) { menu.hidden = true; openAccountPage(currentMe()); }
+  else if (ev.target.closest("[data-archive]")) { menu.hidden = true; openArchive(); }
 
   else if (ev.target.closest("a") && menu) menu.hidden = true;
 });
 document.addEventListener("click", (ev) => { if (!account.contains(ev.target)) { const m = $(".menu", account); if (m) m.hidden = true; } });
+
+// Your archive: places only you can search (archive.js). Plain words only on screen.
+const archiveDialog = $("#archive");
+function openArchive(said = "") {
+  const box = $(".si", archiveDialog), list = archive.shown();
+  box.innerHTML = `<h2 id="archive-title">Your archive</h2>
+    <p>Search also looks through your own archive. Only you can see what's in it.</p>
+    <form data-archive-add><label for="archive-at">Add an archive</label>
+      <input id="archive-at" class="acct-who" type="text" placeholder="archive.example.com" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <p class="si-small" role="status" data-archive-said>${esc(said)}</p>
+      <div class="si-actions"><button type="submit" class="si-button">Add</button><button type="button" class="link" data-archive-close>Done</button></div></form>
+    ${list.length ? `<ul class="archive-list">${list.map((r) => `<li><span>${esc(archive.label(r.url))}</span><button type="button" class="link" data-archive-remove="${esc(r.url)}">Remove</button></li>`).join("")}</ul>` : ""}`;
+  if (!archiveDialog.open) archiveDialog.showModal();
+  $("#archive-at", box)?.focus();
+}
+archiveDialog.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const typed = $("#archive-at", archiveDialog).value;
+  if (archive.add(typed)) openArchive();
+  else { $("[data-archive-said]", archiveDialog).textContent = "That doesn't look like an address. Try something like archive.example.com."; $("#archive-at", archiveDialog).focus(); }
+});
+archiveDialog.addEventListener("click", (ev) => {
+  if (ev.target === archiveDialog || ev.target.closest("[data-archive-close]")) return archiveDialog.close();
+  const rm = ev.target.closest("[data-archive-remove]");
+  if (rm) { archive.remove(rm.dataset.archiveRemove); openArchive(); }
+});
+onMe(() => { if (archiveDialog.open) archiveDialog.close(); });
+
 account.addEventListener("keydown", (ev) => {
   const menu = $(".menu", account);
   if (!menu || menu.hidden) return;

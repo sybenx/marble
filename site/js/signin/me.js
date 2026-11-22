@@ -178,6 +178,15 @@ export async function nip44DecryptFrom(pubkey, ct) {
   throw new Error("unsupported");
 }
 
+/** NIP-44 encrypt as you, to `pubkey` (yourself, for what only you read): through your phone's signer (NIP-46 nip44_encrypt). */
+export async function nip44EncryptTo(pubkey, text) {
+  if (hold) await hold.promise;
+  try {
+    if (state?.method === "phone") return await (await phoneRemote()).request("nip44_encrypt", [pubkey, text], 60000);
+  } catch (err) { throw checked(err); }
+  throw new Error("unsupported");
+}
+
 /** Where your posts go: your own write relays (NIP-65), or the fast ones if you have none listed. */
 export async function myWriteRelays() {
   const o = await Promise.race([hooks.outbox(state.pubkey), new Promise((r) => setTimeout(() => r({ write: [] }), 2000))]);
