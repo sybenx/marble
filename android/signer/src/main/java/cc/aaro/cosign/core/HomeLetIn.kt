@@ -113,7 +113,12 @@ object HomeLetIn {
                         net.call(home, "addmykey", listOf(c, net.proof(home, account.lowercase(), c)), null)
                         memory.markSeen(home, c); continue
                     } catch (e: Refused) {
-                        if ((e.message ?: "").startsWith("addmykey:")) { said += "Your other account can't be let into this home: ${e.message!!.substringAfter(": ")}"; continue }
+                        val why = e.message ?: ""
+                        if (why.startsWith("addmykey:")) {
+                            // In already, or taken out on purpose: settled, never asked again (bothy v0.30 contract).
+                            if ("already a member" in why || "was removed" in why) { memory.markSeen(home, c); continue }
+                            said += "Your other account can't be let into this home: ${why.substringAfter(": ")}"; continue
+                        }
                         ownKeys[home] = false
                     }
                     val code = try {

@@ -103,10 +103,22 @@ class HomeLetInTest {
     }
 
     @Test fun addmykeysOwnNoIsTheAnswerNotAnInvite() {
-        val net = FakeHome(owner, mapOf(null to "member"), mutableSetOf(), ownKeys = "addmykey: that key was removed from this home on purpose")
-        val said = HomeLetIn.run(me, listOf(kidA), listOf(home), net, Kept())
+        val net = FakeHome(owner, mapOf(null to "member"), mutableSetOf(), ownKeys = "addmykey: at most 10 own keys each")
+        val kept = Kept()
+        val said = HomeLetIn.run(me, listOf(kidA), listOf(home), net, kept)
         assertTrue(net.calls.none { it.startsWith("createinvite") })
-        assertEquals(listOf("Your other account can't be let into this home: that key was removed from this home on purpose"), said)
+        assertEquals(listOf("Your other account can't be let into this home: at most 10 own keys each"), said)
+        assertTrue(kept.seen(home).isEmpty())   // tried again tomorrow
+    }
+
+    @Test fun aChildRemovedOnPurposeIsNotAskedAgain() {
+        val net = FakeHome(owner, mapOf(null to "member"), mutableSetOf(),
+            ownKeys = "addmykey: that account was removed from this home. Ask the owner or an admin to let it back in.")
+        val kept = Kept()
+        val said = HomeLetIn.run(me, listOf(kidA), listOf(home), net, kept)
+        assertTrue(said.isEmpty())
+        assertTrue(net.calls.none { it.startsWith("createinvite") })
+        assertEquals(setOf(kidA), kept.seen(home))
     }
 
     @Test fun aMemberWithNoInvitesLeftIsToldInOneLine() {
