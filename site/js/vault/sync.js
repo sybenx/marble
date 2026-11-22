@@ -1,4 +1,4 @@
-// Vaults (vaults.md 7.14): one owner device's session with one vault. Reads (§7.2, §7.3), catches up (§8.3), walks
+// Kist (kist.md 7.14): one owner device's session with one vault. Reads (§7.2, §7.3), catches up (§8.3), walks
 // epochs (§3.1), loads checkpoints (§9.2), and writes (§7.1): commits numbered and signed only when published, a
 // `rekey` under the old epoch before the first write under a new one (§4.1, §8.3), segments on Blossom (§4.1).
 // The network and the signer are passed in, so this runs the same in a page and in a node test.

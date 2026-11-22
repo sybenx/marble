@@ -1,4 +1,4 @@
-// The notes profile (vaults.md §11.1) as Marble writes it (the contract with Marble Android, 2026-11-17):
+// The notes profile (kist.md §11.1) as Marble writes it (the contract with Marble Android, 2026-11-17):
 //   meta {"kind": "note", "created", "title": "", "tags": [], "done": bool, "pinned": false, "id": <Marble's note id>,
 //         "updated", "done_at"? (only when done), "url"? , "quote"?, "app"? (Later's `from`),
 //         "pictures"? [{"ref": nv1 ref, "mime", "w", "h"}] (a screenshot or other picture kept in the note, each its own

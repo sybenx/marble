@@ -1,10 +1,10 @@
-// site/js/vault/ is the Vaults engine from ~/vaults (js/vault/), copied as it is (its tools/vault-copy.mjs; its
+// site/js/vault/ is the Kist engine from ~/kist (js/vault/), copied as it is (its tools/vault-copy.mjs; its
 // SOURCE names the commit). This checks the copy was not edited here, that site/js/vendor/sign.js gives every name the
 // engine imports from it, and that SOURCE is not served.
 //   node tools/vault-copy.test.mjs
-// The vaults checkout: VAULTS_DIR, else the worktree of ~/vaults at the commit SOURCE names,
-// else one whose history has it, else ~/vaults. Without one holding the tool, the first check is skipped and
-// says so.
+// The Kist checkout: KIST_DIR, else VAULTS_DIR (its earlier name), else the worktree of ~/kist (or ~/vaults, the
+// repo's earlier home) at the commit SOURCE names, else one whose history has it, else ~/kist or ~/vaults itself.
+// Without one holding the tool, the first check is skipped and says so.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
@@ -17,11 +17,12 @@ const COPY = path.join(root, "site/js/vault");
 const tool = (dir) => path.join(dir, "tools/vault-copy.mjs");
 
 function checkout() {
-  const given = process.env.VAULTS_DIR;
+  const given = process.env.KIST_DIR || process.env.VAULTS_DIR;
   if (given) return existsSync(tool(given)) ? given : null;
-  const home = path.join(os.homedir(), "vaults");
-  if (!existsSync(home)) return null;
-  const commit = readFileSync(path.join(COPY, "SOURCE"), "utf8").split("\n")[0].replace(/^(vaults|nostr-sync-nip) /, "").split(" ")[0];
+  const home = ["kist", "vaults"].map((d) => path.join(os.homedir(), d)).find((d) => existsSync(d));
+  if (!home) return null;
+  // SOURCE's first line is "kist <commit>"; copies made under the repo's earlier names say vaults or nostr-sync-nip
+  const commit = readFileSync(path.join(COPY, "SOURCE"), "utf8").split("\n")[0].replace(/^(kist|vaults|nostr-sync-nip) /, "").split(" ")[0];
   const list = spawnSync("git", ["-C", home, "worktree", "list", "--porcelain"], { encoding: "utf8" });
   const trees = (list.stdout ?? "").split("\n\n").map((b) => ({ dir: /^worktree (.+)$/m.exec(b)?.[1], head: /^HEAD ([0-9a-f]{40})$/m.exec(b)?.[1] }))
     .filter((t) => t.dir && t.head && existsSync(tool(t.dir)));
@@ -33,11 +34,11 @@ function checkout() {
 
 // the copy is the engine as it is
 const dir = checkout();
-if (!dir) console.log("vault copy: SKIPPED the --check (no vaults checkout with tools/vault-copy.mjs)");
+if (!dir) console.log("vault copy: SKIPPED the --check (no Kist checkout with tools/vault-copy.mjs)");
 else {
   const r = spawnSync(process.execPath, [tool(dir), "--check", COPY], { encoding: "utf8" });
   if (r.status !== 0) console.error(r.stdout + r.stderr);
-  ok(r.status === 0, `site/js/vault is the vaults repo's copy, unedited and the same as ${dir}`);
+  ok(r.status === 0, `site/js/vault is the Kist repo's copy, unedited and the same as ${dir}`);
 }
 
 // what the host provides: ../vendor/sign.js beside the copy, with every name crypto.js takes from it

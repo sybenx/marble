@@ -1,4 +1,4 @@
-// Vaults (vaults.md 7.14): what a device holds of one vault, and the state it shows: "a pure function of the authority
+// Kist (kist.md 7.14): what a device holds of one vault, and the state it shows: "a pure function of the authority
 // events, the live owner dvks' commits and the counting checkpoints" (§5.3). No network here: sync.js feeds it.
 import { readCert, readAuth, readerSet, currentConfig, putOK, readCommit, refOK } from "./core.js";
 import { isHex } from "./crypto.js";

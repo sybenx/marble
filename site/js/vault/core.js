@@ -1,5 +1,5 @@
-// Vaults (~/vaults/vaults.md, draft 7.14): the formats. Pure functions over bytes and JSON, no network.
-// Section numbers are the spec's. The shared vectors (vectors/vaults.json) run against this file: test/vaults.test.mjs.
+// Kist (~/kist/kist.md, draft 7.14): the formats. Pure functions over bytes and JSON, no network.
+// Section numbers are the spec's. The shared vectors (vectors/vaults.json) run against this file: test/vectors.test.mjs.
 import {
   hex, unhex, isHex, cat, u32, utf8, canon, parse, sha256, hkdf, TH, thHex, scalarOK, scalarFrom, pubHex, sign, verify,
   signEvent, eventOK, nip44Conv, nip44Encrypt, nip44Decrypt, randomKey, random, gcmSeal, gcmOpen, unb64,
