@@ -1,4 +1,4 @@
-// The shared vaults vectors (~/vaults/vectors/vaults.json) run against Marble Web's core (site/js/vault/).
+// The shared Kist vectors (~/kist/vectors/vaults.json) run against Marble Web's core (site/js/vault/).
 // Every check of the spec's own verify.mjs, done with this code, plus byte-for-byte remakes of what the vectors made
 // (signatures with BIP-340 aux zero, the keyring seal, nv1 blobs, the shard, accepted puts).
 //   node tools/vaults-vectors.test.mjs [path to vaults.json]
@@ -8,7 +8,7 @@ import path from "node:path";
 import * as C from "../site/js/vault/crypto.js";
 import * as V from "../site/js/vault/core.js";
 
-const file = process.argv[2] || [path.join(os.homedir(), "vaults/vectors/vaults.json"), new URL("./vaults-vectors.json", import.meta.url).pathname].find((f) => fs.existsSync(f));
+const file = process.argv[2] || [path.join(os.homedir(), "kist/vectors/vaults.json"), path.join(os.homedir(), "vaults/vectors/vaults.json"), new URL("./vaults-vectors.json", import.meta.url).pathname].find((f) => fs.existsSync(f));
 const v = JSON.parse(fs.readFileSync(file, "utf8"));
 const { hex, unhex, TH, thHex, sha256, utf8 } = C;
 let n = 0;

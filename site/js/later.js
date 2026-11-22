@@ -1,5 +1,5 @@
 // Notes and tabs, as the Marble app keeps them. Notes: what you typed and pressed Enter on, or kept. Once your account
-// has a notes vault (your phone makes it: vaults.md, notes-vault.js), they're read from and written to it, from any
+// has a notes vault (your phone makes it: kist.md, notes-vault.js), they're read from and written to it, from any
 // sign-in that can (your phone's signer). Before that, as before vaults: on your account as kind 30078
 // d=marble/later, NIP-44 to yourself, merged item by item (the newer `updated` wins; removed ones stay a month as
 // markers so other devices learn it), which only the old browser extension could sync; now kept in this browser.

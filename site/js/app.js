@@ -1619,7 +1619,7 @@ function showNotes(signal, tab) {
     const u = vault.pictureUrl(p), r = p.w && p.h ? ` style="aspect-ratio: ${p.w} / ${p.h}"` : "";
     return u ? `<img class="note-pic" src="${esc(u)}" alt="${esc(notes.wordsOf(alt))}"${r}>` : `<span class="note-pic loading"${r} aria-label="Picture loading"></span>`;
   };
-  // A conflict (vaults §5.4, §11.1): both texts side by side; keep one, keep both, or write the one you want
+  // A conflict (Kist §5.4, §11.1): both texts side by side; keep one, keep both, or write the one you want
   let openConflict = null, editing = null;
   const conflictPanel = (i) => `<div class="conflict" data-conflict="${esc(i.id)}">
       <p class="conflict-why">Changed on two devices at once. Pick the one to keep.</p>
