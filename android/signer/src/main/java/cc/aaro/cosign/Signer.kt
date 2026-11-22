@@ -5,6 +5,8 @@ import android.net.Uri
 import cc.aaro.cosign.core.Asking
 import cc.aaro.cosign.core.BoxAsk
 import cc.aaro.cosign.core.Clock
+import cc.aaro.cosign.core.HomeLetIn
+import okhttp3.MediaType.Companion.toMediaType
 import cc.aaro.cosign.core.NoteTries
 import cc.aaro.cosign.core.NoteWaiter
 import cc.aaro.cosign.core.Policy
@@ -203,7 +205,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         work.execute { try { sites.start() } catch (_: Exception) { } }
         if (pinger == null) pinger = timer.scheduleWithFixedDelay({ refresh() }, 0, 30, TimeUnit.SECONDS)
         if (held != null) waiter.start()
-        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists() } }, 1, 30, TimeUnit.MINUTES)
+        if (lookout == null) lookout = timer.scheduleWithFixedDelay({ work.execute { checkLists(); homesDue() } }, 1, 30, TimeUnit.MINUTES)
         if (screenOff == null) {
             val r = object : android.content.BroadcastReceiver() { override fun onReceive(c: Context?, i: android.content.Intent?) { sharedXs.forgetAll() } }
             context.registerReceiver(r, android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
@@ -1703,6 +1705,7 @@ class Signer(private val context: Context, val slot: String = "0") {
             all.optJSONObject(place)?.let { o -> return Child(place, o.getString("t"), o.getString("npub")) }
             val c = makeChild(place)
             secrets.save("children", all.put(place, JSONObject().put("t", c.t).put("npub", c.npub)).toString())
+            homesSoon()   // a new child goes into the account's home (HomeLetIn)
             return c
         }
     }
@@ -1996,6 +1999,80 @@ class Signer(private val context: Context, val slot: String = "0") {
     }
     /** Debug builds and the app opening: check now (at most once a minute). */
     fun checkListsSoon() = work.execute { checkLists() }
+
+    // --- Children in the account's home (core/HomeLetIn) ----------------------------------------------
+
+    private val homing = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** A new child: into the home now. */
+    private fun homesSoon() { prefs.edit().putBoolean("homes-retry", true).apply(); work.execute { homesDue() } }
+    /** Once a day, or again after a try that reached nothing (every 30 minutes, with the list check). */
+    fun homesDue() {
+        val last = prefs.getLong("homes-at", 0)
+        if (!prefs.getBoolean("homes-retry", false) && System.currentTimeMillis() - last < 24 * 3600_000L) return
+        letChildrenIn()
+    }
+    /** Let every child this phone knows into each home the account owns, administers or is in. Never on the main thread. */
+    private fun letChildrenIn() {
+        val pub = accountHex() ?: return
+        if (!homing.compareAndSet(false, true)) return
+        try {
+            val kids = children().let { all -> all.keys().asSequence().mapNotNull { all.optJSONObject(it)?.optString("npub")?.ifEmpty { null }?.let { k -> k to it } }.toMap() }
+            if (kids.isEmpty()) { prefs.edit().putLong("homes-at", System.currentTimeMillis()).putBoolean("homes-retry", false).apply(); return }
+            // The account's inbox list as this phone keeps it first (profiles and inbox lists may go private),
+            // the published one only when none is kept; each child's as published (no child's lists are kept here).
+            val relays = (writeRelays().map { it.trimEnd('/') } + if (testingRelays()) emptyList() else INDEX_RELAYS).distinct()
+            val mine = lists.latest("10050") ?: query(relays, Json.stringify(mapOf("kinds" to listOf(10050), "authors" to listOf(pub), "limit" to 5)))
+                .filter { it.pubkey == pub && it.kind == 10050 && it.verify() }.maxByOrNull { it.createdAt }
+            val theirs = query(relays, Json.stringify(mapOf("kinds" to listOf(10050), "authors" to kids.keys.toList(), "limit" to 50)))
+                .filter { it.pubkey in kids && it.kind == 10050 && it.verify() }.groupBy { it.pubkey }.values.map { l -> l.maxBy { it.createdAt } }
+            val homes = (HomeLetIn.inboxHomes(mine) + theirs.flatMap { HomeLetIn.inboxHomes(it) }).distinct()
+            val said = HomeLetIn.run(pub, kids.keys, homes, homeNet(pub, kids), homeMemory)
+            said.forEach { note(it) }
+            prefs.edit().putLong("homes-at", System.currentTimeMillis()).putBoolean("homes-retry", false).apply()
+            if (debuggable) android.util.Log.i("MarbleHome", "children in homes: ${kids.size} children, ${homes.size} inbox relays")
+        } catch (e: Exception) {
+            if (debuggable) android.util.Log.i("MarbleHome", "children in homes: try again later (${e.javaClass.simpleName})")
+        } finally { homing.set(false) }
+    }
+    /** Which children this phone has seen in each home, sealed with the rest. A child seen once is never let in again by this phone. */
+    private val homeMemory = object : HomeLetIn.Memory {
+        private fun all() = secrets.load("homes")?.let { try { JSONObject(it) } catch (_: Exception) { null } } ?: JSONObject()
+        override fun seen(home: String): Set<String> = all().optJSONArray(home)?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()
+        override fun markSeen(home: String, child: String) = synchronized(this) {
+            val o = all(); val a = o.optJSONArray(home) ?: org.json.JSONArray().also { o.put(home, it) }
+            if ((0 until a.length()).none { a.getString(it) == child }) { a.put(child); secrets.save("homes", o.toString()) }
+        }
+    }
+    /** NIP-11 and NIP-86 to a home, each call a kind 27235 signed as the account (or as one of [kids]) without asking. */
+    private fun homeNet(pub: String, kids: Map<String, String>) = object : HomeLetIn.Net {
+        override fun proof(home: String, member: String, child: String): Map<String, Any?> {
+            val c = childFor(kids[child] ?: error("not a child here"))
+            val ev = signChecked(Event(c.npub, Clock.now(), 21236, listOf(listOf("p", member), listOf("relay", home)), "").withId(), appName, approved = false, mayAsk = false, asChild = c)
+            @Suppress("UNCHECKED_CAST") return Json.parse(ev.toJson()) as Map<String, Any?>
+        }
+        val http = okhttp3.OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+        // Offline throws (so the day's try is made again later); a relay that answers with something else is no home.
+        override fun info(home: String): Map<*, *>? =
+            http.newCall(okhttp3.Request.Builder().url(home).header("Accept", "application/nostr+json").build()).execute().use { r ->
+                if (r.isSuccessful) try { Json.parse(r.body?.string() ?: "") as? Map<*, *> } catch (_: Exception) { null } else null
+            }
+        override fun call(home: String, method: String, params: List<Any?>, asChild: String?): Any? {
+            val body = Json.stringify(mapOf("method" to method, "params" to params))
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
+            val tags = listOf(listOf("u", home), listOf("method", "POST"), listOf("payload", hash))
+            val auth = if (asChild == null) signChecked(Event(pub, Clock.now(), 27235, tags, "").withId(), appName, approved = false, mayAsk = false)
+                else { val c = childFor(kids[asChild] ?: error("not a child here")); signChecked(Event(c.npub, Clock.now(), 27235, tags, "").withId(), appName, approved = false, mayAsk = false, asChild = c) }
+            val req = okhttp3.Request.Builder().url(home)
+                .header("Authorization", "Nostr " + java.util.Base64.getEncoder().encodeToString(auth.toJson().toByteArray()))
+                .post(okhttp3.RequestBody.create("application/nostr+json+rpc".toMediaType(), body)).build()
+            return http.newCall(req).execute().use { r ->
+                val o = try { Json.parse(r.body?.string() ?: "") as? Map<*, *> } catch (_: Exception) { null }
+                (o?.get("error") as? String)?.let { throw HomeLetIn.Refused(it) }
+                if (!r.isSuccessful || o == null || !o.containsKey("result")) throw IllegalStateException("${r.code}")
+                o["result"]
+            }
+        }
+    }
 
     /** One REQ to each of [relays], until each says it has sent all (or a few seconds pass): every event that came. */
     /** [query], relay by relay: what each relay that answered (sent EOSE) had. A relay missing from the map didn't answer. */
