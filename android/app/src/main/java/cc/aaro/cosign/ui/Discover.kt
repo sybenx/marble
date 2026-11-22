@@ -198,6 +198,8 @@ private sealed class Route {
     data object SpecialList : Route()
     /** Account › News sources: your own feeds, and Marble's (each can be removed). */
     data object News : Route()
+    /** Account › Your archive: your own archive's address, searched for you alone. */
+    data object Archive : Route()
     /** Following › Relays: your favourite relays and sets, relays your people use, and any relay by its address. */
     data object RelayList : Route()
     /** A relay, read like a channel. */
@@ -212,7 +214,7 @@ private sealed class Route {
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
         Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; Archive -> "archive"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
         is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
@@ -229,6 +231,7 @@ private sealed class Route {
             s == "marbles" -> Shelf
             s == "special" -> SpecialList
             s == "news" -> News
+            s == "archive" -> Archive
             s == "relays" -> RelayList
             s == "approvals" -> Approvals
             s == "readersources" -> ReaderSources
@@ -359,7 +362,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
             Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back,
-                onSpecial = { nav.open(Route.SpecialList) }, onNews = { nav.open(Route.News) })
+                onSpecial = { nav.open(Route.SpecialList) }, onNews = { nav.open(Route.News) }, onArchive = { nav.open(Route.Archive) })
             Route.Bell -> BellScreen(phone, ui, social, nav)
             Route.Search -> SearchScreen(social, nav)
             Route.Stories -> StoriesScreen(social, nav)
@@ -374,6 +377,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Searches -> SearchesScreen(social, nav)
             Route.SpecialList -> SpecialListScreen(social, nav)
             Route.News -> NewsSourcesScreen(social, nav)
+            Route.Archive -> ArchiveScreen(social, nav)
             Route.RelayList -> RelayListScreen(social, nav)
             Route.Approvals -> ApprovalsScreen(phone, ui, social, nav)
             Route.ReaderSources -> ReaderSourcesScreen(social, nav)
@@ -4399,6 +4403,65 @@ private fun NewsSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMa
             SourceRow(name, if (gone) "Removed" else topicsOf(marble[id]?.second ?: emptySet()), gone, if (gone) "Add back" else "Remove") {
                 cc.aaro.cosign.NewsSources.setOff(id, !gone)
             }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/**
+ * Account › Your archive: the address of your own archive (a Chronicle server, say), which search also looks through,
+ * for you alone. Synced with your account. No protocol words on screen.
+ */
+@Composable
+private fun ArchiveScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Your archive", nav)
+    val all by social.privateRelays.all.collectAsState()
+    val shown = all.filter { !it.gone }
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    fun add() {
+        val url = cc.aaro.cosign.PrivateRelays.parse(typed) ?: run { problem = "That doesn't look like an address. Try something like archive.example.com."; return }
+        if (shown.any { it.url == url }) { problem = "That one's already here."; return }
+        checking = true; problem = null
+        scope.launch {
+            val ok = cc.aaro.cosign.net.Fetch.reachable(url)
+            checking = false
+            if (ok) { social.privateRelays.add(url); typed = "" } else problem = "Couldn't reach that address. Check it and try again."
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Text("Search also looks through your own archive: every conversation you've taken part in. Only you can see what's in it.",
+                color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+        }
+        items(shown, key = { "pr" + it.url }) { r ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
+                    Icon(Glyphs.save, null, tint = Vault.Accent, modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Text(r.label, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                TextButton({ social.privateRelays.remove(r.url) }) { Text("Remove", color = Vault.AmberText) }
+            }
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(typed, { typed = it; problem = null }, Modifier.weight(1f), singleLine = true,
+                    placeholder = { Text(if (shown.isEmpty()) "Your archive's address" else "Add another address", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (typed.isNotBlank() && !checking) add() }))
+                Spacer(Modifier.width(8.dp))
+                Button({ add() }, enabled = typed.isNotBlank() && !checking, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    if (checking) CircularProgressIndicator(Modifier.size(16.dp), color = Vault.Ground, strokeWidth = 2.dp) else Text("Add")
+                }
+            }
+            problem?.let { Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+            Text("Results from it show first in search, under “From your archive”. Synced with your account, so your other devices have it too.",
+                color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
         }
         item { Spacer(Modifier.height(24.dp)) }
     }

@@ -488,7 +488,7 @@ internal fun ownGrant(s: Site) = s.parent == null && s.via == "App on this phone
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: () -> Unit, onBack: () -> Unit,
-                           onSpecial: () -> Unit = {}, onNews: () -> Unit = {}) {
+                           onSpecial: () -> Unit = {}, onNews: () -> Unit = {}, onArchive: () -> Unit = {}) {
     val m = ui.member!!
     var leaving by remember { mutableStateOf(false) }
     // Which page of the account: null is the short list; a row opens its page (AccountPages). Kept while Special Follow is open.
@@ -641,6 +641,13 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, onProfile: 
                 }
                 Row(Modifier.fillMaxWidth().clickable(onClick = onNews).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("News sources", color = Vault.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+                Row(Modifier.fillMaxWidth().clickable(onClick = onArchive).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Your archive", color = Vault.Text, style = MaterialTheme.typography.bodyMedium)
+                        Text("Search your own conversations too. Only you can see them.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
                     Text("›", color = Vault.Muted, style = MaterialTheme.typography.bodyMedium)
                 }
             }

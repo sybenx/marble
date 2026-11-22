@@ -155,6 +155,19 @@ object Fetch {
         return true
     }
 
+    /** Whether [url] answers at all (a socket opens within [timeoutMs]): checked before an address is kept. */
+    suspend fun reachable(url: String, timeoutMs: Long = 6000): Boolean = runInterruptible(Dispatchers.IO) {
+        val open = CountDownLatch(1); var ok = false
+        val ws = try {
+            http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) { ok = true; open.countDown() }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { open.countDown() }
+            })
+        } catch (_: Exception) { return@runInterruptible false }
+        try { open.await(timeoutMs, TimeUnit.MILLISECONDS) } finally { ws.close(1000, null); ws.cancel() }
+        ok
+    }
+
     /** Send [event] to [relays]; how many took it. */
     suspend fun publish(relays: Collection<String>, event: Event, timeoutMs: Long = 6000): Int = publishOk(relays, event, timeoutMs).size
 
