@@ -1,5 +1,7 @@
 # Marble (beta)
 
+A FROST (keykin) android signer with a search engine and note sync. Search also available at https://marble.syb.lol.
+
 A home screen for the open social web, for Android, with a browser extension: search
 people and posts, a Discover feed with pictures and videos, replies and mentions, likes
 and follows, and signing in to sites and to other apps on your phone. Your account,
