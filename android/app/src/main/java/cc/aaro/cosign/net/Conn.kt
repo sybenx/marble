@@ -61,7 +61,7 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
         synchronized(this) { if (subs.isEmpty()) { idle?.cancel(false); idle = timer.schedule({ closeIfIdle() }, idleMs, TimeUnit.MILLISECONDS) } }
     }
 
-    @Synchronized private fun closeIfIdle() { if (subs.isEmpty()) { ws?.close(1000, null); ws = null; open = false } }
+    @Synchronized private fun closeIfIdle() { if (subs.isEmpty()) { ws?.close(1000, null); ws = null; open = false; auth?.close() } }
 
     @Synchronized private fun send(text: String) {
         idle?.cancel(false)
@@ -102,7 +102,7 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
 
     /** Gone: whatever was waiting ends with what it has; the next query connects again. */
     private fun dropped(socket: WebSocket) {
-        synchronized(this) { if (ws !== socket) return; ws = null; open = false; queue.clear() }
+        synchronized(this) { if (ws !== socket) return; ws = null; open = false; queue.clear(); auth?.close() }
         subs.values.forEach { it.done.complete(null) }
     }
 

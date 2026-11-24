@@ -2208,7 +2208,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val privates = privateRelays.urls()
             if (privates.isNotEmpty()) relayJobs += launch {
                 val f = PrivateRelays.searchFilter(text, tag)
-                val got = try { Fetch.query(privates, f, 8000) } catch (e: Exception) { if (debuggable) android.util.Log.w("CosignSearch", "archive: ${e.javaClass.simpleName}"); emptyList() }
+                // Its login is signed first (with a box, a round trip to it), so it gets longer than the search relays.
+                val got = try { Fetch.query(privates, f, 12_000) } catch (e: Exception) { if (debuggable) android.util.Log.w("CosignSearch", "archive: ${e.javaClass.simpleName}"); emptyList() }
                 People.add(got.filter { it.kind == 0 })
                 val posts = got.filter { it.kind == 1 || it.kind == 30023 }
                 remember(posts); archive += posts

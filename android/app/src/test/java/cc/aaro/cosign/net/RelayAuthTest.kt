@@ -5,6 +5,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class RelayAuthTest {
     private val pk = "a".repeat(64)
@@ -84,5 +86,48 @@ class RelayAuthTest {
         val s = RelayAuth.Session("wss://x", allowed = true)
         s.onChallenge("c"); s.authSent("a")
         assertEquals(false to emptyList<Action>(), s.onOk("someEvent", true))
+    }
+    /** A socket that only records what was sent on it. */
+    private class Sock : okhttp3.WebSocket {
+        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
+        override fun request() = okhttp3.Request.Builder().url("http://x").build()
+        override fun queueSize() = 0L
+        override fun send(text: String): Boolean { sent += text; return true }
+        override fun send(bytes: okio.ByteString) = false
+        override fun close(code: Int, reason: String?) = true
+        override fun cancel() {}
+    }
+
+    /**
+     * Logins are signed one at a time, and with a box each is a round trip to it. Typing a search starts a query (and a
+     * login) per pause; the ones typed past must not be signed, or the last query's login waits behind them all and
+     * your archive times out with nothing (seen with a box ~1.6 s away: 0 posts at 8 s).
+     */
+    @Test fun aLoginForASocketThatEndedIsNotSigned() {
+        val signed = java.util.Collections.synchronizedList(ArrayList<String>())
+        val slowBox = CountDownLatch(1)
+        val was = Triple(RelayAuth.signer, RelayAuth.pubkey, RelayAuth.chosen)
+        try {
+            RelayAuth.pubkey = pk
+            RelayAuth.signer = { e ->
+                val relay = e.tags.first { it[0] == "relay" }[1]
+                if (relay == "wss://first") slowBox.await(5, TimeUnit.SECONDS)
+                signed += relay
+                e.copy(sig = "00")
+            }
+            val first = RelayAuth.Session("wss://first", allowed = true)
+            val typedPast = RelayAuth.Session("wss://typed-past", allowed = true)
+            val last = RelayAuth.Session("wss://last", allowed = true)
+            val lastSock = Sock()
+            RelayAuth.run(Sock(), first, first.onChallenge("c1"), {}, {})
+            RelayAuth.run(Sock(), typedPast, typedPast.onChallenge("c2"), {}, {})
+            RelayAuth.run(lastSock, last, last.onChallenge("c3"), {}, {})
+            typedPast.close()          // its query ended while the first login was still at the box
+            slowBox.countDown()
+            val deadline = System.currentTimeMillis() + 5000
+            while (lastSock.sent.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            assertEquals(listOf("wss://first", "wss://last"), signed.toList())
+            assertTrue(lastSock.sent.single().startsWith("[\"AUTH\","))
+        } finally { RelayAuth.signer = was.first; RelayAuth.pubkey = was.second; RelayAuth.chosen = was.third }
     }
 }

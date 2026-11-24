@@ -59,10 +59,11 @@ object Fetch {
         val stop = java.util.concurrent.atomic.AtomicBoolean(false)
         val sub = "c" + java.lang.Long.toString((Math.random() * 1e12).toLong(), 36)
         val req = Json.stringify(listOf("REQ", sub) + filters)
+        val logins = java.util.Collections.synchronizedList(ArrayList<RelayAuth.Session>())
         val sockets = relays.mapNotNull { url ->
             val once = java.util.concurrent.atomic.AtomicBoolean(false)
             val finish = { ws: WebSocket -> if (once.compareAndSet(false, true)) { done.countDown(); ws.close(1000, null) } }
-            val auth = RelayAuth.session(url)
+            val auth = RelayAuth.session(url).also { logins += it }
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(req) }
@@ -91,7 +92,7 @@ object Fetch {
                 val now = System.currentTimeMillis()
                 if (now >= end || (firstDone.get() != 0L && now - firstDone.get() >= graceMs)) break
             }
-        } finally { sockets.forEach { it.cancel() } }
+        } finally { sockets.forEach { it.cancel() }; synchronized(logins) { logins.forEach { it.close() } } }
         return synchronized(got) { got.values.toList() }
     }
 
@@ -134,8 +135,9 @@ object Fetch {
         val seen = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
         val sub = "l" + java.lang.Long.toString((Math.random() * 1e12).toLong(), 36)
         val req = Json.stringify(listOf("REQ", sub, filter))
+        val logins = java.util.Collections.synchronizedList(ArrayList<RelayAuth.Session>())
         val sockets = relays.distinct().mapNotNull { url ->
-            val auth = RelayAuth.session(url)
+            val auth = RelayAuth.session(url).also { logins += it }
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(req) }
@@ -150,7 +152,7 @@ object Fetch {
                 })
             } catch (_: Exception) { null }
         }
-        return AutoCloseable { sockets.forEach { it.close(1000, null) } }
+        return AutoCloseable { sockets.forEach { it.close(1000, null) }; synchronized(logins) { logins.forEach { it.close() } } }
     }
 
     /**
@@ -189,9 +191,10 @@ object Fetch {
         val ok = java.util.Collections.synchronizedSet(HashSet<String>())
         val done = CountDownLatch(urls.size)
         val frame = "[\"EVENT\"," + event.toJson() + "]"
+        val logins = java.util.Collections.synchronizedList(ArrayList<RelayAuth.Session>())
         val sockets = urls.mapNotNull { url ->
             val once = java.util.concurrent.atomic.AtomicBoolean(false)
-            val auth = RelayAuth.session(url)
+            val auth = RelayAuth.session(url).also { logins += it }
             val refused = { ws: WebSocket -> if (once.compareAndSet(false, true)) { done.countDown(); ws.close(1000, null) } }
             try {
                 http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
@@ -211,7 +214,7 @@ object Fetch {
                 })
             } catch (_: Exception) { done.countDown(); null }
         }
-        try { done.await(timeoutMs, TimeUnit.MILLISECONDS) } finally { sockets.forEach { it.cancel() } }
+        try { done.await(timeoutMs, TimeUnit.MILLISECONDS) } finally { sockets.forEach { it.cancel() }; synchronized(logins) { logins.forEach { it.close() } } }
         synchronized(ok) { ok.toSet() }
     }
 }

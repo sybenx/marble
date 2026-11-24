@@ -45,7 +45,11 @@ object RelayAuth {
             is Action.Resend -> resend(a.key)
             is Action.GiveUp -> giveUp(a.key)
             is Action.SendAuth -> signing.execute {
+                // Logins are signed one at a time, and with a box each takes a round trip to it. A socket that ended while
+                // this one waited (a search typed past, say) needs none: signing it anyway would hold up the next one.
+                if (session.closed) return@execute
                 val e = try { pubkey?.let { pk -> signer?.invoke(loginEvent(pk, session.relay, a.challenge, System.currentTimeMillis() / 1000)) } } catch (_: Exception) { null }
+                if (session.closed) return@execute
                 if (e == null) run(ws, session, session.authSent(null), resend, giveUp)
                 else { session.authSent(e.id).let { run(ws, session, it, resend, giveUp) }; ws.send("[\"AUTH\"," + e.toJson() + "]") }
             }
@@ -65,6 +69,10 @@ object RelayAuth {
      * refuses a request with `auth-required:`, or answers the login. Each request is retried at most once.
      */
     class Session(val relay: String, val allowed: Boolean) {
+        /** The socket is gone (its request ended, or was given up): a login still waiting to be signed is dropped. */
+        @Volatile var closed = false
+            private set
+        fun close() { closed = true }
         private var challenge: String? = null
         private var sentFor: String? = null
         private var authId: String? = null
