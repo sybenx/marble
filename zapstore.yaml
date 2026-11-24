@@ -2,37 +2,35 @@
 # repository's GitHub releases, signed with the app's release key.
 repository: https://github.com/sybenx/marble
 name: Marble
-summary: "Beta: search and discover what people are posting on Nostr, with an account no one place holds."
+summary: "Beta: a Nostr signer with search, a reader and notes that sync, its key on your phone or shared with your own Keykin box."
 description: |
-  Beta. Marble is a home screen for Nostr: search people, notes and hashtags, a Discover
-  feed with pictures and videos, likes and follows, and sign-in to sites and apps.
+  Beta. Marble is a home for Nostr: search people, posts, articles and apps, read the
+  sources you choose, keep notes that sync to all your devices, and sign in to sites and
+  apps.
 
-  Your account is kept safe by Cosign: your phone holds three shares of your key, each
-  of your servers one, and it takes four to sign. Your phone and any one server sign; the
-  servers alone can't, and nobody ever holds the whole key. The signing library is the
-  Zcash Foundation's audited FROST; Cosign's protocol around it hasn't had an outside
-  review yet.
+  Your key starts on your phone, sealed, and signs from there; no server is needed. A
+  Keykin box is optional: sign in to one and your phone and the box each hold a piece of
+  the key, any two pieces sign, and one alone does nothing. The phone keeps the whole key
+  as your backup until you choose to forget it. Signing uses the Zcash Foundation's FROST
+  crate; Keykin's spec around it is still a draft.
 
-  - Sign in to sites by scanning or pasting their code, or with nostrconnect. Apps on your
+  - Create an account, bring the secret key you have, or move it over from another
+    device by scanning one code.
+  - Sign in to sites by a scanned code, nostrconnect:// or a bunker:// link. Apps on your
     phone sign through Marble as an Android signer (NIP-55).
-  - Everyday things sign at once. Anything destructive (most of your follows gone, your
-    profile wiped, a pile of deletions) waits for your OK on the phone.
-  - Every change to your lists is kept, with Undo. Deletions are held for a few seconds,
-    with copies kept.
-  - Add your other devices, report one lost, and keep a paper backup that gets your key
-    back on a new phone after a wait your other devices can stop.
-  - Create an account with nobody ever holding its key, or bring the one you have. Take it
-    back out whenever you like.
+  - Each new site gets an account of its own by default, made from your main one. Sites
+    get only what you allow: private lists and DMs are switches.
+  - Anything hard to undo asks first. An app changing your relay lists asks every time;
+    wiping your profile or emptying your follows takes Yes and your fingerprint.
+  - Every change to your lists is kept in Recent changes, with Undo.
+  - Notes live in an encrypted vault on your own relays and Blossom servers, the same on
+    every device and on Marble Web.
+  - Take your key out whenever you like.
 
-  Public servers today: syb.lol, which I run and will keep running. More operators
-  wanted: running your own (public or private) is encouraged, not required.
-  Live list: https://cosign.aaro.cc/servers
-
-  - Running a server: https://github.com/sybenx/cosign/blob/main/docs/servers.md
-  - How servers work: https://github.com/sybenx/cosign/blob/main/docs/COSIGN.md#9-servers
-  - How Marble picks servers: https://github.com/sybenx/cosign/blob/main/docs/choosing-servers.md
+  Run your own box: https://github.com/sybenx/keykin-umbrel
+  How Keykin works: https://github.com/sybenx/keykin
 license: MIT
-website: https://cosign.aaro.cc
+website: https://marble.syb.lol
 tags:
   - nostr
   - signer

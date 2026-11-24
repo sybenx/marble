@@ -9,13 +9,13 @@ repo, and the rules are its `SPEC.md`.
 
 ## How it is built
 
-- **`android/signer/`** replaces the Cosign library from the `cosign` submodule. It began as a
+- **`android/signer/`** replaces the Cosign library, which came from a `cosign` submodule. It began as a
   copy of that library, so the seam to the app is the same: the signer process (`:signer`),
   `Accounts`, `Phone`, `Ui`, `SignerService`, NIP-55. The screens kept working with few changes.
 - **The engine under the seam is new:** `Signer.kt`, built on the Keykin repo's Kotlin core
   (copied into `signer/src/main/java/cc/aaro/keykin/core/`, with its native FROST library).
-- **The `cosign` submodule is still there for one thing:** the QRST library (sign-in by a
-  scanned code), which lives in its own submodule inside it.
+- **The `cosign` submodule is gone.** The QRST library (sign-in by a scanned code), the one
+  thing still taken from it, is now a submodule of its own at `qr-secret-transfer/`.
 - **Fingerprint:** a P-256 key in the Android Keystore for each account on the phone
   (`Chip.kt`). It signs only after a fingerprint, and the box checks the signature.
 
