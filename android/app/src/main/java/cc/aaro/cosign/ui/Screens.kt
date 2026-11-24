@@ -700,7 +700,8 @@ internal fun AccountScreen(phone: Phone, ui: Ui, onScan: () -> Unit, start: Stri
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (mem in m.group.members) Chip(if (mem.idx == m.idx) "This phone" else mem.name, ui.online[mem.idx] == true, Modifier.weight(1f))
                 }
-                if (ui.relaysUp == 0) Text("Can't reach your box. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                // (a key kept whole on this phone has no box to reach)
+                if (!tier1 && ui.relaysUp == 0) Text("Can't reach your box. Retrying…", color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
                 if (!tier1) Muted("Your box: ${m.box} · " + (if (ui.relaysUp == 0) "not reachable" else "reachable") + (if (m.group.relays.isEmpty()) "" else " · sites reach this phone through ${m.group.relays.size} server${if (m.group.relays.size == 1) "" else "s"}"))
             }
         }
