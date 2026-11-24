@@ -8,10 +8,10 @@
 #   ./release.sh        (bump versionCode and versionName in android/app/build.gradle.kts first)
 set -e
 cd "$(dirname "$0")"
-# The Cosign library is built from the submodule, at the commit this repository records,
-# and Cosign builds on QRST's Kotlin library, a submodule of its own (hence --recursive).
-# Always brought to that commit (a merge that moved it leaves the old one checked out).
-git submodule update --init --recursive
+# QRST's Kotlin library is built from the qr-secret-transfer submodule, at the commit this
+# repository records. Always brought to that commit (a merge that moved it leaves the old
+# one checked out).
+git submodule update --init
 export ANDROID_HOME=${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}
 VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts)
 [ -n "$VERSION" ] || { echo "no versionName"; exit 1; }

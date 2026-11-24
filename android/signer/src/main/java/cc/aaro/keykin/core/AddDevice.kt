@@ -15,7 +15,7 @@ import java.net.URLDecoder
 import java.util.Base64
 
 // A copy of qr-secret-transfer's kotlin/qrst/.../core/KeykinDevice.kt (branch add-device), kept here until the
-// QRST library Marble builds against (cosign/qr-secret-transfer) carries it. Keep the two the same.
+// QRST library Marble builds against (the qr-secret-transfer submodule) carries it. Keep the two the same.
 
 /**
  * QRST profile `keykin-device` (profiles/keykin-device.md): adding a device to a Keykin account with

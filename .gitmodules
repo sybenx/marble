@@ -1,3 +1,3 @@
-[submodule "cosign"]
-	path = cosign
-	url = https://github.com/sybenx/cosign.git
+[submodule "qr-secret-transfer"]
+	path = qr-secret-transfer
+	url = https://github.com/sybenx/qr-secret-transfer.git

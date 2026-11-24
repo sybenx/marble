@@ -22,7 +22,7 @@ android {
         targetSdk = 35
         versionCode = 83
         versionName = "0.16.20"
-        // Cosign's FROST library (libcosign_frost.so, in the Cosign library) is built for these
+        // Keykin's FROST library (libkeykin_frost.so, in the signer module) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
