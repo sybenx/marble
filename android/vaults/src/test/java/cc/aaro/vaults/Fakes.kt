@@ -66,12 +66,15 @@ class FakeAccount(val box: FakeBox, val me: String, val keykin: Boolean = true) 
     var blossom: List<String> = emptyList()
     override fun servers() = blossom
     var signs = 0; var ecdhs = 0
+    /** The next this many keyring opens fail as a busy or unreachable box does (the signer answers null). */
+    var failOpens = 0
     override fun sign(createdAt: Long, kind: Int, tags: List<List<String>>, content: String): Ev {
         if (keykin && !box.ok(me)) throw IllegalStateException("blocked")
         signs++; return Ev.sign(box.npubSecret, createdAt, kind, tags, content)
     }
     override fun openSelf(eph: String, ct: String): String? {
         if (keykin && !box.ok(me)) return null
+        if (failOpens > 0) { failOpens--; return null }
         ecdhs++; return Keys.decrypt(ct, Keys.conv(box.npubSecret, eph))
     }
     override fun keykin(): KeykinView? = if (!keykin) null else KeykinView(me, box.epoch, if (box.ok(me)) LinkedHashMap(box.members) else null, box.revokedGrants.toSet())

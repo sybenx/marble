@@ -1,13 +1,13 @@
 // Opens the test account's notes vault from node, as another owner device: prints its notes; with --edit "<id>" "<text>",
 // writes an edit of that note's displayed version (to make a conflict with an edit elsewhere).
-//   node tools/vault-read.mjs <nsec hex> [--edit <note id> <text>]      (local test servers only)
+//   node tools/vault-read.mjs <nsec hex> [--edit <note id> <text>]      (local test servers only; VAULTS_RELAY moves the relay)
 import * as C from "../site/js/vault/crypto.js";
 import * as N from "../site/js/vault/notes.js";
 import { Session, readKeyrings, notesVault } from "../site/js/vault/sync.js";
 import { localSigner, memoryStore } from "./vault-fixtures.mjs";
 import { realNet } from "./vault-net.mjs";
 const [sec, flag, id, text] = process.argv.slice(2);
-const signer = localSigner(C.unhex(sec)), me = signer.pubkey, relays = ["ws://127.0.0.1:7447"];
+const signer = localSigner(C.unhex(sec)), me = signer.pubkey, relays = [process.env.VAULTS_RELAY || "ws://127.0.0.1:7447"];
 const found = notesVault(await readKeyrings({ me, relays, net: realNet, signer }));
 if (!found.length) { console.log(JSON.stringify({ error: "no notes vault for this account on " + relays.join(", ") })); process.exit(1); }
 const s = await new Session({ me, entries: found, net: realNet, signer, store: memoryStore(), deviceName: "Node phone" }).open();

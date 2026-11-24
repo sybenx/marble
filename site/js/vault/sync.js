@@ -125,8 +125,10 @@ export class Session {
       if (this.epochs.size === before) this.deadEnd();
       await this.loadCheckpoints();
       await this.loadBatches();
-      if (this.missingGen.size && !(await this.rereadKeyring())) break;
-      if (this.epochs.size === before && this.vault.version === ver && !this.missingGen.size) break;
+      let reread = false;
+      if (this.missingGen.size && !(reread = await this.rereadKeyring())) break;
+      // (a re-read that found a generation: another round, to follow the rekey that named it)
+      if (!reread && this.epochs.size === before && this.vault.version === ver && !this.missingGen.size) break;
     }
     this.vetting();
   }
@@ -282,12 +284,15 @@ export class Session {
     const had = this.gens.length;
     if (mine.length) { this.entries = mine; this.gens = V.mergeGens(this.gens, ...mine.map((x) => x.payload.gens)); this.depths = V.chainDepths(this.gens, this.first.id); }
     for (const id of [...this.missingGen]) if (this.gen(id)) this.missingGen.delete(id);
-    // a complete re-read still without it: that rekey is ignored and its device shown as suspect
-    if (fresh.answered > 0) for (const id of this.missingGen) {
+    // a complete re-read still without it: that rekey is ignored and its device shown as suspect. Not complete while
+    // the signer refused an entry (a busy box, a phone out of reach): that entry may hold it, so it's asked again on
+    // the next catch-up (until then this device reads what it can and doesn't write)
+    const complete = fresh.answered > 0 && !fresh.refused.length;
+    if (complete) for (const id of this.missingGen) {
       this.ignoredGens.add(id);
       for (const r of this.rekeys) if (r.op.state[0] === id) this.suspect.add(r.dvk);
     }
-    if (fresh.answered > 0) this.missingGen.clear();
+    if (complete) this.missingGen.clear();
     return this.gens.length > had;
   }
   /** Where the account's keyring entries go: its own write relays (§3.6), else the vault's. */

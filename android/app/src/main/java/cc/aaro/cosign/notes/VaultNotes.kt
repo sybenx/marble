@@ -47,6 +47,9 @@ class VaultNotes(
     @Synchronized fun ensure(create: Boolean): Vault? {
         vault?.let { return it }
         val entries = vaults.keyrings() ?: return null.also { trouble.value = "Can't reach your relays" }
+        // An entry the signer couldn't open now may hold the notes vault (or one with a lower genesis): wait, never
+        // pick another or make a second one.
+        if (vaults.unopened > 0) return null.also { trouble.value = "Waiting for your signer" }
         val found = vaults.findOwned(PROFILE, entries)
         val v = when {
             found != null -> vaults.join(found)

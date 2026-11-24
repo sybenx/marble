@@ -68,24 +68,40 @@ class Vaults(
 
     // --- Keyring entries (§3.6) ---------------------------------------------------------------------------
 
-    /** Every keyring entry of the account that opens, by event (opened once each; the payload is kept, never the ECDH). */
+    /**
+     * Keyring entries the last [keyrings] read couldn't open because the signer didn't answer (busy, out of reach, or
+     * refusing this device). Not "no vault": a new notes vault is never made while this is above zero.
+     */
+    @Volatile var unopened = 0; private set
+    /**
+     * Every keyring entry of the account that opens, by event. One that opens (or is malformed) is remembered for good;
+     * one the signer couldn't open is asked again next time: a box answering `slow_down` once must not hide a new
+     * generation from this device for ever (it would never read the other devices' notes again).
+     */
     @Synchronized fun keyrings(): List<Pair<Ev, JSONObject>>? {
         val r = accountRelays().ifEmpty { return null }
         val a = relays.query(r, JSONObject().put("kinds", JSONArray(listOf(Kinds.KEYRING))).put("authors", JSONArray(listOf(account.npub))))
         if (a.answered.isEmpty()) return null
-        return a.events.filter { it.kind == Kinds.KEYRING && it.pubkey == account.npub && it.valid() }.distinctBy { it.id }.mapNotNull { e -> openKeyring(e)?.let { e to it } }
+        var failed = 0
+        val out = a.events.filter { it.kind == Kinds.KEYRING && it.pubkey == account.npub && it.valid() }.distinctBy { it.id }.mapNotNull { e ->
+            when (val o = openKeyring(e)) { is Opened.Payload -> e to o.p; Opened.NotNow -> { failed++; null }; Opened.Never -> null }
+        }
+        unopened = failed
+        return out
     }
-    private fun openKeyring(e: Ev): JSONObject? {
-        store.get("kr/${e.id}")?.let { return if (it == "-") null else obj(it) }
-        val p = try {
-            // A copy dated more than a day ahead is treated as missing (§3.6).
-            if (e.createdAt > clock.now() + 86_400) null else {
-                val self = obj(e.content).getJSONObject("self")
-                account.openSelf(self.hexOf("eph", 32), self.str("ct"))?.let(::obj)?.takeIf { it.optString("d") == e.tag("d") && isHex(it.optString("vault"), 32) }
-            }
-        } catch (_: Exception) { null }
-        store.put("kr/${e.id}", p?.toString() ?: "-")
-        return p
+    private sealed class Opened { class Payload(val p: JSONObject) : Opened(); object NotNow : Opened(); object Never : Opened() }
+    private fun openKeyring(e: Ev): Opened {
+        // ("x": malformed for good. "-", written before 0.16.21 for any failure, the signer's included: asked again.)
+        store.get("kr/${e.id}")?.let { if (it == "x") return Opened.Never; if (it != "-") return Opened.Payload(obj(it)) }
+        // A copy dated more than a day ahead is treated as missing (§3.6), until it isn't.
+        if (e.createdAt > clock.now() + 86_400) return Opened.Never
+        val self = try {
+            obj(e.content).getJSONObject("self").let { it.hexOf("eph", 32) to it.str("ct") }
+        } catch (_: Exception) { null } ?: return Opened.Never.also { store.put("kr/${e.id}", "x") }
+        val plain = try { account.openSelf(self.first, self.second) } catch (_: Exception) { null } ?: return Opened.NotNow
+        val p = try { obj(plain).takeIf { it.optString("d") == e.tag("d") && isHex(it.optString("vault"), 32) } } catch (_: Exception) { null }
+        store.put("kr/${e.id}", p?.toString() ?: "x")
+        return if (p != null) Opened.Payload(p) else Opened.Never
     }
     /** A keyring entry, sealed `self` to the npub with a fresh one-time key (§3.6), signed by the npub. */
     fun publishKeyring(payload: JSONObject): Set<String> {

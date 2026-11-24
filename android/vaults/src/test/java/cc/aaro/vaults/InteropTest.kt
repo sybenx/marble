@@ -16,8 +16,9 @@ import java.io.File
  * The device's store is kept in build/interop-<npub>, so a second run is the same device.
  */
 class InteropTest {
-    private val relays = listOf("ws://127.0.0.1:7447")
-    private val servers = listOf("http://127.0.0.1:7447", "http://127.0.0.1:7448")
+    // (VAULTS_RELAY and VAULTS_SERVERS move them, as tools/notes-sync-smoke.sh does)
+    private val relays = listOf(System.getenv("VAULTS_RELAY") ?: "ws://127.0.0.1:7447")
+    private val servers = System.getenv("VAULTS_SERVERS")?.split(",") ?: listOf("http://127.0.0.1:7447", "http://127.0.0.1:7448")
 
     private class FileStore(val dir: File) : Store {
         init { dir.mkdirs() }
@@ -48,7 +49,7 @@ class InteropTest {
         val parts = mode!!.split(":")
         when (parts[0]) {
             "open" -> {
-                val vs = vaults(unhex(parts[1]))
+                val vs = vaults(try { unhex(parts[1]) } catch (e: Exception) { error("bad key in VAULTS_INTEROP: $mode") })
                 val p = vs.findOwned("notes", vs.keyrings()!!) ?: error("no notes vault")
                 val v = vs.join(p)
                 check(v.catchUp())
