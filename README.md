@@ -2,116 +2,113 @@
 
 A FROST (keykin) android signer with a search engine and note sync. Search also available at https://marble.syb.lol.
 
-A home for the open social web on Android: search people, posts, articles and apps, read
-the sources you choose, keep notes that sync to all your devices, and sign in to sites and
-to other apps on your phone. Your account, devices, sites and history are behind your picture.
+Marble is a Nostr client and signer for Android. It holds the account's key, signs for
+sites and for other apps on the phone, and has search, a reader and notes. The notes sync
+between devices and with Marble Web through an encrypted vault.
 
-**Your key starts on your phone.** Marble works with no server: the key is kept on the
-phone, sealed, and signs from there. **A [Keykin](https://github.com/sybenx/keykin) box
-is optional.** Sign in to one and your phone and the box each hold a piece of the key;
-any two pieces sign, and one alone does nothing. The phone keeps the whole key as your
-backup until you choose to forget it. You can run a box yourself, for example on an
-Umbrel ([keykin-umbrel](https://github.com/sybenx/keykin-umbrel)).
+## Status
 
-**Beta.** Signing uses the Zcash Foundation's FROST crate (`frost-secp256k1-tr`). Keykin's
-spec around it is still a draft, and [QRST](https://github.com/sybenx/qr-secret-transfer),
-which carries keys and sign-ins by a scanned code, calls itself a draft protocol with
-unaudited code.
+Beta, 0.16.x. Not audited.
+
+- Signing uses the Zcash Foundation's `frost-secp256k1-tr` crate. The
+  [Keykin](https://github.com/sybenx/keykin) spec around it is a draft.
+- [QRST](https://github.com/sybenx/qr-secret-transfer), used to move a key or a sign-in
+  by a scanned code, is a draft protocol.
+- `extension/` was written for Cosign, the signer Marble used before 0.13. It has not
+  been ported to Keykin.
+
+## Install
+
+- APK: https://github.com/sybenx/marble/releases/latest/download/Marble.apk
+- Obtainium: add `https://github.com/sybenx/marble`.
+- Android 11 or newer. Release builds are arm64 only.
+- Marble Web (search and notes): https://marble.syb.lol
+
+## How the key is held
+
+Without a box, the key is on the phone, sealed by the Android Keystore, and signs there.
+No server is involved.
+
+A Keykin box is optional. After signing in to one, the phone and the box each hold one
+FROST piece and any two pieces sign. The phone keeps the whole key as a backup until it is
+told to forget it. Reporting a device lost and cycling the keys both need a box. The box
+is in the [keykin](https://github.com/sybenx/keykin) repository, packaged for Umbrel in
+[keykin-umbrel](https://github.com/sybenx/keykin-umbrel).
+
+There is no paper backup. The key can be moved to another device by QRST, or exported as
+an nsec from Advanced.
 
 ## What it does
 
-- **Start how you like**: create an account, bring the secret key you already have, or
-  move your account over from another device by scanning one code.
-- **Sign in to sites** by a scanned code, `nostrconnect://` or a `bunker://` link. Apps
-  on your phone sign through Marble (NIP-55).
-- **Each new site gets an account of its own** by default, made from your main one, so
-  there is nothing new to back up. *Use my main account* signs in as you instead.
-- **Sites get only what you allow**: posting as you is always on; reading your private
-  lists and reading and sending DMs are switches you change any time.
-- **Hard things ask first.** An app or site changing your relay lists asks every time.
-  Wiping your profile, emptying your follows or deleting everything you've posted
-  takes Yes and then your fingerprint.
-- **Recent changes, with Undo**: every change to your lists, from Marble or another app,
-  with Undo. A change that lost something gets a notification.
-- **Notes in a vault**: encrypted on your phone, kept on your own relays and Blossom
-  servers, the same on every device and on Marble Web. A note changed in two places keeps
-  both versions; removed notes go to Trash.
-- **Search as you type**: people, posts, articles and apps. Apps and any web address
-  open in Marble's web pane, and *Keep* makes them a chip.
-- **Reader**: stories from the people, sites and relays you choose, in folders, with
-  read state that follows you to your other devices. Posts in another language are
-  translated on the phone.
-- **Devices**: add one by scanning its code and confirming with your fingerprint. With a
-  box, report a lost device and cycle the keys so it can't sign any more.
-- **Homes**: accounts Marble makes for sites and apps go into your home, the relay you
-  own or help run, so the people there can reach them.
-- **Take your account out** whenever you like: Advanced shows your secret key after your
-  fingerprint.
+- Signs for sites over NIP-46 (`bunker://`, `nostrconnect://`, or a scanned QRST code)
+  and for apps on the phone over NIP-55.
+- Gives each site a child account derived from the main one by default. Reading private
+  lists and DMs are per-site permissions.
+- Asks before a relay-list change, and asks for a fingerprint before a wiped profile,
+  emptied follows or mass deletion.
+- Keeps a history of list changes, including ones made by other apps, with undo.
+- Stores notes in a vault: encrypted on the device, kept on the account's relays and
+  Blossom servers. See `android/docs/vaults.md`.
+- Searches people, posts, articles and apps. The app index is downloaded once a day and
+  matched on the phone (`apps-index/`).
+- Reader for chosen people, sites and relays, with read state synced between devices and
+  translation done on the phone.
 
-## Getting Marble
+## Layout
 
-Releases are on GitHub (github.com/sybenx/marble/releases), so Obtainium can follow
-them: add `https://github.com/sybenx/marble` as an app. The newest build is always at
-https://github.com/sybenx/marble/releases/latest/download/Marble.apk. It needs Android 11
-or newer on a phone or tablet (arm64).
-
-**Marble Web**, at https://marble.syb.lol, has search and your notes in a browser.
-
-The browser extension in `extension/` (Chrome, Edge, Brave, Firefox, Safari) was written
-for Cosign, the signer Marble used before Keykin, and has not been changed for Keykin.
-
-## Privacy
-
-- **Without a box, your key signs on the phone** and goes nowhere else unless you move
-  it to another device, sealed, by a scanned code.
-- **With a box, the box sees what you sign through it**, keeps a log of it for your
-  account page, and knows which sites and apps are signed in. For messages it sees only
-  whose key they are with, never what they say. It never holds enough to sign alone.
-- **Notes are encrypted on your phone** before they go to your relays and Blossom
-  servers. With no Blossom list of your own, Marble uses nostr.download and
-  blossom.yakihonne.com.
-- **Searching for people** sends what you type to the servers Marble searches. App search
-  matches a list downloaded once a day, on the phone. When a result shows an address like
-  `name@example.com`, Marble asks that site whether it belongs to the person shown, and
-  that site can see your IP address.
-- **Pictures and videos load from wherever they are kept**, which can see your IP
-  address, as in any app that shows you a picture.
+| Path | What |
+| --- | --- |
+| `android/app` | The app. |
+| `android/signer` | Keykin v2 signer. Keykin's Kotlin core is copied in under `cc/aaro/keykin/core`. See `android/docs/keykin-v2.md`. |
+| `android/vaults` | Encrypted sync on Nostr and Blossom. |
+| `qr-secret-transfer/` | Submodule: QRST. Its Kotlin build is included by `android/settings.gradle.kts`. |
+| `site/`, `worker/` | Marble Web, on Cloudflare Workers (`wrangler.jsonc`). |
+| `apps-index/` | The app list that search uses. |
+| `extension/` | Browser extension (Cosign era, see Status). |
+| `tools/` | Tests and scripts for the site and vaults. |
+| `release-notes/` | One file per version. |
 
 ## Building
 
+Needs JDK 17, the Android SDK (compileSdk 35), and JDK 21 for the app's unit tests.
+
 ```sh
 git clone --recursive https://github.com/sybenx/marble && cd marble
-(cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest)
-(cd extension && npm install && node build.mjs)
+cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 ```
 
-- **QRST** is a git submodule at `qr-secret-transfer/`. `android/settings.gradle.kts`
-  includes its Kotlin build (`includeBuild("../qr-secret-transfer/kotlin")`). In a
-  checkout made without `--recursive`, run `git submodule update --init`.
-- **Modules**: `android/app`, `android/signer` (Keykin v2: Keykin's Kotlin core, copied in
-  under `cc/aaro/keykin/core`) and `android/vaults` (end-to-end encrypted sync on Nostr
-  and Blossom). Notes on each are in `android/docs/`.
-- **The FROST library** (`libkeykin_frost.so`, arm64-v8a and x86_64) is committed in
-  `android/signer/src/main/jniLibs`, so a build needs nothing more. To rebuild it after
-  Keykin's `frost/` changes, in a Keykin checkout:
-  `cd frost && cargo ndk -t arm64-v8a -t x86_64 -P 30 -o <marble>/android/signer/src/main/jniLibs build --release --features jni`
-  (needs `cargo-ndk` and `ANDROID_NDK_HOME`).
-- **Tests that run FROST** are skipped unless `KEYKIN_FROSTLIB` names a desktop build of
-  it (`cargo build --release --features jni` in Keykin's `frost/`).
-- **Java and the Android SDK**: Gradle runs on Java 17, and the app's unit tests use a
-  Java 21 toolchain. Set `ANDROID_HOME`, or put `sdk.dir` in `android/local.properties`.
-- **Kept names**: the app keeps the id `cc.aaro.cosign` and its Kotlin package names from
-  the Cosign days, so every build installs over the ones before it. Links to sign-in codes
-  on `cosign.aaro.cc`, Cosign's old address, still open in the app.
-- **Releases**: `./release.sh` (bump `versionCode` and `versionName` in
-  `android/app/build.gradle.kts` first). The release signing files stay outside any
-  repository (`~/cosign-release`). `./zapstore.sh` publishes the newest release to
-  Zapstore. Notes for each version are in `release-notes/`.
-- **Marble Web** is `site/`, with `worker/index.js` for shared links, on Cloudflare
-  Workers: `npx wrangler dev` to try it, `npx wrangler deploy` to publish.
+- In a checkout made without `--recursive`: `git submodule update --init`.
+- Set `ANDROID_HOME`, or put `sdk.dir` in `android/local.properties`.
+- `libkeykin_frost.so` (arm64-v8a, x86_64) is committed in
+  `android/signer/src/main/jniLibs`. To rebuild it, in a Keykin checkout:
 
-Marble's history up to 0.12.4 is in the Cosign repository (tag `v0.12.4`); the
-extension's history came along with it.
+  ```sh
+  cd frost && cargo ndk -t arm64-v8a -t x86_64 -P 30 \
+    -o <marble>/android/signer/src/main/jniLibs build --release --features jni
+  ```
+
+- Unit tests that run FROST are skipped unless `KEYKIN_FROSTLIB` points at a desktop
+  build of the library (`cargo build --release --features jni` in Keykin's `frost/`).
+- Site tests: `for f in tools/*.test.mjs; do node --test "$f"; done`
+- Marble Web: `npx wrangler dev`, `npx wrangler deploy`.
+- Extension: `cd extension && npm install && node build.mjs`
+
+## Releasing
+
+Bump `versionCode` and `versionName` in `android/app/build.gradle.kts`, add the notes to
+`release-notes/`, then run `./release.sh`. The signing files are read from
+`~/cosign-release`, outside the repository. `./zapstore.sh` publishes the newest release
+to Zapstore.
+
+## Names kept from Cosign
+
+Marble was split out of the Cosign repository at 0.12.4 (tag `v0.12.4` there has the
+earlier history). These names are unchanged so that builds install over earlier ones and
+old links keep working:
+
+- application id `cc.aaro.cosign`, and the Kotlin package names
+- the `cosign.aaro.cc` app link
+- `~/cosign-release`
 
 ## License
 
