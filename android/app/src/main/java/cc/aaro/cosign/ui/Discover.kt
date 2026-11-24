@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -173,7 +175,8 @@ import kotlinx.coroutines.delay
 // Discover feed. No posting, no replies, no zaps: you can like a note and follow someone.
 
 private sealed class Route {
-    data object Account : Route()
+    /** One page of your account ([page] is one of AccountPages'), straight from the picture menu. */
+    data class Account(val page: String = AccountPages.DEVICES) : Route()
     data object Bell : Route()
     data object Search : Route()
     data object Stories : Route()
@@ -194,10 +197,12 @@ private sealed class Route {
     data class Compose(val link: String = "") : Route()
     /** Feed 3: one section's whole list, full-size posts ("special", "people" or "beyond"). */
     data class Section(val which: String) : Route()
-    /** Account › Special Follow: the people on your list. */
+    /** Picture menu › Special Follow: the people on your list. */
     data object SpecialList : Route()
-    /** Account › News sources: your own feeds, and Marble's (each can be removed). */
+    /** Picture menu › News sources: your own feeds, and Marble's (each can be removed). */
     data object News : Route()
+    /** Picture menu › Your archive: your own archive's address, searched for you alone. */
+    data object Archive : Route()
     /** Following › Relays: your favourite relays and sets, relays your people use, and any relay by its address. */
     data object RelayList : Route()
     /** A relay, read like a channel. */
@@ -211,13 +216,16 @@ private sealed class Route {
 
     /** As text, so the stack of screens survives Android recreating Marble. */
     fun save(): String = when (this) {
-        Account -> "account"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
-        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
+        is Account -> "account:$page"; Bell -> "bell"; Search -> "search"; Stories -> "stories"; Feed -> "discover"
+        is Thread -> "thread:$id:$reply"; is Profile -> "profile:$pubkey"; is Compose -> "compose:$link"; is Results -> "results:$q"; is PeoplePosts -> "pp:$q"; is Section -> "section:$which"; Later -> "later"; Searches -> "searches"; Shelf -> "marbles"; SpecialList -> "special"; News -> "news"; Archive -> "archive"; RelayList -> "relays"; Approvals -> "approvals"; ReaderSources -> "readersources"
         is Relay -> "relay:$address"; is RelaySet -> "relayset:$d"
     }
     companion object {
         fun of(s: String): Route? = when {
-            s == "account" -> Account; s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories; s == "discover" -> Feed
+            // (a stack saved before the account's pages opened from the menu says plain "account": Devices and backup)
+            s == "account" -> Account()
+            s.startsWith("account:") -> Account(s.removePrefix("account:").takeIf(AccountPages::known) ?: AccountPages.DEVICES)
+            s == "bell" -> Bell; s == "search" -> Search; s == "stories" -> Stories; s == "discover" -> Feed
             s.startsWith("thread:") -> s.split(':').let { Thread(it[1], it.getOrNull(2) == "true") }
             s.startsWith("profile:") -> Profile(s.removePrefix("profile:"))
             s.startsWith("compose:") -> Compose(s.removePrefix("compose:"))
@@ -229,6 +237,7 @@ private sealed class Route {
             s == "marbles" -> Shelf
             s == "special" -> SpecialList
             s == "news" -> News
+            s == "archive" -> Archive
             s == "relays" -> RelayList
             s == "approvals" -> Approvals
             s == "readersources" -> ReaderSources
@@ -331,9 +340,16 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             "shelf" -> stack.add(Route.Shelf)
             "stories" -> stack.add(Route.Stories)
             "compose" -> { delay(1500); nav.compose(social.feed.value.stories.firstOrNull()?.url ?: "") }
-            "account", "rename" -> { DebugOpen.renameThis = askedScreen == "rename"; stack.add(Route.Account) }
-            "changes" -> { if (stack.lastOrNull() != Route.Account) stack.add(Route.Account); DebugOpen.changes.value = true }
+            "account", "menu" -> MenuWanted.value = true
+            "rename" -> { DebugOpen.renameThis = true; stack.add(Route.Account(AccountPages.DEVICES)) }
+            // (also a Recent changes notification's tap, from MainActivity)
+            "changes" -> if (stack.lastOrNull() != Route.Account(AccountPages.CHANGES)) stack.add(Route.Account(AccountPages.CHANGES))
             "later" -> stack.add(Route.Later)
+            "archive" -> stack.add(Route.Archive)
+            "approvals" -> stack.add(Route.Approvals)
+            "special" -> stack.add(Route.SpecialList)
+            "news" -> stack.add(Route.News)
+            "bell" -> stack.add(Route.Bell)
             else -> askedScreen?.let { android.net.Uri.decode(it) }?.let { v ->
                 when {
                     v.startsWith("search:") -> { SearchText.q.value = v.removePrefix("search:"); stack.add(Route.Search) }
@@ -341,6 +357,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
                     // (also a marble.syb.lol/relay/… link, from MainActivity)
                     v.startsWith("relay:") -> stack.add(Route.Relay(v.removePrefix("relay:")))
                     v.startsWith("save:") -> v.removePrefix("save:").split('|').forEach { social.later.save(it) }
+                    v.startsWith("account:") -> v.removePrefix("account:").takeIf(AccountPages::known)?.let { stack.add(Route.Account(it)) }
                 }
             }
         }
@@ -358,8 +375,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
     // A screen on top: its own ground, and every touch is its (none reaches the panes under it).
     if (top != null) Box(Modifier.fillMaxSize().background(Vault.Ground).pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) { kept.SaveableStateProvider(keyOf(stack.lastIndex)) {
         when (top) {
-            Route.Account -> AccountScreen(phone, ui, onScan, onProfile = { ui.member?.group?.groupX?.let { nav.profile(it) } }, onBack = back,
-                onSpecial = { nav.open(Route.SpecialList) }, onNews = { nav.open(Route.News) })
+            is Route.Account -> AccountScreen(phone, ui, onScan, start = top.page, onBack = back)
             Route.Bell -> BellScreen(phone, ui, social, nav)
             Route.Search -> SearchScreen(social, nav)
             Route.Stories -> StoriesScreen(social, nav)
@@ -374,6 +390,7 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
             Route.Searches -> SearchesScreen(social, nav)
             Route.SpecialList -> SpecialListScreen(social, nav)
             Route.News -> NewsSourcesScreen(social, nav)
+            Route.Archive -> ArchiveScreen(social, nav)
             Route.RelayList -> RelayListScreen(social, nav)
             Route.Approvals -> ApprovalsScreen(phone, ui, social, nav)
             Route.ReaderSources -> ReaderSourcesScreen(social, nav)
@@ -383,6 +400,9 @@ fun Discover(phone: Phone, ui: Ui, onScan: () -> Unit) {
         }
     } }
 
+    // Your picture's menu, from home or any screen's bar (one sheet, above whatever is open).
+    if (MenuWanted.collectAsState().value) social.me?.let { me -> PictureSheet(phone, ui, social, People.known.collectAsState().value[me], me, nav) { MenuWanted.value = false } }
+    if (KeysWanted.collectAsState().value) KeysSheet(phone) { KeysWanted.value = false }
     viewing?.let { (urls, i) -> ImageViewer(urls, i) { viewing = null } }
     bigMarble?.let { b -> MarbleView(b, social, onShelf = { bigMarble = null; if (stack.lastOrNull() != Route.Shelf) stack.add(Route.Shelf) }) { bigMarble = null } }
     VideoFullScreen()
@@ -496,36 +516,96 @@ private fun Home(phone: Phone, ui: Ui, social: Social, nav: Nav) {
 private fun liveSource(i: Social.ReaderItem, people: Map<String, Person>): String =
     i.pubkey?.takeIf { i.source.startsWith("people:") || i.source == "writer:$it" }?.let { people[it]?.shown } ?: i.sourceName
 
-/** Your picture's sheet (home-rules.md "Picture"): rare things and account-shaped ones, as named rows. */
+/**
+ * Your picture's menu (home-rules.md "Picture"): the one menu. Every page is one row here, grouped by what you came
+ * to do, so any setting is two taps from your picture. Each row is named for what it opens, and nothing else.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PictureSheet(person: Person?, me: String, nav: Nav, onClose: () -> Unit) {
+private fun PictureSheet(phone: Phone, ui: Ui, social: Social, person: Person?, me: String, nav: Nav, onClose: () -> Unit) {
     val context = LocalContext.current
-    androidx.compose.material3.ModalBottomSheet(onClose, containerColor = Vault.Surface) {
-        Row(Modifier.fillMaxWidth().clickable { onClose(); nav.profile(me) }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Avatar(person, me, 40)
-            Column(Modifier.padding(start = 14.dp)) {
-                Text(person?.shown ?: shortNpub(me), color = Vault.Text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text("Your profile", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+    val go: (() -> Unit) -> Unit = { onClose(); it() }
+    val special by social.special.collectAsState()
+    val circle by social.circleOn.collectAsState()
+    val waiting = waiting(phone, ui).size
+    val sites = ui.sites.filterNot { ownGrant(it) }.map { it.origin }.distinct().size
+    val devices = ui.member?.group?.members?.count { !it.isBox } ?: 0
+    androidx.compose.material3.ModalBottomSheet(onClose, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Vault.Surface) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            Row(Modifier.fillMaxWidth().clickable { go { nav.profile(me) } }.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(person, me, 40)
+                Column(Modifier.padding(start = 14.dp)) {
+                    Text(person?.shown ?: shortNpub(me), color = Vault.Text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(if (person?.name == null) "Your profile · no name or picture yet" else "Your profile", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
             }
-        }
-        HorizontalDivider(color = Vault.Edge)
-        for ((label, go) in listOf<Pair<String, () -> Unit>>(
-            "Notes and searches" to { LaterTab.value = "saved"; nav.open(Route.Later) },
+            if (waiting > 0) MenuItem("Waiting for you", count = "$waiting", amber = true) { go { nav.open(Route.Approvals) } }
+            HorizontalDivider(color = Vault.Edge)
+
+            MenuHeading("Yours")
+            MenuItem("Notes and searches", note = if (social.silentWriteRelays() != null) "Some places that keep your notes haven't answered in a week" else null) {
+                go { LaterTab.value = "saved"; nav.open(Route.Later) } }
+            MenuItem("Your archive", note = "Search your own conversations too. Only you see them.") { go { nav.open(Route.Archive) } }
             // Replies, mentions and likes (the bell's list, now that the bell is gone).
-            "Replies and mentions" to { nav.open(Route.Bell) },
-            "Approvals" to { nav.open(Route.Approvals) },
-            "Devices and backup" to { nav.open(Route.Account) },
-            "Your marbles" to { nav.open(Route.Shelf) },
-            "About Marble" to { cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/about", false, Vault.dark, Vault.Ground.toArgb(), null) },
-        )) Text(label, color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onClose(); go() }.padding(horizontal = 20.dp, vertical = 13.dp))
-        // Switch account: each other account here, one tap away.
-        val accounts = CosignApp.instance.accounts
-        for (p in accounts.all.filter { it.isMember && it.ui.value.member?.group?.groupX != me }) Text("Switch to ${p.label}", color = Vault.Text, style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onClose(); accounts.show(p.slot) }.padding(horizontal = 20.dp, vertical = 13.dp))
-        Spacer(Modifier.height(24.dp))
+            MenuItem("Replies and mentions") { go { nav.open(Route.Bell) } }
+            MenuItem("Your marbles") { go { nav.open(Route.Shelf) } }
+
+            MenuHeading("Who you follow and read")
+            MenuItem("Special Follow", count = special.size.takeIf { it > 0 }?.toString()) { go { nav.open(Route.SpecialList) } }
+            Row(Modifier.fillMaxWidth().clickable { social.setCircleOn(!circle) }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Only your circle", color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+                    Text("People you follow, and people at least two of them follow. Others stay out of Following and come after them in search.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                androidx.compose.material3.Switch(circle, { social.setCircleOn(it) })
+            }
+            MenuItem("News sources") { go { nav.open(Route.News) } }
+            MenuItem("Reader sources") { go { nav.open(Route.ReaderSources) } }
+
+            MenuHeading("Apps that sign as you")
+            MenuItem("Apps and sites", count = sites.takeIf { it > 0 }?.toString()) { go { nav.open(Route.Account(AccountPages.SITES)) } }
+            MenuItem("Recent changes") { go { nav.open(Route.Account(AccountPages.CHANGES)) } }
+
+            MenuHeading("Devices and safety")
+            MenuItem("Devices and backup", count = devices.takeIf { it > 0 }?.toString()) { go { nav.open(Route.Account(AccountPages.DEVICES)) } }
+            MenuItem("How your account works") { go { nav.open(Route.Account(AccountPages.ADVANCED)) } }
+
+            MenuHeading("This phone")
+            MenuItem("Search settings") { go { nav.open(Route.Account(AccountPages.SEARCH)) } }
+            MenuItem("Languages and translation") { go { nav.open(Route.Account(AccountPages.LANGUAGES)) } }
+            MenuItem("Trials and version") { go { nav.open(Route.Account(AccountPages.TRIALS)) } }
+            MenuItem("About Marble", count = "↗") { go { cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/about", false, Vault.dark, Vault.Ground.toArgb(), null) } }
+
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(top = 8.dp))
+            // Switch account: each other account here, one tap away, saying when something waits for it.
+            val accounts = CosignApp.instance.accounts
+            for (p in accounts.all.filter { it.isMember && it.ui.value.member?.group?.groupX != me }) androidx.compose.runtime.key(p.slot) {
+                val u by p.ui.collectAsState()
+                val n = u.asks.size + u.batchAsks.size
+                MenuItem("Switch to ${p.label}", count = if (n > 0) "$n waiting" else null, amber = n > 0, arrow = false) { go { accounts.show(p.slot) } }
+            }
+            MenuItem("Your accounts on this phone", note = "Switch, or add another") { go { KeysWanted.value = true } }
+            Spacer(Modifier.height(24.dp))
+        }
     }
+}
+
+/** A group's name in the picture menu: small, quiet, not a button. */
+@Composable
+private fun MenuHeading(text: String) = Text(text, color = Vault.Muted, style = MaterialTheme.typography.labelMedium,
+    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 2.dp).semantics { heading() })
+
+/** A row of the picture menu: what it opens, a line on what is there, a count on the right. */
+@Composable
+private fun MenuItem(label: String, note: String? = null, count: String? = null, amber: Boolean = false, arrow: Boolean = true, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.weight(1f)) {
+        Text(label, color = Vault.Text, style = MaterialTheme.typography.bodyLarge)
+        note?.let { Text(it, color = Vault.Muted, style = MaterialTheme.typography.bodySmall) }
+    }
+    val tail = listOfNotNull(count, "›".takeIf { arrow && count != "↗" }).joinToString("  ")
+    if (tail.isNotEmpty()) Text(tail, color = if (amber) Vault.AmberText else Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp))
 }
 
 /** Following's place, kept above the screens: its chip, and the posts it had shown at the top (the rest are "new"). */
@@ -606,7 +686,6 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
     Column(Modifier.fillMaxSize()
         .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))) {
         // Home's one place word top left (a tap, or a swipe, goes there); on it, the mark goes home. Your picture top right.
-        var sheet by remember { mutableStateOf(false) }
         // On the web pane the page keeps its own sideways swipes (carousels, tabs): the strip is where a swipe moves
         // between panes. It drives the pager itself; it sits above it, so its drags never reach the pager on their own.
         // Where a strip drag started and how far it went: past a fifth of a page, or flung, it goes to the next pane.
@@ -635,11 +714,10 @@ private fun Panes(phone: Phone, ui: Ui, social: Social, nav: Nav, pager: android
             if (webMode && pager.currentPage == PANE_WEB) cc.aaro.cosign.web.WebChips(web, Modifier.align(Alignment.Center).padding(horizontal = 64.dp))
             // 48 dp to tap, a button that opens your menu.
             Box(Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(48.dp).clip(CircleShape)
-                .clickable(onClickLabel = "Open your menu", role = androidx.compose.ui.semantics.Role.Button) { sheet = true }, contentAlignment = Alignment.Center) {
+                .clickable(onClickLabel = "Open your menu", role = androidx.compose.ui.semantics.Role.Button) { MenuWanted.value = true }, contentAlignment = Alignment.Center) {
                 Avatar(people[me], me, 32, Modifier, "Your picture")
             }
         }
-        if (sheet) PictureSheet(people[me], me, nav) { sheet = false }
         val wanted by PaneWanted.collectAsState()
         LaunchedEffect(wanted) { wanted?.let { pager.animateScrollToPage(it); PaneWanted.value = null } }
         val ctx = LocalContext.current
@@ -1864,6 +1942,9 @@ private fun NeedsYou(phone: Phone, ui: Ui, social: Social, onMore: () -> Unit) {
     }
 }
 
+/** What Waiting for you lists (and the picture menu counts): all that needs you but the paper backup's card. */
+private fun waiting(phone: Phone, ui: Ui) = needs(phone, ui).filter { it !is Need.Paper }
+
 /** What needs you, most pressing first. */
 private sealed class Need {
     data class Approve(val ask: cc.aaro.cosign.Ask) : Need()
@@ -2659,7 +2740,7 @@ private fun TopBar(title: String?, nav: Nav) = Column(Modifier.fillMaxWidth()) {
         Box(Modifier.clip(CircleShape).clickable(onClickLabel = "Home", onClick = nav.home).padding(8.dp)) { Swirl(28f) }
         Spacer(Modifier.weight(1f))
         IconButton({ nav.social.clearSearch(); nav.open(Route.Search) }) { Icon(Icons.Filled.Search, "Search", tint = Vault.Text) }
-        nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clickable { nav.open(Route.Account) }, "Your account") }
+        nav.social.me?.let { me -> Avatar(People.known.collectAsState().value[me], me, 32, Modifier.clip(CircleShape).clickable(onClickLabel = "Open your menu") { MenuWanted.value = true }, "Your picture") }
     }
     // What this screen is, when the screen itself doesn't say.
     title?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Vault.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 6.dp)) }
@@ -3109,11 +3190,9 @@ object Away {
 
 object DebugOpen {
     val profile = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
-    /** A screen to open (--es open marble|stories|account|rename|compose|later|search:…|results:…|save:a|b), for tests that can't tap reliably; rename: your account, renaming this device. */
+    /** A screen to open (--es open marble|stories|account|menu|account:<page>|rename|changes|archive|approvals|special|news|bell|compose|later|search:…|results:…|save:a|b), for tests that can't tap reliably; account and menu: your picture's menu; account:<page>: one of AccountPages; rename: Devices and backup, renaming this device. */
     val screen = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     @Volatile var renameThis = false
-    /** Recent changes asked for (a notification's tap, or --es open changes): the account screen, scrolled to it. */
-    val changes = kotlinx.coroutines.flow.MutableStateFlow(false)
 }
 
 /** Debug builds: how long after opening a profile its name is on screen. */
@@ -3803,10 +3882,15 @@ private fun GoChip(onClick: (() -> Unit)?) = Box(
 private const val SOLID_ENTER = false
 
 /** Places you can go by typing their name (home-rules.md "Typed"). */
-private val PLACES = listOf("Reader", "Notes", "Searches", "Settings", "Approvals", "Devices", "About")
+private val PLACES = listOf("Reader", "Notes", "Archive", "Searches", "Settings", "Approvals", "Devices", "Languages", "About")
 
 /** Asks home's pager for a pane (Go to Reader, from the box). */
 private val PaneWanted = kotlinx.coroutines.flow.MutableStateFlow<Int?>(null)
+
+/** Asks for your picture's menu (home's picture, any screen's bar, "Go to Settings", --es open menu). */
+private val MenuWanted = kotlinx.coroutines.flow.MutableStateFlow(false)
+/** Asks for the accounts on this phone (switch, add another), from the menu. Outside the menu, so it outlives it. */
+private val KeysWanted = kotlinx.coroutines.flow.MutableStateFlow(false)
 
 /** Asks home's web pane to show a site (an app opened from search). Home falls back to the browser when the pane isn't on. */
 private val WebWanted = kotlinx.coroutines.flow.MutableStateFlow<Pair<cc.aaro.cosign.web.WebSite, String>?>(null)
@@ -3816,8 +3900,11 @@ private fun goToPlace(name: String, nav: Nav, context: android.content.Context) 
     "Notes" -> { LaterTab.value = "saved"; nav.open(Route.Later) }
     "Searches" -> nav.open(Route.Searches)
     "Approvals" -> nav.open(Route.Approvals)
+    "Archive" -> nav.open(Route.Archive)
+    "Devices" -> nav.open(Route.Account(AccountPages.DEVICES))
+    "Languages" -> nav.open(Route.Account(AccountPages.LANGUAGES))
     "About" -> cc.aaro.cosign.Tabs.open(context, "https://marble.syb.lol/about", false, Vault.dark, Vault.Ground.toArgb(), null)
-    else -> nav.open(Route.Account)
+    else -> MenuWanted.value = true
 }
 
 /** "Go to Settings": a place, by its name. */
@@ -4074,7 +4161,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
         if (f == null) { item(key = "wait") { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) } }; return@LazyColumn }
         // Still looking: a spinner while there's nothing yet, a thin bar once results are showing.
         if (f.loading) item(key = "loading") {
-            if (f.people.isEmpty() && f.notes.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
+            if (f.people.isEmpty() && f.notes.isEmpty() && f.archive.isEmpty()) Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Vault.Accent) }
             else androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Vault.Accent, trackColor = Color.Transparent)
         }
         // Someone you follow, named in the search: "Anarko · thailand", their posts (and anyone else it could mean). Their
@@ -4101,6 +4188,14 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                     modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp))
             }
         } }
+        // Your archive (your private relays): yours alone, first.
+        if (!peopleOnly && f.archive.isNotEmpty()) {
+            item(key = "yh") { Heading("From your archive") }
+            items(f.archive, key = { "y" + it.id }) { n ->
+                NoteCard(n, people, n.id in liked, nav, onLike = { social.like(n) }, maxLines = 12)
+                HorizontalDivider(color = Vault.Edge)
+            }
+        }
         val loose = f.split?.loose == true && !peopleOnly && f.notes.isNotEmpty()
         if (!loose) authorSection()
         if (showPeople && f.people.isNotEmpty()) {
@@ -4155,7 +4250,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 HorizontalDivider(color = Vault.Edge)
             }
         }
-        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty()) item(key = "none") {
+        if (!f.loading && (f.people.isEmpty() || !showPeople) && (peopleOnly || f.notes.isEmpty()) && f.byAuthor.isEmpty() && f.archive.isEmpty()) item(key = "none") {
             Text("Nothing found for “${f.query}”.", color = Vault.Muted, modifier = Modifier.padding(20.dp))
             // Only here: one row to try your engine instead.
             val engine by cc.aaro.cosign.SearchPrefs.engine.collectAsState()
@@ -4236,7 +4331,7 @@ private fun BellScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Column(
                 .clickable { nav.open(Route.Approvals) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(if (cards.size == 1) "Something is waiting for your key" else "${cards.size} things are waiting for your key", color = Vault.Text, style = MaterialTheme.typography.titleSmall)
-                    Text("Open Approvals", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("See what's waiting", color = Vault.Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text("›", color = Vault.Muted, fontSize = 20.sp)
             }
@@ -4391,6 +4486,65 @@ private fun NewsSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMa
             SourceRow(name, if (gone) "Removed" else topicsOf(marble[id]?.second ?: emptySet()), gone, if (gone) "Add back" else "Remove") {
                 cc.aaro.cosign.NewsSources.setOff(id, !gone)
             }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/**
+ * Account › Your archive: the address of your own archive (a Chronicle server, say), which search also looks through,
+ * for you alone. Synced with your account. No protocol words on screen.
+ */
+@Composable
+private fun ArchiveScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    TopBar("Your archive", nav)
+    val all by social.privateRelays.all.collectAsState()
+    val shown = all.filter { !it.gone }
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    fun add() {
+        val url = cc.aaro.cosign.PrivateRelays.parse(typed) ?: run { problem = "That doesn't look like an address. Try something like archive.example.com."; return }
+        if (shown.any { it.url == url }) { problem = "That one's already here."; return }
+        checking = true; problem = null
+        scope.launch {
+            val ok = cc.aaro.cosign.net.Fetch.reachable(url)
+            checking = false
+            if (ok) { social.privateRelays.add(url); typed = "" } else problem = "Couldn't reach that address. Check it and try again."
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Text("Search also looks through your own archive: every conversation you've taken part in. Only you can see what's in it.",
+                color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+        }
+        items(shown, key = { "pr" + it.url }) { r ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Vault.AccentGround), contentAlignment = Alignment.Center) {
+                    Icon(Glyphs.save, null, tint = Vault.Accent, modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Text(r.label, color = Vault.Text, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                TextButton({ social.privateRelays.remove(r.url) }) { Text("Remove", color = Vault.AmberText) }
+            }
+            HorizontalDivider(color = Vault.Edge, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(typed, { typed = it; problem = null }, Modifier.weight(1f), singleLine = true,
+                    placeholder = { Text(if (shown.isEmpty()) "Your archive's address" else "Add another address", color = Vault.Muted) }, shape = RoundedCornerShape(24.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (typed.isNotBlank() && !checking) add() }))
+                Spacer(Modifier.width(8.dp))
+                Button({ add() }, enabled = typed.isNotBlank() && !checking, colors = ButtonDefaults.buttonColors(Vault.Accent, Vault.Ground)) {
+                    if (checking) CircularProgressIndicator(Modifier.size(16.dp), color = Vault.Ground, strokeWidth = 2.dp) else Text("Add")
+                }
+            }
+            problem?.let { Text(it, color = Vault.Danger, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp)) }
+            Text("Results from it show first in search, under “From your archive”. Synced with your account, so your other devices have it too.",
+                color = Vault.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
         }
         item { Spacer(Modifier.height(24.dp)) }
     }
@@ -4776,8 +4930,8 @@ private fun ApprovalsScreen(phone: Phone, ui: Ui, social: Social, nav: Nav) = Co
     TopBar("Waiting for you", nav)
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-    // Home is interrupted only by approvals, an Undo and recovery (home-rules.md "Interrupt"); the rest live in Approvals.
-    val cards = needs(phone, ui).filter { it !is Need.Paper && it !is Need.Future }
+    // Everything waiting, posts dated in the future included (home shows only approvals, an Undo and recovery).
+    val cards = waiting(phone, ui)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         if (cards.isEmpty()) item { Text("Nothing is waiting for you.", color = Vault.Muted, modifier = Modifier.padding(20.dp)) }
         items(cards) { c -> Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NeedCard(c, phone, now) } }

@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * nothing asked: nothing stays open while you're not looking.
  */
 class Conn(val url: String, private val idleMs: Long = 45_000) {
-    private class Sub(val events: ArrayList<Event> = ArrayList(), val done: CompletableDeferred<Long?> = CompletableDeferred())
+    private class Sub(val frame: String, val events: ArrayList<Event> = ArrayList(), val done: CompletableDeferred<Long?> = CompletableDeferred())
 
     private val subs = ConcurrentHashMap<String, Sub>()
     private val n = AtomicInteger()
@@ -28,13 +28,16 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
     private var open = false
     private val queue = ArrayList<String>()
     private var idle: ScheduledFuture<*>? = null
+    /** NIP-42 login for the socket now open (a new socket logs in again). */
+    private var auth: RelayAuth.Session? = null
 
     /** What the relay has for [filters], until it says it's done or [timeoutMs] passes. Signatures checked. */
     suspend fun req(filters: List<Map<String, Any>>, timeoutMs: Long = 8000): List<Event> {
         val id = "q" + n.incrementAndGet()
-        val sub = Sub()
+        val frame = Json.stringify(listOf("REQ", id) + filters)
+        val sub = Sub(frame)
         subs[id] = sub
-        send(Json.stringify(listOf("REQ", id) + filters))
+        send(frame)
         withTimeoutOrNull(timeoutMs) { sub.done.await() }
         finish(id, close = true)
         return synchronized(sub.events) { sub.events.toList() }
@@ -43,9 +46,10 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
     /** NIP-45: how many events match, or null if the relay won't say. */
     suspend fun count(filter: Map<String, Any>, timeoutMs: Long = 8000): Long? {
         val id = "c" + n.incrementAndGet()
-        val sub = Sub()
+        val frame = Json.stringify(listOf("COUNT", id, filter))
+        val sub = Sub(frame)
         subs[id] = sub
-        send(Json.stringify(listOf("COUNT", id, filter)))
+        send(frame)
         val got = withTimeoutOrNull(timeoutMs) { sub.done.await() }
         finish(id, close = false)
         return got
@@ -67,6 +71,7 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
     }
 
     private fun connect() {
+        auth = RelayAuth.session(url)
         ws = Fetch.http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = synchronized(this@Conn) {
                 if (ws !== webSocket) return
@@ -75,10 +80,18 @@ class Conn(val url: String, private val idleMs: Long = 45_000) {
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val msg = Json.parse(text) as? List<*> ?: return
-                val sub = subs[msg.getOrNull(1) as? String ?: return] ?: return
+                val a = synchronized(this@Conn) { auth.takeIf { ws === webSocket } }
+                val act = { acts: List<RelayAuth.Action> -> if (a != null) RelayAuth.run(webSocket, a, acts, { id -> subs[id]?.let { webSocket.send(it.frame) } }, { id -> subs[id]?.done?.complete(null) }) }
+                when (msg.getOrNull(0)) {
+                    "AUTH" -> { (msg.getOrNull(1) as? String)?.let { c -> a?.let { act(it.onChallenge(c)) } }; return }
+                    "OK" -> { a?.onOk(msg.getOrNull(1) as? String, msg.getOrNull(2) == true)?.second?.let(act); return }
+                }
+                val key = msg.getOrNull(1) as? String ?: return
+                val sub = subs[key] ?: return
                 when (msg.getOrNull(0)) {
                     "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e -> if (e.verify()) synchronized(sub.events) { if (sub.events.none { it.id == e.id }) sub.events += e } }
-                    "EOSE", "CLOSED" -> sub.done.complete(null)
+                    "EOSE" -> sub.done.complete(null)
+                    "CLOSED" -> if (a != null && RelayAuth.needsAuth(msg.getOrNull(2))) act(a.onAuthRequired(key)) else sub.done.complete(null)
                     "COUNT" -> sub.done.complete(((msg.getOrNull(2) as? Map<*, *>)?.get("count") as? Long))
                 }
             }
