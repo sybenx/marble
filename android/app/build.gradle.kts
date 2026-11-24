@@ -20,8 +20,8 @@ android {
         applicationId = "cc.aaro.cosign"
         minSdk = 30
         targetSdk = 35
-        versionCode = 84
-        versionName = "0.16.21"
+        versionCode = 85
+        versionName = "0.16.22"
         // Keykin's FROST library (libkeykin_frost.so, in the signer module) is built for these
         // two only, so the APK carries no others: an app store then offers it only where it runs.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
