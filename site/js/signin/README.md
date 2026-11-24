@@ -55,11 +55,12 @@ read the page's `location` (pool.js `testRelay`) and use `WebSocket` and `docume
   `typedName`, `bech32Key` and `nip05Key` from `pure.js`, and `configure`, `hooks`, `defaults`.
 - `pool.js`, `ids.js`, `vendor/noble.js`, `vendor/sign.js`: Marble's, unchanged. `pool.js`: `FAST`, `INDEXERS`,
   `MORE`, `verify`, `testRelay`, `normalize`, `relays`, `warm`, `req`, `count`, `subscribe`, `publish`, `foundOn`,
-  `connectTimes`. `ids.js`: `toHex`, `fromHex`, `isHex64`, `decode`, `npub`, `note`, `nevent`, `nprofile`, `naddr`,
+  `connectTimes`, and for a site that logs in to relays it chose (NIP-42): `setAuth`, `dropLogins`. With no hook set, a
+  relay that asks for a login gets nothing, as before. `ids.js`: `toHex`, `fromHex`, `isHex64`, `decode`, `npub`, `note`, `nevent`, `nprofile`, `naddr`,
   `parseInput`, `pathFor`.
 - `me.js` (from Marble's `me.js`, without its Marble-only parts): `extensionSignedOut`, `onMe`, `onAsk`, `current`,
   `method`, `phoneSecret`, `onSignedOut`, `signedInWithPhone`, `choose`, `neither`, `signOut`, `sign`,
-  `nip44DecryptFrom`, `myWriteRelays`.
+  `nip44DecryptFrom`, `nip44EncryptTo`, `myWriteRelays`.
 - `toast.js` (from Marble's `act.js`): `toast`, `approving` (was not exported in Marble).
 - `dialog.js` (from Marble's `act.js`, lines 36 to 370): `openSignIn`, `loginLink` (re-export, as act.js had),
   `lookAgain`, and for a site's own flows in the same dialog: `dialog`, `view`, `pageOf`, `rememberedPage`,

@@ -167,7 +167,7 @@ export async function sign(template) {
 }
 
 /**
- * NIP-44 decrypt as you, of a message from `pubkey` (vaults: a keyring entry's one-time key, vaults.md §3.6): through
+ * NIP-44 decrypt as you, of a message from `pubkey` (Kist: a keyring entry's one-time key, kist.md §3.6): through
  * your phone's signer (NIP-46 nip44_decrypt). Throws "unsupported" signed in read-only.
  */
 export async function nip44DecryptFrom(pubkey, ct) {
