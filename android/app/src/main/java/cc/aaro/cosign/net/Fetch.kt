@@ -41,13 +41,22 @@ object Fetch {
         queryBlocking(relays.distinct(), listOf(filter), timeoutMs, 2500, answered, enough) to synchronized(answered) { answered.toSet() }
     }
 
+    /**
+     * [query], with each new event handed to [onEvent] as it arrives (on a network thread), so a screen can show it at
+     * once rather than after the slowest relay. [onEvent] returning true ends the query there (the one post asked for is in).
+     */
+    suspend fun stream(relays: Collection<String>, filters: List<Map<String, Any>>, timeoutMs: Long = 7000, graceMs: Long = 2500, onEvent: (Event) -> Boolean): List<Event> =
+        runInterruptible(Dispatchers.IO) { queryBlocking(relays.distinct(), filters, timeoutMs, graceMs, onEvent = onEvent) }
+
     private fun queryBlocking(relays: List<String>, filters: List<Map<String, Any>>, timeoutMs: Long, graceMs: Long,
-                              answered: MutableSet<String>? = null, enough: (Set<String>) -> Boolean = { true }): List<Event> {
+                              answered: MutableSet<String>? = null, enough: (Set<String>) -> Boolean = { true },
+                              onEvent: ((Event) -> Boolean)? = null): List<Event> {
         if (relays.isEmpty()) return emptyList()
         // In the order they arrive: a curated feed's order is its ranking.
         val got = java.util.Collections.synchronizedMap(LinkedHashMap<String, Event>())
         val done = CountDownLatch(relays.size)
         val firstDone = java.util.concurrent.atomic.AtomicLong()
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
         val sub = "c" + java.lang.Long.toString((Math.random() * 1e12).toLong(), 36)
         val req = Json.stringify(listOf("REQ", sub) + filters)
         val sockets = relays.mapNotNull { url ->
@@ -60,7 +69,10 @@ object Fetch {
                         val msg = Json.parse(text) as? List<*> ?: return
                         if (msg.getOrNull(1) != sub) return
                         when (msg.getOrNull(0)) {
-                            "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e -> if (!got.containsKey(e.id) && e.verify()) got[e.id] = e }
+                            "EVENT" -> Event.fromMap(msg.getOrNull(2))?.let { e ->
+                                if (got.containsKey(e.id) || !e.verify() || got.putIfAbsent(e.id, e) != null) return
+                                if (onEvent?.invoke(e) == true) { stop.set(true); while (done.count > 0) done.countDown() }
+                            }
                             "EOSE" -> { answered?.add(url); if (answered == null || enough(synchronized(answered) { answered.toSet() })) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
                             "CLOSED" -> { if (answered == null) firstDone.compareAndSet(0L, System.currentTimeMillis()); finish(webSocket) }
                         }
@@ -72,7 +84,7 @@ object Fetch {
         }
         val end = System.currentTimeMillis() + timeoutMs
         try {
-            while (!done.await(100, TimeUnit.MILLISECONDS)) {
+            while (!stop.get() && !done.await(100, TimeUnit.MILLISECONDS)) {
                 val now = System.currentTimeMillis()
                 if (now >= end || (firstDone.get() != 0L && now - firstDone.get() >= graceMs)) break
             }

@@ -451,41 +451,82 @@ async function showEvent(d, signal, { hex = false } = {}) {
     ${mainPost(e)}
     ${replyBox(e)}
     <section class="replies" aria-label="Replies"><h2>Replies</h2><div class="list" id="replies"><p class="muted loading-text">Looking for replies…</p></div></section>
+    ${root ? `<section class="replies" aria-label="The rest of the conversation" id="conversation" hidden><h2>The rest of the conversation</h2><div class="list"></div></section>` : ""}
   </div>`;
   mark("post", { relay: found[0] || "kept", id: e.id.slice(0, 8), connect: connectTimes() });
   document.title = `${name(e.pubkey)}: “${(e.content || "").replace(/\s+/g, " ").slice(0, 60)}” · Marble`;
   fillLater();
-  if (parent || root) for (const el of pageEl.querySelectorAll(".up[data-up]")) {
-    findEvent(el.dataset.up, { relays: el.dataset.hint ? [el.dataset.hint] : [], timeout: 5000 }).then((p) => {
-      if (signal.aborted) return;
-      el.innerHTML = p ? card(p, { compact: true, context: false }) : "";
-      fillLater(el);
-    });
+  // A reply opened on its own: the posts it answers come in above it, and the page goes to it (and stays on it as
+  // they do), unless you've moved it yourself first. It's marked, so it's clear which one you opened.
+  const mainEl = pageEl.querySelector(".card.main");
+  let moved = false;
+  if (parent || root) {
+    mainEl.classList.add("opened");
+    const stop = () => { moved = true; };
+    for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) addEventListener(ev, stop, { once: true, passive: true });
+    signal.addEventListener("abort", () => { for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) removeEventListener(ev, stop); });
+    const settle = () => { if (!moved && !signal.aborted) mainEl.scrollIntoView({ block: "start" }); };
+    settle();
+    const ups = [...pageEl.querySelectorAll(".up[data-up]")].map((el) =>
+      findEvent(el.dataset.up, { relays: el.dataset.hint ? [el.dataset.hint] : [], timeout: 5000 }).then((p) => {
+        if (signal.aborted) return;
+        el.innerHTML = p ? card(p, { compact: true, context: false }) : "";
+        fillLater(el);
+        settle();
+      }));
+    // pictures and previews above it load later and push it down: back to it once they have
+    Promise.all(ups).then(() => setTimeout(settle, 400));
   }
   signal.addEventListener("abort", onProfile((pk) => {
     if (pk === e.pubkey) document.title = `${name(pk)}: “${(e.content || "").replace(/\s+/g, " ").slice(0, 60)}” · Marble`;
   }));
 
   // Replies stream in; each one goes under the post it answers, the author's own first, then oldest first.
+  // A reply opened on its own also gets the whole conversation it's in (from its first post): its own replies
+  // that only name the first post are found that way, and the rest of the conversation is shown under it.
   const list = $("#replies");
-  const all = new Map();
+  const all = new Map(); // replies found asking for this post: one whose parent isn't here goes right under it
+  const conv = new Map(); // replies found asking for the first post
+  const rootId = root?.[1];
   let timer = null;
   const draw = () => {
     timer = null;
     if (signal.aborted) return;
+    const known = new Map([...conv, ...all]);
     const kids = new Map();
-    for (const r of all.values()) {
-      const to = replyTo(r)?.[1] || e.id;
-      const at = all.has(to) || to === e.id ? to : e.id;
+    for (const r of known.values()) {
+      const to = replyTo(r)?.[1];
+      const at = to && (known.has(to) || to === e.id || to === rootId) ? to : all.has(r.id) ? e.id : rootId;
       if (!kids.has(at)) kids.set(at, []);
       kids.get(at).push(r);
     }
     const order = (a, b) => (b.pubkey === e.pubkey) - (a.pubkey === e.pubkey) || a.created_at - b.created_at;
-    const tree = (id, depth) => (kids.get(id) || []).sort(order).map((r) =>
+    // (the opened post and what's above it are shown already: in the conversation, each is skipped, its other replies kept)
+    const above = new Set([e.id, rootId, parent?.[1]]);
+    const tree = (id, depth) => (kids.get(id) || []).sort(order).map((r) => above.has(r.id) && r.id !== e.id ? tree(r.id, depth)
+      : r.id === e.id ? "" :
       `<div class="reply${depth ? " nested" : ""}">${card(r, { context: false })}${depth < 3 ? tree(r.id, depth + 1) : ""}</div>${depth >= 3 ? tree(r.id, depth) : ""}`).join("");
-    list.innerHTML = tree(e.id, 0);
+    list.innerHTML = tree(e.id, 0) || (done ? `<p class="muted">No replies yet.</p>` : `<p class="muted loading-text">Looking for replies…</p>`);
     fillLater(list);
+    const rest = rootId && pageEl.querySelector("#conversation");
+    if (rest) {
+      const html = tree(rootId, 0);
+      rest.hidden = !html;
+      rest.querySelector(".list").innerHTML = html;
+      fillLater(rest);
+    }
   };
+  let done = false;
+  const later = () => { if (!timer) timer = setTimeout(draw, all.size + conv.size < 4 ? 0 : 120); };
+  if (rootId) {
+    const rootEvent = { id: rootId, kind: 1, pubkey: (root[4] && isHex64(root[4]) ? root[4] : e.tags.find((t) => t[0] === "p")?.[1]) || e.pubkey, tags: [] };
+    engagement(rootEvent, { hints: [root[2], ...found].filter(Boolean), signal, onEvent: (r) => {
+      if ((r.kind !== 1 && r.kind !== 1111) || r.id === e.id || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
+      if (kindOf(r, rootEvent) !== "reply") return;
+      conv.set(r.id, r);
+      later();
+    } });
+  }
   const tally = { reposts: 0, zaps: 0 };
   engagement(e, { hints: found, signal, onEvent: (r) => {
     if (r.kind === 7) { addReaction(e.id, r); return; }
@@ -493,12 +534,12 @@ async function showEvent(d, signal, { hex = false } = {}) {
     if (r.kind === 6 || r.kind === 16) { tally.reposts++; return; }
     if (kindOf(r, e) !== "reply" || !(r.content || "").trim() || warning(r)?.[1]?.match(/spam/i)) return;
     all.set(r.id, r);
-    if (!timer) timer = setTimeout(draw, all.size < 4 ? 0 : 120);
+    later();
   } }).then(({ counts = {}, events: got = [] }) => {
     if (signal.aborted) return;
     if (markSpam(e, inflated(e.id, got))) recue();
-    if (!all.size) list.innerHTML = `<p class="muted">No replies yet.</p>`;
-    else draw();
+    done = true;
+    draw();
     $(".totals", pageEl).innerHTML = totals({ replies: Math.max(all.size, counts.replies || 0), reposts: Math.max(tally.reposts, counts.reposts || 0) });
     mark("replies", { n: all.size, counts });
   });
