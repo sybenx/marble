@@ -14,7 +14,8 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 export JAVA_HOME=${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home}
 export ANDROID_HOME=${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}
-LOCK=$HOME/.claude/heavy-lock.sh; [ -x "$LOCK" ] || LOCK=""
+# (NOTES_SMOKE_LOCK="" when the caller already holds a heavy-lock slot, as a locked release.sh run does)
+LOCK=${NOTES_SMOKE_LOCK-$HOME/.claude/heavy-lock.sh}; [ -x "$LOCK" ] || LOCK=""
 P1=${SMOKE_PORT:-7457}; P2=$((P1 + 1))
 WORK=$(mktemp -d -t notes-smoke)
 PIDS=()
