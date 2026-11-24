@@ -1930,7 +1930,7 @@ const archiveDialog = $("#archive");
 function openArchive(said = "") {
   const box = $(".si", archiveDialog), list = archive.shown();
   box.innerHTML = `<h2 id="archive-title">Your archive</h2>
-    <p>Search also looks through your own archive. Only you can see what's in it.</p>
+    <p>Search also looks through your archive: your saved posts and the conversations you took part in.</p>
     <form data-archive-add><label for="archive-at">Add an archive</label>
       <input id="archive-at" class="acct-who" type="text" placeholder="archive.example.com" autocapitalize="off" autocorrect="off" spellcheck="false" required>
       <p class="si-small" role="status" data-archive-said>${esc(said)}</p>

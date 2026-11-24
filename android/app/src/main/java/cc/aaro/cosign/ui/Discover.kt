@@ -546,9 +546,9 @@ private fun PictureSheet(phone: Phone, ui: Ui, social: Social, person: Person?, 
             MenuHeading("Yours")
             MenuItem("Notes and searches", note = if (social.silentWriteRelays() != null) "Some places that keep your notes haven't answered in a week" else null) {
                 go { LaterTab.value = "saved"; nav.open(Route.Later) } }
-            MenuItem("Your archive", note = "Search your own conversations too. Only you see them.") { go { nav.open(Route.Archive) } }
+            MenuItem("Your archive", note = "Search your saved posts and conversations too") { go { nav.open(Route.Archive) } }
             // Replies, mentions and likes (the bell's list, now that the bell is gone).
-            MenuItem("Replies and mentions") { go { nav.open(Route.Bell) } }
+            MenuItem("Notifications") { go { nav.open(Route.Bell) } }
             MenuItem("Your marbles") { go { nav.open(Route.Shelf) } }
 
             MenuHeading("Who you follow and read")
@@ -4516,7 +4516,7 @@ private fun ArchiveScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSiz
     }
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            Text("Search also looks through your own archive: every conversation you've taken part in. Only you can see what's in it.",
+            Text("Add your archive's address and search also looks through it: your saved posts and the conversations you took part in.",
                 color = Vault.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
         }
         items(shown, key = { "pr" + it.url }) { r ->
@@ -5348,7 +5348,7 @@ private fun ShareWithNote(i: Social.ReaderItem, social: Social, onUndo: (ReaderU
 /** Reader's folders and sources: add a site or a person; the people toggle; each source's Mute and Unsubscribe. */
 @Composable
 private fun ReaderSourcesScreen(social: Social, nav: Nav) = Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-    TopBar("Reader", nav)
+    TopBar("Reader sources", nav)
     val list by social.readerList.collectAsState()
     val scope = rememberCoroutineScope()
     var typed by remember { mutableStateOf("") }
