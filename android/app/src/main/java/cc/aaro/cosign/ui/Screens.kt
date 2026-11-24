@@ -73,8 +73,6 @@ import cc.aaro.cosign.Ui
 import cc.aaro.cosign.appName
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.DateFormat
-import java.util.Date
 
 @Composable
 fun App(phone: Phone, ui: Ui) {
@@ -1080,9 +1078,20 @@ private fun LogLine(line: Line) = Row {
     Box(Modifier.padding(top = 7.dp).size(6.dp).background(color, CircleShape))
     Spacer(Modifier.width(10.dp))
     Column {
-        Text(line.text, style = MaterialTheme.typography.bodyMedium, color = Vault.Text)
-        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(line.ts)), style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
+        Text(cc.aaro.cosign.Describe.plainLine(line.text), style = MaterialTheme.typography.bodyMedium, color = Vault.Text)
+        Text(logTime(line.ts), style = MaterialTheme.typography.bodySmall, color = Vault.Muted)
     }
+}
+
+/** When an activity line happened: the time alone for today, else the day too ("Nov 19, 10:52 PM"), and the year if not this one. */
+internal fun logTime(ts: Long, now: Long = System.currentTimeMillis(), zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+                     locale: java.util.Locale = java.util.Locale.getDefault()): String {
+    val at = java.time.Instant.ofEpochMilli(ts).atZone(zone)
+    val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val time = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT).withLocale(locale).format(at)
+    if (at.toLocalDate() == today) return time
+    val day = java.time.format.DateTimeFormatter.ofPattern(if (at.year == today.year) "MMM d" else "MMM d, yyyy", locale).format(at)
+    return "$day, $time"
 }
 
 private fun ago(seconds: Long): String {

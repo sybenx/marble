@@ -1540,7 +1540,7 @@ class Signer(private val context: Context, val slot: String = "0") {
         // What changed and what was deleted are kept for the main account only (their Undo signs as the main account).
         if (asChild == null) remember(signed, prev, by, held)
         // Relay logins happen once per relay an app connects to: not worth a line each.
-        if (ev.kind != 22242 || held) note("Signed ${Describe.kind(ev.kind)} for $by", if (held) "approved" else "auto")
+        if (ev.kind != 22242 || held) note(Describe.signed(ev.kind, by), if (held) "approved" else "auto")
         return signed
     }
 

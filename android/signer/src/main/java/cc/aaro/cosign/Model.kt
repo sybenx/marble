@@ -173,4 +173,54 @@ object Describe {
         10002 to "relay list", 10003 to "bookmarks", 22242 to "relay login", 24242 to "upload login", 27235 to "web login", 30023 to "article", 30078 to "app data", 10046 to "login page",
     )
     fun kind(k: Int) = names[k] ?: cc.aaro.cosign.core.Policy.nameOf(k) ?: "kind $k event"
+
+    /** What signing an event of kind [k] did, in plain words for the activity list; null when Marble has no words for it. */
+    fun did(k: Int): String? = when (k) {
+        0 -> "updated your profile"
+        1 -> "posted a note"
+        3 -> "updated who you follow"
+        4, 13, 14 -> "sent a message"
+        5 -> "deleted something"
+        6, 16 -> "reposted something"
+        7 -> "reacted to a post"
+        62 -> "asked to erase your account"
+        1111 -> "commented"
+        9734 -> "sent a zap"
+        10000 -> "updated who you mute"
+        10001 -> "updated your pinned notes"
+        10003, 30003 -> "updated your bookmarks"
+        10002, 10006, 10007, 10050, 10051, 30002 -> "updated your servers"
+        10015, 30015 -> "updated your interests"
+        10046 -> "updated your sign-in page"
+        30000, 30001, 30004, 10004, 10030, 30030 -> "updated a list"
+        22242, 27235 -> "signed in"
+        24242 -> "uploaded a file"
+        30023 -> "published an article"
+        30078 -> "saved its settings"
+        // Marble's notes (vaults/Event.kt Kinds): head, keyring, contribution, storage login, device, invite.
+        30810, 4813 -> "saved your notes"
+        30811, 4811, 4812 -> "set up your notes on this phone"
+        4810 -> "opened your notes"
+        else -> null
+    }
+
+    /** An activity line for something [by] had signed: "Marble posted a note", or "Signed something for Marble". */
+    fun signed(k: Int, by: String): String {
+        val who = by.removePrefix("https://")
+        return did(k)?.let { "$who $it" } ?: "Signed something for $who"
+    }
+
+    private val kindsByName: Map<String, Int> by lazy {
+        // Every name kind() can give, back to its kind (the first kind wins where two share a name).
+        (names.keys + (0..40000).filter { cc.aaro.cosign.core.Policy.nameOf(it) != null }).distinct().reversed().associateBy { kind(it) }
+    }
+    private val oldSigned = Regex("^Signed (.+) for (.+)$")
+
+    /** A line as the activity list shows it: older lines said "Signed kind 4811 event for Marble", now in plain words. */
+    fun plainLine(text: String): String {
+        val m = oldSigned.matchEntire(text) ?: return text
+        val (name, by) = m.destructured
+        val k = Regex("^kind (\\d+) event$").matchEntire(name)?.groupValues?.get(1)?.toIntOrNull() ?: kindsByName[name] ?: return "Signed something for ${by.removePrefix("https://")}"
+        return signed(k, by)
+    }
 }
