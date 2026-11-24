@@ -415,7 +415,7 @@ private class Nav(val open: (Route) -> Unit, val back: () -> Unit, val searched:
     fun profile(pk: String) { FeedLog.ev("open", "what" to "profile", "author" to pk); open(Route.Profile(pk)) }
     /** A post, someone, or an article (found first; if it can't be, it opens on marble.syb.lol). */
     suspend fun ref(r: cc.aaro.cosign.Ref, context: android.content.Context) = when (r) {
-        is cc.aaro.cosign.Ref.Note -> thread(r.id)
+        is cc.aaro.cosign.Ref.Note -> { cc.aaro.cosign.Social.hint(r.id, r.relays); thread(r.id) }
         // An nprofile's relays: asked too when their profile is looked for (people from elsewhere are often only there).
         is cc.aaro.cosign.Ref.Profile -> { cc.aaro.cosign.Social.hint(r.pubkey, r.relays); profile(r.pubkey) }
         // Something from another app: to that app (Social.openTarget), never its raw content in a thread.

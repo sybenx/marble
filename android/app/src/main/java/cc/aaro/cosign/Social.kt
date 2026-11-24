@@ -2299,26 +2299,51 @@ class Social private constructor(private val phone: Phone, context: Context) {
     /** The whole thread [id] is in: its first note, then the replies, each with how deep it sits. */
     /**
      * A thread, gathered where replies and reactions land (as Wisp does, and more): the link's relays, the big
-     * ones, the root author's inbox (NIP-65 read relays), yours; then each replier's own relays. [onSome]: the
-     * thread so far, each time more comes in. Its reactions are counted on the side ([engagement]).
+     * ones, yours, the root author's inbox (NIP-65 read relays); then each replier's own relays. All asked at once,
+     * and [onSome] gets the thread so far as replies come in (a few times a second at most), so one slow relay never
+     * holds up the screen. Its reactions are counted on the side ([engagement]).
      */
     suspend fun thread(id: String, hints: List<String> = emptyList(), onSome: (List<Pair<Event, Int>>) -> Unit = {}): List<Pair<Event, Int>> = kotlinx.coroutines.coroutineScope {
-        val note = note(id) ?: Fetch.query(hints + POST_RELAYS + readRelays().take(4), mapOf("ids" to listOf(id)), 6000).firstOrNull()?.also { remember(listOf(it)) } ?: return@coroutineScope emptyList()
+        val hinted = (hints + hintsOf(id)).distinct()
+        // The note: from here, or from the first relay that has it (the rest aren't waited for).
+        val note = note(id) ?: run {
+            var found: Event? = null
+            Fetch.stream(hinted + POST_RELAYS + readRelays().take(4), listOf(mapOf("ids" to listOf(id))), 6000) { e -> (e.id == id).also { if (it) found = e } }
+            found?.also { remember(listOf(it)) }
+        } ?: return@coroutineScope emptyList()
         val rootId = rootOf(note) ?: note.id
-        val rootNote = note(rootId) ?: if (rootId == note.id) note else null
-        val relays = (hints + postRelays(rootNote?.pubkey ?: note.pubkey)).distinct()
-        val got = java.util.concurrent.ConcurrentHashMap<String, Event>()
+        val rootAuthor = note(rootId)?.pubkey ?: note.tags.firstOrNull { it.size > 4 && it[0] == "e" && it[1] == rootId && it[4].length == 64 }?.get(4) ?: note.pubkey
+        val filters = listOf(mapOf("ids" to listOf(rootId)), mapOf("kinds" to listOf(1, 1111), "#e" to listOf(rootId)), mapOf("kinds" to listOf(1111), "#E" to listOf(rootId)))
+        val got = ConcurrentHashMap<String, Event>()
         fun build(): List<Pair<Event, Int>> = arrange(note, rootId, got.values.toList()).also { synchronized(threads) { threads[id] = it }; onSome(it) }
-        val first = Fetch.query(relays, listOf(mapOf("ids" to listOf(rootId)), mapOf("kinds" to listOf(1, 1111), "#e" to listOf(rootId)), mapOf("kinds" to listOf(1111), "#E" to listOf(rootId))), 7000)
-        first.forEach { got[it.id] = it }
-        build()
+        // Each event, as it arrives, to here; the thread is laid out again at most every 150 ms.
+        val incoming = kotlinx.coroutines.channels.Channel<Event>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val drawing = launch {
+            for (e in incoming) {
+                got.putIfAbsent(e.id, e)
+                while (true) { val more = incoming.tryReceive().getOrNull() ?: break; got.putIfAbsent(more.id, more) }
+                build()
+                kotlinx.coroutines.delay(150)
+            }
+        }
+        val asked = ConcurrentHashMap.newKeySet<String>()
+        suspend fun ask(urls: List<String>, timeoutMs: Long) {
+            val fresh = urls.distinct().filter { asked.add(it) }
+            if (fresh.isNotEmpty()) Fetch.stream(fresh, filters, timeoutMs) { incoming.trySend(it); false }
+        }
+        listOf(
+            async { ask(hinted + POST_RELAYS + readRelays().take(4), 7000) },
+            async { ask(inboxOf(rootAuthor).take(8), 6000) },
+        ).awaitAll()
         // Then where the people who replied post (their write relays), for the replies that only went there.
         val repliers = got.values.filter { it.id != rootId }.map { it.pubkey }.distinct().take(30)
-        val second = repliers.map { pk -> async { outboxOf(pk).take(3) } }.awaitAll().flatten().distinct().filter { it !in relays }.take(25)
-        val more = if (second.isEmpty()) emptyList() else Fetch.query(second, listOf(mapOf("kinds" to listOf(1, 1111), "#e" to listOf(rootId)), mapOf("kinds" to listOf(1111), "#E" to listOf(rootId))), 5000)
-        more.forEach { got.putIfAbsent(it.id, it) }
+        val second = repliers.map { pk -> async { outboxOf(pk).take(3) } }.awaitAll().flatten().distinct().filter { it !in asked }.take(25)
+        ask(second, 5000)
+        incoming.close()
+        drawing.join()
         val out = build()
-        launch { countReactions(out.map { it.first }, relays + second) }
+        // (counted on the side: the thread is done loading before they are)
+        scope.launch { countReactions(out.map { it.first }, asked.toList()) }
         out
     }
 
@@ -3642,6 +3667,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
 
         /** Where people were said to be found (a mention's relay, a link's): asked too when looking for their profile. */
         private val hints = ConcurrentHashMap<String, List<String>>()
+        /** Where a link says to look for someone, or for a post (keyed by its id). */
         fun hint(pk: String, relays: List<String>) {
             val l = relays.map { it.trim().trimEnd('/') }.filter { it.startsWith("wss://") }
             if (l.isNotEmpty()) hints.merge(pk, l) { a, b -> (a + b).distinct().take(4) }

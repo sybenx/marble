@@ -391,6 +391,8 @@
   .more { justify-self: center; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 20px; color: var(--accent); font-weight: 600; font-size: 15px; cursor: pointer; }
   .thread { display: grid; gap: 10px; }
   .up .card { opacity: .85; }
+  /* a reply opened on its own: the one you opened, among what it answers and the rest of its conversation */
+  .card.main.opened { scroll-margin-top: 76px; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .gap { justify-self: start; margin-left: 30px; color: var(--muted); text-decoration: none; }
   .replies { padding-block: 10px 0; }
   .reply.nested { margin-left: 18px; padding-left: 12px; border-left: 2px solid var(--line); margin-top: 8px; }
