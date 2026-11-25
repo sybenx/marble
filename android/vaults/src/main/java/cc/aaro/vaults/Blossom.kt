@@ -14,8 +14,12 @@ class Storage(private val blobs: Blobs, private val clock: Clock) {
     /** Signs blob auth: the account's npub (set by [Vaults]); a test key elsewhere. */
     var signer: ((Long, Int, List<List<String>>, String) -> Ev)? = null
 
-    /** Why each server last refused, by server: an HTTP status ("403"), or "error". For logs and the app. */
+    /** Why each server last refused, by server: an HTTP status ("403"), or "error". For logs. */
     val refused = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** Servers that said no (good-guest §3.5): left alone for that kind of request until they said, or a while. */
+    val refusals = Refusals()
+    /** Whether the last [get] came back empty because servers refused, not because none had it (not a §7.4 gap). */
+    @Volatile var lastGetHeld = false; private set
     /** The last blob put: its first part and the servers that took it. For logs. */
     @Volatile var lastPut: Pair<String, List<String>>? = null
 
@@ -40,34 +44,52 @@ class Storage(private val blobs: Blobs, private val clock: Clock) {
 
     /**
      * Every part to the first [want] of [servers] (already normalized, in the account's order) that take them all; one
-     * auth per server covers every part. A 401, 403 or 415 (or any failure) skips to the next server. The servers that took it.
+     * auth per server covers every part. A 401, 403 or 415 (or any failure) skips to the next server; a refusal (§3.5)
+     * also leaves that server alone for a while, and one waiting out a refusal isn't asked. The servers that took it.
      */
     fun put(sealed: Nv1.Sealed, servers: List<String>, want: Int = 2): List<String> {
         val took = ArrayList<String>()
         val shas = sealed.parts.map { hex(sha256(it)) }
-        for (s in servers) {
+        for (s in refusals.open(servers, "upload", clock.now())) {
             if (took.size >= want) break
             val a = try { auth("upload", shas, s) } catch (e: Exception) { refused[s] = "sign"; continue }
             var why: String? = null
             for ((i, p) in sealed.parts.withIndex()) {
-                val code = try { blobs.upload(s, p, shas[i], a) } catch (_: Exception) { -1 }
+                var noted = false
+                val code = try { blobs.upload(s, p, shas[i], a) } catch (e: BlobRefused) { refusals.refused(s, "upload", e, clock.now()); noted = true; e.status } catch (_: Exception) { -1 }
+                if (!noted && Refusing.isRefusal(code, null)) refusals.refused(s, "upload", code, null, null, clock.now())
                 if (code != 200) { why = when (code) { -1 -> "error"; -2 -> "hash"; else -> code.toString() }; break }
             }
-            if (why == null) { took += s; refused.remove(s) } else refused[s] = why
+            if (why == null) { took += s; refused.remove(s); refusals.answered(s, "upload") } else refused[s] = why
         }
         lastPut = shas.first() to took.toList()
         return took
     }
 
-    /** The plaintext, each part from the first server whose bytes hash right (§6.2). Null: not found whole anywhere. */
+    /**
+     * The plaintext, each part from the first server whose bytes hash right (§6.2). Null: not found whole anywhere, and
+     * [lastGetHeld] says whether that was because servers that might have it refused (or are waiting out a refusal).
+     */
     fun get(ref: BlobRef, servers: List<String>): ByteArray? {
+        var held = false
         val parts = ref.parts.mapIndexed { i, sha ->
-            servers.firstNotNullOfOrNull { s -> try { blobs.get(s, sha)?.takeIf { Nv1.partOK(ref, i, it) } } catch (_: Exception) { null } } ?: return null
+            servers.firstNotNullOfOrNull { s ->
+                val t = clock.now()
+                if (refusals.waiting(s, "get", t) != null) { held = true; return@firstNotNullOfOrNull null }
+                try { blobs.get(s, sha)?.takeIf { Nv1.partOK(ref, i, it) }?.also { refusals.answered(s, "get") } }
+                catch (e: BlobRefused) { if (Refusing.isRefusal(e.status, e.retryAfter)) { refusals.refused(s, "get", e, t); held = true }; null }
+                catch (_: Exception) { null }
+            } ?: return null.also { lastGetHeld = held }
         }
+        lastGetHeld = false
         return Nv1.open(ref, parts)
     }
 
-    fun delete(sha: String, servers: List<String>) { for (s in servers) try { blobs.delete(s, sha, auth("delete", listOf(sha), s)) } catch (_: Exception) {} }
+    fun delete(sha: String, servers: List<String>) {
+        for (s in refusals.open(servers, "delete", clock.now())) try {
+            if (blobs.delete(s, sha, auth("delete", listOf(sha), s))) refusals.answered(s, "delete")
+        } catch (e: BlobRefused) { if (Refusing.isRefusal(e.status, e.retryAfter)) refusals.refused(s, "delete", e, clock.now()) } catch (_: Exception) {}
+    }
 
     /**
      * §6.4's probe: does [server] keep a blob per owner? Two probe keys A and B upload the same random blob; a DELETE by

@@ -1715,8 +1715,8 @@ function showNotes(signal, tab) {
       : show === "tabs"
       ? (tabs.length ? tabs.map(tabRow).join("") : empty)
       : shelfHtml + (these.length ? these.map((i) => noteRow(i, f)).join("") : shelf.length ? "" : empty);
-    const vs = vault.state();
-    $(".only-you", root).innerHTML = `${LOCK}Only you${vault.active() ? vs === "removed" ? " · this browser was removed from your account, so changes here aren't saved" : vs === "opening" ? " · opening…" : vault.syncing() ? " · syncing…" : notes.syncFailing() ? " · can't reach your relays right now, changes wait here" : ""
+    const vs = vault.state(), refused = vault.refusals(); // storage servers that said no, named (good-guest §3.5)
+    $(".only-you", root).innerHTML = `${LOCK}Only you${vault.active() ? vs === "removed" ? " · this browser was removed from your account, so changes here aren't saved" : vs === "opening" ? " · opening…" : refused.length ? ` · ${esc(refused.slice(0, 2).join(" · "))}${vault.held() ? ", changes wait here" : ""}` : vault.syncing() ? " · syncing…" : notes.syncFailing() ? " · can't reach your relays right now, changes wait here" : ""
       : notes.syncs() ? notes.syncFailing() ? " · not syncing right now" : "" : " · this browser"}`;
     // the vault wouldn't open: say so, and that what shows is only this browser's copy (notes-vault.js)
     const why = $(".vault-why", root), stuck = !vault.active() && (vs === "refused" || vs === "error");

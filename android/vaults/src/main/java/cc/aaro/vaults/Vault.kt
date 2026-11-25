@@ -45,6 +45,15 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     @Volatile var trouble: String? = null; private set
     /** Something is missing that a commit or checkpoint names (§7.4): "syncing…", and nothing missing is a deletion. */
     @Volatile var gaps = 0; private set
+    /** Blobs no server gave because the ones that might have them refused (good-guest §3.5): not gaps, not "syncing…". */
+    @Volatile var held = 0; private set
+    /** A blob that wouldn't load: held back by a refusal, or a §7.4 gap. */
+    private fun gap() { if (vs.storage.lastGetHeld) held++ else gaps++ }
+    /**
+     * Storage servers that said no and are being left alone for now, one plain line each, newest first: "blossom.x says
+     * too many requests, trying again at 3 pm", "blossom.x refused storage: 402 payment required". [whenAt] words a time.
+     */
+    fun refusalLines(whenAt: (Long) -> String): List<String> = vs.storage.refusals.active(clock.now()).map { Refusing.line(it, whenAt) }
     /** This device's own root was revoked by the npub (§8.5): it writes nothing more. */
     val removed: Boolean get() = revokedRoots().containsKey(vs.rootPub)
     /** Owner devices to show: root → its name, whether trusted, and why not. */
@@ -279,12 +288,12 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
         val op = c.ops.firstOrNull { it.optString("op") == "checkpoint" } ?: return null
         val ref = BlobRef.of(op.opt("ref")) ?: return null
         val cp = try {
-            val root = obj(String(fetch(ref) ?: return null.also { gaps++ }))
+            val root = obj(String(fetch(ref) ?: return null.also { gap() }))
             fun list(k: String): JSONArray = when (val v = root.opt(k)) { is JSONArray -> v; is JSONObject -> BlobRef.of(v.opt("ref"))?.let { fetch(it) }?.let { arr(String(it)) } ?: throw Malformed("list $k"); else -> JSONArray() }
             val puts = ArrayList<Put>(); val dead = ArrayList<Triple<String, String, String>>()
             for (s in root.arrOr("shards")) {
                 val sref = BlobRef.of(s) ?: throw Malformed("shard")
-                val shard = obj(String(fetch(sref) ?: return null.also { gaps++ }))
+                val shard = obj(String(fetch(sref) ?: return null.also { gap() }))
                 val es = shard.objOr("entries")
                 for (e in es.keys()) {
                     val eo = es.getJSONObject(e)
@@ -324,7 +333,7 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
 
     private var stateCache: State? = null
     private fun opsOf(c: Commit): List<JSONObject> = c.ops.flatMap { op ->
-        if (op.optString("op") == "batch") BlobRef.of(op.opt("ref"))?.let { fetch(it) }?.let { b -> try { arr(String(b)).objs().filter { it.optString("op") == "put" || it.optString("op") == "contrib" } } catch (_: Malformed) { null } } ?: emptyList<JSONObject>().also { gaps++ }
+        if (op.optString("op") == "batch") BlobRef.of(op.opt("ref"))?.let { fetch(it) }?.let { b -> try { arr(String(b)).objs().filter { it.optString("op") == "put" || it.optString("op") == "contrib" } } catch (_: Malformed) { null } } ?: emptyList<JSONObject>().also { gap() }
         else listOf(op)
     }
     @Synchronized fun state(): State {
@@ -363,7 +372,7 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
         while (r != null && hops++ < 1000) {
             val k = refKey(r)
             if (k in segmentsRead) return
-            val seg = try { obj(String(fetch(r) ?: return Unit.also { gaps++ })) } catch (_: Malformed) { return }
+            val seg = try { obj(String(fetch(r) ?: return Unit.also { gap() })) } catch (_: Malformed) { return }
             if (seg.optString("genesis") != genesisId || seg.optString("dvk") != dvk) return
             var allHeld = true
             for (x in seg.arrOr("commits").objs()) Commit.of(x)?.takeIf { it.dvk == dvk }?.let { if (hold(it)) allHeld = false }
@@ -378,7 +387,7 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
      * new ρ turns up), segments and checkpoints. True once a majority of the vault's relays answered.
      */
     @Synchronized fun catchUp(): Boolean {
-        gaps = 0; trouble = null
+        gaps = 0; held = 0; trouble = null
         readKeyrings()
         vs.askKeykin()
         var answeredAny = false; var majority = false
@@ -647,8 +656,9 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
 
     /** For tests and debugging: the counts behind the state. */
     fun debug(): JSONObject = JSONObject().put("commits", commits.size).put("live", liveDvks().size).put("gens", gens.size).put("current", current()?.id)
-        .put("epoch", writeEpoch()?.kid).put("entries", state().entries.size).put("gaps", gaps).put("trouble", trouble).put("pending", pending)
+        .put("epoch", writeEpoch()?.kid).put("entries", state().entries.size).put("gaps", gaps).put("held", held).put("trouble", trouble).put("pending", pending)
         .put("uncovered", JSONArray(uncovered().sorted())).put("trusted", JSONArray(trustedRoots().sorted()))
         .put("servers", JSONArray(writeServers())).put("refused", JSONObject(vs.storage.refused as Map<*, *>))
+        .put("refusals", JSONArray(vs.storage.refusals.active(clock.now()).map { JSONObject().put("host", it.host).put("kind", it.kind).put("status", it.status).put("reason", it.reason).put("until", it.until) }))
         .put("lastPut", vs.storage.lastPut?.let { (sha, on) -> JSONObject().put("sha", sha).put("on", JSONArray(on)) })
 }

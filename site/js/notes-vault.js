@@ -11,7 +11,8 @@ import { accountRelays } from "./account-relays.js";
 import { current, sign, nip44DecryptFrom, canVault, onMe } from "./me.js";
 
 let lib = null; // the vault code (and the noble bundle under it), loaded only for an account that may have a vault
-const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js")]).then(([sync, notes, core]) => ({ sync, notes, core })));
+const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js"), import("./vault/refusals.js")])
+  .then(([sync, notes, core, refusals]) => ({ sync, notes, core, refusals })));
 
 let early = []; // changes made while the vault was opening
 let libNow = null; // the vault code, once loaded
@@ -25,6 +26,35 @@ export const state = () => status;
 export const reason = () => why;
 /** Something the vault names hasn't loaded yet (§7.4): Notes says "syncing…" and shows what it has. */
 export const syncing = () => !!session && (session.gaps.size > 0 || blobFailed.size > 0);
+/**
+ * Storage servers that said no and are being left alone for now (good-guest §3.5), one plain line each, newest first:
+ * "blossom.x says too many requests, trying again at 3 pm", "blossom.x refused storage: 402 payment required".
+ */
+export function refusals() {
+  if (!session || !libNow) return [];
+  return session.refusals.active(Math.floor(Date.now() / 1000)).map((r) => libNow.refusals.refusalLine(r, when));
+}
+/** Whether changes made here are waiting because storage servers refused them (not lost, not a relay problem). */
+export const held = () => heldUntil > Date.now() / 1000;
+let heldUntil = 0;
+/** A time to come back, as Notes says it: "in 5 minutes", "at 3 pm", "tomorrow at 9:30 am", "on Fri at 3 pm". */
+export function when(t) {
+  const left = t - Date.now() / 1000;
+  if (left < 90) return "in a minute";
+  if (left < 3600) return `in ${Math.round(left / 60)} minutes`;
+  const d = new Date(t * 1000), today = new Date();
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: d.getMinutes() ? "2-digit" : undefined }).toLowerCase().replace(/\s+/g, " ");
+  const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date(today).setHours(0, 0, 0, 0)) / 86400000);
+  return days <= 0 ? `at ${time}` : days === 1 ? `tomorrow at ${time}` : `on ${d.toLocaleDateString("en-US", { weekday: "short" })} at ${time}`;
+}
+// When the first refusal is over: Notes redraws, and what waited on it is tried again (once, not on a loop).
+let wakeTimer = null;
+function wake() {
+  clearTimeout(wakeTimer);
+  const t = Math.floor(Date.now() / 1000), next = session?.refusals.active(t).map((r) => r.until).sort((a, b) => a - b)[0];
+  if (!next) return;
+  wakeTimer = setTimeout(() => { tell(); if (session) { if (blobHeld.size) remember(); if (queue.size) flush(); } wake(); }, Math.max(1000, (next - t) * 1000 + 500));
+}
 /** Whether Notes come from the vault (open, or shown from this browser's copy while it opens). */
 export const active = () => status === "open" || status === "offline" || status === "removed" || (status === "opening" && !!cached);
 
@@ -55,14 +85,18 @@ async function idb(op, pk, value) {
 const net = {
   req: (urls, filter) => req(urls, filter, { timeout: 7000, settle: 1500 }),
   publish: (urls, e) => publish(urls, e),
+  // (the engine asks one server at a time; a refusal comes back as {status, reason, retryAfter} so it can leave that
+  // server alone for a while. X-Reason and Retry-After show only when the server lets pages read them.)
   async get(servers, sha) {
+    let last = null;
     for (const s of servers) {
       try {
         const r = await fetch(`${s.replace(/\/+$/, "")}/${sha}`, { signal: AbortSignal.timeout(15000) });
         if (r.ok) return new Uint8Array(await r.arrayBuffer());
+        last = { status: r.status, reason: r.headers.get("X-Reason"), retryAfter: r.headers.get("Retry-After") };
       } catch {}
     }
-    return null;
+    return last && libNow?.refusals.isRefusal(last.status, last.retryAfter) ? last : null;
   },
   /** BUD-02 upload: {ok, why, sha256 (as the server describes the blob)}. */
   // (XMLHttpRequest, not fetch: it says how much has gone up, for the picture's progress bar)
@@ -75,7 +109,10 @@ const net = {
       x.setRequestHeader("Authorization", "Nostr " + btoa(JSON.stringify(auth)));
       if (onSent) x.upload.onprogress = (e) => onSent(e.loaded);
       x.onload = () => {
-        if (x.status < 200 || x.status >= 300) return done({ ok: false, why: `${x.status} ${x.getResponseHeader("X-Reason") || ""}`.trim() });
+        if (x.status < 200 || x.status >= 300) {
+          const reason = x.getResponseHeader("X-Reason"), retryAfter = x.getResponseHeader("Retry-After");
+          return done({ ok: false, why: `${x.status} ${reason || ""}`.trim(), status: x.status, reason, retryAfter });
+        }
         let d = null; try { d = JSON.parse(x.responseText); } catch {}
         done({ ok: true, sha256: typeof d?.sha256 === "string" ? d.sha256 : null });
       };
@@ -97,7 +134,7 @@ const deviceName = () => {
 export function start(pk = current()) {
   if (!pk || !canVault()) return Promise.resolve(null);
   if (opening && who === pk) return opening;
-  if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); }
+  if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); }
   who = pk; status = "opening"; lastTry = Date.now(); tell();
   const p = (async () => {
     cached = (await idb("get", pk)) || null;
@@ -163,7 +200,7 @@ function retry() {
 export async function stop(pk) {
   clearTimeout(timer);
   if (pk) await idb("delete", pk);
-  session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); status = "none"; why = "";
+  session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); status = "none"; why = "";
   for (const u of pictureUrls.values()) if (u) URL.revokeObjectURL(u);
   pictureUrls.clear();
   if (who === pk || !pk) who = "";
@@ -245,11 +282,13 @@ export async function flush() {
     try {
       if (ops.length) await s.commit(ops);
       for (const [id, q] of taking) if (queue.get(id) === q) queue.delete(id);
-      status = s.removed() ? "removed" : "open"; why = "";
+      status = s.removed() ? "removed" : "open"; why = ""; heldUntil = 0;
       await remember();
     } catch (err) {
       why = String(err?.message || err);
       if (/removed/.test(why)) status = "removed";
+      // storage servers said no: the changes wait here, and nothing is sent until the first of them may be asked again
+      else if (err instanceof libNow.refusals.RefusedError) { heldUntil = err.retryAt || 0; clearTimeout(timer); wake(); }
       else { status = "offline"; clearTimeout(timer); timer = setTimeout(flush, 30000); }
     }
     tell();
@@ -270,13 +309,15 @@ async function remember() {
   // a note whose text is in a blob: fetched, then shown
   for (const n of libNow.notes.notesOf(session.vault.state(), session.vault.roster())) for (const x of n.versions) {
     if (x.text !== null || !x.blob || blobTexts.has(x.ver)) continue;
-    session.blob(x.blob).then((b) => { blobTexts.set(x.ver, new TextDecoder().decode(b)); blobFailed.delete(x.ver); tell(); })
-      .catch(() => { blobFailed.add(x.ver); tell(); });
+    session.blob(x.blob).then((b) => { blobTexts.set(x.ver, new TextDecoder().decode(b)); blobFailed.delete(x.ver); blobHeld.delete(x.ver); tell(); })
+      // (held back by a server's refusal: not "syncing…"; Notes names the server, and it's asked again when it said)
+      .catch((err) => { if (err instanceof libNow.refusals.RefusedError) { blobHeld.add(x.ver); blobFailed.delete(x.ver); wake(); } else blobFailed.add(x.ver); tell(); });
   }
+  if (session.held.size) wake();
 }
-const blobTexts = new Map(), blobFailed = new Set();
+const blobTexts = new Map(), blobFailed = new Set(), blobHeld = new Set();
 /** A note's text; one kept in a blob shows a line saying so until it has loaded. */
-export const textOf = (item) => (item.long && !item.text ? blobTexts.get(item.ver) || (blobFailed.has(item.ver) ? "(This note hasn't loaded yet.)" : "(Loading this note…)") : item.text);
+export const textOf = (item) => (item.long && !item.text ? blobTexts.get(item.ver) || (blobFailed.has(item.ver) || blobHeld.has(item.ver) ? "(This note hasn't loaded yet.)" : "(Loading this note…)") : item.text);
 
 // ── pictures (a screenshot dropped or pasted on the page): each an encrypted blob of the vault, named in the note ──
 
@@ -297,7 +338,10 @@ export async function uploadPicture(file, onProgress = null) {
   let w = 0, h = 0;
   try { const b = await createImageBitmap(new Blob([bytes], { type: file.type })); w = b.width; h = b.height; b.close(); }
   catch { throw new Error("That file isn't a picture this browser can open."); }
-  const ref = await session.upload(await session.device(), bytes, 2, undefined, onProgress).catch(() => { throw new Error("Your storage servers wouldn't take the picture. Try again in a moment."); });
+  const ref = await session.upload(await session.device(), bytes, 2, undefined, onProgress).catch((err) => {
+    if (err instanceof libNow.refusals.RefusedError) { wake(); tell(); throw new Error(refusals()[0] ? refusals()[0] + "." : "Your storage servers wouldn't take the picture."); }
+    throw new Error("Your storage servers wouldn't take the picture. Try again in a moment.");
+  });
   const pic = { ref, mime: file.type, w, h };
   pictureUrls.set(ref.parts[0], URL.createObjectURL(new Blob([bytes], { type: file.type })));
   return pic;

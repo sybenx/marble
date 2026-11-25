@@ -16,7 +16,8 @@ interface RelayNet {
 interface Blobs {
     /**
      * BUD-02 upload with [auth] as the Authorization header. 200 when the server took it with this hash; otherwise the
-     * HTTP status, -2 for a wrong hash back, -1 for no answer.
+     * HTTP status, -2 for a wrong hash back, -1 for no answer. A refusal (402, 403, 413, 429, 507, a 503 with
+     * Retry-After) may instead throw [BlobRefused] with the server's X-Reason and Retry-After; so may [get] and [delete].
      */
     fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int
     /** BUD-01: the bytes, or null. The caller checks the hash. */
