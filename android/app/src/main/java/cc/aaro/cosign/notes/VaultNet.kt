@@ -6,10 +6,12 @@ import cc.aaro.qrst.core.Event
 import cc.aaro.qrst.core.Json
 import cc.aaro.vaults.Account
 import cc.aaro.vaults.Answer
+import cc.aaro.vaults.BlobRefused
 import cc.aaro.vaults.Blobs
 import cc.aaro.vaults.Ev
 import cc.aaro.vaults.KeykinView
 import cc.aaro.vaults.RelayNet
+import cc.aaro.vaults.Refusing
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -33,14 +35,19 @@ object VaultNet : RelayNet, Blobs {
     override fun publish(relays: List<String>, ev: Ev): Set<String> = runBlocking { Fetch.publishOk(relays, event(ev), 8000) }
 
     private val http by lazy { Fetch.http.newBuilder().callTimeout(60, TimeUnit.SECONDS).build() }
+    /** A refusal (good-guest §3.5) as [BlobRefused], with what the server said, so the engine leaves it alone a while. */
+    private fun refusal(r: okhttp3.Response) {
+        val after = r.header("Retry-After")
+        if (Refusing.isRefusal(r.code, after)) throw BlobRefused(r.code, r.header("X-Reason"), after)
+    }
     override fun upload(server: String, bytes: ByteArray, sha256: String, auth: String): Int =
         http.newCall(Request.Builder().url("${server.trimEnd('/')}/upload").put(bytes.toRequestBody("application/octet-stream".toMediaType())).header("Authorization", auth).build()).execute().use { r ->
-            if (!r.isSuccessful) r.code else if ((try { JSONObject(r.body?.string() ?: "").optString("sha256") } catch (_: Exception) { "" }) == sha256) 200 else -2
+            if (!r.isSuccessful) { refusal(r); r.code } else if ((try { JSONObject(r.body?.string() ?: "").optString("sha256") } catch (_: Exception) { "" }) == sha256) 200 else -2
         }
     override fun get(server: String, sha256: String): ByteArray? =
-        http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+        http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else { refusal(r); null } }
     override fun delete(server: String, sha256: String, auth: String): Boolean =
-        http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").delete().header("Authorization", auth).build()).execute().use { it.isSuccessful }
+        http.newCall(Request.Builder().url("${server.trimEnd('/')}/$sha256").delete().header("Authorization", auth).build()).execute().use { r -> r.isSuccessful.also { if (!it) refusal(r) } }
 }
 
 /** The account, through Marble's signer: signatures (blob auth included) and the seal's `ecdh` go to the signer process (and the box). */

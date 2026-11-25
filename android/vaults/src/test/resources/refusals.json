@@ -1,0 +1,64 @@
+{
+  "about": "Being told no (proposals/good-guest.md §3.5). Every engine that talks to Blossom checks itself against these: js/vault/refusals.js (node vectors/refusals.test.mjs) and Marble Android's cc.aaro.vaults.Refusals (RefusalsTest, with a copy of this file). Times are seconds. A line's {when} is the host's wording of `until`.",
+  "is_refusal": [
+    { "status": 402, "retry_after": null, "refusal": true },
+    { "status": 403, "retry_after": null, "refusal": true },
+    { "status": 413, "retry_after": null, "refusal": true },
+    { "status": 429, "retry_after": null, "refusal": true },
+    { "status": 507, "retry_after": null, "refusal": true },
+    { "status": 503, "retry_after": "30", "refusal": true },
+    { "status": 503, "retry_after": null, "refusal": false },
+    { "status": 401, "retry_after": null, "refusal": false },
+    { "status": 404, "retry_after": null, "refusal": false },
+    { "status": 500, "retry_after": "30", "refusal": false },
+    { "status": 200, "retry_after": null, "refusal": false }
+  ],
+  "backoff": [[1, 60], [2, 120], [3, 240], [4, 480], [5, 960], [6, 1920], [7, 3840], [8, 7680], [9, 15360], [10, 30720], [11, 61440], [12, 86400], [30, 86400]],
+  "retry_after": [
+    { "value": "120", "t": 1800000000, "seconds": 120 },
+    { "value": " 0 ", "t": 1800000000, "seconds": 0 },
+    { "value": "Fri, 15 Jan 2027 08:00:00 GMT", "t": 1800000000, "seconds": 0 },
+    { "value": "Fri, 15 Jan 2027 08:00:00 GMT", "t": 1799998200, "seconds": 1800 },
+    { "value": "soon", "t": 1800000000, "seconds": null },
+    { "value": null, "t": 1800000000, "seconds": null }
+  ],
+  "scenarios": [
+    {
+      "name": "429 with Retry-After: every kind waits that long, then may ask again",
+      "steps": [
+        { "do": "refused", "server": "https://Blossom.X/", "kind": "get", "status": 429, "reason": null, "retry_after": "120", "t": 1800000000,
+          "expect": { "host": "blossom.x", "kind": "*", "until": 1800000120, "strikes": 1, "line": "blossom.x says too many requests, trying again {when}" } },
+        { "do": "waiting", "server": "https://blossom.x", "kind": "upload", "t": 1800000119, "expect": true },
+        { "do": "waiting", "server": "https://blossom.x", "kind": "get", "t": 1800000120, "expect": false },
+        { "do": "open", "servers": ["https://blossom.x", "https://cdn.y"], "kind": "get", "t": 1800000060, "expect": ["https://cdn.y"] }
+      ]
+    },
+    {
+      "name": "402 on upload with no Retry-After: doubling from a minute; only uploads wait; an answer clears it",
+      "steps": [
+        { "do": "refused", "server": "https://blossom.x", "kind": "upload", "status": 402, "reason": null, "retry_after": null, "t": 1800000000,
+          "expect": { "host": "blossom.x", "kind": "upload", "until": 1800000060, "strikes": 1, "line": "blossom.x refused storage: 402 payment required" } },
+        { "do": "waiting", "server": "https://blossom.x", "kind": "get", "t": 1800000001, "expect": false },
+        { "do": "refused", "server": "https://blossom.x", "kind": "upload", "status": 402, "reason": "  Pay   1000 sats a month ", "retry_after": null, "t": 1800000100,
+          "expect": { "host": "blossom.x", "kind": "upload", "until": 1800000220, "strikes": 2, "line": "blossom.x refused storage: 402 Pay 1000 sats a month" } },
+        { "do": "next_try", "servers": ["https://blossom.x", "https://cdn.y"], "kind": "upload", "t": 1800000101, "expect": 1800000220 },
+        { "do": "answered", "server": "https://blossom.x", "kind": "upload" },
+        { "do": "waiting", "server": "https://blossom.x", "kind": "upload", "t": 1800000101, "expect": false },
+        { "do": "refused", "server": "https://blossom.x", "kind": "upload", "status": 507, "reason": null, "retry_after": null, "t": 1800000200,
+          "expect": { "host": "blossom.x", "kind": "upload", "until": 1800000260, "strikes": 1, "line": "blossom.x refused storage: 507 out of space" } }
+      ]
+    },
+    {
+      "name": "403 on downloads; a Retry-After past a day waits a day; 503 that says when",
+      "steps": [
+        { "do": "refused", "server": "https://cdn.y:8443", "kind": "get", "status": 403, "reason": null, "retry_after": "999999", "t": 1800000000,
+          "expect": { "host": "cdn.y:8443", "kind": "get", "until": 1800086400, "strikes": 1, "line": "cdn.y:8443 refused downloads: 403 not allowed" } },
+        { "do": "refused", "server": "https://z.test", "kind": "delete", "status": 503, "reason": null, "retry_after": "30", "t": 1800000000,
+          "expect": { "host": "z.test", "kind": "delete", "until": 1800000030, "strikes": 1, "line": "z.test refused deleting: 503 busy, trying again {when}" } },
+        { "do": "refused", "server": "https://q.test", "kind": "upload", "status": 413, "reason": null, "retry_after": "0", "t": 1800000000,
+          "expect": { "host": "q.test", "kind": "upload", "until": 1800000060, "strikes": 1, "line": "q.test refused storage: 413 too large" } },
+        { "do": "active", "t": 1800000031, "expect": ["cdn.y:8443", "q.test"] }
+      ]
+    }
+  ]
+}

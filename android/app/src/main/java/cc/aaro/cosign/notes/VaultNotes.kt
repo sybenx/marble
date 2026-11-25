@@ -41,6 +41,16 @@ class VaultNotes(
     /** Why notes can't sync now, in a few words, or null. */
     val trouble = MutableStateFlow<String?>(null)
 
+    /**
+     * What Notes says: storage servers that said no first, by name (good-guest §3.5), then the vault's own trouble.
+     * [waiting]: changes made here didn't all go out.
+     */
+    private fun said(v: Vault, waiting: Boolean = false): String? {
+        val lines = v.refusalLines(::whenAt).take(2)
+        if (lines.isEmpty()) return v.trouble
+        return lines.joinToString(" · ") + if (waiting) ", changes wait here" else ""
+    }
+
     @Volatile var vault: Vault? = vaults.store.get("notesVault")?.let { vaults.open(it) }; private set
 
     /** The notes vault: the one held, else found in the account's keyring entries, else (if [create]) a new one. */
@@ -140,8 +150,8 @@ class VaultNotes(
     /** Caught up, and the notes as the vault has them, with changes made here that haven't gone out kept. Null: couldn't. */
     @Synchronized fun pull(before: List<LaterItem>): List<LaterItem>? {
         val v = ensure(create = false) ?: return null
-        if (!v.catchUp()) { trouble.value = v.trouble ?: "Can't reach your relays"; return null }
-        trouble.value = v.trouble
+        if (!v.catchUp()) { trouble.value = said(v) ?: "Can't reach your relays"; return null }
+        trouble.value = said(v)
         return merged(v, before)
     }
 
@@ -176,12 +186,12 @@ class VaultNotes(
     /** What changed here goes out (§7.1). The notes after, or null if it couldn't. */
     @Synchronized fun push(before: List<LaterItem>): List<LaterItem>? {
         val v = ensure(create = before.any { it.deleted == null }) ?: return null
-        if (!v.catchUp()) { trouble.value = v.trouble ?: "Can't reach your relays"; return null }
+        if (!v.catchUp()) { trouble.value = said(v) ?: "Can't reach your relays"; return null }
         val st = v.state()
         val puts = before.mapNotNull { try { putFor(v, st, it) } catch (_: Exception) { null } }
         if (puts.isNotEmpty()) v.enqueue(puts.map { it.json })
-        val ok = v.sync(); v.checkpointIfDue()
-        trouble.value = v.trouble
+        val ok = try { v.sync().also { v.checkpointIfDue() } } catch (e: Exception) { trouble.value = said(v, waiting = true) ?: v.trouble; throw e }
+        trouble.value = said(v, waiting = !ok)
         if (!ok) return null
         // Each item now based on the version it just wrote.
         val vers = puts.associateBy { it.entry }
@@ -280,5 +290,21 @@ class VaultNotes(
         /** Pictures a note can show (as Marble Web keeps them). */
         val PICTURE_TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
         fun entryFor(id: String) = thHex("marble/later/1", id.toByteArray())
+    }
+}
+
+/** A time to come back, as Notes says it: "in 5 minutes", "at 3 pm", "tomorrow at 9:30 am", "on Fri at 3 pm". */
+fun whenAt(t: Long): String {
+    val left = t - System.currentTimeMillis() / 1000
+    if (left < 90) return "in a minute"
+    if (left < 3600) return "in ${Math.round(left / 60.0)} minutes"
+    val zone = java.time.ZoneId.systemDefault()
+    val d = java.time.Instant.ofEpochSecond(t).atZone(zone)
+    val time = (if (d.minute == 0) "${(d.hour + 11) % 12 + 1}" else "${(d.hour + 11) % 12 + 1}:%02d".format(d.minute)) + if (d.hour < 12) " am" else " pm"
+    val days = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(zone), d.toLocalDate())
+    return when {
+        days <= 0 -> "at $time"
+        days == 1L -> "tomorrow at $time"
+        else -> "on ${d.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.US)} at $time"
     }
 }

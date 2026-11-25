@@ -2,13 +2,16 @@
 // epochs (§3.1), loads checkpoints (§9.2), and writes (§7.1): commits numbered and signed only when published, a
 // `rekey` under the old epoch before the first write under a new one (§4.1, §8.3), segments on Blossom (§4.1).
 // The network and the signer are passed in, so this runs the same in a page and in a node test.
-//   net: {req(urls, filter) → events (.answered), publish(urls, event) → {ok, failed}, get(servers, sha) → bytes|null,
-//         put(server, bytes, auth) → bool, mirror(server, fromUrl, auth) → bool}
+//   net: {req(urls, filter) → events (.answered), publish(urls, event) → {ok, failed}, get([server], sha) → bytes|null|
+//         {status, reason, retryAfter}, put(server, bytes, auth) → true|{ok, sha256}|{ok: false, why, status, reason,
+//         retryAfter}, mirror(server, fromUrl, auth) → bool}   (status: the HTTP code; reason: X-Reason; retryAfter: the
+//         Retry-After header as sent. A server's refusal is kept and that server left alone for a while: refusals.js)
 //   signer: {pubkey, sign(template) → signed event, decrypt(eph, ct) → text}  (the account; nip44_decrypt as it)
 //   store: {get(key), set(key, value)} (this browser's storage: device root, certs, own commits; never owner secrets)
 import { hex, unhex, isHex, canon, parse, utf8, unutf8, signEvent, pubHex, randomKey, random, sha256 } from "./crypto.js";
 import * as V from "./core.js";
 import { Vault } from "./state.js";
+import { Refusals, RefusedError, isRefusal } from "./refusals.js";
 
 const isObj = (o) => !!o && typeof o === "object" && !Array.isArray(o);
 const now = () => Math.floor(Date.now() / 1000);
@@ -50,6 +53,7 @@ export class Session {
   constructor({ me, entries, net, signer, store, deviceName = "Marble Web", accountRelays = [], blossom = null, log = () => {} }) {
     Object.assign(this, { me, net, signer, store, deviceName, accountRelays, log, blossom: blossom && normalizeServers(blossom) });
     this.uploadLog = []; // [{server, why}] for servers skipped
+    this.refusals = new Refusals({ store }); // servers that said no (good-guest §3.5), left alone until they said, or a while
     const p = entries[0].payload;
     this.vid = p.vault; this.genesis = p.genesis;
     this.entries = entries; // keyring entries for this vault (every d)
@@ -60,6 +64,7 @@ export class Session {
     this.rekeys = []; // [{dvk, commit, op}]
     this.missingGen = new Set();
     this.gaps = new Set(); // blobs a live commit or checkpoint names that won't load yet (§7.4): "syncing…", never deletion
+    this.held = new Set(); // blobs no server gave because the ones that may have it refused (429, 402, …): not a gap
     this.ignoredGens = new Set(); // named by a rekey, missing from every keyring entry after a complete re-read
     this.suspect = new Set(); // dvks whose rekey named such a generation
     this.vault = null;
@@ -201,15 +206,36 @@ export class Session {
     }
   }
   async blobJSON(ref) {
-    try { const v = parse(unutf8(await this.blob(ref))); this.gaps.delete(ref.parts[0]); return v; }
-    catch { if (V.refOK(ref)) this.gaps.add(ref.parts[0]); return null; }
+    const k = ref?.parts?.[0];
+    try { const v = parse(unutf8(await this.blob(ref))); this.gaps.delete(k); this.held.delete(k); return v; }
+    catch (err) {
+      if (!V.refOK(ref)) return null;
+      if (err instanceof RefusedError) { this.held.add(k); this.gaps.delete(k); } else { this.gaps.add(k); this.held.delete(k); }
+      return null;
+    }
   }
-  /** A blob's plaintext: each part from any vault server, checked (§6.2). */
+  /**
+   * A blob's plaintext: each part from any vault server, checked (§6.2). Throws RefusedError when no server gave a part
+   * and at least one that might have it refused (or is still waiting out a refusal): held back, not missing.
+   */
   async blob(ref) {
     if (!V.refOK(ref)) throw new Error("bad ref");
     const parts = [];
-    for (const sha of ref.parts) { const p = await this.net.get(this.servers, sha); if (!p) throw new Error("missing"); parts.push(p); }
+    for (const sha of ref.parts) parts.push(await this.part(sha));
     return V.nv1Open(ref, parts);
+  }
+  async part(sha) {
+    const t = now(), held = [];
+    for (const s of this.servers) {
+      const w = this.refusals.waiting(s, "get", t);
+      if (w) { held.push(w); continue; }
+      let r = null;
+      try { r = await this.net.get([s], sha); } catch {}
+      if (r instanceof Uint8Array) { this.refusals.answered(s, "get"); return r; }
+      if (r && isRefusal(r.status, r.retryAfter)) held.push(this.refusals.refused(s, "get", r, t));
+    }
+    if (held.length) throw new RefusedError(held);
+    throw new Error("missing");
   }
 
   // ── generations (§3.1) ──
@@ -427,9 +453,12 @@ export class Session {
    */
   // (the servers wanted are tried at once, not one after another, each signed for at the same time; one that refuses
   // is replaced by the next on the list. onProgress(fraction): how much of the bytes the slowest of them has taken.)
+  // (a server waiting out a refusal is skipped; one that refuses now is noted and replaced. When too few are left the
+  // error is a RefusedError naming them, with retryAt: when the first of them may be asked again.)
   async upload(_dev, plain, need = 2, key, onProgress = null) {
     const { ref, parts } = await V.nv1Seal(plain, key);
-    const servers = this.writeServers, want = Math.min(need, servers.length);
+    const all = this.writeServers, t0 = now(), want = Math.min(need, all.length);
+    const servers = this.refusals.open(all, "upload", t0);
     const total = parts.reduce((a, p) => a + p.length, 0) || 1;
     let on = 0, next = 0;
     const sent = new Map(); // server → bytes taken so far
@@ -445,17 +474,25 @@ export class Session {
         step = `sending to ${host(server)}`; tellProgress();
         for (let i = 0; i < parts.length && !why; i++) {
           const r = await this.net.put(server, parts[i], auth, (n) => { sent.set(server, done + n); tellProgress(); });
-          if (r !== true && !(r && r.ok && (!r.sha256 || r.sha256 === ref.parts[i]))) why = (r && r.why) || "refused";
+          if (r !== true && !(r && r.ok && (!r.sha256 || r.sha256 === ref.parts[i]))) {
+            why = (r && r.why) || "refused";
+            if (r && isRefusal(r.status, r.retryAfter)) this.refusals.refused(server, "upload", r, now());
+          }
           done += parts[i].length; sent.set(server, done); tellProgress();
         }
       } catch (err) { why = String(err?.message || err); }
       if (why) { sent.delete(server); this.uploadLog.push({ server, why, at: now() }); return next < servers.length ? one(servers[next++]) : null; }
+      this.refusals.answered(server, "upload");
       on++;
     };
     const lanes = [];
-    while (next < want) lanes.push(one(servers[next++]));
+    while (next < Math.min(want, servers.length)) lanes.push(one(servers[next++]));
     await Promise.all(lanes);
-    if (!want || on < want) throw new Error("storage unavailable");
+    if (!want || on < want) {
+      const t = now(), held = all.map((s) => this.refusals.waiting(s, "upload", t)).filter(Boolean);
+      if (held.length) throw Object.assign(new RefusedError(held), { retryAt: this.refusals.nextTry(all, "upload", t) });
+      throw new Error("storage unavailable");
+    }
     return ref;
   }
 
