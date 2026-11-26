@@ -3,7 +3,8 @@
 #   tools/notes-sync-smoke.sh            (release.sh runs it before building; run it before `npx wrangler deploy` too)
 #
 #  1. Web engine (site/js/vault/): two browsers and a fresh one, across a new key generation, with a signer that
-#     refuses once (tools/notes-sync-smoke.test.mjs), plus the web engine's own sync checks.
+#     refuses once (tools/notes-sync-smoke.test.mjs), plus the web engine's own sync checks, and the page when a
+#     storage server refuses (tools/vault-refusals-page.test.mjs, headless Chromium; skipped without Playwright).
 #  2. Android engine (android/vaults): phone, tablet and a fresh install, the same way (SyncSmokeTest).
 #  3. Android ↔ Web for real, over a local relay and two Blossom servers (android/tools/vaults-test-server.ts, test keys
 #     only): Android's engine makes a notes vault, Web reads it and edits a note, Android reads Web's edit and edits
@@ -27,6 +28,8 @@ if [ -n "$SMOKE_ONLY_CROSS" ]; then :; else
 echo "1. web engine"
 node tools/notes-sync-smoke.test.mjs
 node tools/vaults-sync.test.mjs | tail -1
+# (Marble Web's Notes in headless Chromium when a storage server refuses: the change waits, said so, and goes up later)
+node tools/vault-refusals-page.test.mjs || fail "web refusals page test"
 
 echo "2. Android engine"
 (cd android && $LOCK ./gradlew -q :vaults:testDebugUnitTest --tests cc.aaro.vaults.SyncSmokeTest --tests cc.aaro.vaults.EngineTest) || fail "Android engine tests"

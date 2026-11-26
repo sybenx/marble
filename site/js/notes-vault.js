@@ -53,7 +53,9 @@ function wake() {
   clearTimeout(wakeTimer);
   const t = Math.floor(Date.now() / 1000), next = session?.refusals.active(t).map((r) => r.until).sort((a, b) => a - b)[0];
   if (!next) return;
-  wakeTimer = setTimeout(() => { tell(); if (session) { if (blobHeld.size) remember(); if (queue.size) flush(); } wake(); }, Math.max(1000, (next - t) * 1000 + 500));
+  // (the vault's own blobs held back while catching up, its batches and segments, need a catch-up, which also fetches
+  // the notes' texts; else only the texts are asked again)
+  wakeTimer = setTimeout(async () => { tell(); if (session) { if (session.held.size) await refresh(); else if (blobHeld.size) await remember(); if (queue.size) flush(); } wake(); }, Math.max(1000, (next - t) * 1000 + 500));
 }
 /** Whether Notes come from the vault (open, or shown from this browser's copy while it opens). */
 export const active = () => status === "open" || status === "offline" || status === "removed" || (status === "opening" && !!cached);
@@ -265,21 +267,23 @@ export async function flush() {
   const s = session, { notes: N } = libNow;
   const taking = new Map(queue);
   const p = (async () => {
-    const ops = [];
-    for (const [id, q] of taking) {
-      const entry = N.entryOf(id);
-      if (q.note.deleted) { if (q.base.length) ops.push(N.deletePut(entry, q.base)); continue; }
-      const note = { id, text: q.note.text, created: q.note.created, updated: q.note.updated, done: q.note.done, url: q.note.url, quote: q.note.quote, app: q.note.from,
-        // (a new note's pictures; a note's pictures already in the vault stay as its meta has them)
-        pictures: q.meta.pictures === undefined && q.note.pictures?.length ? q.note.pictures : undefined };
-      let data = null;
-      if (N.needsBlob(note.text)) {
-        const dev = await s.device();
-        data = { blob: await s.upload(dev, new TextEncoder().encode(note.text), 2) };
-      }
-      ops.push(N.notePut(note, q.base, q.meta, data));
-    }
+    // (inside the try: a long note's text goes up as a blob first, and a storage server refusing it is handled below
+    // like any refusal, so the change waits and is tried again when the server said)
     try {
+      const ops = [];
+      for (const [id, q] of taking) {
+        const entry = N.entryOf(id);
+        if (q.note.deleted) { if (q.base.length) ops.push(N.deletePut(entry, q.base)); continue; }
+        const note = { id, text: q.note.text, created: q.note.created, updated: q.note.updated, done: q.note.done, url: q.note.url, quote: q.note.quote, app: q.note.from,
+          // (a new note's pictures; a note's pictures already in the vault stay as its meta has them)
+          pictures: q.meta.pictures === undefined && q.note.pictures?.length ? q.note.pictures : undefined };
+        let data = null;
+        if (N.needsBlob(note.text)) {
+          const dev = await s.device();
+          data = { blob: await s.upload(dev, new TextEncoder().encode(note.text), 2) };
+        }
+        ops.push(N.notePut(note, q.base, q.meta, data));
+      }
       if (ops.length) await s.commit(ops);
       for (const [id, q] of taking) if (queue.get(id) === q) queue.delete(id);
       status = s.removed() ? "removed" : "open"; why = ""; heldUntil = 0;
