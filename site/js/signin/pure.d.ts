@@ -15,3 +15,5 @@ export type Typed = { pubkey: string } | { name: string; domain: string };
 export declare function typedName(typed: unknown): Typed | null;
 /** The key a NIP-05 answer body gives for name, lower case hex, or null. */
 export declare function nip05Key(body: unknown, name: string): string | null;
+/** The page a signer app asks you to approve at (NIP-46 auth_url): http or https with a host, else null. */
+export declare function approvalPage(url: unknown): { href: string; host: string } | null;

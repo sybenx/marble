@@ -89,3 +89,16 @@ export function nip05Key(body, name) {
     : Object.entries(names).find(([k]) => k.toLowerCase() === want.toLowerCase())?.[1];
   return typeof key === "string" && isHex64(key) ? key.toLowerCase() : null;
 }
+
+/**
+ * The page a signer app asks you to approve at (NIP-46 auth_url): an http or https address with a host, no user or
+ * password, at most 2000 characters. { href, host } (host as it is shown: "Continue at <host>"), or null for anything
+ * else, which is then ignored.
+ */
+export function approvalPage(url) {
+  if (typeof url !== "string" || url.length > 2000 || /[\s\x00-\x1f\x7f]/.test(url)) return null;
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if ((u.protocol !== "https:" && u.protocol !== "http:") || !u.hostname || u.username || u.password) return null;
+  return { href: u.href, host: u.host };
+}

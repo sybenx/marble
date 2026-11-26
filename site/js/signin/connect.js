@@ -2,6 +2,7 @@
 // and your servers answer as the signer, over NIP-44 v2. The pieces for it (vendor/sign.js) load only now.
 import { subscribe, publish, testRelay } from "./pool.js";
 import { toHex, fromHex, isHex64 } from "./ids.js";
+import { approvalPage } from "./pure.js";
 
 let lib = null;
 const load = () => (lib ??= import("./vendor/sign.js"));
@@ -10,6 +11,7 @@ const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const now = () => Math.floor(Date.now() / 1000);
 const ACK_WINDOW = 600; // seconds after a code is made in which a bare "ack" from a second answerer still counts
+const APPROVE_WAIT = 5 * 60000; // ms a request may wait once the signer has asked you to approve it at a web page
 
 /** Where the code tells your servers to answer (on localhost, the test server only). */
 export function connectRelays() {
@@ -91,6 +93,9 @@ function listen(relays, pk, since, onEvent) {
  * the code's secret: a code shown on a shared screen can be scanned by more than one phone, and whoever answers first
  * is signed in, so if another answers it as well we can't tell which was yours. onSecond(signer) is then told (me.js
  * asks you which account is yours). others: those not yet decided on; ignored: those decided against.
+ * onAuthUrl(url): the signer asked you to approve a request at a web page first (NIP-46 auth_url, http or https only:
+ * anything else is ignored). The request keeps waiting, for up to APPROVE_WAIT from then, for the real answer.
+ * ended is a promise that resolves when that request is over (answered, refused, timed out or closed).
  */
 export class Remote {
   constructor({ sk, signer, relays, secret = null, made = 0, others = [], ignored = [] }) {
@@ -102,7 +107,8 @@ export class Remote {
     this.others = others;
     this.ignored = new Set(ignored);
     this.onSecond = null;
-    this.waiting = new Map(); // request id → {resolve, reject}
+    this.onAuthUrl = null;
+    this.waiting = new Map(); // request id → {resolve, reject, at, wait(ms)}
     this.close = null;
   }
   async start() {
@@ -118,7 +124,16 @@ export class Remote {
       try { msg = JSON.parse(await decrypt(e.content, this.key)); } catch { return; }
       const w = this.waiting.get(msg.id);
       if (!w) return;
+      // "approve it at this page first": the same id is answered later, once you have
+      if (msg.result === "auth_url") {
+        const page = approvalPage(msg.error);
+        if (!page) return; // not a web page: ignored, and the request waits on as it was
+        w.wait(APPROVE_WAIT);
+        try { this.onAuthUrl?.(page.href, w.ended); } catch {}
+        return;
+      }
       this.waiting.delete(msg.id);
+      clearTimeout(w.timer);
       if (msg.error) w.reject(new Error(msg.error)); else w.resolve(msg.result);
     });
   }
@@ -142,16 +157,21 @@ export class Remote {
     const content = await encrypt(JSON.stringify({ id, method, params }), this.key);
     const ev = signWith(this.sk, { kind: 24133, created_at: now(), tags: [["p", this.signer]], content }, { schnorr, sha256 });
     const answer = new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject, at: now() });
-      setTimeout(() => { if (this.waiting.delete(id)) reject(new Error("timeout")); }, timeout);
+      const w = { resolve, reject, at: now(), timer: 0 };
+      // (started again, longer, when the signer asks you to approve at a page)
+      w.wait = (ms) => { clearTimeout(w.timer); w.timer = setTimeout(() => { if (this.waiting.get(id) === w) { this.waiting.delete(id); reject(new Error("timeout")); } }, ms); };
+      this.waiting.set(id, w);
+      w.wait(timeout);
     });
+    const w = this.waiting.get(id);
+    if (w) w.ended = answer.then(() => {}, () => {});
     publish(this.relays, ev);
     return answer;
   }
   async signEvent(template) {
     return JSON.parse(await this.request("sign_event", [JSON.stringify(template)]));
   }
-  stop() { this.close?.(); this.close = null; for (const w of this.waiting.values()) w.reject(new Error("closed")); this.waiting.clear(); }
+  stop() { this.close?.(); this.close = null; for (const w of this.waiting.values()) { clearTimeout(w.timer); w.reject(new Error("closed")); } this.waiting.clear(); }
 }
 
 function signWith(sk, t, { schnorr, sha256 }) {
@@ -207,8 +227,9 @@ export { loginTemplate, legacyTemplate, loginLink } from "./pure.js";
  * as after coming back from the login page in this tab. onPending(p) gets that, to keep until the sign-in ends.
  * extra: more parameters for the code, as "&k=v" (kk_login=missing: Marble found no login-page pointer, so the phone
  * that answers can publish it again; agreed with Marble Android).
+ * onAuthUrl(url): the signer asks you to approve at a web page before it says which account (see Remote).
  */
-export async function phoneSignIn({ onCode, onPending, pending = null, signal, extra = "", perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
+export async function phoneSignIn({ onCode, onPending, onAuthUrl = null, pending = null, signal, extra = "", perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", name = "Marble" }) {
   const { schnorr, encodeQR } = await load();
   const sk = pending ? fromHex(pending.sk) : schnorr.utils.randomSecretKey();
   const pk = toHex(schnorr.getPublicKey(sk));
@@ -231,9 +252,11 @@ export async function phoneSignIn({ onCode, onPending, pending = null, signal, e
   });
   // The session listens from here on (for a second answer too) before the code's own listening stops, so none is missed.
   const remote = new Remote({ sk, signer, relays, secret, made });
+  remote.onAuthUrl = onAuthUrl;
   await remote.start();
   close();
   const pubkey = await remote.request("get_public_key", [], 30000);
+  remote.onAuthUrl = null;
   if (!isHex64(pubkey)) throw new Error("no account");
   return { pubkey: pubkey.toLowerCase(), remote, saved: remote.saved() };
 }
@@ -248,17 +271,22 @@ export function parseBunker(link) {
   return { signer: u.hostname.toLowerCase(), relays, secret: u.searchParams.get("secret") || "" };
 }
 
-/** Signs in with a bunker link: connects to that signer, then asks which account it is. Resolves as phoneSignIn does. */
-export async function bunkerSignIn(link, { perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key" } = {}) {
+/**
+ * Signs in with a bunker link: connects to that signer, then asks which account it is. Resolves as phoneSignIn does.
+ * onAuthUrl(url): the signer asks you to approve at a web page first (see Remote).
+ */
+export async function bunkerSignIn(link, { perms = "sign_event:1,sign_event:7,sign_event:4811,sign_event:30811,sign_event:24242,nip44_decrypt,get_public_key", onAuthUrl = null } = {}) {
   const b = parseBunker(link);
   if (!b) throw new Error("That isn't a bunker link.");
   const { schnorr } = await load();
   const remote = new Remote({ sk: schnorr.utils.randomSecretKey(), signer: b.signer, relays: b.relays });
+  remote.onAuthUrl = onAuthUrl;
   try {
     const ok = await remote.request("connect", [b.signer, b.secret, perms], 90000);
     if (ok !== "ack" && ok !== b.secret) throw new Error("The signer didn't connect.");
     const pubkey = await remote.request("get_public_key", [], 30000);
     if (!isHex64(pubkey)) throw new Error("no account");
+    remote.onAuthUrl = null;
     return { pubkey: pubkey.toLowerCase(), remote, saved: remote.saved() };
   } catch (err) { remote.stop(); throw err; }
 }

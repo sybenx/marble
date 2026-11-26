@@ -25,8 +25,9 @@ Layer 1 loads none of layer 2 or 3, and layer 2 loads nothing of layer 3 (`test/
 (no relay pool, no vendored crypto).
 
 **Layer 1 in Node.** Everything imports cleanly. The pure rules work: `loginTemplate`, `legacyTemplate`, `loginLink`,
-`originOnly`, `pageFrom`, `pointerOf`, `typedName`, `bech32Key`, `nip05Key`, `siteCode`, `deviceLabel`, `shortKey`,
-`parseBunker`, `encrypt`, `decrypt`, `conversationKey`, and `whose` given a `resolveNip05` hook (or Node's own `fetch`).
+`originOnly`, `pageFrom`, `pointerOf`, `typedName`, `bech32Key`, `nip05Key`, `approvalPage`, `siteCode`, `deviceLabel`,
+`shortKey`, `parseBunker`, `encrypt`, `decrypt`, `conversationKey`, and `whose` given a `resolveNip05` hook (or Node's
+own `fetch`).
 
 **Local login pages.** `originOnly(url, local)`, `loginTemplate(template, local)`, `pageFrom(event, pubkey, local)` and
 `pointerOf(found, pubkey, local)` take whether a login page on this machine (`http://localhost` or `http://127.0.0.1`)
@@ -41,26 +42,30 @@ read the page's `location` (pool.js `testRelay`) and use `WebSocket` and `docume
 - `pure.js` (new): the pure rules, importing only `ids.js`. `PLACEHOLDER` (`<nostrconnect>`), `originOnly`,
   `loginTemplate`, `legacyTemplate`, `loginLink`, `typedName` (what was typed: `{ pubkey }`, `{ name, domain }` with a
   bare domain as `_`, or null), `bech32Key` (the key in an npub or nprofile), `nip05Key(body, name)` (the key a
-  NIP-05 answer gives). `connect.js` and `pointer.js` re-export theirs from here, so their importers did not change.
+  NIP-05 answer gives), `approvalPage(url)` (the page a signer app asks you to approve at: `{ href, host }` for http or
+  https with a host and no user or password, else null). `connect.js` and `pointer.js` re-export theirs from here, so
+  their importers did not change.
 - `connect.js` (from Marble's `connect.js`): the NIP-46 client and the sign-in code.
   `connectRelays`, `encrypt`, `decrypt`, `conversationKey`, `Remote`, `siteCode`, `deviceLabel`, `shortKey`,
   `loginTemplate`, `legacyTemplate`, `loginLink` (these three from `pure.js`), `phoneSignIn`, `parseBunker`,
-  `bunkerSignIn`, `codeSvg`.
+  `bunkerSignIn`, `codeSvg`. `Remote`, `phoneSignIn({ onAuthUrl })` and `bunkerSignIn(link, { onAuthUrl })` take a
+  signer that asks you to approve at a web page first: see "Approving at a web page" below.
 - `pointer.js` (from Marble's `account-page.js`, its rules): `POINTER` (10046), `LOGIN_D` ("keykin/login"),
   `originOnly` (from `pure.js`), `pageFrom`, `pointerOf`, `loginPage`, `whose` (reads the name with `typedName`). Its
   calls to Marble's `data.js` go through the hooks.
 - `pure.d.ts`, `pointer.d.ts`: types for those two, for a site written in TypeScript (Tube's server).
 - `hooks.js` (new): `configure`, `hooks`, `defaults`, `watchProfiles`. See Hooks below.
 - `rules.js` (new): layer 1 in one import. Re-exports all of `connect.js` and `pointer.js`, `PLACEHOLDER`,
-  `typedName`, `bech32Key` and `nip05Key` from `pure.js`, and `configure`, `hooks`, `defaults`.
+  `typedName`, `bech32Key`, `nip05Key` and `approvalPage` from `pure.js`, and `configure`, `hooks`, `defaults`.
 - `pool.js`, `ids.js`, `vendor/noble.js`, `vendor/sign.js`: Marble's, unchanged. `pool.js`: `FAST`, `INDEXERS`,
   `MORE`, `verify`, `testRelay`, `normalize`, `relays`, `warm`, `req`, `count`, `subscribe`, `publish`, `foundOn`,
   `connectTimes`, and for a site that logs in to relays it chose (NIP-42): `setAuth`, `dropLogins`. With no hook set, a
   relay that asks for a login gets nothing, as before. `ids.js`: `toHex`, `fromHex`, `isHex64`, `decode`, `npub`, `note`, `nevent`, `nprofile`, `naddr`,
   `parseInput`, `pathFor`.
-- `me.js` (from Marble's `me.js`, without its Marble-only parts): `extensionSignedOut`, `onMe`, `onAsk`, `current`,
-  `method`, `phoneSecret`, `onSignedOut`, `signedInWithPhone`, `choose`, `neither`, `signOut`, `sign`,
-  `nip44DecryptFrom`, `nip44EncryptTo`, `myWriteRelays`.
+- `me.js` (from Marble's `me.js`, without its Marble-only parts): `onMe`, `onAsk`, `current`,
+  `method` (`"phone"`, `"extension"` or null), `phoneSecret`, `onSignedOut`, `onApproveAt`, `signedInWithPhone`,
+  `signedInWithExtension`, `choose`, `neither`, `signOut`, `sign`, `nip44DecryptFrom`, `nip44EncryptTo`,
+  `myWriteRelays`.
 - `toast.js` (from Marble's `act.js`): `toast`, `approving` (was not exported in Marble).
 - `dialog.js` (from Marble's `act.js`, lines 36 to 370): `openSignIn`, `loginLink` (re-export, as act.js had),
   `lookAgain`, and for a site's own flows in the same dialog: `dialog`, `view`, `pageOf`, `rememberedPage`,
@@ -117,6 +122,55 @@ configure({ outbox, resolveNip05, profile, profileOf: (pk) => profiles.get(pk), 
 
 The dialog listens for profiles from the moment it loads (`watchProfiles`); when a site passes its own `onProfile`,
 that listener moves over to it.
+
+## The browser extension
+
+Every site has it; there is nothing to turn on.
+
+- When the dialog opens and the page has `window.nostr`, its first screen starts with one more row, "Continue with
+  your browser extension", then "or". With no extension there is no row.
+- Choosing it asks `getPublicKey`. While it waits the dialog says "Waiting for your browser extension…" (and, after
+  3 s, "Open your browser extension to approve."), with Cancel. A refusal, or no account, goes back to the first
+  screen with "Your browser extension didn't sign you in. Try again, or sign in another way."
+- `me.js`: `method()` is `"extension"`, kept across reloads (as `{ method: "extension" }` in `marble.me`; the first
+  version's bare hex is kept too, and saved in that form). `sign`, `nip44EncryptTo` and `nip44DecryptFrom` go
+  through `window.nostr` (`nip44` when the extension has it; else they throw `unsupported: your browser extension
+  can't do this`). Nothing is asked of the extension on load, only when the page asks. A signed event from another
+  account signs you out, as with the phone. `signOut()` forgets it.
+
+## Approving at a web page
+
+Some signer apps answer a request with "approve it at this page first" (NIP-46: `{ id, result: "auth_url", error:
+"<url>" }`) and answer the same id later. `Remote` keeps such a request waiting, for up to 5 minutes from then
+(`APPROVE_WAIT`, longer than the request's own timeout), and calls `remote.onAuthUrl(url)`. Only http and https pages
+with a host count (`approvalPage`); anything else (`javascript:`, `data:`, …) is ignored and the request waits on as it
+was. The dialog shows "Your sign-in app asks you to approve this at <host> first." and a "Continue at <host>" link that
+opens the page in a new tab, in the bunker form and under the code. Sign-in finishes when the real answer comes.
+
+After sign-in it is the same for any later request (`sign`, `nip44EncryptTo`, `nip44DecryptFrom`): the request waits
+on, and the toast (`toast.js`, through `me.js` `onApproveAt(fn(url, ended))`) shows the same line with "Continue at
+<host>" until that request is over, then goes. `approving()` does not put "Approve it on your phone…" over it.
+
+## Test stand-ins
+
+`test/standins/` holds what the sign-in's browser tests use; other tests can import them. Each file starts with how to
+use it.
+
+- `relay.ts`: `startRelay()`, a local relay (`nak serve` on 127.0.0.1), and `hasNak`.
+- `phone.ts`: `standInPhone(options)`, a stand-in sign-in app with a throwaway account (from the old standalone
+  sign-in's `signer-sim.mjs`), in the test's own process. It answers a nostrconnect code (`answerCode(code)`) or gives a
+  bunker link (`bunker(relayUrl)`), over the local relay only. `{ refuse: "Not now" }`, `{ silent: true }`,
+  `{ approveFirst: true }` (the first request gets an auth_url to a page it runs on 127.0.0.1; opening that page sends
+  the real answer) or `{ approveFirst: { url, answerAfter } }`.
+- `extension.ts`: `fakeExtension(context, options)`, a stand-in browser extension: an init script defines
+  `window.nostr`, and the test process signs and encrypts for it. `mode`: `"ready"`, `"slow"` (with `delay`),
+  `"locked"` (waits for `unlock()`), `"refuse"`; `nip44: false` leaves out `nip44`; `calls` lists what was asked.
+- `browser.ts`: `chromiumPath()` (as `test/signin-demo.test.ts` finds it), `serveSignin()` (signin/ from 127.0.0.1, and
+  a bare site page at `/standin/`), `openPage(browser, base, { relay, before, storage })` (headless; every WebSocket but the local relay is closed and every request off 127.0.0.1 refused,
+  so nothing public is reached), `dialogLines(page)`.
+
+`test/signin-extension.test.ts` and `test/signin-approve.test.ts` use them. Both skip without Chromium; the second
+also without `nak`.
 
 ## What a site provides
 
