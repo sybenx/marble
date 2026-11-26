@@ -98,11 +98,23 @@ export class Session {
       const v = new Vault({ vid: this.vid, genesis: this.genesis, owner: this.me, aKey });
       const tmp = new Map([[e.kid, e]]);
       let anchored = false;
+      const has = () => v.events.has(this.genesis) && V.readAuth(v.events.get(this.genesis), aKey, this.vid)?.type === "genesis";
       for (const h of heads) {
         const b = V.openHead(h, tmp, this.vid, this.genesis);
         if (!b) continue;
         for (const x of b.commits) v.addCommit(x);
-        if (v.events.has(this.genesis) && V.readAuth(v.events.get(this.genesis), aKey, this.vid)?.type === "genesis") anchored = true;
+        // (the genesis may be only in this head's segments: a device that rekeyed moved every commit it made under the
+        // genesis epoch there (§4.1), the device that made the vault included, so a fresh device follows them too)
+        let ref = b.segment, n = 0;
+        const seen = new Set();
+        while (!has() && V.refOK(ref) && !seen.has(ref.parts[0]) && n++ < 1000) {
+          seen.add(ref.parts[0]);
+          const seg = await this.blobJSON(ref);
+          if (!seg || seg.genesis !== this.genesis || seg.dvk !== h.pubkey) break;
+          for (const x of seg.commits || []) v.addCommit(x);
+          ref = seg.prev;
+        }
+        if (has()) anchored = true;
       }
       if (!anchored) continue;
       this.first = g; this.K0 = unhex(e.K); this.aKey = aKey; this.dKey = V.dedupKey(this.K0, unhex(this.vid));
