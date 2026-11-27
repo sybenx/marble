@@ -47,6 +47,22 @@ object SearchRank {
     /** A name as typed: lower case, the emoji and signs around it gone, spaces single. */
     fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
+    private val OPERATOR = Regex("^[a-zA-Z_]+:\\S+$")
+    private fun stem(w: String) = if (w.length > 4) w.replace(Regex("(ing|ed|es|s)$"), "") else w
+
+    /**
+     * Whether post [e] has every word of [q] (operators like sort:new aside), give or take an ending ("failed" finds
+     * "failing"), in its text, title, summary or #tags. A search relay may take a post with any one of the words, or
+     * ignore the search and send everything: only these are shown.
+     */
+    fun mentions(e: Event, q: String): Boolean {
+        val words = norm(q.trim().split(Regex("\\s+")).filterNot { OPERATOR.matches(it) }.joinToString(" ")).split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return true
+        val body = norm(listOf(e.content, e.firstTag("title") ?: "", e.firstTag("summary") ?: "").joinToString(" ") + " " +
+            e.tags.filter { it.size > 1 && it[0] == "t" }.joinToString(" ") { it[1] })
+        return words.all { stem(it) in body }
+    }
+
     fun exact(name: String?, q: String) = name != null && norm(name) == norm(q) && norm(q).isNotEmpty()
     fun matches(name: String?, q: String) = name != null && norm(q).isNotEmpty() && norm(q) in norm(name)
 
