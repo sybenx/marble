@@ -4170,7 +4170,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
             item(key = "ah") {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(people[sp.author], sp.author, 22, Modifier.clickable { nav.profile(sp.author) })
-                    Text(listOf(people[sp.author]?.shown ?: shortNpub(sp.author), sp.rest).joinToString(" · "), color = Vault.Text, fontWeight = FontWeight.SemiBold,
+                    Text(listOf(people[sp.author]?.shown ?: shortNpub(sp.author), sp.rest).filter { it.isNotBlank() }.joinToString(" · "), color = Vault.Text, fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp))
                 }
                 if (sp.others.isNotEmpty()) Row(Modifier.padding(start = 16.dp, bottom = 4.dp).horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
@@ -4184,7 +4184,7 @@ private fun MarbleResults(f: cc.aaro.cosign.Found?, people: Map<String, Person>,
                 HorizontalDivider(color = Vault.Edge)
             }
             if (!f.loading && f.byAuthor.isEmpty()) item(key = "anone") {
-                Text("Nothing from ${people[sp.author]?.shown ?: "them"} about “${sp.rest}”.", color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
+                Text(if (sp.rest.isBlank()) "Nothing from ${people[sp.author]?.shown ?: "them"} yet." else "Nothing from ${people[sp.author]?.shown ?: "them"} about “${sp.rest}”.",color = Vault.Muted, style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp))
             }
         } }

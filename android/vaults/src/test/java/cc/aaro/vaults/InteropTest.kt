@@ -104,6 +104,20 @@ class InteropTest {
                 check(v.writeCheckpoint())
                 v.enqueue(listOf(mk("c000000000000004", "After the checkpoint")))
                 check(v.sync())
+                // "create:<n>": then n other devices join and are each reported lost here, and one more note is written:
+                // the move to each new generation carries every revocation (past 12 KiB at about 16).
+                val removals = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                if (removals > 0) {
+                    val tmp = java.nio.file.Files.createTempDirectory("interop-removed").toFile()
+                    repeat(removals) { i ->
+                        val other = Vaults(NsecAccount(sk), OkNet(), OkNet(), FileStore(File(tmp, "d$i")), WallClock, { relays }, "Removed $i")
+                        val o = other.join(other.findOwned("notes", other.keyrings()!!)!!); check(o.sync())
+                        check(v.catchUp()); v.reportLost(other.rootPub)
+                    }
+                    tmp.deleteRecursively()
+                    v.enqueue(listOf(mk("c000000000000005", "After $removals removals")))
+                    check(v.sync())
+                }
                 show(v)
                 println("REFUSED " + vs.storage.refused)
                 println("CREATED nsec=${hex(sk)} npub=${vs.account.npub} vault=${v.id}")

@@ -13,7 +13,8 @@
 // (BUD-01), so pages in a browser can use it.
 //
 // Misbehaviour for tests, by HTTP: POST /_test {"alterBlobs": true} serves altered bytes; {"dropHalf": true} drops half
-// of the blobs; {"reset": true} forgets everything.
+// of the blobs; {"refuseUploads": <seconds>} answers every upload 429 with that Retry-After (true: 600; a busy server, good-guest
+// §3.5); {"reset": true} forgets everything.
 
 const port = Number(process.argv[2] ?? 7447);
 const enc = new TextEncoder();
@@ -23,7 +24,7 @@ const sha256 = async (b: Uint8Array) => hex(await crypto.subtle.digest('SHA-256'
 type Ev = { id: string; pubkey: string; created_at: number; kind: number; tags: string[][]; content: string; sig: string };
 let events = new Map<string, Ev>(); // by id
 let blobs = new Map<string, { bytes: Uint8Array; owners: Set<string>; uploaded: number }>();
-let behaviour: Record<string, boolean> = {};
+let behaviour: Record<string, any> = {};
 const statePath = process.argv[3] ?? `${require('node:os').tmpdir()}/vaults-test-${port}.json`;
 const fs = require('node:fs');
 try {
@@ -101,11 +102,13 @@ async function answer(req: Request): Promise<Response> {
       if (b.reset) { events = new Map(); blobs = new Map(); behaviour = {}; }
       if (b.dropHalf) { let i = 0; for (const k of [...blobs.keys()]) if (i++ % 2 === 0) blobs.delete(k); }
       for (const k of ['alterBlobs']) if (k in b) behaviour[k] = !!b[k];
+      if ('refuseUploads' in b) behaviour.refuseUploads = b.refuseUploads === true ? 600 : Number(b.refuseUploads) || 0;
       return Response.json({ ok: true, events: events.size, blobs: blobs.size });
     }
     if ((req.method === 'PUT') && (path === 'upload' || path === 'mirror')) {
       const a = authOf(req, 'upload');
       if (!a) return new Response('auth', { status: 401 });
+      if (behaviour.refuseUploads) return new Response('busy', { status: 429, headers: { 'retry-after': String(behaviour.refuseUploads), 'x-reason': 'too many requests', 'access-control-expose-headers': 'X-Reason, Retry-After' } });
       let bytes: Uint8Array;
       if (path === 'mirror') {
         const src = (await req.json()).url as string;

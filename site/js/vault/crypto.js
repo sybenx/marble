@@ -67,8 +67,19 @@ export function scalarFrom(ikm, ...info) {
 }
 export const randomKey = () => schnorr.utils.randomSecretKey();
 export const sign = (sec, msg, aux = random(32)) => hex(schnorr.sign(msg, sec, aux));
+// (signatures that checked out, remembered: a vault's certs and revocations are checked again whenever its roster is
+// read, and on an account that removed many devices that was most of a page's time)
+const verified = new Set();
 export function verify(pubH, msg, sigH) {
-  try { return isHex(pubH, 32) && isHex(sigH, 64) && schnorr.verify(unhex(sigH), msg, unhex(pubH)); } catch { return false; }
+  try {
+    if (!isHex(pubH, 32) || !isHex(sigH, 64)) return false;
+    const k = pubH + hex(msg) + sigH;
+    if (verified.has(k)) return true;
+    if (!schnorr.verify(unhex(sigH), msg, unhex(pubH))) return false;
+    if (verified.size > 50000) verified.clear();
+    verified.add(k);
+    return true;
+  } catch { return false; }
 }
 /** The x coordinate of sec · lift_x(pub). */
 export const ecdhX = (sec, pubH) => secp256k1.getSharedSecret(sec, unhex("02" + pubH)).subarray(1, 33);

@@ -11,10 +11,12 @@ import { accountRelays } from "./account-relays.js";
 import { current, sign, nip44DecryptFrom, canVault, onMe } from "./me.js";
 
 let lib = null; // the vault code (and the noble bundle under it), loaded only for an account that may have a vault
-const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js"), import("./vault/refusals.js")])
-  .then(([sync, notes, core, refusals]) => ({ sync, notes, core, refusals })));
+const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js"), import("./vault/refusals.js"), import("./vault/crypto.js")])
+  .then(([sync, notes, core, refusals, crypto]) => ({ sync, notes, core, refusals, crypto })));
 
 let early = []; // changes made while the vault was opening
+let earlyBase = new Map(); // id → {base, meta} for an early change that was queued before a reload (see pending below)
+const OFFLINE = "couldn't reach your relays";
 let libNow = null; // the vault code, once loaded
 let who = "", session = null, status = "none", why = "", cached = null, queue = new Map(), timer = null, writing = null, opening = null;
 // status: "none" (no vault: Notes as before), "opening", "open", "offline" (opened, can't reach relays now), "error",
@@ -23,6 +25,7 @@ const listeners = new Set();
 export const onVault = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const tell = () => listeners.forEach((fn) => fn());
 export const state = () => status;
+/** Why the vault isn't open, for Notes to say in plain words: "offline" (no relay answered), else "" (the detail is logged). */
 export const reason = () => why;
 /** Something the vault names hasn't loaded yet (§7.4): Notes says "syncing…" and shows what it has. */
 export const syncing = () => !!session && (session.gaps.size > 0 || blobFailed.size > 0);
@@ -62,10 +65,50 @@ export const active = () => status === "open" || status === "offline" || status 
 
 // ── this browser's storage ──
 const STORE = (pk) => `marble.vault.${pk}`;
+// Read through and written one key at a time, so every tab of this browser sees the same device: a tab holding its own
+// copy from when it opened would sign a second sub-cert for this browser's key, and a key with two is ignored by every
+// other device (kist.md §2), with everything this browser wrote. (Kept in memory too, for when localStorage can't be.)
 function storeFor(pk) {
-  let o = {};
-  try { o = JSON.parse(localStorage.getItem(STORE(pk))) || {}; } catch {}
-  return { get: (k) => o[k], set: (k, v) => { o[k] = v; try { localStorage.setItem(STORE(pk), JSON.stringify(o)); } catch {} } };
+  let mem = {};
+  const read = () => {
+    try { const s = localStorage.getItem(STORE(pk)); if (s !== null) mem = JSON.parse(s) || {}; } catch {}
+    return mem;
+  };
+  read();
+  return {
+    get: (k) => read()[k],
+    set: (k, v) => { mem = { ...read(), [k]: v }; try { localStorage.setItem(STORE(pk), JSON.stringify(mem)); } catch {} },
+  };
+}
+
+/**
+ * This browser's key went dead (two sub-certs for it, from two tabs before the fix above): other devices ignore all it
+ * wrote. It moves to a new key (the next n, §3.3), and what it wrote under its dead keys that still stands is carried
+ * again by the new one, as written (the same versions), so those notes show everywhere. Tried on every open until done.
+ */
+async function moveFromDeadKey(s, store) {
+  const { core: V, crypto: K } = libNow;
+  const rootH = store.get("root"), nKey = "n:" + s.genesis, deadKey = "dead:" + s.genesis;
+  if (!K.isHex(rootH, 32)) return;
+  const n = store.get(nKey), ro = s.vault.roster();
+  if (Number.isSafeInteger(n)) {
+    const dvk = K.pubHex(V.dvkFor(K.unhex(rootH), s.genesis, n)), d = ro.dvks.get(dvk);
+    // (live, or never wrote: nothing to do; a removed browser isn't moved, it says it was removed)
+    if (d && !d.live && ro.liveRoot(d.root)) {
+      store.set(deadKey, [...new Set([...(store.get(deadKey) || []), dvk])]);
+      store.set(nKey, n + 1);
+      console.info("notes vault: this browser's key had two sub-certs; moved to a new one", { dvk, n: n + 1 });
+    }
+  }
+  const dead = store.get(deadKey) || [];
+  if (!dead.length || s.removed()) return;
+  const st = s.vault.state(), puts = new Map();
+  for (const dvk of dead) for (const c of s.vault.chain(dvk)) for (const op of s.vault.opsOf(c)) if (op.op === "put" && V.putOK(op)) puts.set(op.entry + "/" + op.ver, op);
+  const over = new Set([...puts.values()].flatMap((p) => p.supersedes.map((v) => p.entry + "/" + v)));
+  const counted = (p) => !!st.entries.get(p.entry)?.current.some((x) => x.ver === p.ver);
+  const again = [...puts].filter(([k, p]) => !over.has(k) && !st.superseded.has(k) && !counted(p)).map(([, p]) =>
+    ({ op: "put", ver: p.ver, entry: p.entry, supersedes: p.supersedes, meta: p.meta, data: p.data, deleted: p.deleted }));
+  if (again.length) await s.commit(again);
 }
 const db = () => new Promise((ok, no) => {
   const r = indexedDB.open("marble-vault", 1);
@@ -76,11 +119,44 @@ async function idb(op, pk, value) {
   try {
     const d = await db();
     return await new Promise((ok, no) => {
-      const t = d.transaction("notes", op === "get" ? "readonly" : "readwrite").objectStore("notes");
-      const r = op === "get" ? t.get(pk) : op === "put" ? t.put(value, pk) : t.delete(pk);
+      const t = d.transaction("notes", op === "get" || op === "keys" ? "readonly" : "readwrite").objectStore("notes");
+      const r = op === "get" ? t.get(pk) : op === "keys" ? t.getAllKeys() : op === "put" ? t.put(value, pk) : t.delete(pk);
       r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
     });
   } catch { return undefined; }
+}
+
+/**
+ * Changes made here and not yet sent (the queue, and what was written while the vault opened) are kept in IndexedDB
+ * too, under this tab's own key, until they've gone up: a reload, a closed tab or a vault that didn't open loses none.
+ * The next tab to open Notes takes over what a closed tab left (a tab holds a lock for as long as it's open).
+ */
+const TAB = globalThis.crypto?.randomUUID?.() || String(Math.random()).slice(2);
+const PENDING = (pk, tab) => `pending:${pk}:${tab}`;
+if (globalThis.navigator?.locks) navigator.locks.request("marble-tab-" + TAB, () => new Promise(() => {})).catch(() => {});
+let pendingSaving = Promise.resolve();
+function savePending() {
+  const pk = who;
+  if (!pk) return pendingSaving;
+  const list = new Map();
+  for (const i of early) list.set(i.id, { note: i, ...(earlyBase.get(i.id) || {}) });
+  for (const [id, q] of queue) list.set(id, { note: q.note, base: q.base, meta: q.meta });
+  const v = [...list.values()];
+  pendingSaving = pendingSaving.then(() => (v.length ? idb("put", PENDING(pk, TAB), v) : idb("delete", PENDING(pk, TAB))));
+  return pendingSaving;
+}
+/** What this account's closed tabs (and this tab, before a reload) left unsent, taken over by this tab. */
+async function adoptPending(pk) {
+  const pre = `pending:${pk}:`;
+  const take = async () => {
+    let live = new Set();
+    try { live = new Set(((await navigator.locks.query()).held || []).map((l) => l.name)); } catch {}
+    const keys = ((await idb("keys")) || []).filter((k) => typeof k === "string" && k.startsWith(pre) && k !== PENDING(pk, TAB) && !live.has("marble-tab-" + k.slice(pre.length)));
+    const out = [];
+    for (const k of keys) { const v = await idb("get", k); if (Array.isArray(v)) out.push(...v.filter((x) => x?.note?.id)); await idb("delete", k); }
+    return out;
+  };
+  try { return globalThis.navigator?.locks ? await navigator.locks.request("marble-pending-" + pk, take) : await take(); } catch { return []; }
 }
 
 // ── the network, as the vault code wants it ──
@@ -136,10 +212,17 @@ const deviceName = () => {
 export function start(pk = current()) {
   if (!pk || !canVault()) return Promise.resolve(null);
   if (opening && who === pk) return opening;
-  if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); }
+  if (who !== pk) { session = null; cached = null; queue = new Map(); early = []; earlyBase = new Map(); blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); }
   who = pk; status = "opening"; lastTry = Date.now(); tell();
   const p = (async () => {
     cached = (await idb("get", pk)) || null;
+    // changes this browser kept that hadn't gone up when a tab closed or reloaded: shown now, and sent once it opens
+    for (const x of await adoptPending(pk)) {
+      if (who !== pk) return null;
+      early = [...early.filter((y) => y.id !== x.note.id), x.note];
+      if (x.base) earlyBase.set(x.note.id, { base: x.base, meta: x.meta || {} });
+    }
+    if (early.length) { cached ||= { notes: [] }; savePending(); }
     status = "opening"; why = ""; tell();
     libNow = await load();
     const { sync } = libNow;
@@ -153,21 +236,32 @@ export function start(pk = current()) {
       // keyring entries there, but the signer wouldn't open any of them: not "no vault"
       if (!entries.length && all.refused.length) return fail(pk, all.refused[0]);
       // no relay answered: not "no vault" (that would hide your notes and drop this browser's copy), tried again soon
-      if (!entries.length && !all.answered) { setTimeout(() => { if (who === pk && !session) { lastTry = 0; retry(); } }, 15000); return fail(pk, "couldn't reach your relays"); }
+      if (!entries.length && !all.answered) { setTimeout(() => { if (who === pk && !session) { lastTry = 0; retry(); } }, 15000); return fail(pk, OFFLINE); }
     } catch (err) { return fail(pk, err); }
     if (who !== pk) return null;
     if (!entries.length) { status = "none"; cached = null; await idb("delete", pk); tell(); return null; }
     try {
       // your Blossom servers (kind 10063): where this page's blobs go, in your order (the vault's own when you have none)
       const lists = await req(mine, { kinds: [10063], authors: [pk] }, { timeout: 5000, settle: 1000 }).catch(() => []);
-      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store: storeFor(pk), deviceName: deviceName(), accountRelays: a?.write || [],
+      const store = storeFor(pk);
+      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store, deviceName: deviceName(), accountRelays: a?.write || [],
         blossom: sync.serverList(lists, pk) });
       await s.open();
       if (who !== pk) return null;
+      // (not reaching relays now doesn't stop Notes opening: it's tried again on the next open)
+      await moveFromDeadKey(s, store).catch((err) => console.info("notes vault: moving from a dead key waits", String(err?.message || err)));
+      if (who !== pk) return null;
       session = s;
       status = s.removed() ? "removed" : "open";
-      const waiting = early; early = [];
-      for (const i of waiting) write(i);
+      const waiting = early, bases = earlyBase; early = []; earlyBase = new Map();
+      for (const i of waiting) {
+        // (a change queued before a reload keeps the versions it was based on, so an edit made elsewhere meanwhile
+        // shows as a conflict rather than being written over)
+        const b = bases.get(i.id);
+        if (b) { queue.set(i.id, { note: i, base: b.base, meta: b.meta }); clearTimeout(timer); timer = setTimeout(flush, 2000); tell(); }
+        else write(i);
+      }
+      savePending();
       await remember();
       tell();
       return s;
@@ -181,9 +275,10 @@ function fail(pk, err) {
   if (who !== pk) return null;
   const m = String(err?.message || err);
   // a signer that won't decrypt for this site (Marble's own signer says "not_allowed: …"): Notes show this browser's
-  // copy, and say why; anything else is an error, tried again later
+  // copy, and say why; anything else is an error, tried again later. (The detail is for troubleshooting, never shown.)
+  console.info("notes vault: didn't open:", m);
   status = /unsupported|not[_ ]allowed|denied|rejected|refused/i.test(m) ? "refused" : "error";
-  why = m;
+  why = m === OFFLINE ? "offline" : "";
   tell();
   return null;
 }
@@ -201,8 +296,8 @@ function retry() {
 /** Signed out, or another account: the session and this browser's copy of the notes go (§12.3). */
 export async function stop(pk) {
   clearTimeout(timer);
-  if (pk) await idb("delete", pk);
-  session = null; cached = null; queue = new Map(); early = []; blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); status = "none"; why = "";
+  if (pk) { await idb("delete", pk); await idb("delete", PENDING(pk, TAB)); }
+  session = null; cached = null; queue = new Map(); early = []; earlyBase = new Map(); blobTexts.clear(); blobFailed.clear(); blobHeld.clear(); heldUntil = 0; clearTimeout(wakeTimer); status = "none"; why = "";
   for (const u of pictureUrls.values()) if (u) URL.revokeObjectURL(u);
   pictureUrls.clear();
   if (who === pk || !pk) who = "";
@@ -247,13 +342,14 @@ export function has(id) {
  */
 export function write(item) {
   // (while it opens, with your notes showing from this browser's copy: the change waits for it)
-  if (!session) { if (status !== "opening" || !cached) return false; early = [...early.filter((x) => x.id !== item.id), item]; tell(); return true; }
+  if (!session) { if (status !== "opening" || !cached) return false; early = [...early.filter((x) => x.id !== item.id), item]; savePending(); tell(); return true; }
   const was = queue.get(item.id);
   // the versions it was based on: the first queued change's, so the queue makes one version superseding them
   const cur = notes().find((n) => n.id === item.id);
   const base = was ? was.base : session.vault.state().entries.get(libNow.notes.entryOf(item.id))?.current.map((p) => p.ver) || [];
   const meta = was ? was.meta : cur?.meta || {};
   queue.set(item.id, { note: item, base: item.supersedeAll ? item.supersedeAll : (cur?.conflict && !item.supersedeAll ? [cur.ver] : base), meta });
+  savePending();
   tell();
   clearTimeout(timer);
   timer = setTimeout(flush, 2000);
@@ -286,11 +382,14 @@ export async function flush() {
       }
       if (ops.length) await s.commit(ops);
       for (const [id, q] of taking) if (queue.get(id) === q) queue.delete(id);
+      savePending();
       status = s.removed() ? "removed" : "open"; why = ""; heldUntil = 0;
       await remember();
     } catch (err) {
-      why = String(err?.message || err);
-      if (/removed/.test(why)) status = "removed";
+      const m = String(err?.message || err);
+      console.info("notes vault: changes wait here:", m);
+      why = "";
+      if (/removed/.test(m)) status = "removed";
       // storage servers said no: the changes wait here, and nothing is sent until the first of them may be asked again
       else if (err instanceof libNow.refusals.RefusedError) { heldUntil = err.retryAt || 0; clearTimeout(timer); wake(); }
       else { status = "offline"; clearTimeout(timer); timer = setTimeout(flush, 30000); }
