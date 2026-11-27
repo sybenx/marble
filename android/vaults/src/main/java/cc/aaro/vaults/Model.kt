@@ -171,17 +171,24 @@ class Commit(val c: String, val sig: String) {
     val time = o.long("time")
     val ops: List<JSONObject> = o.getJSONArray("ops").let { a -> List(a.length()) { a.opt(it) as? JSONObject ?: JSONObject() } }
     init {
-        if (utf8(c).size > 12 * 1024) throw Malformed("commit over 12 KiB")
+        // Read as the JS engine reads (kist core.js readCommit): up to four times §5.1's 12 KiB: Marble Web (kist
+        // sync.js) makes a rekey commit with every revocation in it however many there are, and dropping it would hide
+        // that device's move to a new epoch here. This engine writes at most 12 KiB (make).
+        if (utf8(c).size > READ_MAX) throw Malformed("commit too large")
         if ((seq == 0L) != (prev == null)) throw Malformed("prev")
     }
     fun signedOK() = Keys.verify(dvk, th("nostr-vault/commit/1", unhex(id)), sig)
     fun json(): JSONObject = JSONObject().put("c", c).put("sig", sig)
 
     companion object {
+        /** §5.1: a commit string is at most 12 KiB. */
+        const val MAX = 12 * 1024
+        private const val READ_MAX = 4 * MAX
         /** Null if malformed or the signature fails (§10, 2). */
         fun of(o: JSONObject?): Commit? = try { o?.let { Commit(it.str("c"), it.hexOf("sig", 64)) }?.takeIf { it.signedOK() } } catch (_: Exception) { null }
         fun make(dvkSecret: ByteArray, genesis: String, seq: Long, prev: String?, kid: String, time: Long, ops: List<JSONObject>): Commit {
             val c = canon(jobj("genesis" to genesis, "dvk" to Keys.pub(dvkSecret), "seq" to seq, "prev" to prev, "kid" to kid, "time" to time, "ops" to JSONArray(ops)))
+            if (utf8(c).size > MAX) throw Malformed("commit over 12 KiB")
             val id = sha256(utf8(c))
             return Commit(c, Keys.sign(th("nostr-vault/commit/1", id), dvkSecret))
         }

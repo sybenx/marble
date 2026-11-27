@@ -482,7 +482,9 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
     private fun publish(): Boolean {
         val ep = writeEpoch() ?: return false.also { trouble = "No key to write with yet" }
         val last = myCommits().lastOrNull()
-        if (last != null && last.kid != ep.kid) moveEpoch(epochs[last.kid] ?: knownEpochs().let { epochs[last.kid] }, ep)
+        // (a last commit that is already the rekey to it: moved, with nothing written since; not again on every sync)
+        val moved = last != null && last.ops.any { it.optString("op") == "rekey" && it.optString("to") == ep.kid }
+        if (last != null && last.kid != ep.kid && !moved) moveEpoch(epochs[last.kid] ?: knownEpochs().let { epochs[last.kid] }, ep)
         else if (last == null && ep.gen != first()?.id && !reached(ep.kid)) moveEpoch(null, ep)
         val ops = queue.objs()
         if (ops.isNotEmpty()) {
@@ -522,10 +524,36 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
         val moving = auths().filter { it.ev.id in rs.ended || it.adds.isNotEmpty() }.map { JSONObject().put("op", "auth").put("event", it.ev.json()) }
         val revs = revokedRoots().values.flatten().map { JSONObject().put("op", "auth").put("event", it.ev.json()) }
         val rekey = JSONObject().put("op", "rekey").put("to", to.kid).put("state", JSONArray(listOf(to.gen))).put("rho", to.rho).put("wraps", JSONArray())
-        nextCommit(old.kid, listOf(rekey) + moving + revs, certs0 = true)
+        // A commit is at most 12 KiB (§5.1). An account that has removed many devices holds more revocations than fit
+        // beside the rekey and the certs: those that don't fit go first, in commits of their own under the old epoch,
+        // so the rekey commit is still the last one there (readers count authority events from any commit). One
+        // commit with all of them couldn't be made, and this device would never write again.
+        val (earlier, withRekey) = packAuthority((moving + revs).distinctBy { it.getJSONObject("event").optString("id") }, listOf(rekey) + certOps())
+        for (ops in earlier) nextCommit(old.kid, ops)
+        nextCommit(old.kid, listOf(rekey) + withRekey, certs0 = true)
         publishHead(old)
         toSegment(headCommits(old.kid))
         save()
+    }
+
+    /**
+     * [auth] ops split for a rekey (§5.1's 12 KiB): those that fit in the rekey commit beside [alongside] (the rekey and
+     * the certs), in order, and the rest in commits that go before it, each of which fits even with the certs added.
+     */
+    private fun packAuthority(auth: List<JSONObject>, alongside: List<JSONObject>): Pair<List<List<JSONObject>>, List<JSONObject>> {
+        fun size(op: JSONObject) = utf8(canon(op)).size + 1
+        val certs = certOps().sumOf(::size)
+        var room = COMMIT_OPS - alongside.sumOf(::size)
+        val withRekey = ArrayList<JSONObject>(); val rest = ArrayList<JSONObject>()
+        for (op in auth) { val s = size(op); if (rest.isEmpty() && s <= room) { withRekey += op; room -= s } else rest += op }
+        val earlier = ArrayList<List<JSONObject>>(); var cur = ArrayList<JSONObject>(); var used = 0
+        for (op in rest) {
+            val s = size(op)
+            if (cur.isNotEmpty() && used + s > COMMIT_OPS - certs) { earlier += cur; cur = ArrayList(); used = 0 }
+            cur += op; used += s
+        }
+        if (cur.isNotEmpty()) earlier += cur
+        return earlier to withRekey
     }
 
     // --- Generations started here (§3.1) and removals (§8.5) ---------------------------------------------
@@ -661,4 +689,9 @@ class Vault internal constructor(private val vs: Vaults, val id: String) {
         .put("servers", JSONArray(writeServers())).put("refused", JSONObject(vs.storage.refused as Map<*, *>))
         .put("refusals", JSONArray(vs.storage.refusals.active(clock.now()).map { JSONObject().put("host", it.host).put("kind", it.kind).put("status", it.status).put("reason", it.reason).put("until", it.until) }))
         .put("lastPut", vs.storage.lastPut?.let { (sha, on) -> JSONObject().put("sha", sha).put("on", JSONArray(on)) })
+
+    private companion object {
+        /** Room for a commit's ops: §5.1's 12 KiB, less what its other fields (ids, seq, kid, time) take. */
+        const val COMMIT_OPS = 12 * 1024 - 512
+    }
 }

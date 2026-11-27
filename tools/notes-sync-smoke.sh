@@ -7,7 +7,7 @@
 #     storage server refuses (tools/vault-refusals-page.test.mjs, headless Chromium; skipped without Playwright).
 #  2. Android engine (android/vaults): phone, tablet and a fresh install, the same way (SyncSmokeTest).
 #  3. Android ↔ Web for real, over a local relay and two Blossom servers (android/tools/vaults-test-server.ts, test keys
-#     only): Android's engine makes a notes vault, Web reads it and edits a note, Android reads Web's edit and edits
+#     only): Android's engine makes a notes vault and removes 20 devices from it, Web reads it and edits a note, Android reads Web's edit and edits
 #     another, and a fresh Web device reads Android's edit.
 # Gradle runs under ~/.claude/heavy-lock.sh when it's there. The local servers are stopped on exit, failure included.
 set -e
@@ -43,13 +43,15 @@ for i in {1..50}; do curl -s "http://127.0.0.1:$P1/" >/dev/null && curl -s "http
 export VAULTS_RELAY="ws://127.0.0.1:$P1" VAULTS_SERVERS="http://127.0.0.1:$P1,http://127.0.0.1:$P2"
 android_run() { echo "  (android: ${1:0:20}…)" >&2; (cd android && VAULTS_INTEROP="$1" $LOCK ./gradlew -i :vaults:testDebugUnitTest --tests cc.aaro.vaults.InteropTest 2>&1) | grep -E "^\s*(NOTE|CREATED|EDITED|DEVICES)" | sed 's/^ *//'; }
 
-OUT=$(android_run create); echo "$OUT" | grep CREATED
+# (20 other devices join and are removed first: the moves to new generations then carry 20 revocations)
+OUT=$(android_run create:20); echo "$OUT" | grep CREATED
 NSEC=$(echo "$OUT" | sed -n 's/.*CREATED nsec=\([0-9a-f]*\).*/\1/p')
 [ -n "$NSEC" ] || fail "Android's engine didn't make a vault"
 # (each Android run is the same device: its store is kept in android/vaults/build/interop-<npub>)
 R=$(node tools/vault-read.mjs "$NSEC" --brief) || fail "Web couldn't open Android's vault"
 echo "$R" | grep -q '"Buy milk"' || fail "Web doesn't see Android's note"
 echo "$R" | grep -q '"After the checkpoint"' || fail "Web doesn't see Android's note written after its checkpoint"
+echo "$R" | grep -q '"After 20 removals"' || fail "Web doesn't see Android's note written after 20 devices were removed"
 echo "  Android → Web: read"
 node tools/vault-read.mjs "$NSEC" --edit c000000000000001 "Buy oat milk (edited on Web)" >/dev/null || fail "Web couldn't write"
 A=$(android_run "open:${NSEC}:c000000000000002=Done one (edited on Android)")

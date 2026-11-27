@@ -106,7 +106,13 @@ class Vaults(
     /** A keyring entry, sealed `self` to the npub with a fresh one-time key (§3.6), signed by the npub. */
     fun publishKeyring(payload: JSONObject): Set<String> {
         val s = Keys.seal(account.npub, canon(payload))
-        val e = account.sign(clock.now(), Kinds.KEYRING, listOf(listOf("d", payload.str("d"))), canon(JSONObject().put("self", JSONObject().put("eph", s.eph).put("ct", s.ct))))
+        // Always later than this entry's last copy (as Web does): two copies in one second tie, a relay keeps the lower
+        // id (NIP-01), and the one with the new generation could be the one dropped, leaving the other devices unable
+        // to read anything written under it.
+        val d = payload.str("d")
+        val at = maxOf(clock.now(), (store.get("krAt/$d")?.toLongOrNull() ?: 0) + 1)
+        val e = account.sign(at, Kinds.KEYRING, listOf(listOf("d", d)), canon(JSONObject().put("self", JSONObject().put("eph", s.eph).put("ct", s.ct))))
+        store.put("krAt/$d", at.toString())
         store.put("kr/${e.id}", payload.toString())
         return relays.publish(accountRelays(), e)
     }

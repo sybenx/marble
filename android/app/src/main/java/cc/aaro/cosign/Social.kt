@@ -1546,6 +1546,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
             if (debuggable) android.util.Log.i("MarbleVault", "notes pulled: ${after.size}, ${vn.vault?.debug()}")
             if (!sending && after.any { vn.vault != null && it.extra["vv"] == null && it.deleted == null }) laterChanged()
         } catch (e: Exception) {
+            ErrorLog.record("notes pull", e)
             if (debuggable) android.util.Log.i("MarbleVault", "pull failed: $e")
         } finally { vaultLock.unlock() }
     }
@@ -1560,6 +1561,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
             later.synced(before, after)
             if (debuggable) android.util.Log.i("MarbleVault", "notes sent: ${after.size}, ${vn.vault?.debug()}")
         } catch (e: Exception) {
+            // (Kept for troubleshooting: a send that throws every time leaves notes here with nothing on screen.)
+            ErrorLog.record("notes send", e)
             if (debuggable) android.util.Log.i("MarbleVault", "send failed: $e")
         } finally { vaultLock.unlock() }
     }
