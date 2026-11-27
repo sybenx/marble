@@ -1,0 +1,753 @@
+{
+ "pk": {
+  "FIAT": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "COPY_BARE": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+  "COPY_FAKE": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+  "FAN": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+  "ALICE": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+  "BOB": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+  "ME": "5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc",
+  "CAROL": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+  "JUNK": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe",
+  "COPY1": "4ce119c96e2fa357200b559b2f7dd5a5f02d5290aff74b03f3e471b273211c97",
+  "COPY2": "352bbf4a4cdd12564f93fa332ce333301d9ad40271f8107181340aef25be59d5",
+  "COPY3": "421f5fc9a21065445c96fdb91c0c1e2f2431741c72713b4b99ddcb316f31e9fc",
+  "COPY4": "2fa2104d6b38d11b0230010559879124e42ab8dfeff5ff29dc9cdadd4ecacc3f",
+  "COPY5": "6687cdb5b650d558f40cbdefc8e40997c03fe1b2abb840885e5cad81710c4c8a",
+  "COPY6": "55eb67d7b7238a70a7fa6f64d5dc3c826b31536da6eb344dc39a66f904f97968",
+  "COPY7": "6d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00",
+  "COPY8": "6a245bf6dc698504c89a20cfded60853152b695336c28063b61c65cbd269e6b4",
+  "COPY9": "1697ffa6fd9de627c077e3d2fe541084ce13300b0bec1146f95ae57f0d0bd6a5",
+  "COPY10": "1be68a5a028f2601d0e80d468c344ba331d611b96c358b6032e8b4da0547fc11",
+  "COPY11": "605bdb019981718b986d0f07e834cb0d9deb8360ffb7f61df982345ef27a7479",
+  "COPY12": "62d14dab4150bf497402fdc45a215e10dcb01c354959b10cfe31c7e9d87ff33d",
+  "COPY13": "5d045857332d5b9e541514731622af8d60c180165d971a61e06b70a9b3834765",
+  "COPY14": "049370a4b5f43412ea25f514e8ecdad05266115e4a7ecb1387231808f8b45963",
+  "COPY15": "77f230936ee88cbbd73df930d64702ef881d811e0e1498e2f1c13eb1fc345d74",
+  "COPY16": "6eca335d9645307db441656ef4e65b4bfc579b27452bebc19bd870aa1118e5c3"
+ },
+ "followers": {
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798": 52000,
+  "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5": 2,
+  "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9": 40,
+  "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13": 500,
+  "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4": 3100,
+  "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556": 1200,
+  "5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc": 10,
+  "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01": 800,
+  "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe": 4000
+ },
+ "nip05": {
+  "fiatjaf.test": {
+   "_": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+  },
+  "copy.test": {
+   "fiatjaf": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556"
+  }
+ },
+ "publicEvents": [
+  {
+   "id": "434fd9fa8d1f1a6dbae8fc42c971ab748bf3cae92b0b1d87a62397cecb320c08",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763910000,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"building nostr things\",\"nip05\":\"_@fiatjaf.test\"}",
+   "sig": "286e4107daa0b86c14612a269b0a1e7cbf25e7246a2f26c16ef8245e234bf97536ea76097c674c0f46b73b84493c0fc5e7a3944c37e04e85195257d3d5bd5321"
+  },
+  {
+   "id": "ef674e1208be2535aedf9cd9e6334f09b2ffa2d4d521deb2f7638f0be74b5b25",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763920000,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"building nostr things, and a new picture\"}",
+   "sig": "3ba2fb3f0cf5b2c5dae9920074cd4a568bc0321e65b89e1243f19556c6a8bc86a1bc8da611471c913628344b31ea3dff1b002384cc58bd709238b0287b8cfa94"
+  },
+  {
+   "id": "8ae12af237862e6247e01bbe0c9b3e578c6c82ef28558ebddb92f5a4d6c87214",
+   "pubkey": "4ce119c96e2fa357200b559b2f7dd5a5f02d5290aff74b03f3e471b273211c97",
+   "created_at": 1763999000,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "427b5df8c43676160f320d431b9a5cfc8449592072bfa34b5ef0e33ac9b7231dc59347e36730081c5ff850d995eb49c542ec9163a871a4225564c59fe9c12386"
+  },
+  {
+   "id": "bdabd2bc7f3dcc3ee0998d89f71b48c97f65bbc1308988690d8756ccfaac51f0",
+   "pubkey": "352bbf4a4cdd12564f93fa332ce333301d9ad40271f8107181340aef25be59d5",
+   "created_at": 1763998999,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "40025a5503a811ccefd9ee6f64ef415f7b985cdc5046c57a23839d7ec4b1d569cb0d7645ad2c338835d18d6398a3a360c52637c6dc7a7c1d525f767cf127ad0b"
+  },
+  {
+   "id": "b793706e89b172c67ada7522b57d25a1b43ffc9b969bb10e149bb65bee576a72",
+   "pubkey": "421f5fc9a21065445c96fdb91c0c1e2f2431741c72713b4b99ddcb316f31e9fc",
+   "created_at": 1763998998,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "43129a9ea2393035e43abe16827d376b9ed529a255990dc3281f0c1c52a89713a704554d2904a32ec92c1a907eca0233ca28e07bf22d8abdb81888b966853337"
+  },
+  {
+   "id": "9870f7fefcc66b03b4b32ec048baeff7d1134af32ff8904f050a1d7810465de9",
+   "pubkey": "2fa2104d6b38d11b0230010559879124e42ab8dfeff5ff29dc9cdadd4ecacc3f",
+   "created_at": 1763998997,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "7ba640c1fee02bfcfd94db13fd92586771608d135dd666dcb9fa54b9473971fc0c70c9910b28f796c327b77e6e46a49a4e0e1d887f557d508bbc6f236185a6cc"
+  },
+  {
+   "id": "d065913a74697805473af3d439aec3effbdd453965e3c9afe0740b9a2b1d7fe3",
+   "pubkey": "6687cdb5b650d558f40cbdefc8e40997c03fe1b2abb840885e5cad81710c4c8a",
+   "created_at": 1763998996,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "8f405ff7922b730673ba1e5f8113e76d8365d8c3ac28021efaaf7c9a4bff36ee7323b48581bf9b63f68369f626865f33f7bc407f48b92fe2a8d91393b0b7f8c2"
+  },
+  {
+   "id": "71960ae08b96d06c854b8365bbc0a015ea54b24b246d59be0507309cf8ee1c36",
+   "pubkey": "55eb67d7b7238a70a7fa6f64d5dc3c826b31536da6eb344dc39a66f904f97968",
+   "created_at": 1763998995,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "b6a2cb4349e607122856e0da5f4b8bc2275ac8c20e4eade60fa495b6d3509c27adeefb447a2334ca209f1f9c9f0e7481334f7d131e06beed125e9a8fbd583976"
+  },
+  {
+   "id": "979b61ecbc37ef88d7eba7c849b1783dc4c251275c51118ba0d16f5f8d39eabc",
+   "pubkey": "6d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00",
+   "created_at": 1763998994,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "52587f2a30caeddbc02ca01692d04a1dc7f3b49c66cf2c04940621b6e4d0d5a0e6822c36ce98ca1b16af4c836c3501894ae3cfafee7b2da6549aab25ddbd8904"
+  },
+  {
+   "id": "f402ce66a2af1190de8cbd8e6dbdd5114ce734f3419672990d9ae2026df6395f",
+   "pubkey": "6a245bf6dc698504c89a20cfded60853152b695336c28063b61c65cbd269e6b4",
+   "created_at": 1763998993,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "38892fe80d9e49127965e919412e7595dcc4f302582452620100c82d7b3a2a662870072daf8dbe937f3f4c346ae2c9457dc67bd26d9935fd9ca448685943c0a0"
+  },
+  {
+   "id": "9f3b524f1a4a9bd09fd3f42195c39b8d747b0490cf40b7f4b98d7d99c17c75e3",
+   "pubkey": "1697ffa6fd9de627c077e3d2fe541084ce13300b0bec1146f95ae57f0d0bd6a5",
+   "created_at": 1763998992,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "6d7ae4595356d8531677d378aeda010a910ccd84995cad6f70c0bec5a9594fb6cb8ed3e343583f4e2ceb7409f19e3f842b0bcbd2921634e0eaf3bc310dc7e0a9"
+  },
+  {
+   "id": "753378a233b0755bbdf4f563041389bb97c987ab6d21184bcb0df2b2f6e23ff1",
+   "pubkey": "1be68a5a028f2601d0e80d468c344ba331d611b96c358b6032e8b4da0547fc11",
+   "created_at": 1763998991,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "80b73074368174a8021c5b7417d926e69267f7c7a61e724d35bc3d65dc4d6f394c75ecc59b593e84b58aca2ed6cac419e12b3ccb15c01ac680b194298f9c6c0e"
+  },
+  {
+   "id": "9be17749e5ea5b0752eb2ee8624fc3b0f6287f9ecaddade270b5e24e76247ba7",
+   "pubkey": "605bdb019981718b986d0f07e834cb0d9deb8360ffb7f61df982345ef27a7479",
+   "created_at": 1763998990,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "e25b2fdcf239bf53ca82b6b2a755302b53a633b98c4b5e70ad89762b6c9b56948115e1a68b53639f37a754912dbff19c9bcc261bbf43919acbf6f025073ae733"
+  },
+  {
+   "id": "02771a160dffdfb9f43d4faaa41cf67a0d63fee0a537ca0e923fba3806b66621",
+   "pubkey": "62d14dab4150bf497402fdc45a215e10dcb01c354959b10cfe31c7e9d87ff33d",
+   "created_at": 1763998989,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "1490bcbf644348a7d5a5dfb08f3f668b91b92412ea7a4bf5f960eab7a7c9865d708c3ee281c16a3f6437ed0de4f1731dbee3764deb86eb0c6741fb3f124b396e"
+  },
+  {
+   "id": "c41a49df75e2f2d5ce21a0eddf8af9538f0288aa5549f0cb9016a11cfd650008",
+   "pubkey": "5d045857332d5b9e541514731622af8d60c180165d971a61e06b70a9b3834765",
+   "created_at": 1763998988,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "0a4856a84988b37f60b92bcc366f03bde6b29eb47bf48fbc1e63f00492700fe23c080b28bce95cbe0bc4b487586ba8eda907de684ce73bd2153cf842762572f1"
+  },
+  {
+   "id": "e46bfe1403471c9664395b160d8b5a14233ddca9bb7b63ea115d5ae990bba68e",
+   "pubkey": "049370a4b5f43412ea25f514e8ecdad05266115e4a7ecb1387231808f8b45963",
+   "created_at": 1763998987,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "2b604f6c088c9eb62e97a872e2b1a3a999552dda7191f7f442c9dd4eec4c883e683219e302717976f58c15db1d138def863d82c1efde16a58a0d5beab8ee107f"
+  },
+  {
+   "id": "66877b3b3d6d0ee9852d003b5435dd480e505ff14d530917e39857ecce9ad21d",
+   "pubkey": "77f230936ee88cbbd73df930d64702ef881d811e0e1498e2f1c13eb1fc345d74",
+   "created_at": 1763998986,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "f78be14e08e51114cb33b788a203a74e35797b66d15667fcb13257d4bd81c1d35cbd36114691d05dc7ec11bf2b318ec719c0ad79b01673d58fa03f54d556fb7f"
+  },
+  {
+   "id": "7c3a3ed2e4343621ca03bc9c62a25a53457578b5e8598b6786ac6f2debf7b547",
+   "pubkey": "6eca335d9645307db441656ef4e65b4bfc579b27452bebc19bd870aa1118e5c3",
+   "created_at": 1763998985,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "843575edf788348b5af47a10ca0b63e5474320bea37646b0803e7fefc6fb8084c544327425e574ccbbf808c157343f9bfbc2c3b52aaaa78ea9e7f01de686ff67"
+  },
+  {
+   "id": "6059d5b9a2f904a04d956ba88f5956785770d6969b5ca6c0582db3f70339ee79",
+   "pubkey": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+   "created_at": 1763999900,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"display_name\":\"fiatjaf\"}",
+   "sig": "2c1872345ad0a79d4b56d4a2c89de02a2fdb225d84364312139e32a9a524792b9573b6159ebb553ef63b2c057b95b04dbc0f62f56084868c36a24e6bb75647a6"
+  },
+  {
+   "id": "a4e80388ee6ef18c63165af978bb2243d12b95e8ad1473f89499b63ce080b7b2",
+   "pubkey": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+   "created_at": 1763999800,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"the real fiatjaf, follow me here\",\"nip05\":\"fiatjaf@copy.test\"}",
+   "sig": "aa899806e6395446275e2df57d4bd6680ca60807b55e14516aad8631359502cb2860c2c128bf680ee8b64e385ba3b5d236af362ab920b08ce9c867769912e3bc"
+  },
+  {
+   "id": "af36a93b241ac956d551036a204ddc2a9f154ebb572b44407b46bdbff4e5e63f",
+   "pubkey": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+   "created_at": 1763999700,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjafsfan\",\"about\":\"a fan\"}",
+   "sig": "e2ff3a104642d76d5d284b35c183a8ac20f76550ff426737cc72d6a8bc63f4080855e5445dbed3787ffe8f555c6441c7cdffd8116bc54cf03d46de4b20b88b28"
+  },
+  {
+   "id": "c11a5fd05eff26e0bbf9a5671a3b94380b10daa75a3a896c862b71f07fde4c09",
+   "pubkey": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+   "created_at": 1763999600,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"alice\",\"about\":\"bakes bread\"}",
+   "sig": "a89d85c1881a666967b6bf0c01e1ab27ad69bbb557a1bfe2b13d116f98b6d22b43fc91352d5936b609f53df5da83faac1e8d83f6cc74e8d2b9292b796fdc2000"
+  },
+  {
+   "id": "ce03904a4f002c4e3d7aa2cfeefdd686a171f90f73b090c87f939577c4abccf1",
+   "pubkey": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+   "created_at": 1763999500,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"bob\",\"about\":\"runs servers\"}",
+   "sig": "1b7315703d6a90485d98a27600ee4a2250234e3d8d34c5e73746fd5e81b4aebb78e4210e9aebd07a9fd7bdc86cec0bf5d58db23537a8cbbb55751b5997aa53ed"
+  },
+  {
+   "id": "a9df6a32ca43fc78849f832880844cf4c540ec377501a719569db6cebe129c9d",
+   "pubkey": "5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc",
+   "created_at": 1763999400,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"tester\",\"about\":\"the test account\"}",
+   "sig": "3f902419cd0bb8d69e83a8254601cf2a0ac6abf555e573741b328df818b4329732a16fc863a63455ffb56bd44f642db05f9897f6310715e7a44b0581d693e715"
+  },
+  {
+   "id": "f139d62a6e0061f00e75da2156937d4f82cc05ded0fedb72105d03d4aa764080",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1763999300,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"carol\",\"about\":\"keeps an archive\"}",
+   "sig": "75d281632cef3e68fb75fcb3e51c8e0e7f2307731d80cccb8f42381472319f68f36cf8d81544b4d3ebefbe963fb85720f3f37aa4196d6a66e234ab70fe219c5a"
+  },
+  {
+   "id": "583c3ab2bceef82e197b68debd829b3447a3292691d5f516e55c71e762950eb8",
+   "pubkey": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe",
+   "created_at": 1763999200,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"sunshine\",\"about\":\"good mornings\"}",
+   "sig": "a6dbf544e07427aa418032c3389b0e6b0750402190a14aae9790cf21e5434f1e84c66855a0ff1ad0ba65ac527318550dd56e52c5f60850cf324c63172c9a2148"
+  },
+  {
+   "id": "756ee8f169d84395c35b8fdedb930a7495c5cacdd0a3706d3fe2baf7f9efa28a",
+   "pubkey": "5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc",
+   "created_at": 1763999950,
+   "kind": 3,
+   "tags": [
+    [
+     "p",
+     "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556"
+    ]
+   ],
+   "content": "",
+   "sig": "1a18574873107141f7457b3f75812f0db359d0d12083e5a3a54614c0a4166824138a99e16a191e479edad7221924e75e9db4a5c57d29d0058437de5b5e55cbee"
+  },
+  {
+   "id": "0c27cabb2f90b1eb86d8a9b8f31bc9df37252abe10b8f75af050830c829ee821",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763999400,
+   "kind": 1,
+   "tags": [],
+   "content": "The bunker failed to answer again, so signing in with the app failed for everyone this morning.",
+   "sig": "728f6820626902bbd3ed9e853a37a2010d377ee5a9557c9178acd32f8307e30af524cd5f427de8c3c75e2a8b91b155863b0a6de1e6040ef03e70ad8dedf92ba2"
+  },
+  {
+   "id": "3eaca271c548cd8f44372c03e8acb97de907b111c11b80c69817fb473f5d59ab",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763998800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relays are a simple idea: anyone can run one and clients pick where to read and write.",
+   "sig": "42f48af5f7fd07309415256fc9466444e8bce8637ffc3da5ec9a620b26887fc4c02f5fe8ea4f109a8ccb0bb3431beb24801603003ecd45743453d31d61b002e5"
+  },
+  {
+   "id": "fb71b721c0e55082794a849f8c05cfea7a3277ce20878b609a1dd46db6f0678b",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763998200,
+   "kind": 1,
+   "tags": [],
+   "content": "My deploy of the new relay build failed twice before the cache cleared, all good now.",
+   "sig": "c430a9119be9aa2bc4d3c1730c4384b8ff0f5c3478a0497b2bc01ba6250b98a0f02e1bd602c035ef9e8a495e04e23237331c43ae04916530e9cf1ad9815ce15a"
+  },
+  {
+   "id": "8a7cb1ed5ba61b6faac23468b0f695ab308b082aa403efc74bfe7c4eb401effd",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763997600,
+   "kind": 1,
+   "tags": [],
+   "content": "Writing a tutorial about how to build a small Nostr client from scratch this weekend.",
+   "sig": "e4d59f51875d302c2a76cca32dcc0a8b0ae001e23e5a3972b106e16c090255e4046ac58807d8b92a5c957becd7f57e1a49f732e119639d707a633ba5d787fab3"
+  },
+  {
+   "id": "a36fee5e64c4f4d6f873e9df8175eba1a3e7b1cdf24fed68feb89eb51b9c37f9",
+   "pubkey": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+   "created_at": 1763997000,
+   "kind": 1,
+   "tags": [],
+   "content": "Everything I tried today failed, the bunker failed and the relay failed too, what a day.",
+   "sig": "d7cf4a9adea8b376cee788752c160308b03b1c3ba46cf18ca3ae138d8717ad3178fec4b947c14e3c0de84901c2c96d414d49d5783177aa6ccb2e519a52991a69"
+  },
+  {
+   "id": "c05c7b0b1aba386fc4113fb20f8bca0d73f3f17007a1d9c3fbc991013cf74f93",
+   "pubkey": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+   "created_at": 1763996400,
+   "kind": 1,
+   "tags": [],
+   "content": "Official update from the real fiatjaf: the login failed for some of you, it is fixed now.",
+   "sig": "4367a7c833d140b163fe56c657a2f396567c80af58f4943a003d22c22e3131c0825f1b66dbb23b3a624a681bd99f97e99d197a030add00b97ad41a09ed15f8e8"
+  },
+  {
+   "id": "9d1e5efbe61a59a1ab26eec736ed1c5c4cd1940850caa4bbb3e81fd8ac52e706",
+   "pubkey": "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+   "created_at": 1763995800,
+   "kind": 1,
+   "tags": [],
+   "content": "I love everything fiatjaf builds, even when the bunker failed it was fun to debug it.",
+   "sig": "63b4e10edb41a3bf5d5ba7296b79488eddcdbacaeae30a12e284992d5491f19ba4439a2b3a14895bd81299c14e4f2c23fc99857543b231a3d357568317267cbb"
+  },
+  {
+   "id": "c46e24e19b69a3b14a071da38947957ef25cd98993786a41987119e8bb25efe0",
+   "pubkey": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+   "created_at": 1763995200,
+   "kind": 1,
+   "tags": [],
+   "content": "My first attempt at baking sourdough failed completely but the second loaf came out great.",
+   "sig": "b1acdeb199ced92a4bdb3fd096e9173abab5fb3dbfead39b845bb2f2f0af60609a1e5c33c8ff8e4b2a6db700f79acaeeb82f891f27667926e5d22e5587127aaa"
+  },
+  {
+   "id": "4b89bbbb574daffae0cb843290bd17d790c4080a0d9fba34313a518b78569789",
+   "pubkey": "2f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+   "created_at": 1763994600,
+   "kind": 1,
+   "tags": [],
+   "content": "Spent the afternoon at the lake with friends, the weather was perfect for a long swim.",
+   "sig": "ab79485a147670cf587d7c9f0631bb851956a5b49634c3652131c6a8d69219ee81cec68718c848c364ccfd2761be8b0e846547f83444d8b9400ca769424a59bd"
+  },
+  {
+   "id": "6b8e7146178cddfdfdba8587ce3d7a6c091555c370a4b44c03b9ba65babbab5c",
+   "pubkey": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+   "created_at": 1763994000,
+   "kind": 1,
+   "tags": [],
+   "content": "The upload failed because the storage server was busy, retrying later fixed it for me.",
+   "sig": "af6d7aed658fd612c86d89abe52d9322eb3dfa1336cb6271e04615f9cbce2fe0414549046083332b619c3b0b742bb3c7b7bf1f055b9eaaa88856bffbb2da3427"
+  },
+  {
+   "id": "6c569ff4b2a120bd5123c46584c96fd2c641e5f0abf45ed9d6deead29a14f279",
+   "pubkey": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+   "created_at": 1763993400,
+   "kind": 1,
+   "tags": [],
+   "content": "Last night the relay failed during the upgrade, so I rolled it back and all was fine.",
+   "sig": "14bb88ad45d3158b199f1caaaad9b3b82f6264009d25bb17f193b6f6b72e192a8b53388811f2488b2e0cea379807e96d9a65116b1b17a71b5c5b5af339dbfb70"
+  },
+  {
+   "id": "9dbbad9f9fd148903640b78ac5114f1060c77dac64079b8da18fdcb6e949b0b9",
+   "pubkey": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
+   "created_at": 1763992800,
+   "kind": 1,
+   "tags": [],
+   "content": "Marble search works nicely when you type a couple of words and press enter on the keyboard.",
+   "sig": "f524d6c5de77b60e5cab3eee643e46f101cb13d559666d3e75715c6aff46d0a3e88cbbf5f8f0f117aaad6cbec4b58cdeefc4b4f8ce73d5465a96fa2e60034941"
+  },
+  {
+   "id": "f6c22b268519c7e60f23e0d87ecd83bd83553b62df3ad0a1507400b0f8c77d95",
+   "pubkey": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe",
+   "created_at": 1763992200,
+   "kind": 1,
+   "tags": [],
+   "content": "Good morning everyone, have a wonderful day and enjoy the sunshine outside today.",
+   "sig": "7dcec851cbfa6ed1697b372698d25df44791057e54d0e1bbbb29a830a805edf2a491fc4e7c361ac78c47bd9b7fd7c9dfd9f868cbb38b44f3ba51afc55cf01433"
+  },
+  {
+   "id": "3a3c15420f395c0d389843dc4a94fa0ae6a68c35276592ff366a8a4490f51ed4",
+   "pubkey": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe",
+   "created_at": 1763991600,
+   "kind": 1,
+   "tags": [],
+   "content": "Another lovely morning here, the coffee is hot and the birds are singing in the garden.",
+   "sig": "de22f68766ab06787a61e1a1efd2d736f79b2825031627c48f864a8ed9dd0ce44be2a4131cf7f80ef51d09611bdd332f02140c5aa038cf0710cfb5f3b8bedce8"
+  }
+ ],
+ "archiveEvents": [
+  {
+   "id": "2abfc406ee24f76ed5693f2ce827cfd7a282b20e93e5214489c9281f01c67d55",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764099400,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 1: everything is running smoothly on the home server tonight.",
+   "sig": "395a69d078174e31a6934ac468a38ea1007e0358651246e483b9596a8d7886d8c8b0a5444686727e7ae1d011a5cce687035366521252fbe7269ae255a3fd0c41"
+  },
+  {
+   "id": "fe3e8066599913cc82117d5a415859a6287a4d8f31a33d1591dfaee908ef4120",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764098800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 2: everything is running smoothly on the home server tonight.",
+   "sig": "10c127ac174d6faa27716c07aa296a0fe59ff8d35f8274fa1926ac4c4d482929ae07411e6d27cc5cd3a85806424c284111fcdf4b1a9681eb320add440c7e687b"
+  },
+  {
+   "id": "d818170f025a40aab15143abb76bbf5ff75f94a687cd7f843a1fa8df36ced7d7",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764098200,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 3: everything is running smoothly on the home server tonight.",
+   "sig": "11623ecc2d7fd7e5498f78793424ced69018bfa79f5f710f1627d027ba85d78f416dcfbb49ba8ed10ccf0f3906517d538b3d082858f9b24deb11a796ee2aa5ee"
+  },
+  {
+   "id": "a8d77f8541c53f427101730ee5521606dea9ab156b18e97acbdedf1ab4983105",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764097600,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 4: everything is running smoothly on the home server tonight.",
+   "sig": "8dae8e4ee2a7c58c4d44ea8fca84e65f5696c6240c22b7444520bb9c89222a27c87f5a341d1b5622ecf79c847090f2cb5f49a58eb67a216a354c7355c839a59e"
+  },
+  {
+   "id": "833c6fba6ef7cf9513b34586ac331de4d299fcf25e4b5f2bb40d23b7d9ebac3d",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764097000,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 5: everything is running smoothly on the home server tonight.",
+   "sig": "fac6cc723e3c15830fc0aa4675410b5fa188f587755ade595dbb3cc82a92164369fdecf600ab2a170110ff0cfc81a5cfe9819a93c74f28823c9202a6853a3d3b"
+  },
+  {
+   "id": "fb3d3152918569e825d55190980345b89f9529361002197c088ef5a0654e31a1",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764096400,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 6: everything is running smoothly on the home server tonight.",
+   "sig": "c569f11d59845aa37f8b32f92797ad892b7daaeef622aa667a43fce118c11b9402c837a3c03a67ede490297e4cc13fbc2ac3a341b8c744d67a174ed1def4b3bc"
+  },
+  {
+   "id": "d08552ca9a846f72143d2f0b910e05188fad3151d72f1e0a59f6e98e1fe5b5a3",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764095800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 7: everything is running smoothly on the home server tonight.",
+   "sig": "5d2df8ec202152f9a650a8784865fcbb0328e579abddea1a1cc199622a753fb1f55bf2ed1ee7857faafb2455a51c0d84ba246540098e8a664c4c557300b64c07"
+  },
+  {
+   "id": "9df2cb3b49bcd7d998cdcdf194c59b7c69845bf96d555d28758038926fe8a2d5",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764095200,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 8: everything is running smoothly on the home server tonight.",
+   "sig": "7fce6442aec6bfd43c5334e1ce7228d5360f35669680c95794c18e6d42edf425cfb0e0441c6660d2a72859964cdb493151181f8972e4fa214d49328485c4a06a"
+  },
+  {
+   "id": "f97db4f5317d95bf2db225a51f249618d4338c86b339ca45c2967a426df6fcf6",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764094600,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 9: everything is running smoothly on the home server tonight.",
+   "sig": "15afc6c9390c37c7352e9ae830c8626c1170450e4511c1b156f6507f038bcef7dd437b6835483d3e3bfc67524cdcc87aa2f59c7f92f5afb873475adc541538ef"
+  },
+  {
+   "id": "2a761cd5fe3ffed43d328a45f14d7c334fac5e2d8f65feda6acdae3fe817d429",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764094000,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 10: everything is running smoothly on the home server tonight.",
+   "sig": "8f5935216b3dd2474a877a359d08abace0fd5beccde3b3cc76e5a4096e4fedf48bcab91d81cb61d0d5ed86e9644b5c8aa0089b5996d28c2ca3783e01cc11834d"
+  },
+  {
+   "id": "37961d44e2ac6a7a46d9737f0209654115a61d9cb12ccdfd72f78187d1a28814",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764093400,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 11: everything is running smoothly on the home server tonight.",
+   "sig": "66a2343c4c5946900848ec5e84cef05e0f54cf0dce63b410ea461600b66dd0e433cdd6904bb6650c5ac686b09f0b943b0ec9100f3e183e99f203f72a72909a1d"
+  },
+  {
+   "id": "f47687e497dff1203acb6d4fd8795b00aee2c62ee5fe9497aadec7555348da2a",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764092800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 12: everything is running smoothly on the home server tonight.",
+   "sig": "9646d519a954a25fc1e663f88e7a14a72ef98195340922054617d77fdd3a8085230b07ce8d3af89b9abd38d70adb0887659b86397758c2fc230bb46587b09e11"
+  },
+  {
+   "id": "d7d3588a9b7e20077965b38a281ed477fd171ce19e90a6c517c97857ab5a8032",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764092200,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 13: everything is running smoothly on the home server tonight.",
+   "sig": "d97098f88aec82880037912c58eb3aff83e65118a65fd0e1741eb0e754d8240f128c15a04c97c2edcc122769155f5526a38e6b01dd60c47d17fdf39d2c1804e0"
+  },
+  {
+   "id": "76faa5914d36491307f34529accdba9447c7dfff6e5c14e10651f184804599d2",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764091600,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 14: everything is running smoothly on the home server tonight.",
+   "sig": "628ac31d6af19d902767ca76ab83ad0df19fa4ceb6ebd7238a8f6633dbd72df18e19420c5928cefd5fcb99d762d96f1545910d279198e22ff2be5a5bbcbe3754"
+  },
+  {
+   "id": "f660100b9feba2affb751354ccc2f55cebca059e10d7d94b0370e6ca8d2691ab",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764091000,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 15: everything is running smoothly on the home server tonight.",
+   "sig": "b88a13d49c7d5c691d7b8275605fc2b8f691d5ac350b12e12779b6eb939f36e10f6ad8bac0293865ef3d922a586ea229279928576580d701cb569e45a02a84e1"
+  },
+  {
+   "id": "121096b2d38a01c7c5d7896b83c530cd90ef69d84cc36105b15865075427b6fa",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764090400,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 16: everything is running smoothly on the home server tonight.",
+   "sig": "a0fbe5b80d1323d7c4fef4b1e6f1c4f6c1c1f426a032bd6a701e7b9659c2c50e2f545e7aaa6d133b368c134a9ee268d94d100b1a5abdfee9de7df438e252bd9c"
+  },
+  {
+   "id": "03cff22ebb3809b7fccb16c1070791e10ec91e1997bcfde45beed6cb595e9ac5",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764089800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 17: everything is running smoothly on the home server tonight.",
+   "sig": "42a7bc65d24aed30a38f1df64f462a959d5b35e1623a7c7fb00a7b71355b17e22120e3b2f45a831725302afe8cfd8fdcb489ef49569f4214bc5749332bb5c0e9"
+  },
+  {
+   "id": "fdd66ddc36f01256e081b8961de2d5e529b5bfc00f23849536dba8c97302cb56",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764089200,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 18: everything is running smoothly on the home server tonight.",
+   "sig": "b0e0e158d939f6870671d06ac4f83569bb34f1b0c814558f45355e8a096fe50a002d169a9105a23192137255bd8ff14c12cd5f1740242579fd79051a71efa078"
+  },
+  {
+   "id": "a011fb3ff1e7137ad25d1606aeaa27ad186db95957ad80cb2dcd6fcc3611905d",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764088600,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 19: everything is running smoothly on the home server tonight.",
+   "sig": "97303238ac9bb1aa4fde1f05b4cf0eb480d2bcd2af4b98b529721f902876510c0e7208d0393101d9ac8fe795f2c7c6f1e39ee35cfabab4de99846aadf6e1e3cb"
+  },
+  {
+   "id": "06988778dd0c69867a9d844920db0473a24845f4ad33e7166118459d4a822b4f",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764088000,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 20: everything is running smoothly on the home server tonight.",
+   "sig": "5f0d71d1a2e92d0dd0c688672ad295e2e2a1c966ce5a07de85bb160a7741fcff3aec7b5707a674fc413873ed37939279d17a67fd79a2b196269f9f3b694dc0d4"
+  },
+  {
+   "id": "d518ef4b5dd89f4d92d28fa9b5781e42619a96f794021f802493464d7c20e30a",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764087400,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 21: everything is running smoothly on the home server tonight.",
+   "sig": "6f64d492d939316ab2d87ebf2131abe091ff9930bed4711edfd85f2ee58d27a99534621ed19ab8f0192456eff5d716a3774b1e49df942bfca1c1b793cafa29e3"
+  },
+  {
+   "id": "bcc6329367c8c8bd3161b6a8921f1df1d724d7d0b6d84536fbdc69ef80a58898",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764086800,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 22: everything is running smoothly on the home server tonight.",
+   "sig": "ff4ed4f1d0cc0dbc5d6ecafb7cc1b81aa78b48f88b5f417c832d47a900f32c26bd46e6f6bc46513c9d071fdff37c4edb6a723cb3c90a30f817d031df4873287a"
+  },
+  {
+   "id": "a4f299aa0201713421af9c2e7f03989701bacf53b74042e20c81042754b1cf06",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764086200,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 23: everything is running smoothly on the home server tonight.",
+   "sig": "633bc7b047d2876b6a3d3e3aca5fd74f2a105f988b3099965ed01c183856ba1642764a07fddab4b0ee8af967a11aa57ea36ccb60de52b02fc3f03ed985177926"
+  },
+  {
+   "id": "7d29a0ed828e86c3d4a9716928bdc882199b434de8587dc00ceea1770864d21b",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764085600,
+   "kind": 1,
+   "tags": [],
+   "content": "Relay update number 24: everything is running smoothly on the home server tonight.",
+   "sig": "e9298057d341ab8a79c2f5b19667dcd26b7e7a774aa1bd790127ab54b6c9939e77ae8856d13b318b1a9c1ee1a64517d80b943c58aa4c473a7df7c5d548e75d32"
+  },
+  {
+   "id": "524b1475bf673b2466242508005a5b5744bc0eb8e61fffcffd8c49476075a641",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764085000,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 1 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "96cddf7859c18be2da8578df70d051af402d4ca3e08498bcc4c551eee10a022a9ef2b4eff962b81dbce6cfd19586c95f9cfd6caf043c0b20296d0d2a4f869cfd"
+  },
+  {
+   "id": "ac3be2bbc167e0d0c11e32092cbd22e3fcc60857ebf99d4e76d8287fc28a1a67",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764084400,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 2 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "f04bd7f0a1618badbfa6c032018f4997807eba5935e8d605b6ccb7cdf8cbcff243be0f7b30e44374b5fd9eb5ea5e4b06ee1400cbc78f332f035fc6121f1747a6"
+  },
+  {
+   "id": "ae6d4aa0707899f05488657d93e0617c6db377f90efa19da93afc567714ec9db",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764083800,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 3 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "c6a5c52d9cbf85db69d21100193ec8d0fe901a09baf246663be79520a5ffd6cd65be8b7b852e72298a01a907513605c03580793e2ec3615ee4693c5172302d41"
+  },
+  {
+   "id": "8f6c89b8b99e748a568d3acfcf345d5fd0c516e4258b96630b53cce46f6b6eeb",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764083200,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 4 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "a1d7a5832154accc2bef9bc54ef3b7791254e38702c0cb710d9316d4750dba2aedd7f28dea40c3ba952fc08b03c8256d3296f82264b77e94a9663b46e927387f"
+  },
+  {
+   "id": "e6e635951e9302feec55b7921d4d8a7c3f3d003efb2511644f25f67bacaf1747",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764082600,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 5 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "1a48a9846b8419abd16c6a479497770d66e4bbb37953b6805cfcd125d5bf756418dbfdac9a2d5b375f3938749426f6e5c4bb9b0fc3b8a32978a01e61d8608005"
+  },
+  {
+   "id": "4d5574d6308e080cc5a1bee2e0ecde472ce85dc8d0fc8c3451e61e1640c3793c",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764082000,
+   "kind": 1,
+   "tags": [],
+   "content": "Backup run 6 failed halfway because the laptop went to sleep in the middle of it.",
+   "sig": "07913f3e2c611a4acc38c1b4e4dd1765d7889f78a920dc20914cc5384848e277be8c69dd8339bd2aba7ed6bd10ce2a0969b8d2f6be02dafdbbe723f31a788b93"
+  },
+  {
+   "id": "5ffe21fcd1431f67141f15f6dafb44e191e633e843a43b68dd9bad667465d417",
+   "pubkey": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+   "created_at": 1764081400,
+   "kind": 1,
+   "tags": [],
+   "content": "From my archive too: the relay failed and so did everything else, follow me for more.",
+   "sig": "862a62b3ee21c6737c3ad5b2a02e4563a46dc1f3aefcfb88047fcf6b011d9c59a29cc7d4707a36b1cdd394a28503f05ea577daea43ec0331851aae765122a680"
+  },
+  {
+   "id": "ebc8e5a7cdbd4c5982896c77bdcde944df5aa57b9bed90acfb25b4b82a2fbf68",
+   "pubkey": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
+   "created_at": 1764080800,
+   "kind": 1,
+   "tags": [],
+   "content": "The relay failed over to the backup machine at three in the morning without any trouble.",
+   "sig": "245fe052960c9c11c6be742aeae68a138e8036330267dc13ec0957a89fea73bf8b22e8a77640a13184c2d5cefbac742100764e040d3ee61bc34de759cf7aa3e4"
+  },
+  {
+   "id": "c9fed4ca24bbd9a4e171f5698760024c01ea15b32201c7851667acd674d68612",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1764080200,
+   "kind": 1,
+   "tags": [],
+   "content": "From the archive: the relay failed to sync my old notes, a restart fixed it right away.",
+   "sig": "5bff063bbd9bb18d1541e1e12e11680fa1deade87f81d20a948d9851ba26bb7e91ee8722909c3b5cdce15cffefd1f1559842ce9b07409f70ef9ec61cf43863dd"
+  },
+  {
+   "id": "c9900388595b1475fe4b0df5133675c3a38c08cfb6bb4692d2ce3c00a10aa2f4",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1764079600,
+   "kind": 1,
+   "tags": [],
+   "content": "Archive thought: nothing broke today, it was a quiet and pleasant day at the desk.",
+   "sig": "8215dff77cc4cb293a8c149ef5d18fdb57fc75ab7e90bf94bff39c85eda5377b8adb428ece4f6b56f3b7a91b390a6db2a143ed7eaad114e591b3e14ce56c3922"
+  }
+ ],
+ "posts": {
+  "f1": "0c27cabb2f90b1eb86d8a9b8f31bc9df37252abe10b8f75af050830c829ee821",
+  "f2": "3eaca271c548cd8f44372c03e8acb97de907b111c11b80c69817fb473f5d59ab",
+  "f3": "fb71b721c0e55082794a849f8c05cfea7a3277ce20878b609a1dd46db6f0678b",
+  "f4": "8a7cb1ed5ba61b6faac23468b0f695ab308b082aa403efc74bfe7c4eb401effd",
+  "c1": "a36fee5e64c4f4d6f873e9df8175eba1a3e7b1cdf24fed68feb89eb51b9c37f9",
+  "c2": "c05c7b0b1aba386fc4113fb20f8bca0d73f3f17007a1d9c3fbc991013cf74f93",
+  "fan1": "9d1e5efbe61a59a1ab26eec736ed1c5c4cd1940850caa4bbb3e81fd8ac52e706",
+  "a1": "c46e24e19b69a3b14a071da38947957ef25cd98993786a41987119e8bb25efe0",
+  "a2": "4b89bbbb574daffae0cb843290bd17d790c4080a0d9fba34313a518b78569789",
+  "b1": "6b8e7146178cddfdfdba8587ce3d7a6c091555c370a4b44c03b9ba65babbab5c",
+  "b3": "6c569ff4b2a120bd5123c46584c96fd2c641e5f0abf45ed9d6deead29a14f279",
+  "b2": "9dbbad9f9fd148903640b78ac5114f1060c77dac64079b8da18fdcb6e949b0b9",
+  "j1": "f6c22b268519c7e60f23e0d87ecd83bd83553b62df3ad0a1507400b0f8c77d95",
+  "j2": "3a3c15420f395c0d389843dc4a94fa0ae6a68c35276592ff366a8a4490f51ed4"
+ },
+ "archive": {
+  "r3": "ebc8e5a7cdbd4c5982896c77bdcde944df5aa57b9bed90acfb25b4b82a2fbf68",
+  "fa1": "c9fed4ca24bbd9a4e171f5698760024c01ea15b32201c7851667acd674d68612",
+  "fa2": "c9900388595b1475fe4b0df5133675c3a38c08cfb6bb4692d2ce3c00a10aa2f4"
+ }
+}

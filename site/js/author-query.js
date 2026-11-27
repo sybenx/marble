@@ -16,7 +16,7 @@ export const EXACT = 7, TIGHT = 6, FIRST = 5, PREFIX = 4, PART = 3, TYPO = 2, ST
  */
 export function split(q, follows, known) {
   const words = (q || "").trim().split(/\s+/).filter(Boolean);
-  if (words.length < 2 || !follows?.size) return null;
+  if ((words.length < 2 && !explicit(q)?.strict) || !follows?.size) return null;
   const mine = [...follows].map((pk) => known.get(pk) && { ...known.get(pk), pubkey: pk }).filter(Boolean);
   const make = (hits, rest) => ({ author: hits[0][0], rest, others: hits.slice(1, 5).map((h) => h[0]), loose: hits[0][1] < STRONG });
   // from:name, @name: that word only (a name that isn't someone you follow: no author here; see anyone())
@@ -38,15 +38,20 @@ export function split(q, follows, known) {
 }
 
 /**
- * A from:name or @name typed with other words: {name, rest}, else null. rest is what to look for everywhere else: the
- * search servers don't know from: (they answer with anyone's posts about the other words) and no post says it.
+ * A name typed as one: {name, rest, strict}, else null. rest is what to look for everywhere else: the search servers
+ * don't know from: (they answer with anyone's posts about the other words) and no post says it. strict, from:name:
+ * that person's posts with every word and nothing else, as mainstream search does it; a bare from:name, their latest
+ * posts. @name with other words is the softer kind (their posts, and the usual results for the rest); a bare @name is
+ * a person, not this. (Marble Android: AuthorQuery.from.)
  */
 export function explicit(q) {
   const words = (q || "").trim().split(/\s+/).filter(Boolean);
   const i = words.findIndex((w) => EXPLICIT.test(w));
-  if (i < 0 || words.length < 2) return null;
+  if (i < 0) return null;
+  const strict = /^from:/i.test(words[i]);
+  if (words.length < 2 && !strict) return null;
   const name = EXPLICIT.exec(words[i])[1];
-  return normalizeName(name).length >= 2 ? { name, rest: words.filter((_, j) => j !== i).join(" ") } : null;
+  return normalizeName(name).length >= 2 ? { name, rest: words.filter((_, j) => j !== i).join(" "), strict } : null;
 }
 
 /**

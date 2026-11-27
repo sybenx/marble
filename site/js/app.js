@@ -3,7 +3,7 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./signin/ids.js";
 import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./signin/pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
 import { split as authorIn, explicit, anyone } from "./author-query.js";
@@ -13,6 +13,7 @@ import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply,
 import { openAccountPage } from "./signin/account-page.js";
 import * as notes from "./later.js";
 import * as archive from "./archive.js";
+import { relevant } from "./private-relays.js";
 import * as vault from "./notes-vault.js";
 import { showReader, keepUrlOf, plainText } from "./reader.js";
 import { follow, following } from "./follow.js";
@@ -993,8 +994,10 @@ async function showSearch(q, signal) {
   // "sort:top", "language:en"…: for the search servers only (q stays what you typed, for saying it back)
   const { words: typed, ops } = operators(q);
   // from:name or @name with other words: that person's posts with the rest (below), and the rest is what everything
-  // else looks for (the search servers don't know from:, and no post says it)
+  // else looks for (the search servers don't know from:, and no post says it). from: is strict, as on the phone: their
+  // posts with every word (a bare from:name, their latest), from your archive too, and nothing else.
   const named = explicit(typed);
+  const strict = !!named?.strict;
   const plain = named ? named.rest : typed;
   const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(plain) ? plain.slice(1) : null;
   // a bare @name: no people from open search (it ranks lookalikes); the box's handle row is the only person shown
@@ -1002,7 +1005,8 @@ async function showSearch(q, signal) {
   const words = bareName ? plain.slice(1) : plain;
   const oneWord = !tagOnly && /^[\p{L}\p{N}_-]{3,40}$/u.test(words) ? words : null;
   const root = pageEl;
-  const got = { archive: [], apps: [], people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: null, tagged: null, stories: tagOnly ? [] : null, yours: null, follows: new Set() };
+  const got = { archive: [], apps: [], people: [], extra: {}, peopleDone: !!tagOnly || bareName, posts: strict ? [] : null, tagged: null, stories: tagOnly || strict ? [] : null, yours: null, follows: new Set(),
+    fromDone: false }; // (from: and no one by that name: the search is over)
   const opened = new Set(); // lists "See all" has opened, kept across redraws
   const wideQuery = matchMedia("(min-width: 1000px)");
   // #top: what the box adds above the results (a site to go to, what a handle confirms, your own searches and notes)
@@ -1034,21 +1038,25 @@ async function showSearch(q, signal) {
   const appsExact = () => got.apps.length > 0 && appNorm(got.apps[0].name) === appNorm(words);
   const appsSection = () => section("apps", "Apps", got.apps, (a) => appRow(a, got.follows));
   const postItem = (x) => card(x.e, { why: x.why, clamp: true });
-  const waiting = () => got.posts === null ? `<p class="muted loading-text">Searching…</p>` : "";
+  const waiting = () => got.posts === null || (strict && !got.by && !got.fromDone) ? `<p class="muted loading-text">Searching…</p>` : "";
+  // Nothing anywhere: said once everything has answered (under from:, once it's known there's no one by that name;
+  // when there is, their own block says it)
+  const nothing = (any) => !any && got.posts !== null && (strict ? got.fromDone : got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length)
+    ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "";
   // Someone you follow named in the search ("thailand anarko"): their posts with the other words, as well as the rest
   // (author-query.js); a strong match first, a loose one after the first three of the usual results. Others it could
   // mean are chips.
   const fromBlock = (draw) => {
     const { author, rest, others } = got.by, list = got.byPosts;
-    return `<section class="by"><h2 class="by-head">${avatar(author, 24)}<span data-name="${author}">${esc(name(author))}</span><span class="by-words"> · ${esc(rest)}</span></h2>
+    return `<section class="by"><h2 class="by-head">${avatar(author, 24)}<span data-name="${author}">${esc(name(author))}</span>${rest ? `<span class="by-words"> · ${esc(rest)}</span>` : ""}</h2>
       ${others.length ? `<p class="by-chips">${others.map((pk) => `<button type="button" class="chip" data-by="${pk}">${avatar(pk, 18)}<span data-name="${pk}">${esc(name(pk))}</span></button>`).join("")}</p>` : ""}
       <div class="list">${list === null ? `<p class="muted loading-text">Searching…</p>`
-        : !list.length ? `<p class="muted">Nothing from <span data-name="${author}">${esc(name(author))}</span> about “${esc(rest)}”.</p>`
+        : !list.length ? `<p class="muted">Nothing from <span data-name="${author}">${esc(name(author))}</span>${rest ? ` about “${esc(rest)}”` : " yet"}.</p>`
         : (opened.has("by") ? list : list.slice(0, 3)).map(draw).join("") + (!opened.has("by") && list.length > 3 ? `<button type="button" class="more" data-open="by">See all ${list.length}</button>` : "")}</div></section>`;
   };
   const postsFrom = (pk) => {
     got.by.author = pk; got.byPosts = null; soon(drawMain);
-    outbox(pk).then((o) => postsAbout(pk, got.by.rest, { hints: o.write, signal })).then((list) => {
+    outbox(pk).then((o) => postsAbout(pk, got.by.rest, { hints: o.write, signal, all: strict })).then((list) => {
       if (got.by.author !== pk) return;
       got.byPosts = list.map((e) => ({ e, why: "" }));
       soon(drawMain);
@@ -1069,8 +1077,8 @@ async function showSearch(q, signal) {
   }
 
   function drawMain() {
-    // from your archive: first, and not again below
-    const mine0 = got.archive.filter((x) => x.e.kind !== 0), inArchive = new Set(mine0.map((x) => x.e.id));
+    // from your archive: first, and not again below (under from:, only that person's, once it's known who)
+    const mine0 = got.archive.filter((x) => x.e.kind !== 0 && (!strict || x.e.pubkey === got.by?.author)), inArchive = new Set(mine0.map((x) => x.e.id));
     const theirs = new Set([...(got.byPosts || []).map((x) => x.e.id), ...inArchive]), notTheirs = (l) => (l || []).filter((x) => !theirs.has(x.e.id));
     const archiveBlock = (draw) => section("archive", "From your archive", mine0, draw);
     // likely spam (strangers' only): out of the ranking, at the end behind a quiet line
@@ -1090,7 +1098,7 @@ async function showSearch(q, signal) {
         + section("stories", "Stories", stories, storyRow)
         + section("yours", "Your things", yours, postItem)
         + spamLine(postItem)
-        + (got.posts !== null && !mine0.length && !posts.length && !tagged.length && !stories.length && !yours.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+        + nothing(mine0.length || posts.length || tagged.length || stories.length || yours.length);
       fillLater(main);
       return;
     }
@@ -1119,7 +1127,7 @@ async function showSearch(q, signal) {
       + (list.length <= 3 ? (loose ? from : "") + mine : "")
       + (left.length && !opened.has("main") ? `<button type="button" class="more" data-open="main">More results</button>` : "")
       + spamLine(postResult)
-      + (got.posts !== null && !mine0.length && !list.length && got.peopleDone && !got.people.length && !got.byPosts?.length && !got.apps.length ? `<p class="muted">Nothing found for “${esc(q)}”.</p>` : "");
+      + nothing(mine0.length || list.length);
     fillLater(main);
   }
   redraw();
@@ -1130,7 +1138,7 @@ async function showSearch(q, signal) {
   const followsSoon = Promise.race([myFollows(), new Promise((r) => setTimeout(() => r(new Set()), 1500))]);
   followsSoon.then((f) => { got.follows = f; });
   // apps: the index once a visit, then matched here (nothing typed leaves the page)
-  if (!tagOnly && !bareName) Promise.all([loadApps(), followsSoon]).then(([list, follows]) => {
+  if (!tagOnly && !bareName && !strict) Promise.all([loadApps(), followsSoon]).then(([list, follows]) => {
     if (signal.aborted) return;
     got.apps = searchApps(list, words, { follows, limit: 8 });
     if (got.apps.length) { soon(drawSide); soon(drawMain); }
@@ -1138,7 +1146,8 @@ async function showSearch(q, signal) {
 
   if (!tagOnly && !bareName) followsSoon.then((follows) => {
     if (signal.aborted) return;
-    searchPeople(plain, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
+    // (under from:, the people by that name: who it could be)
+    searchPeople(strict ? named.name : plain, { limit: 10, follows: [...follows], cached: profiles, signal, onResults: (list, x) => {
       for (const p of list) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
       got.people = list; got.extra = x;
       soon(drawSide); soon(drawMain);
@@ -1155,22 +1164,33 @@ async function showSearch(q, signal) {
     }
     // from:name that's nobody you follow (or you're signed out): the person people search finds by that name
     if (!named || signal.aborted) return;
+    // a key, an npub or name@domain: whoever it names, as it is (Android: fromWhom)
+    const typedAs = parseInput(named.name.replace(/^nostr:/i, ""));
+    if (typedAs.kind !== "text") {
+      const pk = typedAs.kind === "hex" ? typedAs.hex : typedAs.kind === "entity" && typedAs.decoded.type === "profile" ? typedAs.decoded.pubkey
+        : typedAs.kind === "nip05" ? (await resolveNip05(typedAs.address).catch(() => null))?.pubkey : null;
+      if (signal.aborted) return;
+      if (!isHex64(pk || "")) { got.fromDone = true; soon(drawMain); return; }
+      got.by = { author: pk.toLowerCase(), others: [], rest: named.rest, loose: false };
+      return postsFrom(got.by.author);
+    }
     const people = await searchPeople(named.name, { limit: 5, follows: [...follows], cached: profiles, signal });
     const a = !signal.aborted && anyone(people, named.name);
-    if (!a) return;
+    if (!a) { if (!signal.aborted) { got.fromDone = true; soon(drawMain); } return; }
     for (const p of people) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
     got.by = { ...a, rest: named.rest, loose: false };
     postsFrom(a.author);
   });
 
   boxState(); // the box's rows into #top
-  goodPosts(words, { follows: followsSoon, me, tag: tagOnly, ops, signal }).then((list) => {
+  // (not under from:, which is their posts alone)
+  if (!strict) goodPosts(words, { follows: followsSoon, me, tag: tagOnly, ops, signal }).then((list) => {
     got.posts = list;
     soon(drawMain);
     checkLikes(list.map((x) => x.e), signal).then((any) => { if (any && !signal.aborted) soon(drawMain); });
     if (list.length) mark("posts", goodPosts.last);
   });
-  if (oneWord) goodPosts(words, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => {
+  if (oneWord && !strict) goodPosts(words, { follows: followsSoon, me, tag: oneWord, signal }).then((list) => {
     got.tagged = list;
     soon(drawMain);
     checkLikes(list.map((x) => x.e), signal).then((any) => { if (any && !signal.aborted) soon(drawMain); });
@@ -1179,17 +1199,18 @@ async function showSearch(q, signal) {
   const respam = () => soon(drawMain);
   addEventListener("marble:spam", respam);
   signal.addEventListener("abort", () => removeEventListener("marble:spam", respam));
-  if (!tagOnly) stories(words).then((list) => {
+  if (!tagOnly && !strict) stories(words).then((list) => {
     got.stories = list;
     soon(drawMain);
     if (list.length) mark("stories");
   });
-  if (me) yours(words, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
-  // your archive (only when you have one): profiles found there join People, the rest goes first
-  if (me && archive.urls().length) archive.searchArchive(tagOnly ? `#${tagOnly}` : words, { signal }).then((list) => {
+  if (me && !strict) yours(words, me, { signal }).then((list) => { got.yours = list; soon(drawMain); });
+  // your archive (only when you have one): profiles found there join People, the posts with every word go first (its
+  // search takes a post with any one of them; under from:, only that person's, in drawMain)
+  if (me && archive.urls().length && (words.trim() || tagOnly)) archive.searchArchive(tagOnly ? `#${tagOnly}` : words, { signal }).then((list) => {
     if (signal.aborted || !list.length) return;
     for (const e of list) keep(e);
-    got.archive = list.map((e) => ({ e, why: "", score: 1 }));
+    got.archive = relevant(list.filter((e) => e.kind === 1 || e.kind === 30023), words, tagOnly).map((e) => ({ e, why: "", score: 1 }));
     soon(drawMain);
   });
 }

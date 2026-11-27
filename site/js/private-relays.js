@@ -51,6 +51,25 @@ export const ahead = (theirs, mine) => key(merge(theirs, mine)) !== key(merge(th
 /** When the next change to `url` happens: now, or after its last change. */
 export const nextAt = (list, url, now = Math.floor(Date.now() / 1000)) => Math.max(now, ((list || []).find((r) => r.url === url)?.at || 0) + 1);
 
-/** What's asked of your archive: search over posts, articles and profiles; a #tag: posts with it. */
+/**
+ * What's asked of your archive: search over posts, articles and profiles; a #tag: posts with it. More than are shown,
+ * since relevant() drops the ones with only some of the words.
+ */
 export const searchFilter = (text, tag = null) =>
-  tag ? { kinds: [1, 30023], "#t": [tag], limit: 40 } : { kinds: [1, 30023, 0], search: text, limit: 40 };
+  tag ? { kinds: [1, 30023], "#t": [tag], limit: 40 } : { kinds: [1, 30023, 0], search: text, limit: 100 };
+
+const plainText = (s) => String(s || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/**
+ * Which of the posts your archive sent back for text to show: the ones with every word of it (in the text or the
+ * title), the whole phrase first, then newest. Chronicle's search takes a post with any one of the words, so a big
+ * archive sends back a page of posts for nearly anything, and they'd sit above everything else. A #tag search is
+ * already exact. (Marble Android: PrivateRelays.relevant.)
+ */
+export function relevant(posts, text, tag = null) {
+  if (tag) return [...posts].sort((a, b) => b.created_at - a.created_at);
+  const phrase = plainText(text), words = phrase.split(" ").filter(Boolean);
+  if (!words.length) return [];
+  const body = (e) => plainText(`${e.content || ""} ${(e.tags.find((t) => t[0] === "title") || [])[1] || ""}`);
+  return posts.map((e) => [e, body(e)]).filter(([, b]) => words.every((w) => b.includes(w)))
+    .sort((a, b) => (b[1].includes(phrase) - a[1].includes(phrase)) || b[0].created_at - a[0].created_at).map(([e]) => e);
+}
