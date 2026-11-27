@@ -2131,21 +2131,27 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val notes = java.util.Collections.synchronizedList(ArrayList<Event>())
             val order = java.util.concurrent.atomic.AtomicInteger()
             val mine = follows.value ?: emptySet()
+            // "from:fiatjaf failed": fiatjaf's posts with "failed" and nothing else ("@fiatjaf failed": and the usual results
+            // for "failed"). The relays never see the name (they'd send "failed" by anyone); the people search looks for it.
+            val from = if (tag != null) null else AuthorQuery.from(text)
+            val who = from?.name ?: text
             // Someone you follow, named in it (or picked from the chips): their posts with the other words, first.
-            val split = if (tag != null) null else AuthorQuery.split(text, mine, People.known.value)?.let { s ->
+            var split = if (tag != null) null else AuthorQuery.split(text, mine, People.known.value)?.let { s ->
                 if (author == null || author == s.author) s else s.copy(author = author, others = (listOf(s.author) + s.others).filter { it != author })
-            }
+            } ?: if (from != null && author != null) AuthorQuery.Split(author, from.rest) else null  // a chip picked under a from: someone you don't follow
             val byAuthor = java.util.Collections.synchronizedList(ArrayList<Event>())
             val archive = java.util.Collections.synchronizedList(ArrayList<Event>())
             val caught = ConcurrentHashMap<String, cc.aaro.cosign.spam.Spam.Why>()
             var first: String? = null
             fun show(loading: Boolean) {
                 if (searchGen.get() != gen) return
-                val people = SearchRank.sort(hits.values.filter { it.pubkey !in muted.value }, text).take(30)
+                val people = SearchRank.sort(hits.values.filter { it.pubkey !in muted.value }, who).take(30)
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
                 val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
                 val yours = synchronized(archive) { archive.distinctBy { it.id }.take(40) }  // in PrivateRelays.relevant's order
+                    // from: only theirs with the words, from your archive too.
+                    .filter { e -> from?.strict != true || split?.let { s -> e.pubkey == s.author && AuthorQuery.has(e, s.rest, all = true) } == true }
                 found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } && yours.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught), yours)
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
@@ -2162,15 +2168,15 @@ class Social private constructor(private val phone: Phone, context: Context) {
             val counters = toCount.map { (url, queue) -> launch { for (batch in queue) count(url, batch, hits) { dirty.set(true) } } }
             fun enrich(batch: List<Person>) {
                 toCount.values.forEach { it.trySend(batch) }
-                checks += launch { checkAddresses(batch, text, hits) { dirty.set(true) } }
+                checks += launch { checkAddresses(batch, who, hits) { dirty.set(true) } }
             }
             if (tag == null) {
                 // Your follows, from what this phone knows: no waiting.
-                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, text) }.forEach { add(it) }
+                People.known.value.values.filter { it.pubkey in mine && SearchRank.matches(it.name, who) }.forEach { add(it) }
                 show(true); mark("follows: ${hits.size}")
                 // name@domain: whoever it names, at the top.
-                if (Nip05.isAddress(text)) relayJobs += launch {
-                    val pk = Nip05.lookup(text)?.takeIf { isHex32(it) } ?: return@launch
+                if (Nip05.isAddress(who)) relayJobs += launch {
+                    val pk = Nip05.lookup(who)?.takeIf { isHex32(it) } ?: return@launch
                     People.want(listOf(pk))
                     hits[pk] = Hit(pk, People.known.value[pk]?.name, -1, follow = pk in mine, nip05 = Nip05.Check.OK)  // an address: never bare
                     show(true); mark("address found")
@@ -2178,51 +2184,61 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 val relays = SearchRelays.FAST.map { it to 8000L } + SearchRelays.SLOW.map { it to 3500L } + Sources.extra.value.map { it to 3000L }
                 for ((i, rw) in relays.withIndex()) relayJobs += launch {
                     val (url, wait) = rw
-                    val evs = Fetch.query(listOf(url), mapOf("kinds" to listOf(0), "search" to text, "limit" to 50), wait).filter { it.kind == 0 }
+                    val evs = Fetch.query(listOf(url), mapOf("kinds" to listOf(0), "search" to who, "limit" to 50), wait).filter { it.kind == 0 }
                     People.add(evs)
                     val fresh = evs.mapNotNull { e -> Person.of(e)?.takeIf { !hits.containsKey(it.pubkey) } }
                     fresh.forEach { add(it, i) }
                     show(true); mark("${url.removePrefix("wss://")}: ${evs.size} people")
                     // Trust for the ones whose names match: those are the ones whose order matters.
-                    val named = fresh.filter { SearchRank.matches(it.name, text) }
+                    val named = fresh.filter { SearchRank.matches(it.name, who) }
                     if (named.isNotEmpty()) enrich(named.take(30))
                 }
             }
-            if (split != null) {
-                val words = SearchRank.norm(split.rest).split(' ').filter { it.isNotEmpty() }
-                fun has(e: Event, all: Boolean) = SearchRank.norm(e.content + " " + (e.firstTag("title") ?: "")).let { c -> if (all) words.all { it in c } else words.any { it in c } }
-                // (From a search relay, at least one of the words: one that ignores search would send everything.)
+            // Their posts with the other words: from the search relays, and their latest looked through here. Each is checked
+            // here (a relay that ignores search would send everything): from: needs every word, the softer kinds one of them.
+            suspend fun lookIn(s: AuthorQuery.Split) = kotlinx.coroutines.coroutineScope {
                 fun theirs(got: List<Event>, how: String) {
-                    val ok = got.filter { it.pubkey == split.author && (it.kind == 1 || it.kind == 30023) && has(it, how == "latest") }
+                    val ok = got.filter { it.pubkey == s.author && AuthorQuery.has(it, s.rest, all = from?.strict == true || how == "latest") }
                     remember(ok); byAuthor += ok.filter { safe(it) }
                     show(true); mark("theirs ($how): ${ok.size}")
                 }
-                val f = mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 40)
+                val f = mapOf("kinds" to listOf(1, 30023), "authors" to listOf(s.author), "limit" to 40)
                 // Newest first where the relay can (Ditto's own search ranks by relevance, and a busy poster's new post falls
-                // past any limit); the others don't know sort:new.
-                relayJobs += launch { theirs(Fetch.query(SearchRelays.FAST, f + ("search" to split.rest + " sort:new"), 6000), "newest") }
-                relayJobs += launch { theirs(Fetch.query(SearchRelays.SLOW + Sources.extra.value, f + ("search" to split.rest), 4000), "search") }
-                // And their latest posts (where they write, and the big relays), looked through here: what no search has indexed yet.
-                relayJobs += launch {
-                    theirs(Fetch.query((outboxOf(split.author) + bigRelays).map { it.trimEnd('/') }.distinct(), mapOf("kinds" to listOf(1, 30023), "authors" to listOf(split.author), "limit" to 200), 5000), "latest")
+                // past any limit); the others don't know sort:new. No words (a bare from:name): their latest is the answer.
+                if (s.rest.isNotBlank()) {
+                    launch { theirs(Fetch.query(SearchRelays.FAST, f + ("search" to s.rest + " sort:new"), 6000), "newest") }
+                    launch { theirs(Fetch.query(SearchRelays.SLOW + Sources.extra.value, f + ("search" to s.rest), 4000), "search") }
                 }
+                // And their latest posts (where they write, and the big relays), looked through here: what no search has indexed yet.
+                launch {
+                    theirs(Fetch.query((outboxOf(s.author) + bigRelays).map { it.trimEnd('/') }.distinct(), mapOf("kinds" to listOf(1, 30023), "authors" to listOf(s.author), "limit" to 200), 5000), "latest")
+                }
+            }
+            split?.let { s -> relayJobs += launch { lookIn(s) } }
+            // from: someone you don't follow (or whose profile isn't on this phone yet): the most trusted one by that name.
+            if (from != null && split == null) relayJobs += launch {
+                val s = fromWhom(from, mine) ?: run { mark("from: no one by that name"); return@launch }
+                split = s; People.want(listOf(s.author) + s.others); show(true); mark("from: found")
+                lookIn(s)
             }
             // Your archive (private relays, logged in as you): only when you have one, and never anywhere else.
             val privates = privateRelays.urls()
             if (privates.isNotEmpty()) relayJobs += launch {
-                val f = PrivateRelays.searchFilter(text, tag)
+                val q = from?.rest?.takeIf { it.isNotBlank() } ?: text
+                val f = PrivateRelays.searchFilter(q, tag)
                 // Its login is signed first (with a box, a round trip to it), so it gets longer than the search relays.
                 val got = try { Fetch.query(privates, f, 12_000) } catch (e: Exception) { if (debuggable) android.util.Log.w("CosignSearch", "archive: ${e.javaClass.simpleName}"); emptyList() }
                 People.add(got.filter { it.kind == 0 })
                 // Only the posts with all the words: the archive's own search takes any one of them.
-                val posts = PrivateRelays.relevant(got.filter { it.kind == 1 || it.kind == 30023 }, text, tag)
+                val posts = PrivateRelays.relevant(got.filter { it.kind == 1 || it.kind == 30023 }, q, tag)
                 remember(posts); archive += posts
                 People.want(posts.map { it.pubkey })
                 show(true); mark("archive: ${posts.size} posts from ${privates.size} relays")
             }
             // Posts: the fast relays together, the slow ones on their own.
-            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1, COMMENT), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, COMMENT, 30023), "search" to text, "limit" to 40)
-            for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
+            val noteFilter: Map<String, Any> = if (tag != null) mapOf("kinds" to listOf(1, COMMENT), "#t" to listOf(tag), "limit" to 40) else mapOf("kinds" to listOf(1, COMMENT, 30023), "search" to (from?.rest ?: text), "limit" to 40)
+            // (Not for from:, which is their posts alone.)
+            if (from?.strict != true) for ((relays, wait) in listOf((SearchRelays.FAST + if (tag != null) Sources.GENERAL else emptyList()) to 8000L, SearchRelays.SLOW to 3500L)) relayJobs += launch {
                 // Posts, comments and long-form articles (an article counts once, as its newest version).
                 val got = Fetch.query(relays + Sources.extra.value, noteFilter, wait).filter { it.kind == 1 || it.kind == COMMENT || it.kind == 30023 }
                     .sortedByDescending { it.createdAt }.distinctBy { if (it.kind == 30023) "a:" + it.pubkey + ":" + (it.firstTag("d") ?: it.id) else it.id }
@@ -2247,6 +2263,29 @@ class Social private constructor(private val phone: Phone, context: Context) {
             People.want(hits.keys.toList())
             show(false); mark("done")
         }
+    }
+
+    /**
+     * Whom a from: names, when it isn't someone you follow: a key or npub as it is; name@domain, whoever it names; else
+     * the most trusted of the people the fast search relays know by that name (AuthorQuery.pick). Null: no one.
+     */
+    private suspend fun fromWhom(from: AuthorQuery.From, mine: Set<String>): AuthorQuery.Split? = kotlinx.coroutines.coroutineScope {
+        val n = from.name.trim().removePrefix("nostr:")
+        fun one(pk: String?) = pk?.takeIf { isHex32(it) }?.let { AuthorQuery.Split(it, from.rest) }
+        if (isHex32(n.lowercase())) return@coroutineScope one(n.lowercase())
+        if (n.startsWith("npub1", ignoreCase = true)) return@coroutineScope one(try { Nip19.npubDecode(n.lowercase()) } catch (_: Exception) { null })
+        if (Nip05.isAddress(n)) return@coroutineScope one(Nip05.lookup(n))
+        val evs = Fetch.query(SearchRelays.FAST, mapOf("kinds" to listOf(0), "search" to n, "limit" to 50), 6000).filter { it.kind == 0 }
+        People.add(evs)
+        val found = evs.sortedByDescending { it.createdAt }.mapNotNull { Person.of(it) }.distinctBy { it.pubkey }
+        val strong = AuthorQuery.ranked(found, n).filter { it.second >= AuthorQuery.STRONG }.map { it.first }.take(12).toSet()
+        if (strong.size <= 1) return@coroutineScope one(strong.firstOrNull())
+        val them = found.filter { it.pubkey in strong }
+        val hits = ConcurrentHashMap(them.associate { it.pubkey to Hit(it.pubkey, it.name, 0, follow = it.pubkey in mine, bare = Hit.bare(it)) })
+        val counted = launch { count(SearchRelays.COUNTS[0], them, hits) {} }
+        them.filter { it.nip05 != null }.map { p -> async { Nip05.check(p.pubkey, p.nip05).also { c -> hits.computeIfPresent(p.pubkey) { _, h -> h.copy(nip05 = c) } } } }.awaitAll()
+        counted.join()
+        AuthorQuery.pick(n, from.rest, them, hits)
     }
 
     /** Search's posts through the spam checks; what's caught goes into [into]'s spam (shown apart, and cued). */

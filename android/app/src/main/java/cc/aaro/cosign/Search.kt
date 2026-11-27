@@ -1,5 +1,6 @@
 package cc.aaro.cosign
 
+import cc.aaro.qrst.core.Event
 import cc.aaro.qrst.core.Json
 import cc.aaro.qrst.core.isHex32
 import cc.aaro.cosign.net.Fetch
@@ -159,9 +160,51 @@ object AuthorQuery {
     const val EXACT = 7; const val TIGHT = 6; const val FIRST = 5; const val PREFIX = 4; const val PART = 3; const val TYPO = 2
     const val STRONG = FIRST
 
+    /**
+     * A name typed as one ("from:fiatjaf failed", "@fiatjaf failed"): [name], and [rest], the words everything else looks
+     * for (the search relays don't know from: and answer with anyone's posts about "failed"; no post says it either), as
+     * Marble Web's explicit() (author-query.js). [strict], from:: their posts with all the words (none: their latest) and
+     * nothing else, as mainstream search does it. @name stays the softer kind: their posts, and the usual results for the rest.
+     * A bare @name is a people search (null); a bare from:name, their latest posts.
+     */
+    data class From(val name: String, val rest: String, val strict: Boolean = true)
+    private val FROM = Regex("^from:", RegexOption.IGNORE_CASE)
+
+    fun from(q: String): From? {
+        val words = q.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val i = words.indexOfFirst { EXPLICIT.matches(it) }.takeIf { it >= 0 } ?: return null
+        val strict = FROM.containsMatchIn(words[i])
+        if (words.size < 2 && !strict) return null
+        val name = EXPLICIT.find(words[i])!!.groupValues[1]
+        if (SearchRank.norm(name).length < 2) return null
+        return From(name, words.filterIndexed { j, _ -> j != i }.joinToString(" "), strict)
+    }
+
+    /** Whether [e] is a post or article that has the words of [rest] in it: [all] of them, or at least one (no words: any post). */
+    fun has(e: Event, rest: String, all: Boolean): Boolean {
+        if (e.kind != 1 && e.kind != 30023) return false
+        val words = SearchRank.norm(rest).split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return true
+        val c = SearchRank.norm(e.content + " " + (e.tags.firstOrNull { it.size > 1 && it[0] == "title" }?.get(1) ?: ""))
+        return if (all) words.all { it in c } else words.any { it in c }
+    }
+
+    /**
+     * Someone a from: names whom you don't follow (or whose profile this phone hasn't got): of the people the search relays
+     * know by that name (exactly, or their address's name), the most trusted (a checked address, followers); null when
+     * no one is called that, else the Split (never loose: you asked for this person), the next ones as chips. Anyone can
+     * take a name, so the dozens of bare copies never win over the real one. (Web: anyone(), on people search's order.)
+     */
+    fun pick(name: String, rest: String, found: List<Person>, hits: Map<String, Hit>): Split? {
+        val strong = ranked(found, name).filter { it.second >= STRONG }.map { it.first }
+        if (strong.isEmpty()) return null
+        val order = strong.withIndex().sortedWith(compareByDescending<IndexedValue<String>> { hits[it.value]?.let(SearchRank::trust) ?: -9.0 }.thenBy { it.index }).map { it.value }
+        return Split(order[0], rest, order.drop(1).take(4))
+    }
+
     fun split(q: String, follows: Set<String>?, known: Map<String, Person>): Split? {
         val words = q.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (words.size < 2 || follows.isNullOrEmpty()) return null
+        if ((words.size < 2 && from(q) == null) || follows.isNullOrEmpty()) return null
         val mine = follows.mapNotNull { known[it] }
         // from:name, @name: that word only (a name that isn't someone you follow: no author, the words as they are).
         words.indexOfFirst { EXPLICIT.matches(it) }.takeIf { it >= 0 }?.let { i ->
