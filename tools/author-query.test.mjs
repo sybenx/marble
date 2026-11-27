@@ -10,11 +10,13 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); n++; };
 const same = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
 
 // ── from:name and @name, taken out of the words ──
-same(explicit("from:fiatjaf failed"), { name: "fiatjaf", rest: "failed" }, "from:");
-same(explicit("failed from:fiatjaf"), { name: "fiatjaf", rest: "failed" }, "from: last");
-same(explicit("@fiatjaf bunker failed"), { name: "fiatjaf", rest: "bunker failed" }, "@name");
-same(explicit("FROM:fiatjaf failed"), { name: "fiatjaf", rest: "failed" }, "any case");
-ok(explicit("failed") === null && explicit("from:fiatjaf") === null && explicit("") === null, "nothing else to look for: not this");
+same(explicit("from:fiatjaf failed"), { name: "fiatjaf", rest: "failed", strict: true }, "from: (strict: their posts alone)");
+same(explicit("failed from:fiatjaf"), { name: "fiatjaf", rest: "failed", strict: true }, "from: last");
+same(explicit("@fiatjaf bunker failed"), { name: "fiatjaf", rest: "bunker failed", strict: false }, "@name (the softer kind)");
+same(explicit("FROM:fiatjaf failed"), { name: "fiatjaf", rest: "failed", strict: true }, "any case");
+same(explicit("from:fiatjaf"), { name: "fiatjaf", rest: "", strict: true }, "a bare from:name: their latest posts");
+ok(explicit("failed") === null && explicit("@fiatjaf") === null && explicit("") === null, "a bare @name is a person, not this");
+ok(split("from:fiatjaf", new Set(["3b".repeat(32)]), new Map([["3b".repeat(32), { name: "fiatjaf" }]]))?.rest === "", "a bare from: someone you follow");
 ok(explicit("from:x failed") === null, "a one-letter name");
 
 // ── the words everything else looks for ──

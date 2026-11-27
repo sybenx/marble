@@ -1,7 +1,7 @@
 // Your archive (site/js/relay-auth.js, private-relays.js, and the login in signin/pool.js): who may be logged in to, the
 // login's shape, one retry only, and the account copy's merge, as Marble Android does them.   node tools/archive.test.mjs
 import { allowed, loginEvent, needsAuth, Session, norm, KIND } from "../site/js/relay-auth.js";
-import { parse, label, fromJson, toJson, merge, ahead, nextAt, searchFilter, TAG } from "../site/js/private-relays.js";
+import { parse, label, fromJson, toJson, merge, ahead, nextAt, searchFilter, relevant, TAG } from "../site/js/private-relays.js";
 
 let n = 0;
 const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); n++; };
@@ -117,8 +117,17 @@ ok(ahead(theirs, mine), "this one has something the account copy hasn't");
 ok(!ahead(theirs, [{ url: "wss://a.example.com", at: 50, gone: false }]), "an older change: nothing to write");
 ok(nextAt([{ url: "wss://a.example.com", at: 5000 }], "wss://a.example.com", 100) === 5001 && nextAt([], "wss://x.y", 100) === 100, "next change is newer");
 
-same(searchFilter("cats"), { kinds: [1, 30023, 0], search: "cats", limit: 40 }, "search filter");
+same(searchFilter("cats"), { kinds: [1, 30023, 0], search: "cats", limit: 100 }, "search filter (more than shown: relevant() picks)");
 same(searchFilter("#cats", "cats"), { kinds: [1, 30023], "#t": ["cats"], limit: 40 }, "tag filter");
+
+// ── which archive posts show (as Android's PrivateRelays.relevant): every word, the whole phrase first, then newest ──
+{
+  const p = (id, content, at, title) => ({ id, content, created_at: at, kind: 1, tags: title ? [["title", title]] : [] });
+  const got = relevant([p("a", "new things", 5), p("b", "an app", 6), p("c", "the app is new", 7), p("d", "a new app!", 3), p("e", "nothing", 9), p("f", "notes", 8, "New App")], "new app");
+  same(got.map((e) => e.id), ["f", "d", "c"], "every word; the phrase first, then newest; the title counts");
+  same(relevant([p("a", "x", 1), p("b", "y", 2)], "#x", "x").map((e) => e.id), ["b", "a"], "a #tag: as it is, newest first");
+  same(relevant([p("a", "x", 1)], "  "), [], "no words: nothing");
+}
 
 console.log(`archive: ${n} checks passed`);
 process.exit(0);
