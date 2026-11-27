@@ -21,10 +21,29 @@ class PrivateRelays(private val prefs: android.content.SharedPreferences?) {
         const val TAG = "marble/private-relays"
         /** [url] for people: no scheme, no trailing slash. */
         fun label(url: String): String = SyncGuard.normRelay(url).substringAfter("://")
-        /** What's asked of your archive: NIP-50 search over posts, articles and profiles (a #tag: posts with it). */
+        /**
+         * What's asked of your archive: NIP-50 search over posts, articles and profiles (a #tag: posts with it). More than
+         * are shown, since [relevant] drops the ones with only some of the words (the relay ranks those lower).
+         */
         fun searchFilter(text: String, tag: String?): Map<String, Any> =
             if (tag != null) mapOf("kinds" to listOf(1, 30023), "#t" to listOf(tag), "limit" to 40)
-            else mapOf("kinds" to listOf(1, 30023, 0), "search" to text, "limit" to 40)
+            else mapOf("kinds" to listOf(1, 30023, 0), "search" to text, "limit" to 100)
+        /**
+         * Which of what your archive sent back for [text] to show: the posts with every word of it (in the text or the
+         * title), the whole phrase first, then newest. Chronicle's search takes a post with any one of the words, so a
+         * big archive sends back 40 posts for nearly anything (one has "app", another "new"), and they'd sit above
+         * everything else. A #tag search ([tag]) is already exact.
+         */
+        fun relevant(posts: List<cc.aaro.qrst.core.Event>, text: String, tag: String?): List<cc.aaro.qrst.core.Event> {
+            if (tag != null) return posts.sortedByDescending { it.createdAt }
+            val phrase = SearchRank.norm(text)
+            val words = phrase.split(' ').filter { it.isNotEmpty() }
+            if (words.isEmpty()) return emptyList()
+            fun body(e: cc.aaro.qrst.core.Event) = SearchRank.norm(e.content + " " + (e.firstTag("title") ?: ""))
+            return posts.map { it to body(it) }.filter { (_, b) -> words.all { it in b } }
+                .sortedWith(compareByDescending<Pair<cc.aaro.qrst.core.Event, String>> { (_, b) -> phrase in b }.thenByDescending { it.first.createdAt })
+                .map { it.first }
+        }
         /** A typed address as stored: wss:// added if missing; null if it isn't a relay address. */
         fun parse(input: String): String? {
             val t = input.trim().ifEmpty { return null }
