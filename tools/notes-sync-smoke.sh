@@ -30,6 +30,8 @@ node tools/notes-sync-smoke.test.mjs
 node tools/vaults-sync.test.mjs | tail -1
 # (Marble Web's Notes in headless Chromium when a storage server refuses: the change waits, said so, and goes up later)
 node tools/vault-refusals-page.test.mjs || fail "web refusals page test"
+# (Notes open in two tabs: both tabs' notes reach your other devices; a browser whose key went dead moves and recovers)
+node tools/vault-two-tabs-page.test.mjs || fail "web two tabs page test"
 
 echo "2. Android engine"
 (cd android && $LOCK ./gradlew -q :vaults:testDebugUnitTest --tests cc.aaro.vaults.SyncSmokeTest --tests cc.aaro.vaults.EngineTest) || fail "Android engine tests"
