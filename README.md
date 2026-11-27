@@ -90,7 +90,9 @@ cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 - Unit tests that run FROST are skipped unless `KEYKIN_FROSTLIB` points at a desktop
   build of the library (`cargo build --release --features jni` in Keykin's `frost/`).
 - Site tests: `for f in tools/*.test.mjs; do node --test "$f"; done`
-- Marble Web: `npx wrangler dev`, `npx wrangler deploy`.
+- Marble Web: `npx wrangler dev`, `npx wrangler deploy`. Before a deploy, run `tools/search-smoke.sh` (search on web
+  and Android, against fake relays and then the public ones; `SEARCH_OFFLINE=1` for the offline part only), as
+  `release.sh` does before a release.
 - Extension: `cd extension && npm install && node build.mjs`
 
 ## Releasing

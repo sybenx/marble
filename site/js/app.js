@@ -3,7 +3,7 @@
 // shows the page as it was, at the same place.
 import { decode, parseInput, pathFor, npub, note, nevent, naddr, isHex64 } from "./signin/ids.js";
 import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from "./signin/pool.js";
-import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
+import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox, resolveNip05 } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
 import { split as authorIn, explicit, anyone } from "./author-query.js";
@@ -1164,6 +1164,16 @@ async function showSearch(q, signal) {
     }
     // from:name that's nobody you follow (or you're signed out): the person people search finds by that name
     if (!named || signal.aborted) return;
+    // a key, an npub or name@domain: whoever it names, as it is (Android: fromWhom)
+    const typedAs = parseInput(named.name.replace(/^nostr:/i, ""));
+    if (typedAs.kind !== "text") {
+      const pk = typedAs.kind === "hex" ? typedAs.hex : typedAs.kind === "entity" && typedAs.decoded.type === "profile" ? typedAs.decoded.pubkey
+        : typedAs.kind === "nip05" ? (await resolveNip05(typedAs.address).catch(() => null))?.pubkey : null;
+      if (signal.aborted) return;
+      if (!isHex64(pk || "")) { got.fromDone = true; soon(drawMain); return; }
+      got.by = { author: pk.toLowerCase(), others: [], rest: named.rest, loose: false };
+      return postsFrom(got.by.author);
+    }
     const people = await searchPeople(named.name, { limit: 5, follows: [...follows], cached: profiles, signal });
     const a = !signal.aborted && anyone(people, named.name);
     if (!a) { if (!signal.aborted) { got.fromDone = true; soon(drawMain); } return; }

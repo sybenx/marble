@@ -21,6 +21,8 @@ VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts)
 
 # Notes must sync between clients before anything ships (Android ↔ Web, a fresh install, a signer that refuses once).
 tools/notes-sync-smoke.sh || { echo "notes sync smoke test failed: not releasing"; exit 1; }
+# Search must find what you typed, on web and Android (fake relays at their worst, then the public ones, read only).
+tools/search-smoke.sh || { echo "search smoke test failed: not releasing"; exit 1; }
 
 (cd android && JAVA_HOME=${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home} ./gradlew -q :app:assembleRelease)
 rm -f Marble-*.apk Marble.apk

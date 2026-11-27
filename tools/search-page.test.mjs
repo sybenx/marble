@@ -185,6 +185,20 @@ try {
     ok(everything.every((e) => e?.pubkey === pk.FIAT && hasAll(e, ["relay", "failed"])), `only fiatjaf's posts with both words: archive [${show(r.archive)}], theirs [${show(r.by?.list || [])}], other [${show(r.general)}]`);
     ok(everything.some((e) => e?.id === archive.fa1.id), `their archive post is there: ${show(r.archive)}`);
   }
+
+  console.log("8. from:_@fiatjaf.test failed: an address names whoever it names");
+  {
+    const r = await search("from:_@fiatjaf.test failed");
+    const theirs = (r.by?.list || []).map(which);
+    ok(r.by?.who === pk.FIAT, `the address's key (${whoIs(r.by?.who)})`);
+    ok(theirs.length >= 2 && theirs.every((e) => e?.pubkey === pk.FIAT && hasAll(e, ["failed"])) && r.general.length === 0, `their posts with "failed", only: ${show(r.by?.list || [])} / ${show(r.general)}`);
+  }
+
+  console.log("9. from:nobodyatall failed: no one by that name says so, and stops searching");
+  {
+    const r = await search("from:nobodyatall failed");
+    ok(!r.loading && r.nothing && !r.by && r.general.length === 0, `"Nothing found", nothing shown (loading ${r.loading}, by ${!!r.by}, ${r.general.length} posts)`);
+  }
 } finally {
   await browser.close();
 }
