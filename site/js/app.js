@@ -6,7 +6,7 @@ import { req, relays, warm, foundOn, FAST, INDEXERS, connectTimes, verify } from
 import { keep, events, profiles, wantProfile, onProfile, profile, findEvent, findAddress, replies, postsBy, verifyNip05, engagement, mentionsOf, profilesOf, outbox } from "./data.js";
 import { searchPeople, postsAbout, SEARCH_RELAYS } from "./search.js";
 import { loadApps, searchApps, appLine, norm as appNorm } from "./apps.js";
-import { split as authorIn } from "./author-query.js";
+import { split as authorIn, explicit, anyone } from "./author-query.js";
 import { goodPosts, stories, yours, prepareMine, operators } from "./find.js";
 import { current as currentMe, onMe, signOut, myFollows, phoneSecret } from "./me.js";
 import { heart, reactionsRow, addReaction, markReactions, openSignIn, sendReply, canAct, toast } from "./act.js";
@@ -991,7 +991,11 @@ async function showSearch(q, signal) {
   const parsed = parseInput(q);
   if (parsed.kind === "hex" || (parsed.kind === "entity" && parsed.decoded.type !== "address")) return showFound(parsed, signal);
   // "sort:top", "language:en"…: for the search servers only (q stays what you typed, for saying it back)
-  const { words: plain, ops } = operators(q);
+  const { words: typed, ops } = operators(q);
+  // from:name or @name with other words: that person's posts with the rest (below), and the rest is what everything
+  // else looks for (the search servers don't know from:, and no post says it)
+  const named = explicit(typed);
+  const plain = named ? named.rest : typed;
   const tagOnly = /^#[\p{L}\p{N}_-]+$/u.test(plain) ? plain.slice(1) : null;
   // a bare @name: no people from open search (it ranks lookalikes); the box's handle row is the only person shown
   const bareName = handleOf(plain)?.kind === "name";
@@ -1143,11 +1147,20 @@ async function showSearch(q, signal) {
   });
 
   // someone you follow, named in it (everyone you follow and their names, however long that takes: it's an addition)
-  if (!tagOnly && !bareName && plain.trim().split(/\s+/).length > 1) myFollows().then(async (follows) => {
-    if (!follows.size) return;
-    await profilesOf([...follows]);
-    const s = !signal.aborted && authorIn(plain, follows, profiles);
-    if (s) { got.by = s; postsFrom(s.author); }
+  if (named || (!tagOnly && !bareName && plain.trim().split(/\s+/).length > 1)) myFollows().then(async (follows) => {
+    if (follows.size) {
+      await profilesOf([...follows]);
+      const s = !signal.aborted && authorIn(typed, follows, profiles);
+      if (s) { got.by = s; return postsFrom(s.author); }
+    }
+    // from:name that's nobody you follow (or you're signed out): the person people search finds by that name
+    if (!named || signal.aborted) return;
+    const people = await searchPeople(named.name, { limit: 5, follows: [...follows], cached: profiles, signal });
+    const a = !signal.aborted && anyone(people, named.name);
+    if (!a) return;
+    for (const p of people) if (!profiles.has(p.pubkey)) profiles.set(p.pubkey, p);
+    got.by = { ...a, rest: named.rest, loose: false };
+    postsFrom(a.author);
   });
 
   boxState(); // the box's rows into #top

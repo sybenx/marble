@@ -19,7 +19,7 @@ export function split(q, follows, known) {
   if (words.length < 2 || !follows?.size) return null;
   const mine = [...follows].map((pk) => known.get(pk) && { ...known.get(pk), pubkey: pk }).filter(Boolean);
   const make = (hits, rest) => ({ author: hits[0][0], rest, others: hits.slice(1, 5).map((h) => h[0]), loose: hits[0][1] < STRONG });
-  // from:name, @name: that word only (a name that isn't someone you follow: no author, the words as they are)
+  // from:name, @name: that word only (a name that isn't someone you follow: no author here; see anyone())
   const i = words.findIndex((w) => EXPLICIT.test(w));
   if (i >= 0) {
     const hits = ranked(mine, EXPLICIT.exec(words[i])[1]);
@@ -35,6 +35,31 @@ export function split(q, follows, known) {
       best = { score: hits[0][1], len, split: make(hits, [...words.slice(0, start), ...words.slice(start + len)].join(" ")) };
   }
   return best?.split || null;
+}
+
+/**
+ * A from:name or @name typed with other words: {name, rest}, else null. rest is what to look for everywhere else: the
+ * search servers don't know from: (they answer with anyone's posts about the other words) and no post says it.
+ */
+export function explicit(q) {
+  const words = (q || "").trim().split(/\s+/).filter(Boolean);
+  const i = words.findIndex((w) => EXPLICIT.test(w));
+  if (i < 0 || words.length < 2) return null;
+  const name = EXPLICIT.exec(words[i])[1];
+  return normalizeName(name).length >= 2 ? { name, rest: words.filter((_, j) => j !== i).join(" ") } : null;
+}
+
+/**
+ * from:name when it's nobody you follow: among people found for the name (people search's order: people you follow,
+ * checked addresses, followers), those it really names (at least STRONG: their name, not a part of it), closest
+ * first, then in that order. {author, others} or null. As split() makes it, never loose: you asked for this person.
+ */
+export function anyone(people, typed) {
+  const t = normalizeName(typed);
+  if (t.length < 2) return null;
+  const tight = t.replace(/ /g, "");
+  const hits = (people || []).map((p) => [p.pubkey, score(p, t, tight)]).filter((h) => h[1] >= STRONG).sort((a, b) => b[1] - a[1]);
+  return hits.length ? { author: hits[0][0], others: hits.slice(1, 5).map((h) => h[0]) } : null;
 }
 
 /** Who typed could name among mine, with how well, best first: [[pubkey, score]…]. */
