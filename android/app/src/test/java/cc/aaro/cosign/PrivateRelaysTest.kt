@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import cc.aaro.qrst.core.Event
 
 class PrivateRelaysTest {
     @Test fun parseAndLabel() {
@@ -29,5 +30,26 @@ class PrivateRelaysTest {
         assertFalse(a.take(b.json()))
         assertTrue(a.urls().isEmpty())
         assertFalse(a.take("{\"v\":2,\"relays\":[]}"))
+    }
+
+    // What Chronicle sends back for "new app" (any one of the words, newest first): a probe of its search took
+    // "gm, working on the app today" and "fiatjaf shipped a new khatru" for it. Only posts with both words are shown.
+    private fun post(at: Long, text: String, vararg tags: List<String>) = Event("a".repeat(64), at, 1, tags.toList(), text)
+    @Test fun archiveShowsOnlyPostsWithEveryWord() {
+        val sent = listOf(
+            post(500, "gm, working on the app today"),
+            post(400, "fiatjaf shipped a new khatru"),
+            post(300, "The new Marble app is out!"),
+            post(200, "an app that is new to me"),
+            post(100, "Release notes", listOf("title", "A new app for notes")),
+        )
+        val shown = PrivateRelays.relevant(sent, "New app", null).map { it.content }
+        // The phrase first ("new app" in the text or title), then the rest with both words, newest first.
+        assertEquals(listOf("Release notes", "The new Marble app is out!", "an app that is new to me"), shown)
+        assertTrue(PrivateRelays.relevant(sent, "pizza recipe", null).isEmpty())
+        assertTrue(PrivateRelays.relevant(sent, "  !! ", null).isEmpty())
+        // A #tag search was exact at the relay: all of it, newest first.
+        assertEquals(sent.size, PrivateRelays.relevant(sent.reversed(), "#nostr", "nostr").size)
+        assertEquals(500L, PrivateRelays.relevant(sent.reversed(), "#nostr", "nostr").first().createdAt)
     }
 }

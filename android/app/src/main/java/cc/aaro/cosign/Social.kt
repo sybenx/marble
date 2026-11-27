@@ -2145,7 +2145,7 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 people.firstOrNull()?.pubkey?.takeIf { it != first }?.let { pk -> first = pk; mark("first is now ${People.known.value[pk]?.shown ?: ""} ${pk.take(8)}") }
                 val posts = synchronized(notes) { notes.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(60) }
                 val theirs = synchronized(byAuthor) { byAuthor.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
-                val yours = synchronized(archive) { archive.distinctBy { it.id }.sortedByDescending { it.createdAt }.take(40) }
+                val yours = synchronized(archive) { archive.distinctBy { it.id }.take(40) }  // in PrivateRelays.relevant's order
                 found.value = Found(text, people.map { it.pubkey }, posts.filter { p -> theirs.none { it.id == p.id } && yours.none { it.id == p.id } }, loading, people.associateBy { it.pubkey }, split, theirs, HashMap(caught), yours)
             }
             // Until trust is known, the order the relays give, syb.lol's before relay.ditto.pub's before the slower ones'.
@@ -2214,7 +2214,8 @@ class Social private constructor(private val phone: Phone, context: Context) {
                 // Its login is signed first (with a box, a round trip to it), so it gets longer than the search relays.
                 val got = try { Fetch.query(privates, f, 12_000) } catch (e: Exception) { if (debuggable) android.util.Log.w("CosignSearch", "archive: ${e.javaClass.simpleName}"); emptyList() }
                 People.add(got.filter { it.kind == 0 })
-                val posts = got.filter { it.kind == 1 || it.kind == 30023 }
+                // Only the posts with all the words: the archive's own search takes any one of them.
+                val posts = PrivateRelays.relevant(got.filter { it.kind == 1 || it.kind == 30023 }, text, tag)
                 remember(posts); archive += posts
                 People.want(posts.map { it.pubkey })
                 show(true); mark("archive: ${posts.size} posts from ${privates.size} relays")
