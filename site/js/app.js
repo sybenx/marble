@@ -1736,7 +1736,7 @@ function showNotes(signal, tab) {
     why.hidden = !stuck;
     if (stuck) why.innerHTML = vs === "refused"
       ? `Your notes from your phone can't open here: your phone didn't let Marble Web read them. Until that's fixed, these are only the notes this browser kept.`
-      : `Your notes from your phone couldn't open here (${esc(vault.reason().slice(0, 80))}). Marble tries again when you come back to this page. Until then, these are only the notes this browser kept.`;
+      : `Your notes from your phone couldn't open here${vault.reason() === "offline" ? ": Marble couldn't reach your relays just now" : ""}. Marble tries again when you come back to this page. Until then, these are only the notes this browser kept.`;
     // notes made while nobody was signed in: yours to add, or not (they're never added by themselves)
     const strays = notes.strays(), bar = $(".strays:not(.vault-why)", root);
     bar.hidden = !strays.length;

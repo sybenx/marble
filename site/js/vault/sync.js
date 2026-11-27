@@ -142,10 +142,13 @@ export class Session {
       if (this.epochs.size === before) this.deadEnd();
       await this.loadCheckpoints();
       await this.loadBatches();
+      // (a rekey naming a generation not held: the keyring read again. One that found it: another round, to follow the
+      // rekey. One that didn't still doesn't stop the walk while this round found other epochs or commits: their heads
+      // are fetched next round, so a device that rekeyed to a generation nobody holds can't keep this one short of the
+      // newest epoch)
       let reread = false;
-      if (this.missingGen.size && !(reread = await this.rereadKeyring())) break;
-      // (a re-read that found a generation: another round, to follow the rekey that named it)
-      if (!reread && this.epochs.size === before && this.vault.version === ver && !this.missingGen.size) break;
+      if (this.missingGen.size) reread = await this.rereadKeyring();
+      if (!reread && this.epochs.size === before && this.vault.version === ver) break;
     }
     this.vetting();
   }
@@ -408,7 +411,12 @@ export class Session {
         const rk = { op: "rekey", to: target.e.kid, state: [target.gen], rho: target.rho, wraps: readers.map((r) => V.keyWrap(r, this.vid, [target.e])) };
         const old = this.epochs.get(tip.kid);
         if (!old) throw new Error("can't open this device's previous epoch");
-        sign(tip.kid, [...moved.map((event) => ({ op: "auth", event })), ...certOps, rk]);
+        // (a commit is at most 12 KiB, §5.1: on an account that removed many devices the authority events don't all fit
+        // beside the rekey and the certs. Those that don't go first, in commits of their own under the old epoch, so
+        // the rekey commit is still the last one there; readers count authority events from any commit)
+        const { earlier, withRekey } = packAuthority(moved.map((event) => ({ op: "auth", event })), [...certOps, rk], certOps);
+        for (const ops of earlier) sign(tip.kid, ops);
+        sign(tip.kid, [...withRekey, ...certOps, rk]);
         await this.publishHead(dev, old.e, { segmentAll: true });
       }
       const first = !this.vault.chain(dev.dvk).some((c) => c.ops.some((o) => o?.op === "auth" && o.event?.id === dev.sub.id));
@@ -536,6 +544,29 @@ export class Session {
     return c;
   }
   cpRef(x) { try { return parse(x.c).ops.find((o) => o.op === "checkpoint")?.ref ?? null; } catch { return null; } }
+}
+
+/** Room for a commit's ops: §5.1's 12 KiB, less what its other fields (genesis, dvk, prev, seq, kid, time) take. */
+export const COMMIT_OPS = 12 * 1024 - 512;
+/**
+ * `auth` ops split for a rekey (§5.1), as Android's engine does: those that fit in the rekey commit beside `alongside`
+ * (the rekey and the certs), in order, and the rest in commits that go before it, each with room left for `certs`.
+ */
+export function packAuthority(auth, alongside, certs = []) {
+  const size = (op) => utf8(canon(op)).length + 1;
+  const certRoom = certs.reduce((n, op) => n + size(op), 0);
+  let room = COMMIT_OPS - alongside.reduce((n, op) => n + size(op), 0);
+  const withRekey = [], rest = [];
+  for (const op of auth) { const s = size(op); if (!rest.length && s <= room) { withRekey.push(op); room -= s; } else rest.push(op); }
+  const earlier = [];
+  let cur = [], used = 0;
+  for (const op of rest) {
+    const s = size(op);
+    if (cur.length && used + s > COMMIT_OPS - certRoom) { earlier.push(cur); cur = []; used = 0; }
+    cur.push(op); used += s;
+  }
+  if (cur.length) earlier.push(cur);
+  return { earlier, withRekey };
 }
 
 /** BUD-11 auth for a vault blob (Android's contract): kind 24242, content "nostr-vault", server tag the domain. */
