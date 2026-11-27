@@ -11,8 +11,8 @@ import { accountRelays } from "./account-relays.js";
 import { current, sign, nip44DecryptFrom, canVault, onMe } from "./me.js";
 
 let lib = null; // the vault code (and the noble bundle under it), loaded only for an account that may have a vault
-const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js"), import("./vault/refusals.js")])
-  .then(([sync, notes, core, refusals]) => ({ sync, notes, core, refusals })));
+const load = () => (lib ??= Promise.all([import("./vault/sync.js"), import("./vault/notes.js"), import("./vault/core.js"), import("./vault/refusals.js"), import("./vault/crypto.js")])
+  .then(([sync, notes, core, refusals, crypto]) => ({ sync, notes, core, refusals, crypto })));
 
 let early = []; // changes made while the vault was opening
 let libNow = null; // the vault code, once loaded
@@ -62,10 +62,50 @@ export const active = () => status === "open" || status === "offline" || status 
 
 // ── this browser's storage ──
 const STORE = (pk) => `marble.vault.${pk}`;
+// Read through and written one key at a time, so every tab of this browser sees the same device: a tab holding its own
+// copy from when it opened would sign a second sub-cert for this browser's key, and a key with two is ignored by every
+// other device (kist.md §2), with everything this browser wrote. (Kept in memory too, for when localStorage can't be.)
 function storeFor(pk) {
-  let o = {};
-  try { o = JSON.parse(localStorage.getItem(STORE(pk))) || {}; } catch {}
-  return { get: (k) => o[k], set: (k, v) => { o[k] = v; try { localStorage.setItem(STORE(pk), JSON.stringify(o)); } catch {} } };
+  let mem = {};
+  const read = () => {
+    try { const s = localStorage.getItem(STORE(pk)); if (s !== null) mem = JSON.parse(s) || {}; } catch {}
+    return mem;
+  };
+  read();
+  return {
+    get: (k) => read()[k],
+    set: (k, v) => { mem = { ...read(), [k]: v }; try { localStorage.setItem(STORE(pk), JSON.stringify(mem)); } catch {} },
+  };
+}
+
+/**
+ * This browser's key went dead (two sub-certs for it, from two tabs before the fix above): other devices ignore all it
+ * wrote. It moves to a new key (the next n, §3.3), and what it wrote under its dead keys that still stands is carried
+ * again by the new one, as written (the same versions), so those notes show everywhere. Tried on every open until done.
+ */
+async function moveFromDeadKey(s, store) {
+  const { core: V, crypto: K } = libNow;
+  const rootH = store.get("root"), nKey = "n:" + s.genesis, deadKey = "dead:" + s.genesis;
+  if (!K.isHex(rootH, 32)) return;
+  const n = store.get(nKey), ro = s.vault.roster();
+  if (Number.isSafeInteger(n)) {
+    const dvk = K.pubHex(V.dvkFor(K.unhex(rootH), s.genesis, n)), d = ro.dvks.get(dvk);
+    // (live, or never wrote: nothing to do; a removed browser isn't moved, it says it was removed)
+    if (d && !d.live && ro.liveRoot(d.root)) {
+      store.set(deadKey, [...new Set([...(store.get(deadKey) || []), dvk])]);
+      store.set(nKey, n + 1);
+      console.info("notes vault: this browser's key had two sub-certs; moved to a new one", { dvk, n: n + 1 });
+    }
+  }
+  const dead = store.get(deadKey) || [];
+  if (!dead.length || s.removed()) return;
+  const st = s.vault.state(), puts = new Map();
+  for (const dvk of dead) for (const c of s.vault.chain(dvk)) for (const op of s.vault.opsOf(c)) if (op.op === "put" && V.putOK(op)) puts.set(op.entry + "/" + op.ver, op);
+  const over = new Set([...puts.values()].flatMap((p) => p.supersedes.map((v) => p.entry + "/" + v)));
+  const counted = (p) => !!st.entries.get(p.entry)?.current.some((x) => x.ver === p.ver);
+  const again = [...puts].filter(([k, p]) => !over.has(k) && !st.superseded.has(k) && !counted(p)).map(([, p]) =>
+    ({ op: "put", ver: p.ver, entry: p.entry, supersedes: p.supersedes, meta: p.meta, data: p.data, deleted: p.deleted }));
+  if (again.length) await s.commit(again);
 }
 const db = () => new Promise((ok, no) => {
   const r = indexedDB.open("marble-vault", 1);
@@ -160,9 +200,13 @@ export function start(pk = current()) {
     try {
       // your Blossom servers (kind 10063): where this page's blobs go, in your order (the vault's own when you have none)
       const lists = await req(mine, { kinds: [10063], authors: [pk] }, { timeout: 5000, settle: 1000 }).catch(() => []);
-      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store: storeFor(pk), deviceName: deviceName(), accountRelays: a?.write || [],
+      const store = storeFor(pk);
+      const s = new sync.Session({ me: pk, entries, net, signer: signer(pk), store, deviceName: deviceName(), accountRelays: a?.write || [],
         blossom: sync.serverList(lists, pk) });
       await s.open();
+      if (who !== pk) return null;
+      // (not reaching relays now doesn't stop Notes opening: it's tried again on the next open)
+      await moveFromDeadKey(s, store).catch((err) => console.info("notes vault: moving from a dead key waits", String(err?.message || err)));
       if (who !== pk) return null;
       session = s;
       status = s.removed() ? "removed" : "open";
