@@ -217,7 +217,8 @@ class SearchRun(private val env: SearchEnv) {
         val evs = Fetch.query(env.fast, mapOf("kinds" to listOf(0), "search" to n, "limit" to 50), 6000).filter { it.kind == 0 }
         env.addPeople(evs)
         val found = evs.sortedByDescending { it.createdAt }.mapNotNull { Person.of(it) }.distinctBy { it.pubkey }
-        val strong = AuthorQuery.ranked(found, n).filter { it.second >= AuthorQuery.STRONG }.map { it.first }.take(12).toSet()
+        // (all of them: dozens of copies share a name, and cutting the list short by key order dropped the real one)
+        val strong = AuthorQuery.ranked(found, n).filter { it.second >= AuthorQuery.STRONG }.map { it.first }.toSet()
         if (strong.size <= 1) return@coroutineScope one(strong.firstOrNull())
         val them = found.filter { it.pubkey in strong }
         val hits = ConcurrentHashMap(them.associate { it.pubkey to Hit(it.pubkey, it.name, 0, follow = it.pubkey in mine, bare = Hit.bare(it)) })

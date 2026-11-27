@@ -8,7 +8,23 @@
   "BOB": "fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556",
   "ME": "5cbdf0646e5db4eaa398f365f2ea7a0e3d419b7e0330e39ce92bddedcac4f9bc",
   "CAROL": "2f01e5e15cca351daff3843fb70f3c2f0a1bdd05e5af888a67784ef3e10a2a01",
-  "JUNK": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe"
+  "JUNK": "acd484e2f0c7f65309ad178a9f559abde09796974c57e714c35f110dfc27ccbe",
+  "COPY1": "4ce119c96e2fa357200b559b2f7dd5a5f02d5290aff74b03f3e471b273211c97",
+  "COPY2": "352bbf4a4cdd12564f93fa332ce333301d9ad40271f8107181340aef25be59d5",
+  "COPY3": "421f5fc9a21065445c96fdb91c0c1e2f2431741c72713b4b99ddcb316f31e9fc",
+  "COPY4": "2fa2104d6b38d11b0230010559879124e42ab8dfeff5ff29dc9cdadd4ecacc3f",
+  "COPY5": "6687cdb5b650d558f40cbdefc8e40997c03fe1b2abb840885e5cad81710c4c8a",
+  "COPY6": "55eb67d7b7238a70a7fa6f64d5dc3c826b31536da6eb344dc39a66f904f97968",
+  "COPY7": "6d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00",
+  "COPY8": "6a245bf6dc698504c89a20cfded60853152b695336c28063b61c65cbd269e6b4",
+  "COPY9": "1697ffa6fd9de627c077e3d2fe541084ce13300b0bec1146f95ae57f0d0bd6a5",
+  "COPY10": "1be68a5a028f2601d0e80d468c344ba331d611b96c358b6032e8b4da0547fc11",
+  "COPY11": "605bdb019981718b986d0f07e834cb0d9deb8360ffb7f61df982345ef27a7479",
+  "COPY12": "62d14dab4150bf497402fdc45a215e10dcb01c354959b10cfe31c7e9d87ff33d",
+  "COPY13": "5d045857332d5b9e541514731622af8d60c180165d971a61e06b70a9b3834765",
+  "COPY14": "049370a4b5f43412ea25f514e8ecdad05266115e4a7ecb1387231808f8b45963",
+  "COPY15": "77f230936ee88cbbd73df930d64702ef881d811e0e1498e2f1c13eb1fc345d74",
+  "COPY16": "6eca335d9645307db441656ef4e65b4bfc579b27452bebc19bd870aa1118e5c3"
  },
  "followers": {
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798": 52000,
@@ -38,6 +54,159 @@
    "tags": [],
    "content": "{\"name\":\"fiatjaf\",\"about\":\"building nostr things\",\"nip05\":\"_@fiatjaf.test\"}",
    "sig": "286e4107daa0b86c14612a269b0a1e7cbf25e7246a2f26c16ef8245e234bf97536ea76097c674c0f46b73b84493c0fc5e7a3944c37e04e85195257d3d5bd5321"
+  },
+  {
+   "id": "ef674e1208be2535aedf9cd9e6334f09b2ffa2d4d521deb2f7638f0be74b5b25",
+   "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+   "created_at": 1763920000,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"building nostr things, and a new picture\"}",
+   "sig": "3ba2fb3f0cf5b2c5dae9920074cd4a568bc0321e65b89e1243f19556c6a8bc86a1bc8da611471c913628344b31ea3dff1b002384cc58bd709238b0287b8cfa94"
+  },
+  {
+   "id": "8ae12af237862e6247e01bbe0c9b3e578c6c82ef28558ebddb92f5a4d6c87214",
+   "pubkey": "4ce119c96e2fa357200b559b2f7dd5a5f02d5290aff74b03f3e471b273211c97",
+   "created_at": 1763999000,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "427b5df8c43676160f320d431b9a5cfc8449592072bfa34b5ef0e33ac9b7231dc59347e36730081c5ff850d995eb49c542ec9163a871a4225564c59fe9c12386"
+  },
+  {
+   "id": "bdabd2bc7f3dcc3ee0998d89f71b48c97f65bbc1308988690d8756ccfaac51f0",
+   "pubkey": "352bbf4a4cdd12564f93fa332ce333301d9ad40271f8107181340aef25be59d5",
+   "created_at": 1763998999,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "40025a5503a811ccefd9ee6f64ef415f7b985cdc5046c57a23839d7ec4b1d569cb0d7645ad2c338835d18d6398a3a360c52637c6dc7a7c1d525f767cf127ad0b"
+  },
+  {
+   "id": "b793706e89b172c67ada7522b57d25a1b43ffc9b969bb10e149bb65bee576a72",
+   "pubkey": "421f5fc9a21065445c96fdb91c0c1e2f2431741c72713b4b99ddcb316f31e9fc",
+   "created_at": 1763998998,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "43129a9ea2393035e43abe16827d376b9ed529a255990dc3281f0c1c52a89713a704554d2904a32ec92c1a907eca0233ca28e07bf22d8abdb81888b966853337"
+  },
+  {
+   "id": "9870f7fefcc66b03b4b32ec048baeff7d1134af32ff8904f050a1d7810465de9",
+   "pubkey": "2fa2104d6b38d11b0230010559879124e42ab8dfeff5ff29dc9cdadd4ecacc3f",
+   "created_at": 1763998997,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "7ba640c1fee02bfcfd94db13fd92586771608d135dd666dcb9fa54b9473971fc0c70c9910b28f796c327b77e6e46a49a4e0e1d887f557d508bbc6f236185a6cc"
+  },
+  {
+   "id": "d065913a74697805473af3d439aec3effbdd453965e3c9afe0740b9a2b1d7fe3",
+   "pubkey": "6687cdb5b650d558f40cbdefc8e40997c03fe1b2abb840885e5cad81710c4c8a",
+   "created_at": 1763998996,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "8f405ff7922b730673ba1e5f8113e76d8365d8c3ac28021efaaf7c9a4bff36ee7323b48581bf9b63f68369f626865f33f7bc407f48b92fe2a8d91393b0b7f8c2"
+  },
+  {
+   "id": "71960ae08b96d06c854b8365bbc0a015ea54b24b246d59be0507309cf8ee1c36",
+   "pubkey": "55eb67d7b7238a70a7fa6f64d5dc3c826b31536da6eb344dc39a66f904f97968",
+   "created_at": 1763998995,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "b6a2cb4349e607122856e0da5f4b8bc2275ac8c20e4eade60fa495b6d3509c27adeefb447a2334ca209f1f9c9f0e7481334f7d131e06beed125e9a8fbd583976"
+  },
+  {
+   "id": "979b61ecbc37ef88d7eba7c849b1783dc4c251275c51118ba0d16f5f8d39eabc",
+   "pubkey": "6d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00",
+   "created_at": 1763998994,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "52587f2a30caeddbc02ca01692d04a1dc7f3b49c66cf2c04940621b6e4d0d5a0e6822c36ce98ca1b16af4c836c3501894ae3cfafee7b2da6549aab25ddbd8904"
+  },
+  {
+   "id": "f402ce66a2af1190de8cbd8e6dbdd5114ce734f3419672990d9ae2026df6395f",
+   "pubkey": "6a245bf6dc698504c89a20cfded60853152b695336c28063b61c65cbd269e6b4",
+   "created_at": 1763998993,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "38892fe80d9e49127965e919412e7595dcc4f302582452620100c82d7b3a2a662870072daf8dbe937f3f4c346ae2c9457dc67bd26d9935fd9ca448685943c0a0"
+  },
+  {
+   "id": "9f3b524f1a4a9bd09fd3f42195c39b8d747b0490cf40b7f4b98d7d99c17c75e3",
+   "pubkey": "1697ffa6fd9de627c077e3d2fe541084ce13300b0bec1146f95ae57f0d0bd6a5",
+   "created_at": 1763998992,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "6d7ae4595356d8531677d378aeda010a910ccd84995cad6f70c0bec5a9594fb6cb8ed3e343583f4e2ceb7409f19e3f842b0bcbd2921634e0eaf3bc310dc7e0a9"
+  },
+  {
+   "id": "753378a233b0755bbdf4f563041389bb97c987ab6d21184bcb0df2b2f6e23ff1",
+   "pubkey": "1be68a5a028f2601d0e80d468c344ba331d611b96c358b6032e8b4da0547fc11",
+   "created_at": 1763998991,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "80b73074368174a8021c5b7417d926e69267f7c7a61e724d35bc3d65dc4d6f394c75ecc59b593e84b58aca2ed6cac419e12b3ccb15c01ac680b194298f9c6c0e"
+  },
+  {
+   "id": "9be17749e5ea5b0752eb2ee8624fc3b0f6287f9ecaddade270b5e24e76247ba7",
+   "pubkey": "605bdb019981718b986d0f07e834cb0d9deb8360ffb7f61df982345ef27a7479",
+   "created_at": 1763998990,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "e25b2fdcf239bf53ca82b6b2a755302b53a633b98c4b5e70ad89762b6c9b56948115e1a68b53639f37a754912dbff19c9bcc261bbf43919acbf6f025073ae733"
+  },
+  {
+   "id": "02771a160dffdfb9f43d4faaa41cf67a0d63fee0a537ca0e923fba3806b66621",
+   "pubkey": "62d14dab4150bf497402fdc45a215e10dcb01c354959b10cfe31c7e9d87ff33d",
+   "created_at": 1763998989,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "1490bcbf644348a7d5a5dfb08f3f668b91b92412ea7a4bf5f960eab7a7c9865d708c3ee281c16a3f6437ed0de4f1731dbee3764deb86eb0c6741fb3f124b396e"
+  },
+  {
+   "id": "c41a49df75e2f2d5ce21a0eddf8af9538f0288aa5549f0cb9016a11cfd650008",
+   "pubkey": "5d045857332d5b9e541514731622af8d60c180165d971a61e06b70a9b3834765",
+   "created_at": 1763998988,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "0a4856a84988b37f60b92bcc366f03bde6b29eb47bf48fbc1e63f00492700fe23c080b28bce95cbe0bc4b487586ba8eda907de684ce73bd2153cf842762572f1"
+  },
+  {
+   "id": "e46bfe1403471c9664395b160d8b5a14233ddca9bb7b63ea115d5ae990bba68e",
+   "pubkey": "049370a4b5f43412ea25f514e8ecdad05266115e4a7ecb1387231808f8b45963",
+   "created_at": 1763998987,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "2b604f6c088c9eb62e97a872e2b1a3a999552dda7191f7f442c9dd4eec4c883e683219e302717976f58c15db1d138def863d82c1efde16a58a0d5beab8ee107f"
+  },
+  {
+   "id": "66877b3b3d6d0ee9852d003b5435dd480e505ff14d530917e39857ecce9ad21d",
+   "pubkey": "77f230936ee88cbbd73df930d64702ef881d811e0e1498e2f1c13eb1fc345d74",
+   "created_at": 1763998986,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "f78be14e08e51114cb33b788a203a74e35797b66d15667fcb13257d4bd81c1d35cbd36114691d05dc7ec11bf2b318ec719c0ad79b01673d58fa03f54d556fb7f"
+  },
+  {
+   "id": "7c3a3ed2e4343621ca03bc9c62a25a53457578b5e8598b6786ac6f2debf7b547",
+   "pubkey": "6eca335d9645307db441656ef4e65b4bfc579b27452bebc19bd870aa1118e5c3",
+   "created_at": 1763998985,
+   "kind": 0,
+   "tags": [],
+   "content": "{\"name\":\"fiatjaf\",\"about\":\"~\"}",
+   "sig": "843575edf788348b5af47a10ca0b63e5474320bea37646b0803e7fefc6fb8084c544327425e574ccbbf808c157343f9bfbc2c3b52aaaa78ea9e7f01de686ff67"
   },
   {
    "id": "6059d5b9a2f904a04d956ba88f5956785770d6969b5ca6c0582db3f70339ee79",

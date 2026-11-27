@@ -18,8 +18,15 @@ const profile = (who, at, p) => sign(who, 0, at, JSON.stringify(p));
 
 // ── people: the real one, two copycats with the same name (newer, so they come first by date), a fan whose name
 //    starts with it, and people who aren't named anything like it ──
+// (as on the real relays: the real one's newest profile has no address, an older one has; and more copies than a
+// search looks at closely, with keys that sort before his, each with an about of "~" so they don't look bare)
+const copies = [];
+for (let n = 20; copies.length < 16; n++) { const s = key(n); if (C.pubHex(s) < C.pubHex(secrets.FIAT)) copies.push(s); }
+copies.forEach((s, i) => { secrets[`COPY${i + 1}`] = s; pk[`COPY${i + 1}`] = C.pubHex(s); });
 const profiles = [
   profile("FIAT", BASE - 90000, { name: "fiatjaf", about: "building nostr things", nip05: "_@fiatjaf.test" }),
+  profile("FIAT", BASE - 80000, { name: "fiatjaf", about: "building nostr things, and a new picture" }),
+  ...copies.map((_, i) => profile(`COPY${i + 1}`, BASE - 1000 - i, { name: "fiatjaf", about: "~" })),
   profile("COPY_BARE", BASE - 100, { name: "fiatjaf", display_name: "fiatjaf" }),
   profile("COPY_FAKE", BASE - 200, { name: "fiatjaf", about: "the real fiatjaf, follow me here", nip05: "fiatjaf@copy.test" }),
   profile("FAN", BASE - 300, { name: "fiatjafsfan", about: "a fan" }),

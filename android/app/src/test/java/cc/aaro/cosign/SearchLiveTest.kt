@@ -31,10 +31,12 @@ class SearchLiveTest {
 
     /** What each search relay says to [q] by itself, for a failure's message. */
     private fun relays(q: String, filter: Map<String, Any>) = runBlocking {
-        (SearchRelays.FAST + SearchRelays.SLOW).joinToString("\n") { url ->
+        val lines = ArrayList<String>()
+        for (url in SearchRelays.FAST + SearchRelays.SLOW) {
             val (got, answered) = try { Fetch.queryAnswered(listOf(url), filter + ("search" to q), 8000) } catch (e: Exception) { emptyList<cc.aaro.qrst.core.Event>() to emptySet() }
-            "  $url: ${if (answered.isEmpty()) "no answer" else "${got.size} events, ${got.count { SearchRank.mentions(it, q) }} with the words"}"
+            lines += "  $url: ${if (answered.isEmpty()) "no answer" else "${got.size} events, ${got.count { SearchRank.mentions(it, q) }} with the words"}"
         }
+        lines.joinToString("\n")
     }
     private fun why(q: String, filter: Map<String, Any>) = "\nsteps:\n  " + log.joinToString("\n  ") + "\nrelays, asked alone:\n" + relays(q, filter)
 
